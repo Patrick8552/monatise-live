@@ -8,6 +8,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from monatise.live.config import RuntimeConfig
+from monatise.live.secrets import secret_value
 from monatise.live.service import JsonEncoder, TradingService
 
 
@@ -45,7 +46,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
         self.send_error(404, "not found")
 
     def _require_api_auth(self) -> bool:
-        token = os.getenv("MONATISE_CONTROL_TOKEN", "").strip()
+        token = secret_value("MONATISE_CONTROL_TOKEN", "")
         if not token:
             return True
 

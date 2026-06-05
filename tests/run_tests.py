@@ -33,6 +33,10 @@ TESTS = {
     "tests.test_live_server": [
         "test_live_server_requires_control_token_for_status",
     ],
+    "tests.test_live_secrets": [
+        "test_secret_value_reads_direct_secret_file",
+        "test_secret_value_reads_key_value_secret_file",
+    ],
 }
 
 

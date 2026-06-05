@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from monatise.live.secrets import secret_value
+
 
 LIVE_CONFIRMATION = "I_UNDERSTAND_REAL_MONEY"
 
@@ -46,9 +48,9 @@ class RuntimeConfig:
             max_base_inventory=float(os.getenv("MONATISE_MAX_BASE_INVENTORY", "0.1")),
             max_daily_loss=float(os.getenv("MONATISE_MAX_DAILY_LOSS", "100")),
             allow_live_orders=os.getenv("MONATISE_ALLOW_LIVE_ORDERS", "false").lower() == "true",
-            live_confirmation=os.getenv("MONATISE_LIVE_CONFIRMATION", ""),
-            account_address=os.getenv("HYPERLIQUID_ACCOUNT_ADDRESS", ""),
-            secret_key=os.getenv("HYPERLIQUID_SECRET_KEY", ""),
+            live_confirmation=secret_value("MONATISE_LIVE_CONFIRMATION", ""),
+            account_address=secret_value("HYPERLIQUID_ACCOUNT_ADDRESS", ""),
+            secret_key=secret_value("HYPERLIQUID_SECRET_KEY", ""),
         )
 
     @property
