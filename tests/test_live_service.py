@@ -24,5 +24,5 @@ def test_live_tick_initializes_risk_baseline_from_live_mark() -> None:
     snapshot = service.snapshot()
 
     assert snapshot["markPrice"] == 63_816.5
-    assert snapshot["riskStatus"] == "live dry-run: missing confirmation or keys"
+    assert snapshot["riskStatus"] == "live dry-run"
     assert "max daily loss reached" not in [event["message"] for event in snapshot["events"]]

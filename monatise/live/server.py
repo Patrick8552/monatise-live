@@ -88,8 +88,8 @@ def main() -> int:
     port = int(os.getenv("MONATISE_PORT", os.getenv("PORT", "4174")))
     host = os.getenv("MONATISE_HOST", "127.0.0.1")
     server = ThreadingHTTPServer((host, port), Handler)
-    print(f"Monatise backend running at http://{host}:{port}")
-    print(f"mode={config.mode} network={config.network} live_ready={config.live_enabled}")
+    print(f"Monatise backend running at http://{host}:{port}", flush=True)
+    print(f"mode={config.mode} network={config.network} live_ready={config.live_enabled}", flush=True)
     server.serve_forever()
     return 0
 

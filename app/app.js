@@ -400,10 +400,12 @@ function renderBackend(snapshot) {
     els.markPrice.textContent = money(snapshot.markPrice);
   }
   if (snapshot.portfolio) {
-    els.equityMetric.textContent = money(snapshot.portfolio.equity);
+    els.equityMetric.textContent = money(snapshot.account?.accountValue ?? snapshot.portfolio.equity);
     els.harvestMetric.textContent = money(snapshot.portfolio.realizedHarvest);
     els.feesMetric.textContent = money(snapshot.portfolio.feePaid);
-    els.inventoryMetric.textContent = `${(snapshot.portfolio.inventoryRatio * 100).toFixed(2)}%`;
+    els.inventoryMetric.textContent = snapshot.account
+      ? `${Number(snapshot.account.positionSize || 0).toFixed(5)} ${snapshot.symbol}`
+      : `${(snapshot.portfolio.inventoryRatio * 100).toFixed(2)}%`;
   }
   if (Array.isArray(snapshot.fills)) {
     els.fillCount.textContent = `${snapshot.fills.length} fills`;

@@ -34,6 +34,7 @@ class RuntimeState:
     events: list[RuntimeEvent] = field(default_factory=list)
     live_ready: bool = False
     risk_status: str = "ready"
+    account: dict = field(default_factory=dict)
 
 
 class TradingService:
@@ -83,6 +84,8 @@ class TradingService:
             return self._snapshot_unlocked()
 
     def snapshot(self) -> dict:
+        if self.config.mode == "live" and not self.state.running:
+            self._refresh_live_status()
         with self._lock:
             return self._snapshot_unlocked()
 
@@ -136,7 +139,27 @@ class TradingService:
             "liveReady": self.state.live_ready,
             "riskStatus": self.state.risk_status,
             "requires": self.requirements(),
+            "account": self.state.account,
         }
+
+    def _refresh_live_status(self) -> None:
+        try:
+            adapter = self._live_adapter()
+            mark = adapter.latest_price(self.config.symbol)
+            account = self._account_snapshot(adapter, mark)
+            with self._lock:
+                self.state.mark_price = mark
+                self.state.account = account
+                self.state.risk_status = "live data ready" if self.config.live_enabled else "live dry-run"
+                if not self._live_baseline_initialized:
+                    self.harvester = self._build_harvester(mark)
+                    self.risk = RiskManager(self.config, self.portfolio.equity(mark))
+                    self._live_baseline_initialized = True
+                    self._event("info", f"live baseline initialized at {mark}")
+        except Exception as error:  # noqa: BLE001
+            with self._lock:
+                self.state.risk_status = "live data error"
+                self._event("error", str(error))
 
     def _paper_tick(self) -> None:
         candle = self._paper_candles[self._paper_index % len(self._paper_candles)]
@@ -155,6 +178,7 @@ class TradingService:
     def _live_tick(self) -> None:
         adapter = self._live_adapter()
         mark = adapter.latest_price(self.config.symbol)
+        account = self._account_snapshot(adapter, mark)
         with self._lock:
             if not self._live_baseline_initialized:
                 self.harvester = self._build_harvester(mark)
@@ -162,6 +186,7 @@ class TradingService:
                 self._live_baseline_initialized = True
                 self._event("info", f"live baseline initialized at {mark}")
             self.state.mark_price = mark
+            self.state.account = account
             orders = self.harvester.plan_orders(self.portfolio, mark)
             decision = self.risk.check_batch(orders, self.portfolio, mark)
             if not decision.allowed:
@@ -183,6 +208,27 @@ class TradingService:
             self._adapter = HyperliquidAdapter(self.config)
             self._event("info", "Hyperliquid adapter initialized")
         return self._adapter
+
+    def _account_snapshot(self, adapter: HyperliquidAdapter, mark: float) -> dict:
+        if not self.config.account_address:
+            return {}
+        user_state = adapter.user_state()
+        margin = user_state.get("marginSummary", {})
+        position_size = 0.0
+        position_value = 0.0
+        for item in user_state.get("assetPositions", []):
+            position = item.get("position", {})
+            if position.get("coin") == self.config.symbol:
+                position_size = float(position.get("szi", 0) or 0)
+                position_value = position_size * mark
+                break
+        return {
+            "accountValue": float(margin.get("accountValue", 0) or 0),
+            "totalMarginUsed": float(margin.get("totalMarginUsed", 0) or 0),
+            "withdrawable": float(user_state.get("withdrawable", 0) or 0),
+            "positionSize": position_size,
+            "positionValue": position_value,
+        }
 
     def _match_candle(self, candle: Candle, orders: list[Order]) -> list[Fill]:
         fills: list[Fill] = []
@@ -223,6 +269,7 @@ class TradingService:
 
     def _event(self, level: str, message: str) -> None:
         self.state.events.append(RuntimeEvent(time.time(), level, message))
+        print(f"{level.upper()}: {message}", flush=True)
         self.state.events = self.state.events[-200:]
 
 
