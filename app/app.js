@@ -402,12 +402,12 @@ function renderBackend(snapshot) {
     els.markPrice.textContent = money(snapshot.markPrice);
   }
   if (snapshot.portfolio) {
-    els.equityMetric.textContent = money(snapshot.account?.accountValue ?? snapshot.portfolio.equity);
+    els.equityMetric.textContent = money(snapshot.account?.displayValue ?? snapshot.account?.accountValue ?? snapshot.portfolio.equity);
     if (snapshot.account && Number.isFinite(Number(snapshot.account.accountValue))) {
-      els.accountMetricLabel.textContent = "Account";
-      els.cashMetricLabel.textContent = "Withdrawable";
+      els.accountMetricLabel.textContent = "Perp Account";
+      els.cashMetricLabel.textContent = "Spot USDC";
       els.harvestMetric.textContent = money(snapshot.account.accountValue);
-      els.feesMetric.textContent = money(snapshot.account.withdrawable);
+      els.feesMetric.textContent = money(snapshot.account.spotUsdc || 0);
     } else {
       els.accountMetricLabel.textContent = "Harvest";
       els.cashMetricLabel.textContent = "Fees";

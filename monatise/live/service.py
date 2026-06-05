@@ -194,6 +194,9 @@ class TradingService:
                 self.state.risk_status = decision.reason
                 self._event("warn", decision.reason)
                 return
+            if self.state.open_orders:
+                self.state.risk_status = f"{len(self.state.open_orders)} live orders resting"
+                return
             if self.config.live_enabled:
                 submitted = adapter.place_orders(orders)
                 self.state.open_orders = orders
@@ -213,6 +216,8 @@ class TradingService:
         if not self.config.account_address:
             return {}
         user_state = adapter.user_state()
+        spot_state = adapter.spot_user_state()
+        vaults = adapter.vault_equities()
         margin = user_state.get("marginSummary", {})
         position_size = 0.0
         position_value = 0.0
@@ -222,12 +227,28 @@ class TradingService:
                 position_size = float(position.get("szi", 0) or 0)
                 position_value = position_size * mark
                 break
+        spot_balances = []
+        spot_usdc = 0.0
+        for balance in spot_state.get("balances", []):
+            coin = str(balance.get("coin", ""))
+            total = float(balance.get("total", 0) or 0)
+            hold = float(balance.get("hold", 0) or 0)
+            if total or hold:
+                spot_balances.append({"coin": coin, "total": total, "hold": hold})
+            if coin.upper() == "USDC":
+                spot_usdc += total
+        perp_value = float(margin.get("accountValue", 0) or 0)
+        withdrawable = float(user_state.get("withdrawable", 0) or 0)
         return {
-            "accountValue": float(margin.get("accountValue", 0) or 0),
+            "accountValue": perp_value,
             "totalMarginUsed": float(margin.get("totalMarginUsed", 0) or 0),
-            "withdrawable": float(user_state.get("withdrawable", 0) or 0),
+            "withdrawable": withdrawable,
             "positionSize": position_size,
             "positionValue": position_value,
+            "spotUsdc": spot_usdc,
+            "spotBalances": spot_balances,
+            "vaultCount": len(vaults),
+            "displayValue": perp_value + spot_usdc,
         }
 
     def _match_candle(self, candle: Candle, orders: list[Order]) -> list[Fill]:

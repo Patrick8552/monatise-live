@@ -85,6 +85,16 @@ class HyperliquidAdapter(MarketDataPort, ExecutionPort):
             raise RuntimeError("HYPERLIQUID_ACCOUNT_ADDRESS is required for user_state")
         return self.info.user_state(self.account_address)
 
+    def spot_user_state(self) -> dict[str, Any]:
+        if not self.account_address:
+            raise RuntimeError("HYPERLIQUID_ACCOUNT_ADDRESS is required for spot_user_state")
+        return self.info.spot_user_state(self.account_address)
+
+    def vault_equities(self) -> list[dict[str, Any]]:
+        if not self.account_address:
+            return []
+        return self.info.user_vault_equities(self.account_address)
+
     def _coin(self, symbol: str) -> str:
         return symbol.split("-", 1)[0].upper()
 
