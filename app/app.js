@@ -12,6 +12,7 @@ const sampleCsv = `timestamp,open,high,low,close,volume
 
 const els = {
   accountAddressInput: document.querySelector("#accountAddressInput"),
+  assetGroups: document.querySelector("#assetGroups"),
   assetSelect: document.querySelector("#assetSelect"),
   baseInput: document.querySelector("#baseInput"),
   backendStartButton: document.querySelector("#backendStartButton"),
@@ -43,6 +44,10 @@ const els = {
   marketStrip: document.querySelector("#marketStrip"),
   marketTitle: document.querySelector("#marketTitle"),
   orderSizeInput: document.querySelector("#orderSizeInput"),
+  paymentCurrencySelect: document.querySelector("#paymentCurrencySelect"),
+  paymentEmailInput: document.querySelector("#paymentEmailInput"),
+  paymentMethodSelect: document.querySelector("#paymentMethodSelect"),
+  paymentStatus: document.querySelector("#paymentStatus"),
   passwordInput: document.querySelector("#passwordInput"),
   proPlanButton: document.querySelector("#proPlanButton"),
   quoteInput: document.querySelector("#quoteInput"),
@@ -66,6 +71,7 @@ let state = null;
 let backendOnline = false;
 let currentUser = { authenticated: false, credentialsConfigured: false };
 let markets = [];
+let marketGroups = {};
 let selectedAsset = "BTC";
 localStorage.removeItem("monatiseControlToken");
 
@@ -167,6 +173,7 @@ async function loadMarkets() {
     if (!response.ok) throw new Error("market fetch failed");
     const payload = await response.json();
     markets = (payload.assets || []).filter((asset) => Number.isFinite(Number(asset.price)));
+    marketGroups = payload.groups || {};
     if (!els.assetSelect.options.length && markets.length) {
       els.assetSelect.innerHTML = markets
         .map((asset) => `<option value="${asset.symbol}">${asset.symbol}</option>`)
@@ -201,6 +208,39 @@ function renderMarkets() {
       </button>`
     )
     .join("");
+  renderAssetGroups();
+}
+
+function renderAssetGroups() {
+  const groups = [
+    ["Crypto perps", marketGroups.crypto || markets],
+    ["HIP-3 builder", marketGroups.builder || []],
+    ["Forex watch", marketGroups.forex || []],
+    ["Stock watch", marketGroups.stocks || []]
+  ];
+  els.assetGroups.innerHTML = groups
+    .map(([title, items]) => {
+      const visible = (items || []).slice(0, 8);
+      return `<section class="asset-group">
+        <h3>${title}</h3>
+        <div class="asset-list">
+          ${
+            visible.length
+              ? visible
+                  .map((asset) => {
+                    const tradable = asset.tradable && Number.isFinite(Number(asset.price));
+                    if (tradable) {
+                      return `<button type="button" data-symbol="${asset.symbol}">${asset.symbol} ${money(asset.price)}</button>`;
+                    }
+                    return `<span class="asset-chip unavailable">${asset.symbol}</span>`;
+                  })
+                  .join("")
+              : '<span class="asset-chip unavailable">No live listings</span>'
+          }
+        </div>
+      </section>`;
+    })
+    .join("");
 }
 
 async function saveSelectedAsset(symbol) {
@@ -224,19 +264,41 @@ async function saveSelectedAsset(symbol) {
   refreshBackend();
 }
 
-async function selectPlan(plan) {
+async function checkoutPlan(plan) {
   if (!currentUser.authenticated) {
     els.subscriptionStatus.textContent = "login required";
     return;
   }
-  const response = await jsonPost("/api/subscription", { plan });
+  const response = await jsonPost("/api/payments/checkout", {
+    currency: els.paymentCurrencySelect.value,
+    email: els.paymentEmailInput.value.trim(),
+    method: els.paymentMethodSelect.value,
+    plan
+  });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    els.subscriptionStatus.textContent = payload.error || "plan error";
+    els.paymentStatus.textContent = payload.error || "payment error";
     return;
   }
-  currentUser = { ...currentUser, subscription: payload.subscription };
-  els.subscriptionStatus.textContent = `${payload.subscription.plan} ${payload.subscription.status}`;
+  if (payload.status === "redirect" && payload.checkoutUrl) {
+    window.location.href = payload.checkoutUrl;
+    return;
+  }
+  if (payload.provider === "crypto") {
+    els.paymentStatus.textContent = payload.setupRequired
+      ? "crypto address not configured"
+      : `${payload.amount} ${payload.currency} on ${payload.network}: ${payload.address} ref ${payload.reference}`;
+    return;
+  }
+  if (payload.status === "setup_required") {
+    els.paymentStatus.textContent = payload.message || "payment setup required";
+    return;
+  }
+  if (payload.subscription) {
+    currentUser = { ...currentUser, subscription: payload.subscription };
+    els.subscriptionStatus.textContent = `${payload.subscription.plan} ${payload.subscription.status}`;
+    els.paymentStatus.textContent = `${payload.subscription.plan} active`;
+  }
 }
 
 function money(value) {
@@ -689,6 +751,10 @@ els.marketStrip.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-symbol]");
   if (button) saveSelectedAsset(button.dataset.symbol);
 });
+els.assetGroups.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-symbol]");
+  if (button) saveSelectedAsset(button.dataset.symbol);
+});
 els.loginButton.addEventListener("click", () => loginOrRegister("/api/login"));
 els.registerButton.addEventListener("click", () => loginOrRegister("/api/register"));
 els.logoutButton.addEventListener("click", async () => {
@@ -696,9 +762,9 @@ els.logoutButton.addEventListener("click", async () => {
   renderAuth({ authenticated: false, credentialsConfigured: false });
 });
 els.saveCredentialsButton.addEventListener("click", saveCredentials);
-els.freePlanButton.addEventListener("click", () => selectPlan("free"));
-els.proPlanButton.addEventListener("click", () => selectPlan("pro"));
-els.businessPlanButton.addEventListener("click", () => selectPlan("business"));
+els.freePlanButton.addEventListener("click", () => checkoutPlan("free"));
+els.proPlanButton.addEventListener("click", () => checkoutPlan("pro"));
+els.businessPlanButton.addEventListener("click", () => checkoutPlan("business"));
 els.backendStartButton.addEventListener("click", () => backendCommand("/api/start").catch(refreshBackend));
 els.backendStopButton.addEventListener("click", () => backendCommand("/api/stop").catch(refreshBackend));
 ["input", "change"].forEach((eventName) => {

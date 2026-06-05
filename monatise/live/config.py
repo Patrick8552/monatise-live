@@ -50,8 +50,16 @@ class RuntimeConfig:
             max_daily_loss=float(os.getenv("MONATISE_MAX_DAILY_LOSS", "100")),
             allow_live_orders=os.getenv("MONATISE_ALLOW_LIVE_ORDERS", "false").lower() == "true",
             live_confirmation=secret_value("MONATISE_LIVE_CONFIRMATION", ""),
-            account_address=secret_value("HYPERLIQUID_ACCOUNT_ADDRESS", ""),
-            secret_key=secret_value("HYPERLIQUID_SECRET_KEY", ""),
+            account_address=(
+                secret_value("HYPERLIQUID_ACCOUNT_ADDRESS", "")
+                if os.getenv("MONATISE_ENABLE_GLOBAL_CREDENTIALS", "false").lower() == "true"
+                else ""
+            ),
+            secret_key=(
+                secret_value("HYPERLIQUID_SECRET_KEY", "")
+                if os.getenv("MONATISE_ENABLE_GLOBAL_CREDENTIALS", "false").lower() == "true"
+                else ""
+            ),
             assets=tuple(
                 asset.strip().upper()
                 for asset in os.getenv("MONATISE_ASSETS", "BTC,ETH,SOL,HYPE,BNB,XRP,DOGE").split(",")

@@ -3,14 +3,14 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Monatise Liquidity Harvester</title>
+    <title>Monatise Trading Console</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <main class="shell">
       <header class="topbar">
         <div>
-          <p class="eyebrow">Liquidity harvesting protocol</p>
+          <p class="eyebrow">Multi-asset trading console</p>
           <h1>Monatise</h1>
         </div>
         <div class="status-strip" aria-label="simulation status">
@@ -23,7 +23,7 @@
       <section class="workspace" aria-label="Monatise dashboard">
         <aside class="panel controls">
           <div class="panel-head">
-            <h2>Protocol Controls</h2>
+            <h2>Trading Controls</h2>
             <button id="resetButton" type="button" title="Reset to defaults">Reset</button>
           </div>
 
@@ -105,7 +105,7 @@
               <input id="secretKeyInput" type="password" autocomplete="off" />
             </label>
             <button id="saveCredentialsButton" type="button">Save credentials</button>
-            <p id="credentialStatus">Each user connects their own Hyperliquid account.</p>
+            <p id="credentialStatus">Per-user Hyperliquid credentials only.</p>
           </div>
 
           <div class="backend-box" aria-label="backend trading controls">
@@ -137,6 +137,7 @@
             </div>
           </div>
           <div id="marketStrip" class="market-strip" aria-label="live market prices"></div>
+          <div id="assetGroups" class="asset-groups" aria-label="asset classes"></div>
           <canvas id="liquidityCanvas" width="980" height="620" aria-label="Liquidity grid chart"></canvas>
         </section>
 
@@ -186,31 +187,57 @@
 
           <section class="panel subscription-panel">
             <div class="panel-head">
-              <h2>Subscription</h2>
+              <h2>Billing</h2>
               <span id="subscriptionStatus">Free</span>
+            </div>
+            <div class="billing-fields">
+              <label>
+                Payment method
+                <select id="paymentMethodSelect">
+                  <option value="flutterwave">Flutterwave</option>
+                  <option value="fiat">Fiat checkout</option>
+                  <option value="crypto">Crypto USDC</option>
+                </select>
+              </label>
+              <div class="input-row">
+                <label>
+                  Currency
+                  <select id="paymentCurrencySelect">
+                    <option value="USD">USD</option>
+                    <option value="NGN">NGN</option>
+                    <option value="GBP">GBP</option>
+                    <option value="EUR">EUR</option>
+                  </select>
+                </label>
+                <label>
+                  Email
+                  <input id="paymentEmailInput" type="email" autocomplete="email" />
+                </label>
+              </div>
             </div>
             <div class="plan-grid">
               <article>
                 <strong>Free</strong>
-                <span>Paper mode</span>
+                <span>$0</span>
                 <button id="freePlanButton" type="button">Select</button>
               </article>
               <article>
                 <strong>Pro</strong>
-                <span>Live multi-asset</span>
+                <span>$29/mo</span>
                 <button id="proPlanButton" class="primary" type="button">Select</button>
               </article>
               <article>
                 <strong>Business</strong>
-                <span>Team accounts</span>
+                <span>$149/mo</span>
                 <button id="businessPlanButton" type="button">Select</button>
               </article>
             </div>
+            <p id="paymentStatus" class="payment-status">Flutterwave, fiat, or crypto.</p>
           </section>
         </aside>
       </section>
     </main>
 
-    <script src="./app.js?v=20260605-multi-asset"></script>
+    <script src="./app.js?v=20260605-payments-redesign"></script>
   </body>
 </html>

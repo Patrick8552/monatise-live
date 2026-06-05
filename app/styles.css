@@ -1,15 +1,17 @@
 :root {
   color-scheme: light;
-  --bg: #f6f7f3;
-  --ink: #202523;
-  --muted: #6b746f;
-  --panel: #ffffff;
-  --line: #d9ded8;
-  --buy: #0f9f7a;
-  --sell: #c74747;
-  --accent: #d29d2b;
-  --graph: #365f6b;
-  --shadow: 0 18px 45px rgba(32, 37, 35, 0.12);
+  --bg: #eef2f0;
+  --ink: #17211e;
+  --muted: #697873;
+  --panel: #fffefa;
+  --line: #ccd8d2;
+  --buy: #098f6a;
+  --sell: #d14c5a;
+  --accent: #c69728;
+  --graph: #214f61;
+  --deep: #142622;
+  --soft: #f7f8f2;
+  --shadow: 0 16px 36px rgba(23, 33, 30, 0.13);
 }
 
 * {
@@ -19,7 +21,10 @@
 body {
   margin: 0;
   min-width: 320px;
-  background: var(--bg);
+  background:
+    linear-gradient(135deg, rgba(8, 143, 106, 0.12), transparent 30%),
+    linear-gradient(315deg, rgba(198, 151, 40, 0.14), transparent 28%),
+    var(--bg);
   color: var(--ink);
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
@@ -40,11 +45,16 @@ textarea {
 
 .topbar {
   align-items: center;
+  background: rgba(255, 254, 250, 0.76);
+  border: 1px solid rgba(204, 216, 210, 0.82);
+  border-radius: 8px;
+  box-shadow: 0 10px 28px rgba(23, 33, 30, 0.08);
   display: flex;
   gap: 20px;
   justify-content: space-between;
   margin: 0 auto 18px;
   max-width: 1560px;
+  padding: 16px 18px;
 }
 
 .eyebrow {
@@ -63,7 +73,7 @@ h2 {
 }
 
 h1 {
-  font-size: clamp(2rem, 4vw, 4rem);
+  font-size: clamp(2.2rem, 4vw, 4.6rem);
   line-height: 0.95;
 }
 
@@ -110,6 +120,12 @@ h2 {
   padding: 16px;
 }
 
+.controls,
+.side-stack {
+  position: relative;
+  z-index: 1;
+}
+
 .panel-head,
 .stage-head,
 .button-row,
@@ -142,7 +158,7 @@ label {
 input,
 select,
 textarea {
-  background: #fbfcfa;
+  background: var(--soft);
   border: 1px solid var(--line);
   border-radius: 6px;
   color: var(--ink);
@@ -171,7 +187,7 @@ textarea {
 }
 
 button {
-  background: #f2f5f1;
+  background: #edf2ee;
   border: 1px solid var(--line);
   border-radius: 6px;
   color: var(--ink);
@@ -186,8 +202,8 @@ button:hover {
 }
 
 button.primary {
-  background: var(--ink);
-  border-color: var(--ink);
+  background: var(--deep);
+  border-color: var(--deep);
   color: #ffffff;
 }
 
@@ -196,7 +212,10 @@ button.primary {
 }
 
 .market-stage {
-  min-height: 680px;
+  background:
+    linear-gradient(180deg, rgba(255, 254, 250, 0.95), rgba(247, 248, 242, 0.98)),
+    var(--panel);
+  min-height: 720px;
   overflow: hidden;
   padding: 18px;
 }
@@ -222,11 +241,11 @@ canvas {
 }
 
 #liquidityCanvas {
-  background: linear-gradient(180deg, #fbfcfa 0%, #f3f6f2 100%);
+  background: linear-gradient(180deg, #fffefa 0%, #eef4ef 100%);
   border: 1px solid var(--line);
   border-radius: 6px;
-  height: min(64vh, 620px);
-  min-height: 460px;
+  height: min(58vh, 560px);
+  min-height: 420px;
   width: 100%;
 }
 
@@ -239,7 +258,7 @@ canvas {
 
 .market-strip button {
   align-items: center;
-  background: #fbfcfa;
+  background: #fffefa;
   display: flex;
   justify-content: space-between;
   min-height: 42px;
@@ -248,6 +267,43 @@ canvas {
 .market-strip button.active {
   border-color: var(--graph);
   box-shadow: 0 0 0 3px rgba(54, 95, 107, 0.12);
+}
+
+.asset-groups {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-bottom: 12px;
+}
+
+.asset-group {
+  background: rgba(255, 254, 250, 0.82);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px;
+}
+
+.asset-group h3 {
+  font-size: 0.82rem;
+  margin: 0 0 8px;
+}
+
+.asset-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.asset-list button,
+.asset-chip {
+  border-radius: 999px;
+  font-size: 0.74rem;
+  min-height: 28px;
+  padding: 5px 8px;
+}
+
+.asset-chip.unavailable {
+  opacity: 0.52;
 }
 
 .side-stack {
@@ -414,6 +470,12 @@ button:disabled {
   align-self: start;
 }
 
+.billing-fields {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
 .plan-grid {
   display: grid;
   gap: 9px;
@@ -426,6 +488,15 @@ button:disabled {
   display: grid;
   gap: 7px;
   padding: 12px;
+}
+
+.payment-status {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 750;
+  line-height: 1.35;
+  margin: 10px 0 0;
+  overflow-wrap: anywhere;
 }
 
 .plan-grid strong {
@@ -485,5 +556,9 @@ button:disabled {
   #liquidityCanvas {
     height: 480px;
     min-height: 380px;
+  }
+
+  .asset-groups {
+    grid-template-columns: 1fr;
   }
 }

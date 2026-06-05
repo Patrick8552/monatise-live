@@ -26,6 +26,7 @@ TESTS = {
         "test_live_mode_requires_all_order_gates",
         "test_live_mode_enables_only_with_explicit_confirmation",
         "test_order_size_cannot_exceed_max_order_notional",
+        "test_global_hyperliquid_credentials_are_ignored_by_default",
     ],
     "tests.test_live_service": [
         "test_live_tick_initializes_risk_baseline_from_live_mark",

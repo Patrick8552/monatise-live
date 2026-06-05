@@ -59,6 +59,9 @@ class HyperliquidAdapter(MarketDataPort, ExecutionPort):
                 prices[coin] = float(mids[coin])
         return prices
 
+    def all_prices(self) -> dict[str, float]:
+        return {str(coin): float(price) for coin, price in self.info.all_mids().items()}
+
     def candles(self, symbol: str, limit: int):  # noqa: ANN201
         raise NotImplementedError("live candle history is not wired yet; use latest_price polling")
 

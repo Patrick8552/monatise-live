@@ -3,16 +3,29 @@ from __future__ import annotations
 import json
 import threading
 import time
+import urllib.error
+import urllib.request
 from dataclasses import replace
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import os
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from monatise.adapters.hyperliquid import HyperliquidAdapter
 from monatise.live.config import RuntimeConfig
+from monatise.live.secrets import secret_value
 from monatise.live.service import JsonEncoder, TradingService
 from monatise.live.users import User, UserCredentials, UserStore
+
+
+PLAN_PRICES = {
+    "free": {"amount": 0, "currency": "USD"},
+    "pro": {"amount": 29, "currency": "USD"},
+    "business": {"amount": 149, "currency": "USD"},
+}
+
+FOREX_WATCHLIST = ("EURUSD", "GBPUSD", "USDJPY", "XAU", "XAG")
+STOCK_WATCHLIST = ("SPX", "NDX", "NASDAQ", "AAPL", "TSLA", "NVDA")
 
 
 class TenantServices:
@@ -53,6 +66,7 @@ class MarketFeed:
         self.config = config
         self._adapter: HyperliquidAdapter | None = None
         self._prices: dict[str, float] = {}
+        self._all_prices: dict[str, float] = {}
         self._updated_at = 0.0
         self._lock = threading.Lock()
 
@@ -62,20 +76,121 @@ class MarketFeed:
             if now - self._updated_at > 2:
                 if self._adapter is None:
                     self._adapter = HyperliquidAdapter(self.config)
-                self._prices = self._adapter.latest_prices(self.config.assets)
+                self._all_prices = self._adapter.all_prices()
+                self._prices = {
+                    symbol: self._all_prices[symbol]
+                    for symbol in self.config.assets
+                    if symbol in self._all_prices
+                }
                 self._updated_at = now
+            builder = [
+                {"symbol": coin, "price": price, "tradable": True}
+                for coin, price in sorted(self._all_prices.items())
+                if ":" in coin
+            ][:18]
             return {
                 "assets": [
                     {"symbol": symbol, "price": self._prices.get(symbol)}
                     for symbol in self.config.assets
                 ],
+                "groups": {
+                    "crypto": [
+                        {"symbol": symbol, "price": self._prices.get(symbol), "tradable": symbol in self._prices}
+                        for symbol in self.config.assets
+                    ],
+                    "builder": builder,
+                    "forex": self._watchlist(FOREX_WATCHLIST),
+                    "stocks": self._watchlist(STOCK_WATCHLIST),
+                },
                 "updatedAt": self._updated_at,
             }
+
+    def _watchlist(self, symbols: tuple[str, ...]) -> list[dict]:
+        return [
+            {"symbol": symbol, "price": self._all_prices.get(symbol), "tradable": symbol in self._all_prices}
+            for symbol in symbols
+        ]
+
+
+class PaymentGateway:
+    def checkout(self, user: User, payload: dict) -> dict:
+        plan = str(payload.get("plan", "pro")).lower()
+        method = str(payload.get("method", "flutterwave")).lower()
+        price = PLAN_PRICES.get(plan)
+        if price is None:
+            raise ValueError("unknown subscription plan")
+        if plan == "free":
+            return {"provider": "internal", "status": "active", "plan": "free"}
+        if method in {"flutterwave", "fiat"}:
+            return self._flutterwave_checkout(user, plan, price, payload)
+        if method == "crypto":
+            return self._crypto_checkout(user, plan, price)
+        raise ValueError("unknown payment method")
+
+    def _flutterwave_checkout(self, user: User, plan: str, price: dict, payload: dict) -> dict:
+        secret_key = secret_value("FLUTTERWAVE_SECRET_KEY", "")
+        public_key = secret_value("FLUTTERWAVE_PUBLIC_KEY", "")
+        if not secret_key:
+            return {
+                "provider": "flutterwave",
+                "status": "setup_required",
+                "message": "FLUTTERWAVE_SECRET_KEY is not configured",
+                "publicKeyConfigured": bool(public_key),
+            }
+
+        host = os.getenv("MONATISE_PUBLIC_URL", "https://monatise-live.onrender.com").rstrip("/")
+        tx_ref = f"monatise-{user.id}-{plan}-{int(time.time())}"
+        body = {
+            "tx_ref": tx_ref,
+            "amount": price["amount"],
+            "currency": str(payload.get("currency", price["currency"])).upper(),
+            "redirect_url": f"{host}/api/payments/flutterwave/callback",
+            "customer": {
+                "email": str(payload.get("email") or f"{user.username}@monatise.local"),
+                "name": user.username,
+            },
+            "customizations": {
+                "title": "Monatise",
+                "description": f"{plan.title()} subscription",
+            },
+        }
+        request = urllib.request.Request(
+            "https://api.flutterwave.com/v3/payments",
+            data=json.dumps(body).encode("utf-8"),
+            headers={"Authorization": f"Bearer {secret_key}", "Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:  # noqa: S310
+                result = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as error:
+            details = error.read().decode("utf-8")
+            raise ValueError(f"Flutterwave checkout failed: {details}") from error
+        link = result.get("data", {}).get("link")
+        if not link:
+            raise ValueError("Flutterwave did not return a checkout link")
+        return {"provider": "flutterwave", "status": "redirect", "checkoutUrl": link, "txRef": tx_ref}
+
+    def _crypto_checkout(self, user: User, plan: str, price: dict) -> dict:
+        address = secret_value("MONATISE_CRYPTO_PAYMENT_ADDRESS", "")
+        network = os.getenv("MONATISE_CRYPTO_PAYMENT_NETWORK", "USDC on Arbitrum or HyperEVM")
+        return {
+            "provider": "crypto",
+            "status": "pending",
+            "plan": plan,
+            "amount": price["amount"],
+            "currency": "USDC",
+            "network": network,
+            "address": address,
+            "reference": f"monatise-{user.id}-{plan}",
+            "setupRequired": not bool(address),
+        }
 
 
 class MonatiseHandler(SimpleHTTPRequestHandler):
     tenants: TenantServices
     market_feed: MarketFeed
+    payment_gateway: PaymentGateway
     store: UserStore
     app_dir: Path
 
@@ -111,6 +226,11 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                     },
                 }
             )
+            return
+        if parsed.path == "/api/payments/flutterwave/callback":
+            params = parse_qs(parsed.query)
+            status = params.get("status", ["unknown"])[0]
+            self._redirect(f"/?payment={status}")
             return
         if parsed.path == "/api/status":
             user = self._require_user()
@@ -223,6 +343,23 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             except ValueError as error:
                 self._error(400, str(error))
             return
+        if parsed.path == "/api/payments/checkout":
+            user = self._require_user()
+            if user is None:
+                return
+            payload = self._read_json()
+            try:
+                checkout = self.payment_gateway.checkout(user, payload)
+                if checkout.get("provider") == "internal":
+                    settings = self.store.save_subscription_plan(user.id, str(checkout["plan"]))
+                    checkout["subscription"] = {
+                        "plan": settings.subscription_plan,
+                        "status": settings.subscription_status,
+                    }
+                self._json(checkout)
+            except ValueError as error:
+                self._error(400, str(error))
+            return
         if parsed.path == "/api/start":
             user = self._require_user()
             if user is None:
@@ -296,12 +433,18 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _redirect(self, location: str) -> None:
+        self.send_response(302)
+        self.send_header("Location", location)
+        self.end_headers()
+
 
 def main() -> int:
     config = RuntimeConfig.from_env()
     store = UserStore()
     tenants = TenantServices(config, store)
-    market_feed = MarketFeed(config)
+    market_feed = MarketFeed(replace(config, account_address="", secret_key=""))
+    payment_gateway = PaymentGateway()
     app_dir = Path(__file__).resolve().parents[2] / "app"
 
     class Handler(MonatiseHandler):
@@ -310,6 +453,7 @@ def main() -> int:
     Handler.store = store
     Handler.tenants = tenants
     Handler.market_feed = market_feed
+    Handler.payment_gateway = payment_gateway
     Handler.app_dir = app_dir
 
     port = int(os.getenv("MONATISE_PORT", os.getenv("PORT", "4174")))
