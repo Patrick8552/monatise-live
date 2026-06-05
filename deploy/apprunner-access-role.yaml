@@ -1,0 +1,78 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: IAM roles allowing AWS App Runner to pull the Monatise ECR image and read configured runtime secrets.
+
+Parameters:
+  RoleName:
+    Type: String
+    Default: monatise-apprunner-ecr-access
+  InstanceRoleName:
+    Type: String
+    Default: monatise-apprunner-instance
+  HyperliquidAccountAddressSecretArn:
+    Type: String
+    Default: ""
+  HyperliquidSecretKeySecretArn:
+    Type: String
+    Default: ""
+
+Conditions:
+  HasHyperliquidAccountAddressSecret: !Not [!Equals [!Ref HyperliquidAccountAddressSecretArn, ""]]
+  HasHyperliquidSecretKeySecret: !Not [!Equals [!Ref HyperliquidSecretKeySecretArn, ""]]
+  HasRuntimeSecrets: !Or
+    - !Condition HasHyperliquidAccountAddressSecret
+    - !Condition HasHyperliquidSecretKeySecret
+
+Resources:
+  AppRunnerEcrAccessRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref RoleName
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: build.apprunner.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSAppRunnerServicePolicyForECRAccess
+
+  AppRunnerInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref InstanceRoleName
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: tasks.apprunner.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - !If
+          - HasRuntimeSecrets
+          - PolicyName: monatise-runtime-secrets
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - secretsmanager:GetSecretValue
+                    - ssm:GetParameters
+                    - ssm:GetParameter
+                  Resource:
+                    - !If
+                      - HasHyperliquidAccountAddressSecret
+                      - !Ref HyperliquidAccountAddressSecretArn
+                      - !Ref AWS::NoValue
+                    - !If
+                      - HasHyperliquidSecretKeySecret
+                      - !Ref HyperliquidSecretKeySecretArn
+                      - !Ref AWS::NoValue
+          - !Ref AWS::NoValue
+
+Outputs:
+  AccessRoleArn:
+    Value: !GetAtt AppRunnerEcrAccessRole.Arn
+  InstanceRoleArn:
+    Value: !GetAtt AppRunnerInstanceRole.Arn

@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Monatise Liquidity Harvester</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Liquidity harvesting protocol</p>
+          <h1>Monatise</h1>
+        </div>
+        <div class="status-strip" aria-label="simulation status">
+          <span id="runState">Ready</span>
+          <span id="candleCount">0 candles</span>
+          <span id="fillCount">0 fills</span>
+        </div>
+      </header>
+
+      <section class="workspace" aria-label="Monatise dashboard">
+        <aside class="panel controls">
+          <div class="panel-head">
+            <h2>Protocol Controls</h2>
+            <button id="resetButton" type="button" title="Reset to defaults">Reset</button>
+          </div>
+
+          <label>
+            Symbol
+            <input id="symbolInput" type="text" value="BTC-USD" />
+          </label>
+
+          <div class="input-row">
+            <label>
+              Quote
+              <input id="quoteInput" type="number" value="10000" min="0" step="100" />
+            </label>
+            <label>
+              Base
+              <input id="baseInput" type="number" value="0.05" min="0" step="0.01" />
+            </label>
+          </div>
+
+          <label>
+            Grid spacing
+            <input id="spacingInput" type="range" min="0.1" max="2" step="0.1" value="0.5" />
+            <span class="range-readout"><span id="spacingValue">0.5</span>%</span>
+          </label>
+
+          <label>
+            Levels each side
+            <input id="levelsInput" type="range" min="1" max="12" step="1" value="5" />
+            <span class="range-readout"><span id="levelsValue">5</span> levels</span>
+          </label>
+
+          <label>
+            Order quote size
+            <input id="orderSizeInput" type="number" value="250" min="10" step="10" />
+          </label>
+
+          <label>
+            Fee rate
+            <input id="feeInput" type="number" value="0.04" min="0" step="0.01" />
+            <span class="range-readout">percent per fill</span>
+          </label>
+
+          <div class="button-row">
+            <button id="runButton" class="primary" type="button">Run</button>
+            <button id="stepButton" type="button">Step</button>
+          </div>
+
+          <div class="backend-box" aria-label="backend trading controls">
+            <div>
+              <span>Backend</span>
+              <strong id="backendStatus">Offline</strong>
+            </div>
+            <div class="button-row">
+              <button id="backendStartButton" type="button">Start</button>
+              <button id="backendStopButton" type="button">Stop</button>
+            </div>
+          </div>
+
+          <label>
+            Candle data
+            <textarea id="csvInput" spellcheck="false"></textarea>
+          </label>
+        </aside>
+
+        <section class="market-stage" aria-label="market visualization">
+          <div class="stage-head">
+            <div>
+              <p class="eyebrow">Grid state</p>
+              <h2 id="marketTitle">BTC-USD liquidity map</h2>
+            </div>
+            <div class="price-pill">
+              <span>Mark</span>
+              <strong id="markPrice">$0.00</strong>
+            </div>
+          </div>
+          <canvas id="liquidityCanvas" width="980" height="620" aria-label="Liquidity grid chart"></canvas>
+        </section>
+
+        <aside class="side-stack">
+          <section class="panel metrics">
+            <h2>Portfolio</h2>
+            <div class="metric-grid">
+              <article>
+                <span>Equity</span>
+                <strong id="equityMetric">$0.00</strong>
+              </article>
+              <article>
+                <span>Harvest</span>
+                <strong id="harvestMetric">$0.00</strong>
+              </article>
+              <article>
+                <span>Fees</span>
+                <strong id="feesMetric">$0.00</strong>
+              </article>
+              <article>
+                <span>Inventory</span>
+                <strong id="inventoryMetric">0.00%</strong>
+              </article>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Fill Tape</h2>
+              <span id="lastFill">No fills</span>
+            </div>
+            <div id="fillTape" class="fill-tape"></div>
+          </section>
+
+          <section class="panel">
+            <h2>Equity Curve</h2>
+            <canvas id="equityCanvas" width="420" height="220" aria-label="Equity curve"></canvas>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Runtime Log</h2>
+              <span id="riskStatus">ready</span>
+            </div>
+            <div id="runtimeLog" class="runtime-log"></div>
+          </section>
+        </aside>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

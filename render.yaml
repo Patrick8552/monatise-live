@@ -1,0 +1,39 @@
+services:
+  - type: web
+    name: monatise-live
+    runtime: docker
+    plan: starter
+    region: oregon
+    dockerfilePath: ./deploy/Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    autoDeployTrigger: commit
+    envVars:
+      - key: MONATISE_MODE
+        value: live
+      - key: MONATISE_NETWORK
+        value: mainnet
+      - key: MONATISE_HOST
+        value: 0.0.0.0
+      - key: MONATISE_SYMBOL
+        value: BTC
+      - key: MONATISE_ORDER_QUOTE_SIZE
+        value: 250
+      - key: MONATISE_MAX_ORDER_NOTIONAL
+        value: 250
+      - key: MONATISE_MAX_TOTAL_NOTIONAL
+        value: 1500
+      - key: MONATISE_MAX_BASE_INVENTORY
+        value: 0.1
+      - key: MONATISE_MAX_DAILY_LOSS
+        value: 100
+      - key: MONATISE_ALLOW_LIVE_ORDERS
+        value: true
+      - key: MONATISE_LIVE_CONFIRMATION
+        value: I_UNDERSTAND_REAL_MONEY
+      - key: MONATISE_CONTROL_TOKEN
+        sync: false
+      - key: HYPERLIQUID_ACCOUNT_ADDRESS
+        sync: false
+      - key: HYPERLIQUID_SECRET_KEY
+        sync: false
