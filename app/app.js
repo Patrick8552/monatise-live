@@ -10,16 +10,17 @@ const sampleCsv = `timestamp,open,high,low,close,volume
 2026-06-04T00:08:00Z,99550,100450,99000,100350,142
 2026-06-04T00:09:00Z,100350,101000,99700,100000,118`;
 
-const controlTokenKey = "monatiseControlToken";
-
 const els = {
+  accountAddressInput: document.querySelector("#accountAddressInput"),
   baseInput: document.querySelector("#baseInput"),
   backendStartButton: document.querySelector("#backendStartButton"),
   backendStatus: document.querySelector("#backendStatus"),
   backendStopButton: document.querySelector("#backendStopButton"),
   accountMetricLabel: document.querySelector("#accountMetricLabel"),
+  authStatus: document.querySelector("#authStatus"),
   candleCount: document.querySelector("#candleCount"),
   cashMetricLabel: document.querySelector("#cashMetricLabel"),
+  credentialStatus: document.querySelector("#credentialStatus"),
   csvInput: document.querySelector("#csvInput"),
   equityCanvas: document.querySelector("#equityCanvas"),
   equityMetric: document.querySelector("#equityMetric"),
@@ -33,53 +34,109 @@ const els = {
   levelsInput: document.querySelector("#levelsInput"),
   levelsValue: document.querySelector("#levelsValue"),
   liquidityCanvas: document.querySelector("#liquidityCanvas"),
+  loginButton: document.querySelector("#loginButton"),
+  logoutButton: document.querySelector("#logoutButton"),
   markPrice: document.querySelector("#markPrice"),
   marketTitle: document.querySelector("#marketTitle"),
   orderSizeInput: document.querySelector("#orderSizeInput"),
+  passwordInput: document.querySelector("#passwordInput"),
   quoteInput: document.querySelector("#quoteInput"),
+  registerButton: document.querySelector("#registerButton"),
   resetButton: document.querySelector("#resetButton"),
   riskStatus: document.querySelector("#riskStatus"),
   runButton: document.querySelector("#runButton"),
   runState: document.querySelector("#runState"),
+  saveCredentialsButton: document.querySelector("#saveCredentialsButton"),
+  secretKeyInput: document.querySelector("#secretKeyInput"),
   runtimeLog: document.querySelector("#runtimeLog"),
   spacingInput: document.querySelector("#spacingInput"),
   spacingValue: document.querySelector("#spacingValue"),
   stepButton: document.querySelector("#stepButton"),
-  symbolInput: document.querySelector("#symbolInput")
+  symbolInput: document.querySelector("#symbolInput"),
+  usernameInput: document.querySelector("#usernameInput")
 };
 
 let state = null;
 let backendOnline = false;
-
-function authHeaders() {
-  const token = localStorage.getItem(controlTokenKey);
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
-
-function promptForControlToken() {
-  const token = window.prompt("Control token");
-  if (!token) return false;
-  localStorage.setItem(controlTokenKey, token.trim());
-  return true;
-}
+let currentUser = { authenticated: false, credentialsConfigured: false };
 
 async function apiFetch(path, options = {}) {
-  const response = await fetch(path, {
-    ...options,
-    headers: {
-      ...authHeaders(),
-      ...(options.headers || {})
-    }
-  });
-  if (response.status !== 401) return response;
-  if (!promptForControlToken()) return response;
   return fetch(path, {
     ...options,
+    credentials: "same-origin",
     headers: {
-      ...authHeaders(),
       ...(options.headers || {})
     }
   });
+}
+
+async function jsonPost(path, payload = {}) {
+  return apiFetch(path, {
+    body: JSON.stringify(payload),
+    headers: { "Content-Type": "application/json" },
+    method: "POST"
+  });
+}
+
+function setAuthStatus(message) {
+  els.authStatus.textContent = message;
+}
+
+function renderAuth(me) {
+  currentUser = me;
+  const loggedIn = Boolean(me.authenticated);
+  els.authStatus.textContent = loggedIn ? me.username : "Logged out";
+  els.credentialStatus.textContent = loggedIn
+    ? me.credentialsConfigured
+      ? "Hyperliquid credentials saved for this user."
+      : "Save your funded account address and API wallet secret key."
+    : "Register or log in to connect your own Hyperliquid account.";
+  els.logoutButton.disabled = !loggedIn;
+  els.saveCredentialsButton.disabled = !loggedIn;
+  els.backendStartButton.disabled = !loggedIn || !me.credentialsConfigured;
+  els.backendStopButton.disabled = !loggedIn;
+  if (!loggedIn) {
+    backendOnline = false;
+    els.backendStatus.textContent = "Login required";
+  }
+}
+
+async function loadMe() {
+  const response = await apiFetch("/api/me", { cache: "no-store" });
+  if (!response.ok) {
+    renderAuth({ authenticated: false, credentialsConfigured: false });
+    return;
+  }
+  renderAuth(await response.json());
+}
+
+async function loginOrRegister(path) {
+  const username = els.usernameInput.value.trim();
+  const password = els.passwordInput.value;
+  const response = await jsonPost(path, { username, password });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    setAuthStatus(payload.error || "Auth failed");
+    return;
+  }
+  els.passwordInput.value = "";
+  renderAuth(payload);
+  refreshBackend();
+}
+
+async function saveCredentials() {
+  const response = await jsonPost("/api/credentials", {
+    accountAddress: els.accountAddressInput.value.trim(),
+    secretKey: els.secretKeyInput.value.trim()
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    els.credentialStatus.textContent = payload.error || "Could not save credentials";
+    return;
+  }
+  els.secretKeyInput.value = "";
+  await loadMe();
+  refreshBackend();
 }
 
 function money(value) {
@@ -445,10 +502,16 @@ function renderBackend(snapshot) {
 
 async function refreshBackend() {
   try {
+    if (!currentUser.authenticated) {
+      backendOnline = false;
+      els.backendStatus.textContent = "Login required";
+      return;
+    }
     const response = await apiFetch("/api/status", { cache: "no-store" });
     if (response.status === 401) {
       backendOnline = false;
-      els.backendStatus.textContent = "Locked";
+      els.backendStatus.textContent = "Login required";
+      renderAuth({ authenticated: false, credentialsConfigured: false });
       return;
     }
     if (!response.ok) throw new Error("backend offline");
@@ -460,7 +523,7 @@ async function refreshBackend() {
 }
 
 async function backendCommand(path) {
-  const response = await apiFetch(path, { method: "POST" });
+  const response = await jsonPost(path);
   if (!response.ok) throw new Error(`request failed: ${path}`);
   renderBackend(await response.json());
 }
@@ -518,6 +581,13 @@ els.stepButton.addEventListener("click", () => {
 });
 
 els.resetButton.addEventListener("click", reset);
+els.loginButton.addEventListener("click", () => loginOrRegister("/api/login"));
+els.registerButton.addEventListener("click", () => loginOrRegister("/api/register"));
+els.logoutButton.addEventListener("click", async () => {
+  await jsonPost("/api/logout");
+  renderAuth({ authenticated: false, credentialsConfigured: false });
+});
+els.saveCredentialsButton.addEventListener("click", saveCredentials);
 els.backendStartButton.addEventListener("click", () => backendCommand("/api/start").catch(refreshBackend));
 els.backendStopButton.addEventListener("click", () => backendCommand("/api/stop").catch(refreshBackend));
 ["input", "change"].forEach((eventName) => {
@@ -532,5 +602,6 @@ els.backendStopButton.addEventListener("click", () => backendCommand("/api/stop"
 
 window.addEventListener("resize", render);
 reset();
+loadMe();
 refreshBackend();
 setInterval(refreshBackend, 2500);

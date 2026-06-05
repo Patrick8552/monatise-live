@@ -276,20 +276,60 @@ canvas {
   padding: 12px;
 }
 
+.auth-box {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.auth-head {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.auth-head div {
+  display: grid;
+  gap: 2px;
+}
+
+.auth-head button {
+  min-height: 34px;
+  padding: 7px 10px;
+}
+
 .backend-box div:first-child {
   align-items: center;
   display: flex;
   justify-content: space-between;
 }
 
+.auth-box span,
 .backend-box span {
   color: var(--muted);
   font-size: 0.76rem;
   font-weight: 800;
 }
 
+.auth-box strong,
 .backend-box strong {
   font-size: 0.9rem;
+}
+
+.auth-box p {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 700;
+  line-height: 1.35;
+  margin: 0;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
 }
 
 .fill-row {

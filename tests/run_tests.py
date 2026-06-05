@@ -31,8 +31,9 @@ TESTS = {
         "test_live_tick_initializes_risk_baseline_from_live_mark",
         "test_hyperliquid_order_values_are_rounded_for_wire_format",
     ],
-    "tests.test_live_server": [
-        "test_live_server_requires_control_token_for_status",
+    "tests.test_live_users": [
+        "test_user_store_authenticates_and_loads_session_user",
+        "test_user_store_encrypts_credentials_per_user",
     ],
     "tests.test_live_secrets": [
         "test_secret_value_reads_direct_secret_file",

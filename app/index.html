@@ -71,6 +71,38 @@
             <button id="stepButton" type="button">Step</button>
           </div>
 
+          <div class="auth-box" aria-label="user account controls">
+            <div class="auth-head">
+              <div>
+                <span>Account</span>
+                <strong id="authStatus">Logged out</strong>
+              </div>
+              <button id="logoutButton" type="button">Logout</button>
+            </div>
+            <label>
+              Username
+              <input id="usernameInput" type="text" autocomplete="username" />
+            </label>
+            <label>
+              Password
+              <input id="passwordInput" type="password" autocomplete="current-password" />
+            </label>
+            <div class="button-row">
+              <button id="loginButton" class="primary" type="button">Login</button>
+              <button id="registerButton" type="button">Register</button>
+            </div>
+            <label>
+              Funded account address
+              <input id="accountAddressInput" type="text" autocomplete="off" placeholder="0x..." />
+            </label>
+            <label>
+              API wallet secret key
+              <input id="secretKeyInput" type="password" autocomplete="off" />
+            </label>
+            <button id="saveCredentialsButton" type="button">Save credentials</button>
+            <p id="credentialStatus">Each user connects their own Hyperliquid account.</p>
+          </div>
+
           <div class="backend-box" aria-label="backend trading controls">
             <div>
               <span>Backend</span>
