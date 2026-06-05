@@ -61,11 +61,13 @@ class HyperliquidAdapter(MarketDataPort, ExecutionPort):
 
         submitted: list[SubmittedOrder] = []
         for order in orders:
+            price = self._order_price(order.price)
+            quantity = self._order_quantity(order.quantity)
             response = self.exchange.order(
                 self._coin(order.symbol),
                 order.side is OrderSide.BUY,
-                order.quantity,
-                order.price,
+                quantity,
+                price,
                 {"limit": {"tif": "Gtc"}},
                 reduce_only=False,
             )
@@ -85,3 +87,9 @@ class HyperliquidAdapter(MarketDataPort, ExecutionPort):
 
     def _coin(self, symbol: str) -> str:
         return symbol.split("-", 1)[0].upper()
+
+    def _order_price(self, price: float) -> float:
+        return round(price, 1)
+
+    def _order_quantity(self, quantity: float) -> float:
+        return round(quantity, 5)

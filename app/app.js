@@ -17,7 +17,9 @@ const els = {
   backendStartButton: document.querySelector("#backendStartButton"),
   backendStatus: document.querySelector("#backendStatus"),
   backendStopButton: document.querySelector("#backendStopButton"),
+  accountMetricLabel: document.querySelector("#accountMetricLabel"),
   candleCount: document.querySelector("#candleCount"),
+  cashMetricLabel: document.querySelector("#cashMetricLabel"),
   csvInput: document.querySelector("#csvInput"),
   equityCanvas: document.querySelector("#equityCanvas"),
   equityMetric: document.querySelector("#equityMetric"),
@@ -401,9 +403,18 @@ function renderBackend(snapshot) {
   }
   if (snapshot.portfolio) {
     els.equityMetric.textContent = money(snapshot.account?.accountValue ?? snapshot.portfolio.equity);
-    els.harvestMetric.textContent = money(snapshot.portfolio.realizedHarvest);
-    els.feesMetric.textContent = money(snapshot.portfolio.feePaid);
-    els.inventoryMetric.textContent = snapshot.account
+    if (snapshot.account && Number.isFinite(Number(snapshot.account.accountValue))) {
+      els.accountMetricLabel.textContent = "Account";
+      els.cashMetricLabel.textContent = "Withdrawable";
+      els.harvestMetric.textContent = money(snapshot.account.accountValue);
+      els.feesMetric.textContent = money(snapshot.account.withdrawable);
+    } else {
+      els.accountMetricLabel.textContent = "Harvest";
+      els.cashMetricLabel.textContent = "Fees";
+      els.harvestMetric.textContent = money(snapshot.portfolio.realizedHarvest);
+      els.feesMetric.textContent = money(snapshot.portfolio.feePaid);
+    }
+    els.inventoryMetric.textContent = snapshot.account && Number.isFinite(Number(snapshot.account.positionSize))
       ? `${Number(snapshot.account.positionSize || 0).toFixed(5)} ${snapshot.symbol}`
       : `${(snapshot.portfolio.inventoryRatio * 100).toFixed(2)}%`;
   }

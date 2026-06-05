@@ -29,6 +29,7 @@ TESTS = {
     ],
     "tests.test_live_service": [
         "test_live_tick_initializes_risk_baseline_from_live_mark",
+        "test_hyperliquid_order_values_are_rounded_for_wire_format",
     ],
     "tests.test_live_server": [
         "test_live_server_requires_control_token_for_status",
