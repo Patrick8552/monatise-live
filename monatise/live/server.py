@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import hmac
 import threading
 import time
 import urllib.error
@@ -9,7 +11,7 @@ from dataclasses import replace
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import os
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 
 from monatise.adapters.hyperliquid import HyperliquidAdapter
 from monatise.live.config import RuntimeConfig
@@ -123,9 +125,54 @@ class PaymentGateway:
             return {"provider": "internal", "status": "active", "plan": "free"}
         if method in {"flutterwave", "fiat"}:
             return self._flutterwave_checkout(user, plan, price, payload)
+        if method == "stripe":
+            return self._stripe_checkout(user, plan, price, payload)
         if method == "crypto":
             return self._crypto_checkout(user, plan, price)
         raise ValueError("unknown payment method")
+
+    def _stripe_checkout(self, user: User, plan: str, price: dict, payload: dict) -> dict:
+        secret_key = secret_value("STRIPE_SECRET_KEY", "")
+        if not secret_key:
+            return {
+                "provider": "stripe",
+                "status": "setup_required",
+                "message": "STRIPE_SECRET_KEY is not configured",
+            }
+        host = os.getenv("MONATISE_PUBLIC_URL", "https://monatise-live.onrender.com").rstrip("/")
+        form = {
+            "mode": "subscription",
+            "success_url": f"{host}/?payment=stripe_success",
+            "cancel_url": f"{host}/?payment=stripe_cancelled",
+            "client_reference_id": f"{user.id}:{plan}",
+            "customer_email": str(payload.get("email") or f"{user.username}@monatise.local"),
+            "metadata[user_id]": str(user.id),
+            "metadata[plan]": plan,
+            "line_items[0][quantity]": "1",
+            "line_items[0][price_data][currency]": str(payload.get("currency", price["currency"])).lower(),
+            "line_items[0][price_data][unit_amount]": str(int(price["amount"]) * 100),
+            "line_items[0][price_data][recurring][interval]": "month",
+            "line_items[0][price_data][product_data][name]": f"Monatise {plan.title()}",
+        }
+        request = urllib.request.Request(
+            "https://api.stripe.com/v1/checkout/sessions",
+            data=urlencode(form).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {secret_key}",
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:  # noqa: S310
+                result = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as error:
+            details = error.read().decode("utf-8")
+            raise ValueError(f"Stripe checkout failed: {details}") from error
+        url = result.get("url")
+        if not url:
+            raise ValueError("Stripe did not return a checkout URL")
+        return {"provider": "stripe", "status": "redirect", "checkoutUrl": url, "sessionId": result.get("id")}
 
     def _flutterwave_checkout(self, user: User, plan: str, price: dict, payload: dict) -> dict:
         secret_key = secret_value("FLUTTERWAVE_SECRET_KEY", "")
@@ -343,6 +390,9 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             except ValueError as error:
                 self._error(400, str(error))
             return
+        if parsed.path == "/api/payments/stripe/webhook":
+            self._handle_stripe_webhook()
+            return
         if parsed.path == "/api/payments/checkout":
             user = self._require_user()
             if user is None:
@@ -381,10 +431,16 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
         self.send_error(404, "not found")
 
     def _read_json(self) -> dict:
+        data = self._read_body()
+        if not data:
+            return {}
+        return json.loads(data.decode("utf-8"))
+
+    def _read_body(self) -> bytes:
         length = int(self.headers.get("Content-Length", "0") or 0)
         if length <= 0:
-            return {}
-        return json.loads(self.rfile.read(length).decode("utf-8"))
+            return b""
+        return self.rfile.read(length)
 
     def _current_user(self) -> User | None:
         return self.store.user_for_session(self._session_token())
@@ -437,6 +493,42 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
         self.send_response(302)
         self.send_header("Location", location)
         self.end_headers()
+
+    def _handle_stripe_webhook(self) -> None:
+        body = self._read_body()
+        secret = secret_value("STRIPE_WEBHOOK_SECRET", "")
+        if secret and not self._valid_stripe_signature(body, secret):
+            self._error(400, "invalid Stripe signature")
+            return
+        try:
+            event = json.loads(body.decode("utf-8"))
+        except json.JSONDecodeError:
+            self._error(400, "invalid webhook payload")
+            return
+        if event.get("type") == "checkout.session.completed":
+            session = event.get("data", {}).get("object", {})
+            plan = session.get("metadata", {}).get("plan", "")
+            user_id = session.get("metadata", {}).get("user_id", "")
+            if not user_id or not plan:
+                reference = str(session.get("client_reference_id", ""))
+                user_id, _, plan = reference.partition(":")
+            if user_id.isdigit() and plan:
+                try:
+                    self.store.save_subscription_plan(int(user_id), plan)
+                except ValueError:
+                    pass
+        self._json({"received": True})
+
+    def _valid_stripe_signature(self, body: bytes, secret: str) -> bool:
+        header = self.headers.get("Stripe-Signature", "")
+        values = dict(part.split("=", 1) for part in header.split(",") if "=" in part)
+        timestamp = values.get("t", "")
+        signature = values.get("v1", "")
+        if not timestamp or not signature:
+            return False
+        payload = timestamp.encode("utf-8") + b"." + body
+        expected = hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+        return hmac.compare_digest(expected, signature)
 
 
 def main() -> int:

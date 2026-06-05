@@ -41,6 +41,7 @@ const els = {
   loginButton: document.querySelector("#loginButton"),
   logoutButton: document.querySelector("#logoutButton"),
   markPrice: document.querySelector("#markPrice"),
+  market3dMap: document.querySelector("#market3dMap"),
   marketStrip: document.querySelector("#marketStrip"),
   marketTitle: document.querySelector("#marketTitle"),
   orderSizeInput: document.querySelector("#orderSizeInput"),
@@ -73,6 +74,7 @@ let currentUser = { authenticated: false, credentialsConfigured: false };
 let markets = [];
 let marketGroups = {};
 let selectedAsset = "BTC";
+let marketScene = null;
 localStorage.removeItem("monatiseControlToken");
 
 async function apiFetch(path, options = {}) {
@@ -209,6 +211,7 @@ function renderMarkets() {
     )
     .join("");
   renderAssetGroups();
+  updateMarketMap();
 }
 
 function renderAssetGroups() {
@@ -299,6 +302,99 @@ async function checkoutPlan(plan) {
     els.subscriptionStatus.textContent = `${payload.subscription.plan} ${payload.subscription.status}`;
     els.paymentStatus.textContent = `${payload.subscription.plan} active`;
   }
+}
+
+function initMarketMap() {
+  if (marketScene || !window.THREE || !els.market3dMap) return;
+  const THREE = window.THREE;
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
+  camera.position.set(0, 5.2, 12);
+  const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  els.market3dMap.appendChild(renderer.domElement);
+
+  const group = new THREE.Group();
+  scene.add(group);
+
+  const ambient = new THREE.AmbientLight(0xffffff, 0.72);
+  scene.add(ambient);
+  const key = new THREE.PointLight(0x00d4ff, 2.2, 40);
+  key.position.set(-5, 5, 7);
+  scene.add(key);
+  const fill = new THREE.PointLight(0xffbe0b, 1.6, 35);
+  fill.position.set(6, -2, 4);
+  scene.add(fill);
+
+  const grid = new THREE.GridHelper(18, 18, 0x3a86ff, 0x24505d);
+  grid.position.y = -2.2;
+  grid.material.transparent = true;
+  grid.material.opacity = 0.34;
+  scene.add(grid);
+
+  const ringMaterial = new THREE.MeshBasicMaterial({ color: 0x00d4ff, transparent: true, opacity: 0.24, side: THREE.DoubleSide });
+  const ring = new THREE.Mesh(new THREE.RingGeometry(3.2, 3.25, 96), ringMaterial);
+  ring.rotation.x = Math.PI / 2;
+  group.add(ring);
+
+  marketScene = { camera, group, renderer, scene, sprites: [] };
+  resizeMarketMap();
+  animateMarketMap();
+}
+
+function updateMarketMap() {
+  initMarketMap();
+  if (!marketScene || !window.THREE) return;
+  const THREE = window.THREE;
+  marketScene.sprites.forEach((sprite) => marketScene.group.remove(sprite));
+  marketScene.sprites = [];
+  const values = markets.map((asset) => Number(asset.price || 0)).filter(Boolean);
+  const min = Math.min(...values, 1);
+  const max = Math.max(...values, 1);
+  markets.slice(0, 10).forEach((asset, index) => {
+    const price = Number(asset.price || 0);
+    const t = (price - min) / Math.max(1, max - min);
+    const angle = (index / Math.max(1, markets.length)) * Math.PI * 2;
+    const radius = 2.6 + t * 2.6;
+    const geometry = new THREE.SphereGeometry(0.16 + t * 0.32, 24, 24);
+    const palette = [0x00d4ff, 0x00a878, 0xffbe0b, 0xff4d6d, 0x8338ec, 0xfb5607];
+    const material = new THREE.MeshStandardMaterial({
+      color: palette[index % palette.length],
+      emissive: palette[index % palette.length],
+      emissiveIntensity: asset.symbol === selectedAsset ? 0.65 : 0.25,
+      metalness: 0.34,
+      roughness: 0.28
+    });
+    const sphere = new THREE.Mesh(geometry, material);
+    sphere.position.set(Math.cos(angle) * radius, -0.25 + t * 2.1, Math.sin(angle) * radius);
+    sphere.userData = { angle, radius, speed: 0.004 + index * 0.0007, t };
+    marketScene.group.add(sphere);
+    marketScene.sprites.push(sphere);
+  });
+}
+
+function resizeMarketMap() {
+  if (!marketScene) return;
+  const rect = els.market3dMap.getBoundingClientRect();
+  const width = Math.max(1, rect.width);
+  const height = Math.max(1, rect.height);
+  marketScene.renderer.setSize(width, height, false);
+  marketScene.camera.aspect = width / height;
+  marketScene.camera.updateProjectionMatrix();
+}
+
+function animateMarketMap() {
+  if (!marketScene) return;
+  marketScene.group.rotation.y += 0.0035;
+  marketScene.sprites.forEach((sprite) => {
+    const data = sprite.userData;
+    data.angle += data.speed;
+    sprite.position.x = Math.cos(data.angle) * data.radius;
+    sprite.position.z = Math.sin(data.angle) * data.radius;
+    sprite.position.y += Math.sin(Date.now() * 0.002 + data.radius) * 0.002;
+  });
+  marketScene.renderer.render(marketScene.scene, marketScene.camera);
+  requestAnimationFrame(animateMarketMap);
 }
 
 function money(value) {
@@ -778,7 +874,9 @@ els.backendStopButton.addEventListener("click", () => backendCommand("/api/stop"
 });
 
 window.addEventListener("resize", render);
+window.addEventListener("resize", resizeMarketMap);
 reset();
+initMarketMap();
 loadMarkets();
 loadMe();
 refreshBackend();

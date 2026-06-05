@@ -138,6 +138,7 @@
           </div>
           <div id="marketStrip" class="market-strip" aria-label="live market prices"></div>
           <div id="assetGroups" class="asset-groups" aria-label="asset classes"></div>
+          <div id="market3dMap" class="market-3d-map" aria-label="3D live market map"></div>
           <canvas id="liquidityCanvas" width="980" height="620" aria-label="Liquidity grid chart"></canvas>
         </section>
 
@@ -194,6 +195,7 @@
               <label>
                 Payment method
                 <select id="paymentMethodSelect">
+                  <option value="stripe">Stripe</option>
                   <option value="flutterwave">Flutterwave</option>
                   <option value="fiat">Fiat checkout</option>
                   <option value="crypto">Crypto USDC</option>
@@ -238,6 +240,7 @@
       </section>
     </main>
 
-    <script src="./app.js?v=20260605-payments-redesign"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="./app.js?v=20260605-stripe-3d"></script>
   </body>
 </html>
