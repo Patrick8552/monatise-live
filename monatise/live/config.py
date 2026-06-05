@@ -29,6 +29,7 @@ class RuntimeConfig:
     live_confirmation: str = ""
     account_address: str = ""
     secret_key: str = ""
+    assets: tuple[str, ...] = ("BTC", "ETH", "SOL", "HYPE", "BNB", "XRP", "DOGE")
 
     @classmethod
     def from_env(cls) -> "RuntimeConfig":
@@ -51,6 +52,11 @@ class RuntimeConfig:
             live_confirmation=secret_value("MONATISE_LIVE_CONFIRMATION", ""),
             account_address=secret_value("HYPERLIQUID_ACCOUNT_ADDRESS", ""),
             secret_key=secret_value("HYPERLIQUID_SECRET_KEY", ""),
+            assets=tuple(
+                asset.strip().upper()
+                for asset in os.getenv("MONATISE_ASSETS", "BTC,ETH,SOL,HYPE,BNB,XRP,DOGE").split(",")
+                if asset.strip()
+            ),
         )
 
     @property

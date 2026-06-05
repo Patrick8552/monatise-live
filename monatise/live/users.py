@@ -30,6 +30,13 @@ class UserCredentials:
     secret_key: str
 
 
+@dataclass(frozen=True)
+class UserSettings:
+    selected_symbol: str = "BTC"
+    subscription_plan: str = "free"
+    subscription_status: str = "active"
+
+
 def default_auth_db_path() -> str:
     configured = os.getenv("MONATISE_AUTH_DB")
     if configured:
@@ -142,6 +149,61 @@ class UserStore:
                 (user_id, account_address, encrypted_secret, time.time()),
             )
 
+    def save_selected_symbol(self, user_id: int, symbol: str) -> UserSettings:
+        settings = self.settings_for_user(user_id)
+        selected_symbol = symbol.strip().upper()
+        if not selected_symbol:
+            raise ValueError("select an asset")
+        with self._connect() as conn:
+            conn.execute(
+                """
+                insert into user_settings(user_id, selected_symbol, subscription_plan, subscription_status, updated_at)
+                values (?, ?, ?, ?, ?)
+                on conflict(user_id) do update set
+                  selected_symbol = excluded.selected_symbol,
+                  updated_at = excluded.updated_at
+                """,
+                (user_id, selected_symbol, settings.subscription_plan, settings.subscription_status, time.time()),
+            )
+        return self.settings_for_user(user_id)
+
+    def save_subscription_plan(self, user_id: int, plan: str) -> UserSettings:
+        plan = plan.strip().lower()
+        if plan not in {"free", "pro", "business"}:
+            raise ValueError("unknown subscription plan")
+        settings = self.settings_for_user(user_id)
+        with self._connect() as conn:
+            conn.execute(
+                """
+                insert into user_settings(user_id, selected_symbol, subscription_plan, subscription_status, updated_at)
+                values (?, ?, ?, ?, ?)
+                on conflict(user_id) do update set
+                  subscription_plan = excluded.subscription_plan,
+                  subscription_status = excluded.subscription_status,
+                  updated_at = excluded.updated_at
+                """,
+                (user_id, settings.selected_symbol, plan, "active", time.time()),
+            )
+        return self.settings_for_user(user_id)
+
+    def settings_for_user(self, user_id: int) -> UserSettings:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                select selected_symbol, subscription_plan, subscription_status
+                from user_settings
+                where user_id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+        if row is None:
+            return UserSettings()
+        return UserSettings(
+            selected_symbol=str(row["selected_symbol"]),
+            subscription_plan=str(row["subscription_plan"]),
+            subscription_status=str(row["subscription_status"]),
+        )
+
     def credentials_for_user(self, user_id: int) -> UserCredentials | None:
         with self._connect() as conn:
             row = conn.execute(
@@ -186,6 +248,13 @@ class UserStore:
                   user_id integer primary key references users(id) on delete cascade,
                   account_address text not null,
                   encrypted_secret_key text not null,
+                  updated_at real not null
+                );
+                create table if not exists user_settings(
+                  user_id integer primary key references users(id) on delete cascade,
+                  selected_symbol text not null,
+                  subscription_plan text not null,
+                  subscription_status text not null,
                   updated_at real not null
                 );
                 """

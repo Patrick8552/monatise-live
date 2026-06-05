@@ -12,6 +12,7 @@ const sampleCsv = `timestamp,open,high,low,close,volume
 
 const els = {
   accountAddressInput: document.querySelector("#accountAddressInput"),
+  assetSelect: document.querySelector("#assetSelect"),
   baseInput: document.querySelector("#baseInput"),
   backendStartButton: document.querySelector("#backendStartButton"),
   backendStatus: document.querySelector("#backendStatus"),
@@ -28,6 +29,8 @@ const els = {
   feesMetric: document.querySelector("#feesMetric"),
   fillCount: document.querySelector("#fillCount"),
   fillTape: document.querySelector("#fillTape"),
+  businessPlanButton: document.querySelector("#businessPlanButton"),
+  freePlanButton: document.querySelector("#freePlanButton"),
   harvestMetric: document.querySelector("#harvestMetric"),
   inventoryMetric: document.querySelector("#inventoryMetric"),
   lastFill: document.querySelector("#lastFill"),
@@ -37,9 +40,11 @@ const els = {
   loginButton: document.querySelector("#loginButton"),
   logoutButton: document.querySelector("#logoutButton"),
   markPrice: document.querySelector("#markPrice"),
+  marketStrip: document.querySelector("#marketStrip"),
   marketTitle: document.querySelector("#marketTitle"),
   orderSizeInput: document.querySelector("#orderSizeInput"),
   passwordInput: document.querySelector("#passwordInput"),
+  proPlanButton: document.querySelector("#proPlanButton"),
   quoteInput: document.querySelector("#quoteInput"),
   registerButton: document.querySelector("#registerButton"),
   resetButton: document.querySelector("#resetButton"),
@@ -52,6 +57,7 @@ const els = {
   spacingInput: document.querySelector("#spacingInput"),
   spacingValue: document.querySelector("#spacingValue"),
   stepButton: document.querySelector("#stepButton"),
+  subscriptionStatus: document.querySelector("#subscriptionStatus"),
   symbolInput: document.querySelector("#symbolInput"),
   usernameInput: document.querySelector("#usernameInput")
 };
@@ -59,6 +65,9 @@ const els = {
 let state = null;
 let backendOnline = false;
 let currentUser = { authenticated: false, credentialsConfigured: false };
+let markets = [];
+let selectedAsset = "BTC";
+localStorage.removeItem("monatiseControlToken");
 
 async function apiFetch(path, options = {}) {
   return fetch(path, {
@@ -84,8 +93,12 @@ function setAuthStatus(message) {
 
 function renderAuth(me) {
   currentUser = me;
+  selectedAsset = me.selectedSymbol || selectedAsset;
   const loggedIn = Boolean(me.authenticated);
   els.authStatus.textContent = loggedIn ? me.username : "Logged out";
+  els.subscriptionStatus.textContent = me.subscription
+    ? `${me.subscription.plan} ${me.subscription.status}`
+    : "free active";
   els.credentialStatus.textContent = loggedIn
     ? me.credentialsConfigured
       ? "Hyperliquid credentials saved for this user."
@@ -99,6 +112,7 @@ function renderAuth(me) {
     backendOnline = false;
     els.backendStatus.textContent = "Login required";
   }
+  syncSelectedAsset();
 }
 
 async function loadMe() {
@@ -137,6 +151,92 @@ async function saveCredentials() {
   els.secretKeyInput.value = "";
   await loadMe();
   refreshBackend();
+}
+
+function syncSelectedAsset() {
+  if (els.assetSelect.options.length && els.assetSelect.value !== selectedAsset) {
+    els.assetSelect.value = selectedAsset;
+  }
+  els.symbolInput.value = `${selectedAsset}-USD`;
+  renderMarkets();
+}
+
+async function loadMarkets() {
+  try {
+    const response = await apiFetch("/api/markets", { cache: "no-store" });
+    if (!response.ok) throw new Error("market fetch failed");
+    const payload = await response.json();
+    markets = (payload.assets || []).filter((asset) => Number.isFinite(Number(asset.price)));
+    if (!els.assetSelect.options.length && markets.length) {
+      els.assetSelect.innerHTML = markets
+        .map((asset) => `<option value="${asset.symbol}">${asset.symbol}</option>`)
+        .join("");
+    }
+    if (!markets.some((asset) => asset.symbol === selectedAsset) && markets[0]) {
+      selectedAsset = markets[0].symbol;
+    }
+    syncSelectedAsset();
+    if (!backendOnline) {
+      const active = markets.find((asset) => asset.symbol === selectedAsset);
+      if (active) {
+        els.markPrice.textContent = money(active.price);
+        els.marketTitle.textContent = `${selectedAsset}-USD liquidity map`;
+      }
+    }
+  } catch {
+    if (!els.assetSelect.options.length) {
+      ["BTC", "ETH", "SOL", "HYPE", "BNB", "XRP", "DOGE"].forEach((symbol) => {
+        els.assetSelect.add(new Option(symbol, symbol));
+      });
+    }
+  }
+}
+
+function renderMarkets() {
+  els.marketStrip.innerHTML = markets
+    .map(
+      (asset) => `<button type="button" data-symbol="${asset.symbol}" class="${asset.symbol === selectedAsset ? "active" : ""}">
+        <strong>${asset.symbol}</strong>
+        <span>${money(asset.price)}</span>
+      </button>`
+    )
+    .join("");
+}
+
+async function saveSelectedAsset(symbol) {
+  selectedAsset = symbol;
+  syncSelectedAsset();
+  if (!currentUser.authenticated) {
+    render();
+    return;
+  }
+  const response = await jsonPost("/api/settings", { selectedSymbol: symbol });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    els.riskStatus.textContent = payload.error || "asset update failed";
+    return;
+  }
+  currentUser = {
+    ...currentUser,
+    selectedSymbol: payload.selectedSymbol,
+    subscription: payload.subscription || currentUser.subscription
+  };
+  refreshBackend();
+}
+
+async function selectPlan(plan) {
+  if (!currentUser.authenticated) {
+    els.subscriptionStatus.textContent = "login required";
+    return;
+  }
+  const response = await jsonPost("/api/subscription", { plan });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    els.subscriptionStatus.textContent = payload.error || "plan error";
+    return;
+  }
+  currentUser = { ...currentUser, subscription: payload.subscription };
+  els.subscriptionStatus.textContent = `${payload.subscription.plan} ${payload.subscription.status}`;
 }
 
 function money(value) {
@@ -178,7 +278,7 @@ function configFromInputs() {
     orderQuoteSize: Number(els.orderSizeInput.value),
     quote: Number(els.quoteInput.value),
     spacingPct: Number(els.spacingInput.value) / 100,
-    symbol: els.symbolInput.value.trim() || "BTC-USD",
+    symbol: `${selectedAsset}-USD`,
     targetInventoryRatio: 0.5,
     maxInventorySkew: 0.25
   };
@@ -457,6 +557,8 @@ function renderBackend(snapshot) {
   els.runState.textContent = snapshot.running ? "Backend running" : "Backend ready";
   if (snapshot.markPrice) {
     els.markPrice.textContent = money(snapshot.markPrice);
+    selectedAsset = snapshot.symbol || selectedAsset;
+    syncSelectedAsset();
   }
   if (snapshot.portfolio) {
     els.equityMetric.textContent = money(snapshot.account?.displayValue ?? snapshot.account?.accountValue ?? snapshot.portfolio.equity);
@@ -537,8 +639,9 @@ function render() {
   els.fillCount.textContent = `${state.fills.length} fills`;
   els.harvestMetric.textContent = money(state.realizedHarvest);
   els.inventoryMetric.textContent = `${(inventoryRatio(mark) * 100).toFixed(2)}%`;
-  els.markPrice.textContent = money(mark);
-  els.marketTitle.textContent = `${state.symbol} liquidity map`;
+  const live = markets.find((asset) => asset.symbol === selectedAsset);
+  els.markPrice.textContent = live ? money(live.price) : money(mark);
+  els.marketTitle.textContent = `${selectedAsset}-USD liquidity map`;
   els.runState.textContent = state.activeIndex >= state.candles.length ? "Complete" : "Ready";
   renderTape();
   drawLiquidity();
@@ -581,6 +684,11 @@ els.stepButton.addEventListener("click", () => {
 });
 
 els.resetButton.addEventListener("click", reset);
+els.assetSelect.addEventListener("change", () => saveSelectedAsset(els.assetSelect.value));
+els.marketStrip.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-symbol]");
+  if (button) saveSelectedAsset(button.dataset.symbol);
+});
 els.loginButton.addEventListener("click", () => loginOrRegister("/api/login"));
 els.registerButton.addEventListener("click", () => loginOrRegister("/api/register"));
 els.logoutButton.addEventListener("click", async () => {
@@ -588,6 +696,9 @@ els.logoutButton.addEventListener("click", async () => {
   renderAuth({ authenticated: false, credentialsConfigured: false });
 });
 els.saveCredentialsButton.addEventListener("click", saveCredentials);
+els.freePlanButton.addEventListener("click", () => selectPlan("free"));
+els.proPlanButton.addEventListener("click", () => selectPlan("pro"));
+els.businessPlanButton.addEventListener("click", () => selectPlan("business"));
 els.backendStartButton.addEventListener("click", () => backendCommand("/api/start").catch(refreshBackend));
 els.backendStopButton.addEventListener("click", () => backendCommand("/api/stop").catch(refreshBackend));
 ["input", "change"].forEach((eventName) => {
@@ -602,6 +713,8 @@ els.backendStopButton.addEventListener("click", () => backendCommand("/api/stop"
 
 window.addEventListener("resize", render);
 reset();
+loadMarkets();
 loadMe();
 refreshBackend();
+setInterval(loadMarkets, 5000);
 setInterval(refreshBackend, 2500);

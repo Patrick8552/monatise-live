@@ -28,7 +28,12 @@
           </div>
 
           <label>
-            Symbol
+            Trading asset
+            <select id="assetSelect"></select>
+          </label>
+
+          <label>
+            Local simulation symbol
             <input id="symbolInput" type="text" value="BTC-USD" />
           </label>
 
@@ -131,6 +136,7 @@
               <strong id="markPrice">$0.00</strong>
             </div>
           </div>
+          <div id="marketStrip" class="market-strip" aria-label="live market prices"></div>
           <canvas id="liquidityCanvas" width="980" height="620" aria-label="Liquidity grid chart"></canvas>
         </section>
 
@@ -177,10 +183,34 @@
             </div>
             <div id="runtimeLog" class="runtime-log"></div>
           </section>
+
+          <section class="panel subscription-panel">
+            <div class="panel-head">
+              <h2>Subscription</h2>
+              <span id="subscriptionStatus">Free</span>
+            </div>
+            <div class="plan-grid">
+              <article>
+                <strong>Free</strong>
+                <span>Paper mode</span>
+                <button id="freePlanButton" type="button">Select</button>
+              </article>
+              <article>
+                <strong>Pro</strong>
+                <span>Live multi-asset</span>
+                <button id="proPlanButton" class="primary" type="button">Select</button>
+              </article>
+              <article>
+                <strong>Business</strong>
+                <span>Team accounts</span>
+                <button id="businessPlanButton" type="button">Select</button>
+              </article>
+            </div>
+          </section>
         </aside>
       </section>
     </main>
 
-    <script src="./app.js"></script>
+    <script src="./app.js?v=20260605-multi-asset"></script>
   </body>
 </html>

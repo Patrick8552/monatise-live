@@ -50,6 +50,15 @@ class HyperliquidAdapter(MarketDataPort, ExecutionPort):
             raise RuntimeError(f"{coin} was not found in Hyperliquid all_mids response")
         return float(mids[coin])
 
+    def latest_prices(self, symbols: list[str] | tuple[str, ...]) -> dict[str, float]:
+        mids = self.info.all_mids()
+        prices: dict[str, float] = {}
+        for symbol in symbols:
+            coin = self._coin(symbol)
+            if coin in mids:
+                prices[coin] = float(mids[coin])
+        return prices
+
     def candles(self, symbol: str, limit: int):  # noqa: ANN201
         raise NotImplementedError("live candle history is not wired yet; use latest_price polling")
 

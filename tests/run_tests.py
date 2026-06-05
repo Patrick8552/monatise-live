@@ -34,6 +34,7 @@ TESTS = {
     "tests.test_live_users": [
         "test_user_store_authenticates_and_loads_session_user",
         "test_user_store_encrypts_credentials_per_user",
+        "test_user_store_saves_asset_and_subscription_settings",
     ],
     "tests.test_live_secrets": [
         "test_secret_value_reads_direct_secret_file",

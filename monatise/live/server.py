@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from dataclasses import replace
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import os
 from pathlib import Path
 from urllib.parse import urlparse
 
+from monatise.adapters.hyperliquid import HyperliquidAdapter
 from monatise.live.config import RuntimeConfig
 from monatise.live.service import JsonEncoder, TradingService
 from monatise.live.users import User, UserCredentials, UserStore
@@ -28,8 +30,10 @@ class TenantServices:
             credentials = self.store.credentials_for_user(user.id)
             if credentials is None:
                 raise ValueError("save Hyperliquid credentials before starting live trading")
+            settings = self.store.settings_for_user(user.id)
             config = replace(
                 self.base_config,
+                symbol=settings.selected_symbol,
                 account_address=credentials.account_address,
                 secret_key=credentials.secret_key,
             )
@@ -44,8 +48,34 @@ class TenantServices:
             service.stop()
 
 
+class MarketFeed:
+    def __init__(self, config: RuntimeConfig) -> None:
+        self.config = config
+        self._adapter: HyperliquidAdapter | None = None
+        self._prices: dict[str, float] = {}
+        self._updated_at = 0.0
+        self._lock = threading.Lock()
+
+    def snapshot(self) -> dict:
+        with self._lock:
+            now = time.time()
+            if now - self._updated_at > 2:
+                if self._adapter is None:
+                    self._adapter = HyperliquidAdapter(self.config)
+                self._prices = self._adapter.latest_prices(self.config.assets)
+                self._updated_at = now
+            return {
+                "assets": [
+                    {"symbol": symbol, "price": self._prices.get(symbol)}
+                    for symbol in self.config.assets
+                ],
+                "updatedAt": self._updated_at,
+            }
+
+
 class MonatiseHandler(SimpleHTTPRequestHandler):
     tenants: TenantServices
+    market_feed: MarketFeed
     store: UserStore
     app_dir: Path
 
@@ -57,16 +87,28 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/health":
             self._json({"ok": True})
             return
+        if parsed.path == "/api/markets":
+            try:
+                self._json(self.market_feed.snapshot())
+            except Exception as error:  # noqa: BLE001
+                self._error(502, str(error))
+            return
         if parsed.path == "/api/me":
             user = self._current_user()
             if user is None:
                 self._json({"authenticated": False})
                 return
+            settings = self.store.settings_for_user(user.id)
             self._json(
                 {
                     "authenticated": True,
                     "username": user.username,
                     "credentialsConfigured": self.store.has_credentials(user.id),
+                    "selectedSymbol": settings.selected_symbol,
+                    "subscription": {
+                        "plan": settings.subscription_plan,
+                        "status": settings.subscription_status,
+                    },
                 }
             )
             return
@@ -83,7 +125,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                         "running": False,
                         "mode": self.tenants.base_config.mode,
                         "network": self.tenants.base_config.network,
-                        "symbol": self.tenants.base_config.symbol,
+                        "symbol": self.store.settings_for_user(user.id).selected_symbol,
                         "riskStatus": str(error),
                         "requires": ["Hyperliquid credentials"],
                         "events": [{"timestamp": 0, "level": "warn", "message": str(error)}],
@@ -140,6 +182,44 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                 )
                 self.tenants.reset_user(user.id)
                 self._json({"credentialsConfigured": True})
+            except ValueError as error:
+                self._error(400, str(error))
+            return
+        if parsed.path == "/api/settings":
+            user = self._require_user()
+            if user is None:
+                return
+            payload = self._read_json()
+            try:
+                settings = self.store.save_selected_symbol(user.id, str(payload.get("selectedSymbol", "")))
+                self.tenants.reset_user(user.id)
+                self._json(
+                    {
+                        "selectedSymbol": settings.selected_symbol,
+                        "subscription": {
+                            "plan": settings.subscription_plan,
+                            "status": settings.subscription_status,
+                        },
+                    }
+                )
+            except ValueError as error:
+                self._error(400, str(error))
+            return
+        if parsed.path == "/api/subscription":
+            user = self._require_user()
+            if user is None:
+                return
+            payload = self._read_json()
+            try:
+                settings = self.store.save_subscription_plan(user.id, str(payload.get("plan", "")))
+                self._json(
+                    {
+                        "subscription": {
+                            "plan": settings.subscription_plan,
+                            "status": settings.subscription_status,
+                        }
+                    }
+                )
             except ValueError as error:
                 self._error(400, str(error))
             return
@@ -221,6 +301,7 @@ def main() -> int:
     config = RuntimeConfig.from_env()
     store = UserStore()
     tenants = TenantServices(config, store)
+    market_feed = MarketFeed(config)
     app_dir = Path(__file__).resolve().parents[2] / "app"
 
     class Handler(MonatiseHandler):
@@ -228,6 +309,7 @@ def main() -> int:
 
     Handler.store = store
     Handler.tenants = tenants
+    Handler.market_feed = market_feed
     Handler.app_dir = app_dir
 
     port = int(os.getenv("MONATISE_PORT", os.getenv("PORT", "4174")))

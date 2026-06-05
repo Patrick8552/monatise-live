@@ -48,3 +48,20 @@ def test_user_store_encrypts_credentials_per_user() -> None:
             assert store.credentials_for_user(user.id) == credentials
     finally:
         _restore_key(old_key)
+
+
+def test_user_store_saves_asset_and_subscription_settings() -> None:
+    old_key = _with_key()
+    try:
+        with tempfile.NamedTemporaryFile() as db:
+            store = UserStore(db.name)
+            user = store.create_user("trader-three", "password123")
+
+            assert store.settings_for_user(user.id).selected_symbol == "BTC"
+            settings = store.save_selected_symbol(user.id, "eth")
+            assert settings.selected_symbol == "ETH"
+            settings = store.save_subscription_plan(user.id, "pro")
+            assert settings.subscription_plan == "pro"
+            assert settings.subscription_status == "active"
+    finally:
+        _restore_key(old_key)
