@@ -12,21 +12,21 @@ services:
       - key: MONATISE_MODE
         value: live
       - key: MONATISE_NETWORK
-        value: mainnet
+        value: testnet
       - key: MONATISE_HOST
         value: 0.0.0.0
       - key: MONATISE_SYMBOL
         value: BTC
       - key: MONATISE_ORDER_QUOTE_SIZE
-        value: 250
+        value: 25
       - key: MONATISE_MAX_ORDER_NOTIONAL
-        value: 250
+        value: 25
       - key: MONATISE_MAX_TOTAL_NOTIONAL
-        value: 1500
+        value: 150
       - key: MONATISE_MAX_BASE_INVENTORY
         value: 0.1
       - key: MONATISE_MAX_DAILY_LOSS
-        value: 100
+        value: 25
       - key: MONATISE_ALLOW_LIVE_ORDERS
         value: true
       - key: MONATISE_LIVE_CONFIRMATION

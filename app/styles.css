@@ -15,6 +15,8 @@
   --deep: #142622;
   --soft: #f7f8f2;
   --shadow: 0 16px 36px rgba(23, 33, 30, 0.13);
+  --danger: #e63946;
+  --dark-panel: #101817;
 }
 
 * {
@@ -25,10 +27,8 @@ body {
   margin: 0;
   min-width: 320px;
   background:
-    radial-gradient(circle at 12% 10%, rgba(0, 212, 255, 0.18), transparent 28%),
-    radial-gradient(circle at 92% 18%, rgba(131, 56, 236, 0.16), transparent 26%),
-    linear-gradient(135deg, rgba(0, 168, 120, 0.14), transparent 34%),
-    linear-gradient(315deg, rgba(255, 190, 11, 0.18), transparent 30%),
+    linear-gradient(135deg, rgba(0, 168, 120, 0.12), transparent 34%),
+    linear-gradient(315deg, rgba(255, 190, 11, 0.15), transparent 30%),
     var(--bg);
   color: var(--ink);
   font-family:
@@ -51,8 +51,8 @@ textarea {
 .topbar {
   align-items: center;
   background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.88), rgba(244, 255, 248, 0.8)),
-    rgba(255, 254, 250, 0.76);
+    linear-gradient(135deg, rgba(255, 255, 255, 0.92), rgba(240, 250, 246, 0.86)),
+    rgba(255, 254, 250, 0.82);
   border: 1px solid rgba(204, 216, 210, 0.82);
   border-radius: 8px;
   box-shadow: 0 10px 28px rgba(23, 33, 30, 0.08);
@@ -213,9 +213,19 @@ button:hover {
 }
 
 button.primary {
-  background: linear-gradient(135deg, var(--graph), var(--violet));
+  background: linear-gradient(135deg, var(--deep), var(--graph));
   border-color: rgba(58, 134, 255, 0.5);
   color: #ffffff;
+}
+
+button.danger-primary {
+  background: linear-gradient(135deg, #111817, var(--danger));
+  border-color: rgba(230, 57, 70, 0.52);
+}
+
+button.live-running {
+  background: linear-gradient(135deg, var(--buy), #0b5f51);
+  border-color: rgba(0, 168, 120, 0.7);
 }
 
 .button-row button {
@@ -396,6 +406,92 @@ canvas {
   overflow: auto;
 }
 
+.live-desk {
+  background:
+    linear-gradient(145deg, rgba(16, 24, 23, 0.96), rgba(20, 38, 34, 0.94)),
+    var(--dark-panel);
+  border: 1px solid rgba(0, 168, 120, 0.36);
+  border-radius: 8px;
+  box-shadow: 0 18px 42px rgba(16, 24, 23, 0.18);
+  color: #f6fff9;
+  display: grid;
+  gap: 12px;
+  padding: 13px;
+  position: sticky;
+  top: 12px;
+  z-index: 3;
+}
+
+.live-desk-head {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.live-desk-head div {
+  display: grid;
+  gap: 3px;
+}
+
+.live-desk-head span,
+.readiness-grid span {
+  color: rgba(246, 255, 249, 0.68);
+  font-size: 0.72rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.live-desk-head strong {
+  font-size: 1rem;
+}
+
+#liveNetworkBadge {
+  background: rgba(255, 190, 11, 0.16);
+  border: 1px solid rgba(255, 190, 11, 0.42);
+  border-radius: 999px;
+  color: #fff5d0;
+  padding: 6px 9px;
+}
+
+.readiness-grid {
+  display: grid;
+  gap: 7px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.readiness-grid article {
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  display: grid;
+  gap: 3px;
+  min-height: 58px;
+  padding: 9px;
+}
+
+.readiness-grid article.ready {
+  border-color: rgba(0, 168, 120, 0.68);
+}
+
+.readiness-grid article.warn {
+  border-color: rgba(255, 190, 11, 0.62);
+}
+
+.readiness-grid article.hot {
+  border-color: rgba(230, 57, 70, 0.78);
+}
+
+.readiness-grid strong {
+  color: #ffffff;
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+.trade-actions button {
+  min-height: 44px;
+}
+
 .backend-box {
   border: 1px solid var(--line);
   border-radius: 6px;
@@ -440,6 +536,10 @@ canvas {
   color: var(--muted);
   font-size: 0.76rem;
   font-weight: 800;
+}
+
+.live-mode {
+  color: var(--danger);
 }
 
 .auth-box strong,
@@ -608,6 +708,14 @@ button:disabled {
   }
 
   .asset-groups {
+    grid-template-columns: 1fr;
+  }
+
+  .live-desk {
+    position: static;
+  }
+
+  .readiness-grid {
     grid-template-columns: 1fr;
   }
 }

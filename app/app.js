@@ -38,6 +38,11 @@ const els = {
   levelsInput: document.querySelector("#levelsInput"),
   levelsValue: document.querySelector("#levelsValue"),
   liquidityCanvas: document.querySelector("#liquidityCanvas"),
+  credentialGate: document.querySelector("#credentialGate"),
+  liveDeskStatus: document.querySelector("#liveDeskStatus"),
+  liveModeStatus: document.querySelector("#liveModeStatus"),
+  liveNetworkBadge: document.querySelector("#liveNetworkBadge"),
+  loginGate: document.querySelector("#loginGate"),
   loginButton: document.querySelector("#loginButton"),
   logoutButton: document.querySelector("#logoutButton"),
   markPrice: document.querySelector("#markPrice"),
@@ -54,6 +59,7 @@ const els = {
   quoteInput: document.querySelector("#quoteInput"),
   registerButton: document.querySelector("#registerButton"),
   resetButton: document.querySelector("#resetButton"),
+  riskGate: document.querySelector("#riskGate"),
   riskStatus: document.querySelector("#riskStatus"),
   runButton: document.querySelector("#runButton"),
   runState: document.querySelector("#runState"),
@@ -76,6 +82,49 @@ let marketGroups = {};
 let selectedAsset = "BTC";
 let marketScene = null;
 localStorage.removeItem("monatiseControlToken");
+
+function setGate(element, label, status, className = "") {
+  element.classList.remove("ready", "warn", "hot");
+  if (className) element.classList.add(className);
+  element.querySelector("span").textContent = label;
+  element.querySelector("strong").textContent = status;
+}
+
+function updateLiveDesk(snapshot = null) {
+  const loggedIn = Boolean(currentUser.authenticated);
+  const hasCredentials = Boolean(currentUser.credentialsConfigured);
+  const mode = snapshot?.mode || "paper";
+  const network = snapshot?.network || "local";
+  const running = Boolean(snapshot?.running);
+  const liveReady = Boolean(snapshot?.liveReady);
+  const requires = Array.isArray(snapshot?.requires) ? snapshot.requires : [];
+
+  setGate(els.loginGate, "Login", loggedIn ? "Ready" : "Needed", loggedIn ? "ready" : "warn");
+  setGate(els.credentialGate, "API wallet", hasCredentials ? "Saved" : "Needed", hasCredentials ? "ready" : "warn");
+  setGate(
+    els.riskGate,
+    "Risk gate",
+    liveReady ? "Armed" : requires[0] || "Waiting",
+    liveReady ? "hot" : mode === "live" ? "warn" : "ready"
+  );
+
+  els.liveNetworkBadge.textContent = `${mode} / ${network}`;
+  els.liveDeskStatus.textContent = running
+    ? "Trading loop running"
+    : liveReady
+      ? "Live armed"
+      : loggedIn && hasCredentials
+        ? "Ready to arm"
+        : "Not armed";
+  els.liveModeStatus.textContent = running
+    ? `${mode.toUpperCase()} running`
+    : liveReady
+      ? "Real orders armed"
+      : `${mode.toUpperCase()} idle`;
+  els.liveModeStatus.classList.toggle("live-mode", mode === "live");
+  els.backendStartButton.classList.toggle("live-running", running);
+  els.backendStartButton.textContent = running ? "Running" : mode === "live" ? "Start Live" : "Start Paper";
+}
 
 async function apiFetch(path, options = {}) {
   return fetch(path, {
@@ -120,6 +169,7 @@ function renderAuth(me) {
     backendOnline = false;
     els.backendStatus.textContent = "Login required";
   }
+  updateLiveDesk();
   syncSelectedAsset();
 }
 
@@ -713,6 +763,7 @@ function renderBackend(snapshot) {
   els.candleCount.textContent = snapshot.running ? "backend loop" : "backend idle";
   els.riskStatus.textContent = snapshot.riskStatus || "ready";
   els.runState.textContent = snapshot.running ? "Backend running" : "Backend ready";
+  updateLiveDesk(snapshot);
   if (snapshot.markPrice) {
     els.markPrice.textContent = money(snapshot.markPrice);
     selectedAsset = snapshot.symbol || selectedAsset;
@@ -765,6 +816,7 @@ async function refreshBackend() {
     if (!currentUser.authenticated) {
       backendOnline = false;
       els.backendStatus.textContent = "Login required";
+      updateLiveDesk();
       return;
     }
     const response = await apiFetch("/api/status", { cache: "no-store" });
@@ -779,6 +831,7 @@ async function refreshBackend() {
   } catch {
     backendOnline = false;
     els.backendStatus.textContent = "Offline";
+    updateLiveDesk();
   }
 }
 
@@ -807,6 +860,7 @@ function render() {
   if (!backendOnline) {
     els.runtimeLog.innerHTML = "<article>Serve with the live backend to control paper/live loops.</article>";
     els.riskStatus.textContent = "local";
+    updateLiveDesk();
   }
 }
 

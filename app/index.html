@@ -15,6 +15,7 @@
         </div>
         <div class="status-strip" aria-label="simulation status">
           <span id="runState">Ready</span>
+          <span id="liveModeStatus">Live desk idle</span>
           <span id="candleCount">0 candles</span>
           <span id="fillCount">0 fills</span>
         </div>
@@ -25,6 +26,34 @@
           <div class="panel-head">
             <h2>Trading Controls</h2>
             <button id="resetButton" type="button" title="Reset to defaults">Reset</button>
+          </div>
+
+          <div class="live-desk" aria-label="live trading desk">
+            <div class="live-desk-head">
+              <div>
+                <span>Real-money desk</span>
+                <strong id="liveDeskStatus">Not armed</strong>
+              </div>
+              <span id="liveNetworkBadge">paper</span>
+            </div>
+            <div class="readiness-grid">
+              <article id="loginGate">
+                <span>Login</span>
+                <strong>Needed</strong>
+              </article>
+              <article id="credentialGate">
+                <span>API wallet</span>
+                <strong>Needed</strong>
+              </article>
+              <article id="riskGate">
+                <span>Risk gate</span>
+                <strong>Waiting</strong>
+              </article>
+            </div>
+            <div class="button-row trade-actions">
+              <button id="backendStartButton" class="primary danger-primary" type="button">Start Live</button>
+              <button id="backendStopButton" type="button">Stop</button>
+            </div>
           </div>
 
           <label>
@@ -108,14 +137,10 @@
             <p id="credentialStatus">Per-user Hyperliquid credentials only.</p>
           </div>
 
-          <div class="backend-box" aria-label="backend trading controls">
+          <div class="backend-box" aria-label="backend trading status">
             <div>
               <span>Backend</span>
               <strong id="backendStatus">Offline</strong>
-            </div>
-            <div class="button-row">
-              <button id="backendStartButton" type="button">Start</button>
-              <button id="backendStopButton" type="button">Stop</button>
             </div>
           </div>
 
