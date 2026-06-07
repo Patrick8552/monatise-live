@@ -608,6 +608,39 @@ textarea:focus {
   box-shadow: 0 0 0 3px rgba(54, 95, 107, 0.16);
 }
 
+.password-field {
+  align-items: stretch;
+  display: grid;
+  grid-template-columns: 1fr auto;
+}
+
+.password-field input {
+  border-radius: 6px 0 0 6px;
+}
+
+.password-field button {
+  background: #101820;
+  border: 1px solid var(--line);
+  border-left: 0;
+  border-radius: 0 6px 6px 0;
+  color: #f8faf5;
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 900;
+  min-width: 56px;
+  padding: 0 10px;
+  text-transform: uppercase;
+}
+
+.password-field:focus-within input {
+  border-color: var(--graph);
+  box-shadow: 0 0 0 3px rgba(54, 95, 107, 0.16);
+}
+
+.password-field:focus-within button {
+  border-color: var(--graph);
+}
+
 input[type="range"] {
   accent-color: var(--buy);
   padding: 0;

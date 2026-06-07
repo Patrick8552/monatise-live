@@ -401,12 +401,15 @@
                 <button id="logoutButton" type="button">Logout</button>
               </div>
               <label>
-                Username
-                <input id="usernameInput" type="text" autocomplete="username" />
+                Email or phone
+                <input id="usernameInput" type="text" autocomplete="username" inputmode="email" placeholder="client@email.com or +15551234567" />
               </label>
               <label>
                 Password
-                <input id="passwordInput" type="password" autocomplete="current-password" />
+                <span class="password-field">
+                  <input id="passwordInput" type="password" autocomplete="current-password" />
+                  <button id="passwordToggle" type="button" aria-label="Show password" aria-pressed="false">Show</button>
+                </span>
               </label>
               <div class="button-row">
                 <button id="loginButton" class="primary" type="button">Login</button>

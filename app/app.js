@@ -78,6 +78,7 @@ const els = {
   paymentMethodSelect: document.querySelector("#paymentMethodSelect"),
   paymentStatus: document.querySelector("#paymentStatus"),
   passwordInput: document.querySelector("#passwordInput"),
+  passwordToggle: document.querySelector("#passwordToggle"),
   proPlanButton: document.querySelector("#proPlanButton"),
   quoteInput: document.querySelector("#quoteInput"),
   readinessChecklist: document.querySelector("#readinessChecklist"),
@@ -170,6 +171,13 @@ const forexSessions = [
 ];
 const forexPairs = Array.from(new Set(forexSessions.flatMap((session) => session.pairs)));
 const commoditySymbols = ["GOLD", "CL", "BRENTOIL"];
+
+function isEmailOrPhoneUsername(value) {
+  const normalized = value.trim();
+  const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+  const phonePattern = /^\+?[0-9][0-9\s().-]{6,}[0-9]$/;
+  return emailPattern.test(normalized) || phonePattern.test(normalized);
+}
 
 function normalizeForexSymbol(symbol) {
   return String(symbol || "").replace(/[-/]/g, "").toUpperCase();
@@ -897,9 +905,9 @@ async function loginOrRegister(path) {
   const password = els.passwordInput.value;
   const isRegister = path.includes("register");
   const actionButton = isRegister ? els.registerButton : els.loginButton;
-  if (username.length < 3) {
-    setAuthStatus("Username needs 3+ characters");
-    els.credentialStatus.textContent = "Enter a username with at least 3 characters.";
+  if (!isEmailOrPhoneUsername(username)) {
+    setAuthStatus("Email or phone required");
+    els.credentialStatus.textContent = "Use an email address or phone number as your username.";
     return;
   }
   if (password.length < 8) {
@@ -2261,6 +2269,14 @@ els.assetGroups.addEventListener("click", (event) => {
 });
 els.loginButton.addEventListener("click", () => loginOrRegister("/api/login"));
 els.registerButton.addEventListener("click", () => loginOrRegister("/api/register"));
+els.passwordToggle.addEventListener("click", () => {
+  const isHidden = els.passwordInput.type === "password";
+  els.passwordInput.type = isHidden ? "text" : "password";
+  els.passwordToggle.textContent = isHidden ? "Hide" : "Show";
+  els.passwordToggle.setAttribute("aria-label", isHidden ? "Hide password" : "Show password");
+  els.passwordToggle.setAttribute("aria-pressed", String(isHidden));
+  els.passwordInput.focus();
+});
 [els.usernameInput, els.passwordInput].forEach((input) => {
   input.addEventListener("keydown", (event) => {
     if (event.key === "Enter") loginOrRegister("/api/login");
