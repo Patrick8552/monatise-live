@@ -511,6 +511,18 @@ button.live-running {
   margin: 8px 0 0;
 }
 
+.doctrine-output {
+  background: rgba(17, 24, 23, 0.96);
+  border: 1px solid rgba(232, 162, 20, 0.34);
+  border-left: 4px solid var(--accent);
+  border-radius: 6px;
+  color: #f9fffb !important;
+  font-size: 1.05rem;
+  font-weight: 950 !important;
+  margin-top: 12px;
+  padding: 13px 14px;
+}
+
 .gold-preset-grid,
 .target-table {
   display: grid;
