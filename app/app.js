@@ -1248,7 +1248,7 @@ function drawLiquidity(options = {}) {
   const candle = state.candles[Math.max(0, Math.min(state.activeIndex, state.candles.length - 1))];
   const mark = Number(options.mark ?? currentMarketPrice() ?? candle.close);
   const sourceType = options.sourceType || "preview";
-  const sourceLabel = options.sourceLabel || "Strategy preview from local sample candles";
+  const sourceLabel = options.sourceLabel || "Strategy preview only. No exchange orders.";
   const orders = Array.isArray(options.orders) ? options.orders : buildLevels(mark);
   const prices = [
     ...orders.map((order) => Number(order.price)).filter((price) => Number.isFinite(price)),
@@ -1639,13 +1639,13 @@ function render() {
   const live = markets.find((asset) => asset.symbol === selectedAsset);
   els.markPrice.textContent = live ? money(live.price) : money(mark);
   els.marketTitle.textContent = `${selectedAsset}-USD strategy map`;
-  els.liquiditySource.textContent = "Strategy preview from local sample candles. These are not exchange orders.";
+  els.liquiditySource.textContent = "Strategy preview only. No exchange orders.";
   els.runState.textContent = state.activeIndex >= state.candles.length ? "Complete" : "Ready";
   renderTape();
   drawLiquidity({
     mark: live ? Number(live.price) : mark,
     orders: state.openOrders,
-    sourceLabel: "Strategy preview - not exchange orders",
+    sourceLabel: "Strategy preview only. No exchange orders.",
     sourceType: "preview"
   });
   drawEquity();
