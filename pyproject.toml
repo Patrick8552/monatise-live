@@ -9,7 +9,7 @@ description = "A local-first liquidity harvesting framework for grid-based tradi
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "Monatise" }]
-dependencies = []
+dependencies = ["cryptography>=42.0.0"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
