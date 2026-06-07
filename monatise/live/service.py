@@ -10,6 +10,7 @@ from monatise.adapters.hyperliquid import HyperliquidAdapter
 from monatise.core.models import Candle, Fill, Order, OrderSide, Portfolio
 from monatise.live.config import RuntimeConfig
 from monatise.live.risk import RiskDecision, RiskManager
+from monatise.live.sessions import forex_session_break_guard
 from monatise.sim.csv_data import load_candles
 from monatise.strategy.harvester import LiquidityHarvester, LiquidityHarvesterConfig
 
@@ -40,6 +41,7 @@ class RuntimeState:
     exchange_order_ids: dict[str, str] = field(default_factory=dict)
     reconciled_fill_ids: set[str] = field(default_factory=set)
     last_reconciliation: float = 0.0
+    session_guard: dict = field(default_factory=dict)
 
 
 class TradingService:
@@ -68,6 +70,12 @@ class TradingService:
     def start(self) -> dict:
         with self._lock:
             if self.state.running:
+                return self._snapshot_unlocked()
+            session_guard = forex_session_break_guard(self.config.symbol)
+            self.state.session_guard = session_guard
+            if self.config.mode == "live" and session_guard.get("active"):
+                self.state.risk_status = str(session_guard.get("message", "forex session-break guard"))
+                self._event("warn", self.state.risk_status)
                 return self._snapshot_unlocked()
             self._stop.clear()
             if self.config.mode == "live":
@@ -151,6 +159,7 @@ class TradingService:
             "liveReady": self.state.live_ready,
             "riskStatus": self.state.risk_status,
             "requires": self.requirements(),
+            "sessionGuard": self.state.session_guard,
             "account": self.state.account,
             "risk": asdict(self.risk.snapshot(self.state.open_orders, self.portfolio, mark)),
             "desk": {
@@ -312,6 +321,10 @@ class TradingService:
         }
 
     def _market_guard(self, mark: float, account: dict) -> RiskDecision:
+        session_guard = forex_session_break_guard(self.config.symbol)
+        self.state.session_guard = session_guard
+        if session_guard.get("active"):
+            return RiskDecision(False, str(session_guard.get("message", "forex session-break guard")))
         previous = self.state.last_mark_price or mark
         move_pct = abs(mark - previous) / previous if previous > 0 else 0.0
         if move_pct > self.config.max_mark_move_pct:

@@ -128,6 +128,12 @@ const forexSessions = [
   { closeHour: 16, name: "London", openHour: 7, pairs: ["EURUSD", "GBPUSD", "EURGBP"] },
   { closeHour: 21, name: "New York", openHour: 12, pairs: ["EURUSD", "GBPUSD", "USDJPY"] }
 ];
+const forexBreakGuardMinutes = 60;
+const forexPairs = Array.from(new Set(forexSessions.flatMap((session) => session.pairs)));
+
+function normalizeForexSymbol(symbol) {
+  return String(symbol || "").replace(/[-/]/g, "").toUpperCase();
+}
 
 function setGate(element, label, status, className = "") {
   element.classList.remove("ready", "warn", "hot");
@@ -143,7 +149,11 @@ function updateLiveDesk(snapshot = null) {
   const mode = snapshot?.mode || "paper";
   const network = snapshot?.network || "local";
   const running = Boolean(snapshot?.running);
-  const liveReady = Boolean(snapshot?.liveReady && paidLive);
+  const backendSessionGuard = snapshot?.sessionGuard || {};
+  const localSessionGuard = forexSessionBreakGuard(selectedAsset);
+  const sessionGuard = backendSessionGuard.active ? backendSessionGuard : localSessionGuard;
+  const sessionBlocked = Boolean(sessionGuard.active && mode === "live");
+  const liveReady = Boolean(snapshot?.liveReady && paidLive && !sessionBlocked);
   const requires = Array.isArray(snapshot?.requires) ? snapshot.requires : [];
 
   setGate(els.loginGate, "Login", loggedIn ? "Ready" : "Needed", loggedIn ? "ready" : "warn");
@@ -151,13 +161,15 @@ function updateLiveDesk(snapshot = null) {
   setGate(
     els.riskGate,
     "Risk gate",
-    liveReady ? "Armed" : requires[0] || "Waiting",
-    liveReady ? "hot" : mode === "live" ? "warn" : "ready"
+    sessionBlocked ? "Session break" : liveReady ? "Armed" : requires[0] || "Waiting",
+    liveReady ? "hot" : mode === "live" || sessionBlocked ? "warn" : "ready"
   );
 
   els.liveNetworkBadge.textContent = `${mode} / ${network}`;
   els.liveDeskStatus.textContent = running
     ? "Trading loop running"
+    : sessionBlocked
+      ? "Close trading window"
     : liveReady
       ? "Live armed"
       : loggedIn && hasCredentials
@@ -167,6 +179,8 @@ function updateLiveDesk(snapshot = null) {
         : "Not armed";
   els.liveModeStatus.textContent = running
     ? `${mode.toUpperCase()} running`
+    : sessionBlocked
+      ? `${sessionGuard.session} ${sessionGuard.transition} guard`
     : liveReady
       ? "Real orders armed"
       : `${mode.toUpperCase()} idle`;
@@ -174,11 +188,17 @@ function updateLiveDesk(snapshot = null) {
   els.backendStartButton.classList.toggle("live-running", running);
   els.backendStartButton.textContent = running
     ? "Running"
+    : sessionBlocked
+      ? "Session Guard"
     : mode === "live" && !paidLive
       ? "Pro Required"
       : mode === "live"
         ? "Start Live"
         : "Start Paper";
+  els.backendStartButton.disabled = !loggedIn || !hasCredentials || !paidLive || sessionBlocked;
+  if (sessionBlocked) {
+    els.riskStatus.textContent = sessionGuard.message || "forex session-break guard";
+  }
 }
 
 async function apiFetch(path, options = {}) {
@@ -253,6 +273,34 @@ function minutesUntilSessionChange(session, date) {
   return (target - now + 1440) % 1440;
 }
 
+function forexSessionBreakGuard(symbol = selectedAsset, date = new Date()) {
+  const pair = normalizeForexSymbol(symbol);
+  if (!forexPairs.includes(pair)) return { active: false, symbol: pair };
+  const guarded = forexSessions
+    .filter((session) => session.pairs.includes(pair))
+    .map((session) => ({
+      active: minutesUntilSessionChange(session, date) <= forexBreakGuardMinutes,
+      minutes: minutesUntilSessionChange(session, date),
+      pairs: session.pairs,
+      session: session.name,
+      transition: isSessionOpen(session, date) ? "close" : "open"
+    }))
+    .filter((guard) => guard.active)
+    .sort((left, right) => left.minutes - right.minutes);
+  if (!guarded.length) return { active: false, symbol: pair };
+  const primary = guarded[0];
+  return {
+    active: true,
+    affectedPairs: primary.pairs,
+    guardMinutes: forexBreakGuardMinutes,
+    message: `forex session-break guard: ${pair} is ${primary.minutes}m from ${primary.session} ${primary.transition}`,
+    minutes: primary.minutes,
+    session: primary.session,
+    symbol: pair,
+    transition: primary.transition
+  };
+}
+
 function durationLabel(totalMinutes) {
   const minutes = Math.max(0, Math.round(totalMinutes));
   const hours = Math.floor(minutes / 60);
@@ -278,11 +326,13 @@ function activeForexPairs(date = new Date()) {
 function renderForexSessions(date = new Date()) {
   if (!els.forexSessions) return;
   const activePairs = activeForexPairs(date);
+  const sessionGuard = forexSessionBreakGuard(selectedAsset, date);
   const rows = forexSessions
     .map((session) => {
       const open = isSessionOpen(session, date);
       const change = minutesUntilSessionChange(session, date);
-      return `<article class="session-row ${open ? "open" : "closed"}">
+      const guarded = change <= forexBreakGuardMinutes;
+      return `<article class="session-row ${open ? "open" : "closed"} ${guarded ? "guarded" : ""}">
         <div>
           <strong>${session.name}</strong>
           <span>${utcHourLabel(session.openHour)}-${utcHourLabel(session.closeHour)} UTC</span>
@@ -298,11 +348,18 @@ function renderForexSessions(date = new Date()) {
       <span>${date.toISOString().slice(11, 19)} UTC</span>
     </div>
     <div class="session-grid">${rows}</div>
-    <div class="session-pairs">
-      <strong>Active pairs</strong>
-      <span>${activePairs.length ? activePairs.join(" · ") : "No major session active"}</span>
+    <div class="session-pairs ${sessionGuard.active ? "guarded" : ""}">
+      <strong>${sessionGuard.active ? "Close trading" : "Active pairs"}</strong>
+      <span>${
+        sessionGuard.active
+          ? `${sessionGuard.symbol}: ${sessionGuard.session} ${sessionGuard.transition} in ${durationLabel(sessionGuard.minutes)}`
+          : activePairs.length
+            ? activePairs.join(" · ")
+            : "No major session active"
+      }</span>
     </div>
   `;
+  updateLiveDesk(lastBackendSnapshot);
 }
 
 function hasLivePlan() {
@@ -1401,6 +1458,12 @@ async function refreshBackend() {
 }
 
 async function backendCommand(path) {
+  const sessionGuard = forexSessionBreakGuard(selectedAsset);
+  if (path === "/api/start" && sessionGuard.active && lastBackendSnapshot?.mode === "live") {
+    els.riskStatus.textContent = sessionGuard.message;
+    updateLiveDesk(lastBackendSnapshot);
+    return;
+  }
   const response = await jsonPost(path);
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));

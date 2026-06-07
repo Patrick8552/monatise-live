@@ -1,3 +1,4 @@
+import monatise.live.service as service_module
 from monatise.adapters.hyperliquid import HyperliquidAdapter, SubmittedOrder
 from monatise.live.config import LIVE_CONFIRMATION, RuntimeConfig
 from monatise.live.service import TradingService
@@ -82,6 +83,24 @@ def test_market_shock_guard_blocks_fast_mark_move() -> None:
     assert "market shock guard" in decision.reason
 
 
+def test_live_start_blocks_forex_session_break_guard() -> None:
+    original_guard = service_module.forex_session_break_guard
+    service_module.forex_session_break_guard = lambda symbol: {
+        "active": True,
+        "message": "forex session-break guard: EURUSD is 20m from London close",
+    }
+    try:
+        service = TradingService(RuntimeConfig(mode="live", symbol="EURUSD"))
+
+        snapshot = service.start()
+
+        assert not snapshot["running"]
+        assert snapshot["riskStatus"] == "forex session-break guard: EURUSD is 20m from London close"
+        assert snapshot["sessionGuard"]["active"]
+    finally:
+        service_module.forex_session_break_guard = original_guard
+
+
 def test_stale_live_grid_cancels_exchange_orders_before_replace() -> None:
     service = TradingService(
         RuntimeConfig(
@@ -110,6 +129,51 @@ def test_stale_live_grid_cancels_exchange_orders_before_replace() -> None:
     assert first_ids
     assert first_ids.issubset(set(adapter.cancelled))
     assert adapter.submitted == 2
+
+
+def test_live_tick_cancels_orders_during_forex_session_break_guard() -> None:
+    original_guard = service_module.forex_session_break_guard
+    guard_calls = {"count": 0}
+
+    def guard(symbol: str) -> dict:
+        guard_calls["count"] += 1
+        if guard_calls["count"] == 1:
+            return {"active": False, "symbol": symbol}
+        return {
+            "active": True,
+            "message": "forex session-break guard: EURUSD is 15m from London close",
+        }
+
+    service_module.forex_session_break_guard = guard
+    try:
+        service = TradingService(
+            RuntimeConfig(
+                mode="live",
+                execution_mode="live",
+                allow_live_orders=True,
+                live_confirmation=LIVE_CONFIRMATION,
+                account_address="0xabc",
+                secret_key="secret",
+                order_quote_size=10,
+                max_order_notional=10,
+                max_total_notional=100,
+                max_position_value=100_000,
+                max_base_inventory=10,
+            )
+        )
+        adapter = FakeExecutionAdapter()
+        service._adapter = adapter
+
+        service._live_tick()
+        first_ids = set(service.state.exchange_order_ids.values())
+        service._live_tick()
+
+        assert first_ids
+        assert first_ids.issubset(set(adapter.cancelled))
+        assert not service.state.open_orders
+        assert service.state.risk_status == "forex session-break guard: EURUSD is 15m from London close"
+    finally:
+        service_module.forex_session_break_guard = original_guard
 
 
 def test_live_tick_reconciles_exchange_fills_once() -> None:

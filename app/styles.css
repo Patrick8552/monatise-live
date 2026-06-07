@@ -1278,6 +1278,12 @@ canvas {
   border-color: rgba(0, 168, 120, 0.34);
 }
 
+.session-row.guarded {
+  background: rgba(232, 162, 20, 0.18);
+  border-color: rgba(232, 162, 20, 0.48);
+  box-shadow: inset 0 0 0 1px rgba(232, 162, 20, 0.18);
+}
+
 .session-row strong {
   color: #f9fffb;
   display: block;
@@ -1311,6 +1317,11 @@ canvas {
   display: grid;
   gap: 3px;
   padding: 8px;
+}
+
+.session-pairs.guarded {
+  background: rgba(216, 58, 70, 0.18);
+  border-color: rgba(216, 58, 70, 0.42);
 }
 
 .session-pairs strong {

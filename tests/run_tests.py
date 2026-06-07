@@ -29,6 +29,10 @@ TESTS = {
         "test_indicator_snapshot_and_instruction_for_range",
         "test_context_assets_for_gold_and_oil",
     ],
+    "tests.test_sessions": [
+        "test_forex_session_break_guard_flags_one_hour_before_london_close",
+        "test_forex_session_break_guard_ignores_crypto_symbols",
+    ],
     "tests.test_hyperliquid_candles": [
         "test_hyperliquid_candle_snapshot_uses_builder_coin_alias",
         "test_parse_candle_and_interval_validation",
@@ -45,7 +49,9 @@ TESTS = {
     "tests.test_live_service": [
         "test_live_tick_initializes_risk_baseline_from_live_mark",
         "test_market_shock_guard_blocks_fast_mark_move",
+        "test_live_start_blocks_forex_session_break_guard",
         "test_stale_live_grid_cancels_exchange_orders_before_replace",
+        "test_live_tick_cancels_orders_during_forex_session_break_guard",
         "test_live_tick_reconciles_exchange_fills_once",
         "test_hyperliquid_order_values_are_rounded_for_wire_format",
         "test_hyperliquid_extracts_exchange_order_id",
