@@ -17,7 +17,7 @@
           <a href="./index.html">Desk</a>
           <a href="./onboarding.html" aria-current="page">Onboarding</a>
           <a href="./learn.html">Learn</a>
-          <a href="./gold.html">Gold</a>
+          <a href="./gold.html">Gold/Oil</a>
           <a href="./about.html">About</a>
           <a href="./contact.html">Contact</a>
         </nav>
@@ -31,7 +31,7 @@
       <section class="ops-ribbon" aria-label="funds flow">
         <article>
           <span>Funds</span>
-          <strong>Your wallet</strong>
+          <strong>Venue balance</strong>
         </article>
         <article>
           <span>Trading venue</span>
@@ -62,6 +62,7 @@
           <h2>Where do withdrawals happen?</h2>
           <ul class="desk-list">
             <li>Withdraw trading funds from Hyperliquid or your wallet route</li>
+            <li>Confirmed venue collateral can be traded immediately on supported markets</li>
             <li>Cancel or stop Monatise before moving funds</li>
             <li>Confirm no live grid orders are resting</li>
             <li>Monatise subscription payments are separate from trading capital</li>
@@ -104,7 +105,7 @@
             </li>
             <li>
               <strong>Fund the venue directly</strong>
-              <span>Deposit through Hyperliquid-supported routes. Monatise should not receive trading deposits.</span>
+              <span>Deposit through Hyperliquid-supported routes. Once the venue reports the balance, supported assets can be traded immediately, but losses can also begin immediately.</span>
             </li>
             <li>
               <strong>Create an API wallet</strong>
@@ -237,6 +238,9 @@
           <p>
             Monatise should not collect user trading deposits, hold customer crypto, or promise withdrawals from an internal balance.
             That would require a much heavier compliance, custody, reconciliation, and fraud-control program.
+          </p>
+          <p>
+            Treat every newly deposited balance as live risk. Confirm the market is supported, verify order size, and start with a small clip before scaling.
           </p>
         </section>
       </section>

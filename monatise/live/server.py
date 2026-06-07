@@ -26,7 +26,8 @@ PLAN_PRICES = {
     "business": {"amount": 149, "currency": "USD"},
 }
 
-FOREX_WATCHLIST = ("EURUSD", "GBPUSD", "USDJPY", "XAU", "XAG")
+COMMODITY_WATCHLIST = ("GOLD", "CL", "BRENTOIL")
+FOREX_WATCHLIST = ("EURUSD", "GBPUSD", "USDJPY", "XAG")
 STOCK_WATCHLIST = ("SPX", "NDX", "NASDAQ", "AAPL", "TSLA", "NVDA")
 
 
@@ -101,6 +102,7 @@ class MarketFeed:
                         for symbol in self.config.assets
                     ],
                     "builder": builder,
+                    "commodities": self._watchlist(COMMODITY_WATCHLIST),
                     "forex": self._watchlist(FOREX_WATCHLIST),
                     "stocks": self._watchlist(STOCK_WATCHLIST),
                 },

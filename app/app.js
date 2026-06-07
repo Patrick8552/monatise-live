@@ -299,16 +299,22 @@ function renderMarkets() {
 }
 
 function renderAssetGroups() {
+  const commodityWatch = marketGroups.commodities && marketGroups.commodities.length
+    ? [...marketGroups.commodities]
+    : ["GOLD", "CL", "BRENTOIL"].map((symbol) => ({ symbol, tradable: false }));
+  ["GOLD", "CL", "BRENTOIL"].forEach((symbol) => {
+    if (!commodityWatch.some((asset) => asset.symbol === symbol)) {
+      commodityWatch.push({ symbol, tradable: false });
+    }
+  });
   const forexWatch = marketGroups.forex && marketGroups.forex.length
     ? [...marketGroups.forex]
-    : ["XAU", "EURUSD", "GBPUSD", "USDJPY", "XAG"].map((symbol) => ({ symbol, tradable: false }));
-  if (!forexWatch.some((asset) => asset.symbol === "XAU")) {
-    forexWatch.unshift({ symbol: "XAU", tradable: false });
-  }
+    : ["EURUSD", "GBPUSD", "USDJPY", "XAG"].map((symbol) => ({ symbol, tradable: false }));
   const groups = [
-    ["Crypto perps", marketGroups.crypto || markets],
+    ["Routed markets", marketGroups.crypto || markets],
     ["HIP-3 builder", marketGroups.builder || []],
-    ["Gold / forex watch", forexWatch],
+    ["Gold / oil perps", commodityWatch],
+    ["Forex watch", forexWatch],
     ["Stock watch", marketGroups.stocks || []]
   ];
   els.assetGroups.innerHTML = groups

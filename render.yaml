@@ -27,6 +27,10 @@ services:
         value: USDC on Arbitrum or HyperEVM
       - key: MONATISE_SYMBOL
         value: BTC
+      - key: MONATISE_ASSETS
+        value: BTC,ETH,SOL,HYPE,BNB,XRP,DOGE,GOLD,CL,BRENTOIL
+      - key: MONATISE_BUILDER_DEXES
+        value: xyz
       - key: MONATISE_EXECUTION_MODE
         value: live
       - key: MONATISE_ORDER_QUOTE_SIZE

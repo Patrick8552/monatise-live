@@ -34,7 +34,8 @@ class RuntimeConfig:
     live_confirmation: str = ""
     account_address: str = ""
     secret_key: str = ""
-    assets: tuple[str, ...] = ("BTC", "ETH", "SOL", "HYPE", "BNB", "XRP", "DOGE")
+    assets: tuple[str, ...] = ("BTC", "ETH", "SOL", "HYPE", "BNB", "XRP", "DOGE", "GOLD", "CL", "BRENTOIL")
+    builder_dexes: tuple[str, ...] = ("xyz",)
 
     @classmethod
     def from_env(cls) -> "RuntimeConfig":
@@ -72,8 +73,13 @@ class RuntimeConfig:
             ),
             assets=tuple(
                 asset.strip().upper()
-                for asset in os.getenv("MONATISE_ASSETS", "BTC,ETH,SOL,HYPE,BNB,XRP,DOGE").split(",")
+                for asset in os.getenv("MONATISE_ASSETS", "BTC,ETH,SOL,HYPE,BNB,XRP,DOGE,GOLD,CL,BRENTOIL").split(",")
                 if asset.strip()
+            ),
+            builder_dexes=tuple(
+                dex.strip()
+                for dex in os.getenv("MONATISE_BUILDER_DEXES", "xyz").split(",")
+                if dex.strip()
             ),
         )
 

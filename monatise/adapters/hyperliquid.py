@@ -8,6 +8,16 @@ from monatise.core.ports import ExecutionPort, MarketDataPort
 from monatise.live.config import RuntimeConfig
 
 
+BUILDER_ASSET_ALIASES = {
+    "BRENTOIL": "xyz:BRENTOIL",
+    "CL": "xyz:CL",
+    "GOLD": "xyz:GOLD",
+    "WTI": "xyz:CL",
+    "WTIOIL": "xyz:CL",
+    "XAU": "xyz:GOLD",
+}
+
+
 @dataclass(frozen=True)
 class SubmittedOrder:
     local_order_id: str
@@ -46,22 +56,27 @@ class HyperliquidAdapter(MarketDataPort, ExecutionPort):
 
     def latest_price(self, symbol: str) -> float:
         coin = self._coin(symbol)
-        mids = self.info.all_mids()
+        mids = self._all_mids()
         if coin not in mids:
             raise RuntimeError(f"{coin} was not found in Hyperliquid all_mids response")
         return float(mids[coin])
 
     def latest_prices(self, symbols: list[str] | tuple[str, ...]) -> dict[str, float]:
-        mids = self.info.all_mids()
+        mids = self._all_mids()
         prices: dict[str, float] = {}
         for symbol in symbols:
             coin = self._coin(symbol)
             if coin in mids:
-                prices[coin] = float(mids[coin])
+                prices[symbol.upper()] = float(mids[coin])
         return prices
 
     def all_prices(self) -> dict[str, float]:
-        return {str(coin): float(price) for coin, price in self.info.all_mids().items()}
+        mids = self._all_mids()
+        prices = {str(coin): float(price) for coin, price in mids.items()}
+        for alias, coin in BUILDER_ASSET_ALIASES.items():
+            if coin in prices:
+                prices[alias] = prices[coin]
+        return prices
 
     def candles(self, symbol: str, limit: int):  # noqa: ANN201
         raise NotImplementedError("live candle history is not wired yet; use latest_price polling")
@@ -124,7 +139,20 @@ class HyperliquidAdapter(MarketDataPort, ExecutionPort):
         return self.info.user_vault_equities(self.account_address)
 
     def _coin(self, symbol: str) -> str:
-        return symbol.split("-", 1)[0].upper()
+        coin = symbol.split("-", 1)[0]
+        if ":" in coin:
+            dex, _, market = coin.partition(":")
+            return f"{dex.lower()}:{market.upper()}"
+        return BUILDER_ASSET_ALIASES.get(coin.upper(), coin.upper())
+
+    def _all_mids(self) -> dict[str, str]:
+        mids = dict(self.info.all_mids())
+        for dex in self.config.builder_dexes:
+            try:
+                mids.update(self.info.post("/info", {"type": "allMids", "dex": dex}))
+            except Exception:  # noqa: BLE001
+                continue
+        return mids
 
     def _order_price(self, price: float) -> float:
         return round(price, 1)
