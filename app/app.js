@@ -24,6 +24,7 @@ const els = {
   candleCount: document.querySelector("#candleCount"),
   cashMetricLabel: document.querySelector("#cashMetricLabel"),
   credentialStatus: document.querySelector("#credentialStatus"),
+  contextRadar: document.querySelector("#contextRadar"),
   csvInput: document.querySelector("#csvInput"),
   equityCanvas: document.querySelector("#equityCanvas"),
   equityMetric: document.querySelector("#equityMetric"),
@@ -101,6 +102,10 @@ let fibAnalysis = null;
 let fibLoading = false;
 let fibLastLoadedAt = 0;
 let fibLastSymbol = "";
+let contextRadar = null;
+let contextLoading = false;
+let contextLastLoadedAt = 0;
+let contextLastSymbol = "";
 localStorage.removeItem("monatiseControlToken");
 
 const assetMetadata = {
@@ -317,6 +322,7 @@ async function loadMarkets() {
     }
     syncSelectedAsset();
     loadFibonacciAnalysis();
+    loadContextRadar();
     if (!backendOnline) {
       const active = markets.find((asset) => asset.symbol === selectedAsset);
       if (active) {
@@ -405,6 +411,87 @@ function renderFibonacciAnalysis() {
       <span>Invalidation <strong>${money(fibAnalysis.invalidation)}</strong></span>
     </div>
     <div class="fib-levels">${levels}</div>
+  `;
+}
+
+async function loadContextRadar(options = {}) {
+  if (contextLoading && !options.force) return;
+  const now = Date.now();
+  if (!options.force && contextLastSymbol === selectedAsset && now - contextLastLoadedAt < 60_000) return;
+  const requestSymbol = selectedAsset;
+  let shouldRender = true;
+  contextLoading = true;
+  try {
+    const response = await apiFetch(
+      `/api/context/radar?symbol=${encodeURIComponent(requestSymbol)}&interval=1h&limit=120`,
+      { cache: "no-store" }
+    );
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || "context radar unavailable");
+    if (requestSymbol !== selectedAsset) {
+      shouldRender = false;
+      return;
+    }
+    contextRadar = payload;
+    contextLastLoadedAt = now;
+    contextLastSymbol = requestSymbol;
+  } catch (error) {
+    if (requestSymbol !== selectedAsset) {
+      shouldRender = false;
+      return;
+    }
+    contextRadar = { error: error.message || "context radar unavailable", symbol: requestSymbol };
+    contextLastLoadedAt = now;
+    contextLastSymbol = requestSymbol;
+  } finally {
+    contextLoading = false;
+    if (shouldRender) renderContextRadar();
+  }
+}
+
+function renderContextRadar() {
+  if (!els.contextRadar) return;
+  if (!contextRadar) {
+    els.contextRadar.innerHTML = `<div class="context-head"><strong>Context Radar</strong><span>Waiting for indicators</span></div>`;
+    return;
+  }
+  if (contextRadar.error) {
+    els.contextRadar.innerHTML = `<div class="context-head"><strong>Context Radar</strong><span>${contextRadar.error}</span></div>`;
+    return;
+  }
+  const indicator = contextRadar.indicator || {};
+  const instruction = contextRadar.instruction || {};
+  const action = String(instruction.action || "normal");
+  const assets = (contextRadar.contextAssets || [])
+    .map((asset) => {
+      const price = Number(asset.price);
+      const hasPrice = asset.price !== null && asset.price !== undefined && Number.isFinite(price);
+      return `<span class="context-asset ${hasPrice ? "live" : "offline"}">
+        <strong>${asset.symbol}</strong>
+        <em>${asset.label}</em>
+        <b>${hasPrice ? money(price) : "External / pending"}</b>
+      </span>`;
+    })
+    .join("");
+  const reasons = (instruction.reasons || []).map((reason) => `<li>${reason}</li>`).join("");
+  els.contextRadar.innerHTML = `
+    <div class="context-head">
+      <strong>Context Radar</strong>
+      <span>${contextRadar.interval} · ${assetLabel(contextRadar.symbol)} · ${action.toUpperCase()}</span>
+    </div>
+    <div class="context-action ${action}">
+      <strong>${action}</strong>
+      <span>Spacing x${Number(instruction.spacingMultiplier || 0).toFixed(2)} · Size x${Number(instruction.sizeMultiplier || 0).toFixed(2)}</span>
+    </div>
+    <div class="context-metrics">
+      <span>ATR <strong>${money(indicator.atr || 0)}</strong></span>
+      <span>ATR% <strong>${((indicator.atr_pct || 0) * 100).toFixed(2)}%</strong></span>
+      <span>Chop <strong>${Number(indicator.choppiness || 0).toFixed(1)}</strong></span>
+      <span>RSI <strong>${Number(indicator.rsi || 0).toFixed(1)}</strong></span>
+      <span>Trend <strong>${String(indicator.trend || "flat").toUpperCase()}</strong></span>
+    </div>
+    <div class="context-assets">${assets}</div>
+    <ul class="context-reasons">${reasons}</ul>
   `;
 }
 
@@ -518,9 +605,11 @@ function renderAssetGroups() {
 async function saveSelectedAsset(symbol) {
   selectedAsset = symbol;
   fibAnalysis = null;
+  contextRadar = null;
   syncSelectedAsset();
   rebuildFromInputs();
   loadFibonacciAnalysis({ force: true });
+  loadContextRadar({ force: true });
   if (!currentUser.authenticated) {
     render();
     return;

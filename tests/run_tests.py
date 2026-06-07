@@ -25,6 +25,10 @@ TESTS = {
     "tests.test_fibonacci": [
         "test_fibonacci_analysis_builds_retracements_and_extensions",
     ],
+    "tests.test_context": [
+        "test_indicator_snapshot_and_instruction_for_range",
+        "test_context_assets_for_gold_and_oil",
+    ],
     "tests.test_hyperliquid_candles": [
         "test_hyperliquid_candle_snapshot_uses_builder_coin_alias",
         "test_parse_candle_and_interval_validation",

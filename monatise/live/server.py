@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
 
+from monatise.analysis.context import context_assets, grid_instruction, indicator_snapshot
 from monatise.analysis.fibonacci import analyze_fibonacci
 from monatise.adapters.hyperliquid import HyperliquidAdapter
 from monatise.live.config import RuntimeConfig
@@ -330,6 +331,47 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                     {
                         "analysis": analyze_fibonacci(symbol, interval, candles, mark=mark).to_dict(),
                         "candles": [candle.__dict__ for candle in candles],
+                    }
+                )
+            except Exception as error:  # noqa: BLE001
+                self._error(502, str(error))
+            return
+        if parsed.path == "/api/context/radar":
+            query = parse_qs(parsed.query)
+            symbol = str(query.get("symbol", [self.config.symbol])[0]).strip().upper()
+            interval = str(query.get("interval", ["1h"])[0]).strip() or "1h"
+            try:
+                limit = max(50, min(240, int(query.get("limit", ["120"])[0])))
+                adapter = HyperliquidAdapter(self.config)
+                candles = adapter.candles(symbol, limit, interval=interval)
+                indicators = indicator_snapshot(candles)
+                prices = adapter.all_prices()
+                instruction = grid_instruction(indicators)
+                self._json(
+                    {
+                        "symbol": symbol,
+                        "interval": interval,
+                        "indicator": indicators.__dict__,
+                        "instruction": instruction,
+                        "contextAssets": context_assets(symbol, prices),
+                        "sources": [
+                            {
+                                "label": "Hyperliquid candleSnapshot",
+                                "url": "https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/info-endpoint",
+                            },
+                            {
+                                "label": "EIA Weekly Petroleum Status Report",
+                                "url": "https://www.eia.gov/petroleum/supply/weekly/index.php",
+                            },
+                            {
+                                "label": "ICE U.S. Dollar Index",
+                                "url": "https://www.ice.com/market-data/indices/currency-indices",
+                            },
+                            {
+                                "label": "CME FedWatch",
+                                "url": "https://www.cmegroup.com/markets/interest-rates/cme-fedwatch-tool.html",
+                            },
+                        ],
                     }
                 )
             except Exception as error:  # noqa: BLE001
