@@ -895,16 +895,40 @@ async function loadMe() {
 async function loginOrRegister(path) {
   const username = els.usernameInput.value.trim();
   const password = els.passwordInput.value;
-  const response = await jsonPost(path, { username, password });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    setAuthStatus(payload.error || "Auth failed");
+  const isRegister = path.includes("register");
+  const actionButton = isRegister ? els.registerButton : els.loginButton;
+  if (username.length < 3) {
+    setAuthStatus("Username needs 3+ characters");
+    els.credentialStatus.textContent = "Enter a username with at least 3 characters.";
     return;
   }
-  els.passwordInput.value = "";
-  renderAuth(payload);
-  addAuditEvent(path.includes("register") ? "register" : "login", path.includes("register") ? "User registered" : "User logged in", payload.username || username);
-  refreshBackend();
+  if (password.length < 8) {
+    setAuthStatus("Password needs 8+ characters");
+    els.credentialStatus.textContent = "Enter a password with at least 8 characters.";
+    return;
+  }
+  actionButton.disabled = true;
+  actionButton.textContent = isRegister ? "Registering..." : "Logging in...";
+  setAuthStatus(isRegister ? "Registering..." : "Logging in...");
+  try {
+    const response = await jsonPost(path, { username, password });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      setAuthStatus(payload.error || "Auth failed");
+      els.credentialStatus.textContent = payload.error || "Authentication request failed.";
+      return;
+    }
+    els.passwordInput.value = "";
+    renderAuth(payload);
+    addAuditEvent(isRegister ? "register" : "login", isRegister ? "User registered" : "User logged in", payload.username || username);
+    refreshBackend();
+  } catch {
+    setAuthStatus("Auth request failed");
+    els.credentialStatus.textContent = "Network request failed. Try again.";
+  } finally {
+    actionButton.disabled = false;
+    actionButton.textContent = isRegister ? "Register" : "Login";
+  }
 }
 
 async function saveCredentials() {
@@ -2237,6 +2261,11 @@ els.assetGroups.addEventListener("click", (event) => {
 });
 els.loginButton.addEventListener("click", () => loginOrRegister("/api/login"));
 els.registerButton.addEventListener("click", () => loginOrRegister("/api/register"));
+[els.usernameInput, els.passwordInput].forEach((input) => {
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") loginOrRegister("/api/login");
+  });
+});
 els.logoutButton.addEventListener("click", async () => {
   await jsonPost("/api/logout");
   addAuditEvent("logout", "User logged out", "live actions disabled");
