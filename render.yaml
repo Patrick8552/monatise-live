@@ -17,16 +17,8 @@ services:
         value: 0.0.0.0
       - key: MONATISE_PUBLIC_URL
         value: https://monatise-live.onrender.com
-      - key: MONATISE_PAYMENT_RECEIVER_NAME
-        value: Monatise
       - key: MONATISE_ENCRYPTION_KEY
         sync: false
-      - key: MONATISE_CRYPTO_PAYMENT_RAILS
-        value: USDC on Solana|dJs4k4PUfH8WVWoECJ925WWP91LcUq8nbZPZcHZCWHp,USDC on Arbitrum|0xbD0B18D46B7afA6E5874A6e0eebbfD28276EA560,USDC on Polygon|0xbD0B18D46B7afA6E5874A6e0eebbfD28276EA560
-      - key: MONATISE_CRYPTO_WATCHER_ENABLED
-        value: true
-      - key: MONATISE_CRYPTO_WATCHER_SECONDS
-        value: 60
       - key: MONATISE_SOLANA_RPC_URL
         value: https://api.mainnet-beta.solana.com
       - key: MONATISE_ARBITRUM_RPC_URL

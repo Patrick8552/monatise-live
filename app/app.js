@@ -46,7 +46,6 @@ const els = {
   fillTape: document.querySelector("#fillTape"),
   fibAnalysis: document.querySelector("#fibAnalysis"),
   forexSessions: document.querySelector("#forexSessions"),
-  freePlanButton: document.querySelector("#freePlanButton"),
   harvestMetric: document.querySelector("#harvestMetric"),
   inventoryMetric: document.querySelector("#inventoryMetric"),
   lastFill: document.querySelector("#lastFill"),
@@ -72,14 +71,8 @@ const els = {
   openOrderCount: document.querySelector("#openOrderCount"),
   openGridTitle: document.querySelector("#openGridTitle"),
   orderAgeMetric: document.querySelector("#orderAgeMetric"),
-  paymentCurrencySelect: document.querySelector("#paymentCurrencySelect"),
-  paymentEmailInput: document.querySelector("#paymentEmailInput"),
-  paymentDestination: document.querySelector("#paymentDestination"),
-  paymentMethodSelect: document.querySelector("#paymentMethodSelect"),
-  paymentStatus: document.querySelector("#paymentStatus"),
   passwordInput: document.querySelector("#passwordInput"),
   passwordToggle: document.querySelector("#passwordToggle"),
-  proPlanButton: document.querySelector("#proPlanButton"),
   quoteInput: document.querySelector("#quoteInput"),
   readinessChecklist: document.querySelector("#readinessChecklist"),
   riskBudgetMetric: document.querySelector("#riskBudgetMetric"),
@@ -122,14 +115,12 @@ const els = {
   onboardingPlan: document.querySelector("#onboardingPlan"),
   onboardingStatus: document.querySelector("#onboardingStatus"),
   registrationDesk: document.querySelector("#registrationDesk"),
-  startOnboardingPaymentButton: document.querySelector("#startOnboardingPaymentButton"),
   usernameInput: document.querySelector("#usernameInput")
 };
 
 let state = null;
 let backendOnline = false;
 let currentUser = { authenticated: false, credentialsConfigured: false };
-let paymentConfig = null;
 let markets = [];
 let marketGroups = {};
 let selectedAsset = "BTC";
@@ -258,7 +249,7 @@ function readinessBlocks(snapshot = null) {
 
 function auditLevelFromType(type) {
   if (/block|failed|error|stop/i.test(type)) return "error";
-  if (/review|watch|payment|rules|credential/i.test(type)) return "warn";
+  if (/review|watch|rules|credential/i.test(type)) return "warn";
   return "info";
 }
 
@@ -305,7 +296,6 @@ function renderAuditLog(serverEvents = null) {
 function localReadinessItems(snapshot = null) {
   const loggedIn = Boolean(currentUser.authenticated);
   const hasCredentials = Boolean(currentUser.credentialsConfigured);
-  const paidLive = hasLivePlan();
   const mode = snapshot?.mode || "paper";
   const network = snapshot?.network || "local";
   const sessionGuard = (snapshot?.sessionGuard?.active ? snapshot.sessionGuard : activeSessionGuard(selectedAsset)) || {};
@@ -333,9 +323,9 @@ function localReadinessItems(snapshot = null) {
       severity: "block"
     },
     {
-      detail: paidLive ? "Pro plan active" : "real order routing requires Pro",
+      detail: mode === "live" ? "free access; credentials and risk gates still apply" : "free access",
       label: "Live permission",
-      ok: paidLive || mode !== "live",
+      ok: true,
       severity: isLiveMainnet ? "block" : "warn"
     },
     {
@@ -562,7 +552,6 @@ function updateDecisionSurface(snapshot = null) {
 function updateLiveDesk(snapshot = null) {
   const loggedIn = Boolean(currentUser.authenticated);
   const hasCredentials = Boolean(currentUser.credentialsConfigured);
-  const paidLive = hasLivePlan();
   const mode = snapshot?.mode || "paper";
   const network = snapshot?.network || "local";
   const running = Boolean(snapshot?.running);
@@ -570,7 +559,7 @@ function updateLiveDesk(snapshot = null) {
   const localSessionGuard = activeSessionGuard(selectedAsset);
   const sessionGuard = backendSessionGuard.active ? backendSessionGuard : localSessionGuard;
   const sessionBlocked = Boolean(sessionGuard.active && mode === "live");
-  const liveReady = Boolean(snapshot?.liveReady && paidLive && !sessionBlocked);
+  const liveReady = Boolean(snapshot?.liveReady && !sessionBlocked);
   const requires = Array.isArray(snapshot?.requires) ? snapshot.requires : [];
 
   setGate(els.loginGate, "Login", loggedIn ? "Ready" : "Needed", loggedIn ? "ready" : "warn");
@@ -590,9 +579,7 @@ function updateLiveDesk(snapshot = null) {
     : liveReady
       ? "Live armed"
       : loggedIn && hasCredentials
-        ? paidLive
-          ? "Ready to arm"
-          : "Pro required"
+        ? "Ready to arm"
         : "Not armed";
   els.liveModeStatus.textContent = running
     ? `${mode.toUpperCase()} running`
@@ -607,12 +594,10 @@ function updateLiveDesk(snapshot = null) {
     ? "Running"
     : sessionBlocked
       ? "Session Guard"
-    : mode === "live" && !paidLive
-      ? "Pro Required"
-      : mode === "live"
+    : mode === "live"
         ? "Start Live"
         : "Start Paper";
-  els.backendStartButton.disabled = !loggedIn || !hasCredentials || !paidLive || sessionBlocked;
+  els.backendStartButton.disabled = !loggedIn || !hasCredentials || sessionBlocked;
   if (sessionBlocked) {
     els.riskStatus.textContent = sessionGuard.message || "forex session-break guard";
   }
@@ -665,12 +650,6 @@ function radarAssetLabel(symbol) {
 
 function assetRoute(symbol) {
   return assetMetadata[symbol]?.route || "Watchlist or strategy-preview asset";
-}
-
-function maskAddress(address = "") {
-  const value = String(address || "");
-  if (value.length <= 14) return value;
-  return `${value.slice(0, 6)}...${value.slice(-6)}`;
 }
 
 async function copyText(value, label = "Value") {
@@ -881,11 +860,7 @@ function normalizedTradingRules(rules = {}) {
 
 function applyTradingRules(rules = {}) {
   tradingRules = normalizedTradingRules(rules);
-  if (tradingRules.chartInterval === "1m" && !hasLivePlan()) {
-    tradingRules.chartInterval = "5m";
-  }
   els.chartIntervalSelect.value = tradingRules.chartInterval;
-  els.chartIntervalSelect.querySelector('option[value="1m"]').disabled = !hasLivePlan();
   els.sessionGuardSelect.value = String(tradingRules.sessionGuardMinutes);
   els.drawdownLimitInput.value = (tradingRules.maxDailyLossPct * 100).toFixed(1).replace(/\.0$/, "");
   els.staleGridCancelInput.checked = tradingRules.staleGridCancel;
@@ -894,22 +869,20 @@ function applyTradingRules(rules = {}) {
 }
 
 function renderTradingRules() {
-  const proNote = hasLivePlan() ? "Pro enabled" : "1m requires Pro";
   const drawdownLabel = `${(tradingRules.maxDailyLossPct * 100).toFixed(1).replace(/\.0$/, "")}% drawdown cap`;
   els.rulesStatus.textContent = `${tradingRules.chartInterval} grid feed`;
   els.rulesSummary.textContent = `${tradingRules.chartInterval} analysis · ${tradingRules.sessionGuardMinutes}m session guard · ${
     tradingRules.londonCommodityOnly ? "London commodity guard on" : "London commodity guard off"
-  } · ${drawdownLabel} · ${tradingRules.staleGridCancel ? "stale cancel on" : "stale cancel off"} · ${proNote}`;
+  } · ${drawdownLabel} · ${tradingRules.staleGridCancel ? "stale cancel on" : "stale cancel off"} · free access`;
   els.ticketDrawdown.textContent = `${(tradingRules.maxDailyLossPct * 100).toFixed(2)}%`;
   els.decisionDrawdown.textContent = `${(tradingRules.maxDailyLossPct * 100).toFixed(2)}%`;
-  els.chartIntervalSelect.querySelector('option[value="1m"]').disabled = !hasLivePlan();
   renderForexSessions();
   updateDecisionSurface(lastBackendSnapshot);
   renderRegistrationDesk();
 }
 
 function hasLivePlan() {
-  return currentPlan() === "pro";
+  return true;
 }
 
 function renderAuth(me) {
@@ -928,12 +901,9 @@ function renderAuth(me) {
     : "Register or log in to connect your own Hyperliquid account.";
   els.logoutButton.disabled = !loggedIn;
   els.saveCredentialsButton.disabled = !loggedIn;
-  els.backendStartButton.disabled = !loggedIn || !me.credentialsConfigured || !hasLivePlan();
+  els.backendStartButton.disabled = !loggedIn || !me.credentialsConfigured;
   els.backendStopButton.disabled = !loggedIn;
   renderRegistrationDesk(me);
-  if (loggedIn && me.credentialsConfigured && !hasLivePlan()) {
-    els.backendStatus.textContent = "Pro required for mainnet live";
-  }
   if (!loggedIn) {
     backendOnline = false;
     els.backendStatus.textContent = "Login required";
@@ -1040,17 +1010,7 @@ async function finishOnboarding() {
   }
   await saveTradingRules();
   renderRegistrationDesk();
-  els.credentialStatus.textContent = "Client setup filed. Upgrade Pro to enable mainnet live execution.";
-}
-
-function startOnboardingPayment() {
-  if (!currentUser.authenticated) {
-    els.subscriptionStatus.textContent = "login required";
-    return;
-  }
-  if (els.paymentMethodSelect) els.paymentMethodSelect.value = "crypto";
-  document.querySelector(".subscription-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
-  checkoutPlan("pro");
+  els.credentialStatus.textContent = "Client setup filed. Access is free for now.";
 }
 
 function syncSelectedAsset() {
@@ -1402,117 +1362,6 @@ async function saveSelectedAsset(symbol) {
   };
   addAuditEvent("asset changed", "Trading asset saved", `${previous} -> ${selectedAsset}`);
   refreshBackend();
-}
-
-async function checkoutPlan(plan) {
-  if (!currentUser.authenticated) {
-    els.subscriptionStatus.textContent = "login required";
-    addAuditEvent("payment blocked", "Payment blocked", "login required");
-    return;
-  }
-  addAuditEvent("payment requested", `${plan.toUpperCase()} checkout requested`, els.paymentMethodSelect.value);
-  const response = await jsonPost("/api/payments/checkout", {
-    currency: els.paymentCurrencySelect.value,
-    email: els.paymentEmailInput.value.trim(),
-    method: els.paymentMethodSelect.value,
-    plan
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    els.paymentStatus.textContent = payload.error || "payment error";
-    addAuditEvent("payment error", "Payment request failed", payload.error || plan);
-    return;
-  }
-  if (payload.status === "redirect" && payload.checkoutUrl) {
-    window.location.href = payload.checkoutUrl;
-    return;
-  }
-  if (payload.provider === "crypto") {
-    renderCryptoPaymentTicket(payload);
-    addAuditEvent("payment instruction", "Crypto payment instructions returned", payload.setupRequired ? "address not configured" : "USDC rails");
-    return;
-  }
-  if (payload.status === "setup_required") {
-    els.paymentStatus.textContent = payload.message || "payment setup required";
-    addAuditEvent("payment setup", "Payment setup required", payload.message || plan);
-    return;
-  }
-  if (payload.subscription) {
-    currentUser = { ...currentUser, subscription: payload.subscription };
-    els.subscriptionStatus.textContent = `${payload.subscription.plan} ${payload.subscription.status}`;
-    els.paymentStatus.textContent = `${payload.subscription.plan} active`;
-    addAuditEvent("payment active", "Subscription updated", `${payload.subscription.plan} ${payload.subscription.status}`);
-  }
-}
-
-function renderCryptoPaymentTicket(payload) {
-  if (payload.setupRequired) {
-    els.paymentStatus.textContent = "crypto address not configured";
-    return;
-  }
-  const rails = Array.isArray(payload.networks) ? payload.networks : [{ network: payload.network, address: payload.address }];
-  els.paymentStatus.innerHTML = `
-    <section class="crypto-ticket" aria-label="crypto payment ticket">
-      <div class="crypto-ticket-head">
-        <div>
-          <span>USDC Payment Ticket</span>
-          <strong>${payload.amount} ${payload.currency}</strong>
-        </div>
-        <button type="button" data-copy="${payload.amount}" data-copy-label="Exact amount">Copy Amount</button>
-      </div>
-      <div class="crypto-reference">
-        <span>Reference</span>
-        <strong>${payload.reference}</strong>
-        <button type="button" data-copy="${payload.reference}" data-copy-label="Payment reference">Copy Ref</button>
-      </div>
-      <div class="crypto-rail-grid">
-        ${rails
-          .map(
-            (rail) => `<article>
-              <span>${rail.network}</span>
-              <strong>${maskAddress(rail.address)}</strong>
-              <button type="button" data-copy="${rail.address}" data-copy-label="${rail.network} address">Copy Address</button>
-            </article>`
-          )
-          .join("")}
-      </div>
-      <p>Send the exact amount on one network only. The watcher confirms the matching transfer automatically.</p>
-    </section>
-  `;
-}
-
-async function loadPaymentConfig() {
-  try {
-    const response = await fetch("/api/payments/config");
-    if (!response.ok) throw new Error("payment config unavailable");
-    paymentConfig = await response.json();
-    renderPaymentDestination();
-  } catch (error) {
-    els.paymentDestination.textContent = "Payment destination unavailable.";
-  }
-}
-
-function renderPaymentDestination() {
-  if (!paymentConfig || !els.paymentDestination) return;
-  const rails = paymentConfig.rails || {};
-  const ready = [];
-  if (rails.stripe?.configured) ready.push("Stripe merchant account");
-  if (rails.flutterwave?.configured) ready.push("Flutterwave merchant account");
-  if (rails.crypto?.configured) {
-    const cryptoDestination = Array.isArray(rails.crypto.networks)
-      ? rails.crypto.networks.map((rail) => rail.network.replace(/^USDC on /i, "")).join(", ")
-      : String(rails.crypto.network || "USDC");
-    ready.push(`Crypto USDC: ${cryptoDestination}`);
-  }
-  const missing = [];
-  if (rails.stripe && !rails.stripe.configured) {
-    missing.push(rails.stripe.webhookConfigured ? "Stripe secret" : "Stripe secret/webhook");
-  }
-  if (rails.flutterwave && !rails.flutterwave.configured) missing.push("Flutterwave secret");
-  if (rails.crypto && !rails.crypto.configured) missing.push("crypto wallet");
-  const destination = ready.length ? ready.join(" · ") : "No paid payment rail configured yet";
-  const setup = missing.length ? ` Setup needed: ${missing.join(", ")}.` : "";
-  els.paymentDestination.textContent = `Recipient: ${paymentConfig.recipient || "Monatise"}. Destination: ${destination}.${setup}`;
 }
 
 function initMarketMap() {
@@ -2076,12 +1925,6 @@ async function saveTradingRules() {
     sessionGuardMinutes: Number(els.sessionGuardSelect.value),
     staleGridCancel: els.staleGridCancelInput.checked
   });
-  if (nextRules.chartInterval === "1m" && !hasLivePlan()) {
-    els.rulesStatus.textContent = "Pro required for 1m";
-    els.chartIntervalSelect.value = tradingRules.chartInterval;
-    addAuditEvent("rules blocked", "1m chart rejected", "Pro plan required");
-    return;
-  }
   if (!currentUser.authenticated) {
     applyTradingRules(nextRules);
     fibAnalysis = null;
@@ -2216,7 +2059,6 @@ els.assetGroups.addEventListener("click", (event) => {
 els.loginButton.addEventListener("click", () => loginOrRegister("/api/login"));
 els.registerButton.addEventListener("click", () => loginOrRegister("/api/register"));
 els.finishOnboardingButton.addEventListener("click", finishOnboarding);
-els.startOnboardingPaymentButton.addEventListener("click", startOnboardingPayment);
 els.clientNameInput.addEventListener("input", () => renderRegistrationDesk());
 els.passwordToggle.addEventListener("click", () => {
   const isHidden = els.passwordInput.type === "password";
@@ -2246,11 +2088,6 @@ function previewTradingRules() {
     sessionGuardMinutes: Number(els.sessionGuardSelect.value),
     staleGridCancel: els.staleGridCancelInput.checked
   });
-  if (nextRules.chartInterval === "1m" && !hasLivePlan()) {
-    els.rulesStatus.textContent = "Pro required for 1m";
-    els.chartIntervalSelect.value = tradingRules.chartInterval;
-    return;
-  }
   applyTradingRules(nextRules);
 }
 [els.chartIntervalSelect, els.sessionGuardSelect, els.staleGridCancelInput, els.londonCommodityInput].forEach((input) => {
@@ -2258,13 +2095,6 @@ function previewTradingRules() {
 });
 els.drawdownLimitInput.addEventListener("input", previewTradingRules);
 els.drawdownLimitInput.addEventListener("change", previewTradingRules);
-els.freePlanButton.addEventListener("click", () => checkoutPlan("free"));
-els.proPlanButton.addEventListener("click", () => checkoutPlan("pro"));
-els.paymentStatus.addEventListener("click", (event) => {
-  const button = event.target.closest("button[data-copy]");
-  if (!button) return;
-  copyText(button.dataset.copy, button.dataset.copyLabel || "Payment value");
-});
 els.backendStartButton.addEventListener("click", () => backendCommand("/api/start").catch(refreshBackend));
 els.backendStopButton.addEventListener("click", () => backendCommand("/api/stop").catch(refreshBackend));
 ["input", "change"].forEach((eventName) => {
@@ -2284,7 +2114,6 @@ window.addEventListener("resize", resizeMarketMap);
 reset();
 initMarketMap();
 loadMarkets();
-loadPaymentConfig();
 loadMe();
 refreshBackend();
 renderForexSessions();

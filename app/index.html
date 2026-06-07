@@ -257,7 +257,7 @@
                     <option value="1h">1h</option>
                     <option value="15m">15m</option>
                     <option value="5m">5m</option>
-                    <option value="1m">1m Pro</option>
+                    <option value="1m">1m</option>
                   </select>
                 </label>
                 <label>
@@ -385,8 +385,8 @@
         <section id="account" class="desk-section">
           <div class="section-head">
             <div>
-              <p class="eyebrow">Account & payment</p>
-              <h2>Keep identity, credentials, and subscription separate from trading capital.</h2>
+              <p class="eyebrow">Account</p>
+              <h2>Keep identity and credentials separate from trading capital.</h2>
             </div>
           </div>
 
@@ -437,13 +437,12 @@
                     <strong id="onboardingAccount">Needed</strong>
                   </article>
                   <article>
-                    <span>Subscription</span>
+                    <span>Access</span>
                     <strong id="onboardingPlan">Free active</strong>
                   </article>
                 </div>
                 <div class="button-row">
                   <button id="finishOnboardingButton" class="primary" type="button">File setup</button>
-                  <button id="startOnboardingPaymentButton" type="button">Upgrade Pro</button>
                 </div>
               </div>
               <label>
@@ -458,61 +457,12 @@
               <p id="credentialStatus">Per-user Hyperliquid credentials only.</p>
             </div>
 
-            <section class="panel subscription-panel">
+            <section class="panel access-panel">
               <div class="panel-head">
-                <h2>Billing</h2>
+                <h2>Access</h2>
                 <span id="subscriptionStatus">Free</span>
               </div>
-              <div class="billing-fields">
-                <p id="paymentDestination" class="payment-destination">Checking payment destination.</p>
-                <label>
-                  Payment method
-                  <select id="paymentMethodSelect">
-                    <option value="stripe">Stripe</option>
-                    <option value="flutterwave">Flutterwave</option>
-                    <option value="fiat">Fiat checkout</option>
-                    <option value="crypto">Crypto USDC</option>
-                  </select>
-                </label>
-                <div class="input-row">
-                  <label>
-                    Currency
-                    <select id="paymentCurrencySelect">
-                      <option value="USD">USD</option>
-                      <option value="NGN">NGN</option>
-                      <option value="GBP">GBP</option>
-                      <option value="EUR">EUR</option>
-                    </select>
-                  </label>
-                  <label>
-                    Email
-                    <input id="paymentEmailInput" type="email" autocomplete="email" />
-                  </label>
-                </div>
-              </div>
-              <div class="plan-grid">
-                <article>
-                  <strong>Free</strong>
-                  <span>$0</span>
-                  <ul>
-                    <li>Paper trading and strategy preview</li>
-                    <li>Live market prices</li>
-                    <li>No real order routing</li>
-                  </ul>
-                  <button id="freePlanButton" type="button">Select</button>
-                </article>
-                <article>
-                  <strong>Pro</strong>
-                  <span>$29/mo</span>
-                  <ul>
-                    <li>Single-user mainnet live trading</li>
-                    <li>Risk console and emergency stop</li>
-                    <li>Live order and fill tracking</li>
-                  </ul>
-                  <button id="proPlanButton" class="primary" type="button">Select</button>
-                </article>
-              </div>
-              <div id="paymentStatus" class="payment-status">Stripe, Flutterwave, fiat, or crypto.</div>
+              <p>Access is free for now. Connect only the exchange account you control when you are ready to run paper or live loops.</p>
             </section>
           </div>
         </section>

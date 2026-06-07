@@ -1,32 +1,20 @@
 from __future__ import annotations
 
 import json
-import hashlib
-import hmac
-import secrets
 import threading
 import time
-import urllib.error
-import urllib.request
 from dataclasses import replace
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import os
 from pathlib import Path
-from urllib.parse import parse_qs, urlencode, urlparse
+from urllib.parse import parse_qs, urlparse
 
 from monatise.analysis.context import context_assets, grid_instruction, indicator_snapshot
 from monatise.analysis.fibonacci import analyze_fibonacci
 from monatise.adapters.hyperliquid import HyperliquidAdapter
 from monatise.live.config import RuntimeConfig
-from monatise.live.secrets import secret_value
 from monatise.live.service import JsonEncoder, TradingService
-from monatise.live.users import CryptoInvoice, User, UserCredentials, UserStore, encryption_key_configured
-
-
-PLAN_PRICES = {
-    "free": {"amount": 0, "currency": "USD"},
-    "pro": {"amount": 29, "currency": "USD"},
-}
+from monatise.live.users import User, UserCredentials, UserStore, encryption_key_configured
 
 COMMODITY_WATCHLIST = ("GOLD", "CL", "BRENTOIL")
 FOREX_WATCHLIST = ("EURUSD", "GBPUSD", "USDJPY", "XAG")
@@ -133,400 +121,9 @@ class MarketFeed:
         ]
 
 
-class PaymentGateway:
-    DEFAULT_CRYPTO_RAILS = (
-        ("USDC on Solana", "dJs4k4PUfH8WVWoECJ925WWP91LcUq8nbZPZcHZCWHp"),
-        ("USDC on Arbitrum", "0xbD0B18D46B7afA6E5874A6e0eebbfD28276EA560"),
-        ("USDC on Polygon", "0xbD0B18D46B7afA6E5874A6e0eebbfD28276EA560"),
-    )
-
-    def __init__(self, store: UserStore | None = None) -> None:
-        self.store = store
-
-    def config(self) -> dict:
-        recipient = self._recipient_name()
-        stripe_ready = bool(secret_value("STRIPE_SECRET_KEY", "")) and bool(secret_value("STRIPE_WEBHOOK_SECRET", ""))
-        flutterwave_ready = bool(secret_value("FLUTTERWAVE_SECRET_KEY", ""))
-        crypto_rails = self._crypto_rails()
-        return {
-            "recipient": recipient,
-            "rails": {
-                "stripe": {
-                    "configured": stripe_ready,
-                    "destination": f"{recipient} Stripe merchant account",
-                    "webhookConfigured": bool(secret_value("STRIPE_WEBHOOK_SECRET", "")),
-                },
-                "flutterwave": {
-                    "configured": flutterwave_ready,
-                    "destination": f"{recipient} Flutterwave merchant account",
-                },
-                "crypto": {
-                    "configured": bool(crypto_rails),
-                    "destination": self._format_crypto_destination(crypto_rails),
-                    "networks": crypto_rails,
-                },
-            },
-        }
-
-    def checkout(self, user: User, payload: dict) -> dict:
-        plan = str(payload.get("plan", "pro")).lower()
-        method = str(payload.get("method", "flutterwave")).lower()
-        price = PLAN_PRICES.get(plan)
-        if price is None:
-            raise ValueError("unknown subscription plan")
-        if plan == "free":
-            return {"provider": "internal", "status": "active", "plan": "free"}
-        if method in {"flutterwave", "fiat"}:
-            return self._flutterwave_checkout(user, plan, price, payload)
-        if method == "stripe":
-            return self._stripe_checkout(user, plan, price, payload)
-        if method == "crypto":
-            return self._crypto_checkout(user, plan, price)
-        raise ValueError("unknown payment method")
-
-    def _stripe_checkout(self, user: User, plan: str, price: dict, payload: dict) -> dict:
-        secret_key = secret_value("STRIPE_SECRET_KEY", "")
-        destination = self._destination("stripe")
-        if not secret_key:
-            return {
-                "provider": "stripe",
-                "status": "setup_required",
-                "message": "STRIPE_SECRET_KEY is not configured",
-                "destination": destination,
-            }
-        if not secret_value("STRIPE_WEBHOOK_SECRET", ""):
-            return {
-                "provider": "stripe",
-                "status": "setup_required",
-                "message": "STRIPE_WEBHOOK_SECRET is required before accepting Stripe payments",
-                "destination": destination,
-            }
-        host = os.getenv("MONATISE_PUBLIC_URL", "https://monatise-live.onrender.com").rstrip("/")
-        form = {
-            "mode": "subscription",
-            "success_url": f"{host}/?payment=stripe_success",
-            "cancel_url": f"{host}/?payment=stripe_cancelled",
-            "client_reference_id": f"{user.id}:{plan}",
-            "customer_email": str(payload.get("email") or f"{user.username}@monatise.local"),
-            "metadata[user_id]": str(user.id),
-            "metadata[plan]": plan,
-            "line_items[0][quantity]": "1",
-            "line_items[0][price_data][currency]": str(payload.get("currency", price["currency"])).lower(),
-            "line_items[0][price_data][unit_amount]": str(int(price["amount"]) * 100),
-            "line_items[0][price_data][recurring][interval]": "month",
-            "line_items[0][price_data][product_data][name]": f"Monatise {plan.title()}",
-        }
-        request = urllib.request.Request(
-            "https://api.stripe.com/v1/checkout/sessions",
-            data=urlencode(form).encode("utf-8"),
-            headers={
-                "Authorization": f"Bearer {secret_key}",
-                "Content-Type": "application/x-www-form-urlencoded",
-            },
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=20) as response:  # noqa: S310
-                result = json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as error:
-            details = error.read().decode("utf-8")
-            raise ValueError(f"Stripe checkout failed: {details}") from error
-        url = result.get("url")
-        if not url:
-            raise ValueError("Stripe did not return a checkout URL")
-        return {
-            "provider": "stripe",
-            "status": "redirect",
-            "checkoutUrl": url,
-            "sessionId": result.get("id"),
-            "destination": destination,
-        }
-
-    def _flutterwave_checkout(self, user: User, plan: str, price: dict, payload: dict) -> dict:
-        secret_key = secret_value("FLUTTERWAVE_SECRET_KEY", "")
-        public_key = secret_value("FLUTTERWAVE_PUBLIC_KEY", "")
-        destination = self._destination("flutterwave")
-        if not secret_key:
-            return {
-                "provider": "flutterwave",
-                "status": "setup_required",
-                "message": "FLUTTERWAVE_SECRET_KEY is not configured",
-                "publicKeyConfigured": bool(public_key),
-                "destination": destination,
-            }
-
-        host = os.getenv("MONATISE_PUBLIC_URL", "https://monatise-live.onrender.com").rstrip("/")
-        tx_ref = f"monatise-{user.id}-{plan}-{int(time.time())}"
-        body = {
-            "tx_ref": tx_ref,
-            "amount": price["amount"],
-            "currency": str(payload.get("currency", price["currency"])).upper(),
-            "redirect_url": f"{host}/api/payments/flutterwave/callback",
-            "customer": {
-                "email": str(payload.get("email") or f"{user.username}@monatise.local"),
-                "name": user.username,
-            },
-            "customizations": {
-                "title": "Monatise",
-                "description": f"{plan.title()} subscription",
-            },
-        }
-        request = urllib.request.Request(
-            "https://api.flutterwave.com/v3/payments",
-            data=json.dumps(body).encode("utf-8"),
-            headers={"Authorization": f"Bearer {secret_key}", "Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=20) as response:  # noqa: S310
-                result = json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as error:
-            details = error.read().decode("utf-8")
-            raise ValueError(f"Flutterwave checkout failed: {details}") from error
-        link = result.get("data", {}).get("link")
-        if not link:
-            raise ValueError("Flutterwave did not return a checkout link")
-        return {
-            "provider": "flutterwave",
-            "status": "redirect",
-            "checkoutUrl": link,
-            "txRef": tx_ref,
-            "destination": destination,
-        }
-
-    def _crypto_checkout(self, user: User, plan: str, price: dict) -> dict:
-        crypto_rails = self._crypto_rails()
-        default_rail = crypto_rails[0] if crypto_rails else {"network": "", "address": ""}
-        reference = f"monatise-{user.id}-{plan}-{int(time.time())}-{secrets.token_hex(4)}"
-        amount = self._unique_crypto_amount(float(price["amount"]))
-        invoice_id = None
-        if self.store is not None:
-            invoice = self.store.create_crypto_invoice(user.id, plan, amount, "USDC", reference)
-            invoice_id = invoice.id
-        return {
-            "provider": "crypto",
-            "status": "pending",
-            "plan": plan,
-            "amount": amount,
-            "currency": "USDC",
-            "network": default_rail["network"],
-            "address": default_rail["address"],
-            "destination": self._format_crypto_destination(crypto_rails),
-            "networks": crypto_rails,
-            "recipient": self._recipient_name(),
-            "reference": reference,
-            "invoiceId": invoice_id,
-            "setupRequired": not bool(crypto_rails),
-        }
-
-    def _recipient_name(self) -> str:
-        return os.getenv("MONATISE_PAYMENT_RECEIVER_NAME", "Monatise").strip() or "Monatise"
-
-    def _destination(self, rail: str) -> dict:
-        return {"recipient": self._recipient_name(), "rail": rail}
-
-    def _crypto_rails(self) -> list[dict]:
-        configured = secret_value("MONATISE_CRYPTO_PAYMENT_RAILS", "")
-        if not configured:
-            configured = ",".join(f"{network}|{address}" for network, address in self.DEFAULT_CRYPTO_RAILS)
-        rails = []
-        for raw_rail in configured.split(","):
-            network, _, address = raw_rail.strip().partition("|")
-            if not network or not address:
-                continue
-            rails.append({"network": network.strip(), "address": address.strip()})
-        if rails:
-            return rails
-
-        address = secret_value("MONATISE_CRYPTO_PAYMENT_ADDRESS", "")
-        network = os.getenv("MONATISE_CRYPTO_PAYMENT_NETWORK", "USDC on Arbitrum or HyperEVM")
-        if address:
-            return [{"network": network, "address": address}]
-        return []
-
-    @staticmethod
-    def _format_crypto_destination(rails: list[dict]) -> str:
-        return " · ".join(f"{rail['network']}: {rail['address']}" for rail in rails)
-
-    @staticmethod
-    def _unique_crypto_amount(base_amount: float) -> float:
-        base_units = int(round(base_amount * 1_000_000))
-        return (base_units + secrets.randbelow(9_000) + 1_000) / 1_000_000
-
-
-class CryptoPaymentWatcher:
-    TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
-    EVM_USDC_CONTRACTS = {
-        "arbitrum": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
-        "polygon": "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
-    }
-    EVM_RPC_DEFAULTS = {
-        "arbitrum": "https://arb1.arbitrum.io/rpc",
-        "polygon": "https://polygon-rpc.com",
-    }
-    SOLANA_USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
-
-    def __init__(self, store: UserStore, gateway: PaymentGateway) -> None:
-        self.store = store
-        self.gateway = gateway
-        self.poll_seconds = float(os.getenv("MONATISE_CRYPTO_WATCHER_SECONDS", "60"))
-        self._stop = threading.Event()
-        self._thread: threading.Thread | None = None
-
-    def start(self) -> None:
-        if os.getenv("MONATISE_CRYPTO_WATCHER_ENABLED", "true").lower() != "true":
-            return
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
-
-    def stop(self) -> None:
-        self._stop.set()
-
-    def _run(self) -> None:
-        while not self._stop.is_set():
-            try:
-                self.check_once()
-            except Exception as error:  # noqa: BLE001
-                print(f"crypto watcher error: {error}", flush=True)
-            self._stop.wait(self.poll_seconds)
-
-    def check_once(self) -> int:
-        confirmed = 0
-        rails = self.gateway._crypto_rails()
-        for invoice in self.store.pending_crypto_invoices():
-            match = self._find_payment(invoice, rails)
-            if match is None:
-                continue
-            self.store.mark_crypto_invoice_paid(invoice.id, network=match["network"], tx_hash=match["tx_hash"])
-            confirmed += 1
-            print(f"crypto invoice paid: {invoice.reference} {match['network']} {match['tx_hash']}", flush=True)
-        return confirmed
-
-    def _find_payment(self, invoice: CryptoInvoice, rails: list[dict]) -> dict | None:
-        for rail in rails:
-            network = str(rail.get("network", ""))
-            lowered = network.lower()
-            if "solana" in lowered:
-                match = self._find_solana_payment(invoice, rail)
-            elif "arbitrum" in lowered or "polygon" in lowered:
-                match = self._find_evm_payment(invoice, rail)
-            else:
-                match = None
-            if match is not None:
-                return match
-        return None
-
-    def _find_evm_payment(self, invoice: CryptoInvoice, rail: dict) -> dict | None:
-        network = str(rail["network"])
-        network_key = "arbitrum" if "arbitrum" in network.lower() else "polygon"
-        rpc_url = self._evm_rpc_url(network_key)
-        if not rpc_url:
-            return None
-        latest_hex = self._rpc_json(rpc_url, "eth_blockNumber", [])
-        latest = int(str(latest_hex), 16)
-        lookback = int(os.getenv("MONATISE_CRYPTO_EVM_BLOCK_LOOKBACK", "20000"))
-        from_block = max(0, latest - lookback)
-        to_topic = "0x" + "0" * 24 + str(rail["address"]).lower().removeprefix("0x")
-        logs = self._rpc_json(
-            rpc_url,
-            "eth_getLogs",
-            [
-                {
-                    "address": self.EVM_USDC_CONTRACTS[network_key],
-                    "fromBlock": hex(from_block),
-                    "toBlock": "latest",
-                    "topics": [self.TRANSFER_TOPIC, None, to_topic],
-                }
-            ],
-        )
-        required_units = int(round(invoice.amount * 1_000_000))
-        for event in logs or []:
-            amount = int(str(event.get("data", "0x0")), 16)
-            if amount == required_units:
-                return {"network": network, "tx_hash": str(event.get("transactionHash", ""))}
-        return None
-
-    def _find_solana_payment(self, invoice: CryptoInvoice, rail: dict) -> dict | None:
-        rpc_url = os.getenv("MONATISE_SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com")
-        token_accounts = self._solana_token_accounts(rpc_url, str(rail["address"]))
-        required_units = int(round(invoice.amount * 1_000_000))
-        for token_account in token_accounts:
-            signatures = self._rpc_json(
-                rpc_url,
-                "getSignaturesForAddress",
-                [token_account, {"limit": int(os.getenv("MONATISE_CRYPTO_SOLANA_SIGNATURE_LIMIT", "25"))}],
-            )
-            for item in signatures or []:
-                signature = str(item.get("signature", ""))
-                if not signature:
-                    continue
-                transaction = self._rpc_json(
-                    rpc_url,
-                    "getTransaction",
-                    [signature, {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0}],
-                )
-                if self._solana_transaction_matches(transaction, token_account, required_units):
-                    return {"network": str(rail["network"]), "tx_hash": signature}
-        return None
-
-    def _solana_token_accounts(self, rpc_url: str, owner: str) -> list[str]:
-        result = self._rpc_json(
-            rpc_url,
-            "getTokenAccountsByOwner",
-            [owner, {"mint": self.SOLANA_USDC_MINT}, {"encoding": "jsonParsed"}],
-        )
-        accounts = []
-        for item in result.get("value", []) if isinstance(result, dict) else []:
-            pubkey = item.get("pubkey")
-            if pubkey:
-                accounts.append(str(pubkey))
-        return accounts
-
-    def _solana_transaction_matches(self, transaction: dict, token_account: str, required_units: int) -> bool:
-        meta = transaction.get("meta", {}) if isinstance(transaction, dict) else {}
-        for balance in meta.get("postTokenBalances", []) or []:
-            if balance.get("mint") != self.SOLANA_USDC_MINT:
-                continue
-            if balance.get("accountIndex") is None:
-                continue
-        instructions = self._solana_instructions(transaction)
-        for instruction in instructions:
-            parsed = instruction.get("parsed", {}) if isinstance(instruction, dict) else {}
-            info = parsed.get("info", {}) if isinstance(parsed, dict) else {}
-            if info.get("mint") != self.SOLANA_USDC_MINT:
-                continue
-            if info.get("destination") != token_account:
-                continue
-            amount = info.get("tokenAmount", {}).get("amount") or info.get("amount")
-            if amount is not None and int(amount) == required_units:
-                return True
-        return False
-
-    def _solana_instructions(self, transaction: dict) -> list[dict]:
-        message = transaction.get("transaction", {}).get("message", {}) if isinstance(transaction, dict) else {}
-        instructions = list(message.get("instructions", []) or [])
-        for inner in transaction.get("meta", {}).get("innerInstructions", []) or []:
-            instructions.extend(inner.get("instructions", []) or [])
-        return instructions
-
-    def _evm_rpc_url(self, network_key: str) -> str:
-        env_key = f"MONATISE_{network_key.upper()}_RPC_URL"
-        return os.getenv(env_key, self.EVM_RPC_DEFAULTS[network_key])
-
-    def _rpc_json(self, url: str, method: str, params: list) -> object:
-        body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode("utf-8")
-        request = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
-        with urllib.request.urlopen(request, timeout=20) as response:  # noqa: S310
-            payload = json.loads(response.read().decode("utf-8"))
-        if payload.get("error"):
-            raise ValueError(f"{method} RPC error: {payload['error']}")
-        return payload.get("result")
-
-
 class MonatiseHandler(SimpleHTTPRequestHandler):
     tenants: TenantServices
     market_feed: MarketFeed
-    payment_gateway: PaymentGateway
     store: UserStore
     config: RuntimeConfig
     app_dir: Path
@@ -625,9 +222,6 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             except Exception as error:  # noqa: BLE001
                 self._error(502, str(error))
             return
-        if parsed.path == "/api/payments/config":
-            self._json(self.payment_gateway.config())
-            return
         if parsed.path == "/api/me":
             user = self._current_user()
             if user is None:
@@ -647,11 +241,6 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                     "tradingRules": settings_payload(settings),
                 }
             )
-            return
-        if parsed.path == "/api/payments/flutterwave/callback":
-            params = parse_qs(parsed.query)
-            status = params.get("status", ["unknown"])[0]
-            self._redirect(f"/?payment={status}")
             return
         if parsed.path == "/api/status":
             user = self._require_user()
@@ -677,7 +266,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
-        if parsed.path != "/api/payments/stripe/webhook" and not self._valid_request_origin():
+        if not self._valid_request_origin():
             self._error(403, "invalid request origin")
             return
         if self._rate_limited(parsed.path):
@@ -792,59 +381,9 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             except (TypeError, ValueError) as error:
                 self._error(400, str(error))
             return
-        if parsed.path == "/api/subscription":
-            user = self._require_user()
-            if user is None:
-                return
-            payload = self._read_json()
-            plan = str(payload.get("plan", "")).strip().lower()
-            if plan != "free":
-                self._error(402, "paid plans must be activated through verified checkout")
-                return
-            try:
-                settings = self.store.save_subscription_plan(user.id, plan)
-                self._json(
-                    {
-                        "subscription": {
-                            "plan": settings.subscription_plan,
-                            "status": settings.subscription_status,
-                        }
-                    }
-                )
-            except ValueError as error:
-                self._error(400, str(error))
-            return
-        if parsed.path == "/api/payments/stripe/webhook":
-            self._handle_stripe_webhook()
-            return
-        if parsed.path == "/api/payments/checkout":
-            user = self._require_user()
-            if user is None:
-                return
-            payload = self._read_json()
-            try:
-                checkout = self.payment_gateway.checkout(user, payload)
-                if checkout.get("provider") == "internal":
-                    settings = self.store.save_subscription_plan(user.id, str(checkout["plan"]))
-                    checkout["subscription"] = {
-                        "plan": settings.subscription_plan,
-                        "status": settings.subscription_status,
-                    }
-                self._json(checkout)
-            except ValueError as error:
-                self._error(400, str(error))
-            return
         if parsed.path == "/api/start":
             user = self._require_user()
             if user is None:
-                return
-            settings = self.store.settings_for_user(user.id)
-            if (
-                self.tenants.base_config.mode == "live"
-                and self.tenants.base_config.network == "mainnet"
-                and settings.subscription_plan != "pro"
-            ):
-                self._error(402, "Pro is required before starting mainnet live trading")
                 return
             try:
                 self._json(self.tenants.service_for_user(user).start())
@@ -909,7 +448,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "no-referrer")
-        self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()")
+        self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
         self.send_header(
             "Content-Security-Policy",
             "default-src 'self'; "
@@ -947,50 +486,6 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _redirect(self, location: str) -> None:
-        self.send_response(302)
-        self.send_header("Location", location)
-        self.end_headers()
-
-    def _handle_stripe_webhook(self) -> None:
-        body = self._read_body()
-        secret = secret_value("STRIPE_WEBHOOK_SECRET", "")
-        if not secret:
-            self._error(503, "Stripe webhook secret is not configured")
-            return
-        if not self._valid_stripe_signature(body, secret):
-            self._error(400, "invalid Stripe signature")
-            return
-        try:
-            event = json.loads(body.decode("utf-8"))
-        except json.JSONDecodeError:
-            self._error(400, "invalid webhook payload")
-            return
-        if event.get("type") == "checkout.session.completed":
-            session = event.get("data", {}).get("object", {})
-            plan = session.get("metadata", {}).get("plan", "")
-            user_id = session.get("metadata", {}).get("user_id", "")
-            if not user_id or not plan:
-                reference = str(session.get("client_reference_id", ""))
-                user_id, _, plan = reference.partition(":")
-            if user_id.isdigit() and plan:
-                try:
-                    self.store.save_subscription_plan(int(user_id), plan)
-                except ValueError:
-                    pass
-        self._json({"received": True})
-
-    def _valid_stripe_signature(self, body: bytes, secret: str) -> bool:
-        header = self.headers.get("Stripe-Signature", "")
-        values = dict(part.split("=", 1) for part in header.split(",") if "=" in part)
-        timestamp = values.get("t", "")
-        signature = values.get("v1", "")
-        if not timestamp or not signature:
-            return False
-        payload = timestamp.encode("utf-8") + b"." + body
-        expected = hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
-        return hmac.compare_digest(expected, signature)
-
     def _valid_request_origin(self) -> bool:
         origin = self.headers.get("Origin") or self.headers.get("Referer")
         if not origin:
@@ -1010,7 +505,6 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             "/api/login": (10, 60),
             "/api/register": (6, 60),
             "/api/credentials": (6, 60),
-            "/api/payments/checkout": (12, 60),
             "/api/start": (6, 60),
             "/api/stop": (12, 60),
         }
@@ -1036,9 +530,6 @@ def main() -> int:
     store = UserStore()
     tenants = TenantServices(config, store)
     market_feed = MarketFeed(replace(config, account_address="", secret_key=""))
-    payment_gateway = PaymentGateway(store)
-    crypto_watcher = CryptoPaymentWatcher(store, payment_gateway)
-    crypto_watcher.start()
     app_dir = Path(__file__).resolve().parents[2] / "app"
 
     class Handler(MonatiseHandler):
@@ -1047,7 +538,6 @@ def main() -> int:
     Handler.store = store
     Handler.tenants = tenants
     Handler.market_feed = market_feed
-    Handler.payment_gateway = payment_gateway
     Handler.config = config
     Handler.app_dir = app_dir
 

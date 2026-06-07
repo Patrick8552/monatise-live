@@ -42,22 +42,6 @@ class UserSettings:
     max_daily_loss_pct: float = 0.05
 
 
-@dataclass(frozen=True)
-class CryptoInvoice:
-    id: int
-    user_id: int
-    plan: str
-    amount: float
-    currency: str
-    reference: str
-    status: str
-    created_at: float
-    updated_at: float
-    paid_at: float | None = None
-    network: str = ""
-    tx_hash: str = ""
-
-
 def default_auth_db_path() -> str:
     configured = os.getenv("MONATISE_AUTH_DB")
     if configured:
@@ -206,8 +190,6 @@ class UserStore:
         chart_interval = chart_interval.strip()
         if chart_interval not in {"1h", "15m", "5m", "1m"}:
             raise ValueError("chart interval must be 1h, 15m, 5m, or 1m")
-        if settings.subscription_plan != "pro" and chart_interval == "1m":
-            raise ValueError("1m grid analysis is available for Pro users only")
         if session_guard_minutes not in {5, 15, 30, 60, 90}:
             raise ValueError("session guard must be 5, 15, 30, 60, or 90 minutes")
         if not 0 < max_daily_loss_pct <= 0.2:
@@ -246,8 +228,8 @@ class UserStore:
 
     def save_subscription_plan(self, user_id: int, plan: str) -> UserSettings:
         plan = plan.strip().lower()
-        if plan not in {"free", "pro"}:
-            raise ValueError("unknown subscription plan")
+        if plan != "free":
+            raise ValueError("unknown access plan")
         settings = self.settings_for_user(user_id)
         with self._connect() as conn:
             conn.execute(
@@ -262,89 +244,6 @@ class UserStore:
                 (user_id, settings.selected_symbol, plan, "active", time.time()),
             )
         return self.settings_for_user(user_id)
-
-    def create_crypto_invoice(self, user_id: int, plan: str, amount: float, currency: str, reference: str) -> CryptoInvoice:
-        now = time.time()
-        with self._connect() as conn:
-            conn.execute(
-                """
-                insert into crypto_invoices(user_id, plan, amount, currency, reference, status, created_at, updated_at)
-                values (?, ?, ?, ?, ?, 'pending', ?, ?)
-                on conflict(reference) do update set
-                  amount = excluded.amount,
-                  currency = excluded.currency,
-                  status = 'pending',
-                  updated_at = excluded.updated_at
-                """,
-                (user_id, plan, amount, currency, reference, now, now),
-            )
-        invoice = self.crypto_invoice_for_reference(reference)
-        if invoice is None:
-            raise ValueError("crypto invoice could not be created")
-        return invoice
-
-    def pending_crypto_invoices(self, limit: int = 50) -> list[CryptoInvoice]:
-        with self._connect() as conn:
-            rows = conn.execute(
-                """
-                select id, user_id, plan, amount, currency, reference, status, created_at, updated_at,
-                       paid_at, network, tx_hash
-                from crypto_invoices
-                where status = 'pending'
-                order by created_at asc
-                limit ?
-                """,
-                (limit,),
-            ).fetchall()
-        return [self._crypto_invoice_from_row(row) for row in rows]
-
-    def crypto_invoice_for_reference(self, reference: str) -> CryptoInvoice | None:
-        with self._connect() as conn:
-            row = conn.execute(
-                """
-                select id, user_id, plan, amount, currency, reference, status, created_at, updated_at,
-                       paid_at, network, tx_hash
-                from crypto_invoices
-                where reference = ?
-                """,
-                (reference,),
-            ).fetchone()
-        return self._crypto_invoice_from_row(row) if row is not None else None
-
-    def mark_crypto_invoice_paid(self, invoice_id: int, *, network: str, tx_hash: str) -> CryptoInvoice:
-        now = time.time()
-        with self._connect() as conn:
-            row = conn.execute(
-                """
-                update crypto_invoices
-                set status = 'paid', paid_at = ?, network = ?, tx_hash = ?, updated_at = ?
-                where id = ? and status = 'pending'
-                returning id, user_id, plan, amount, currency, reference, status, created_at, updated_at,
-                          paid_at, network, tx_hash
-                """,
-                (now, network, tx_hash, now, invoice_id),
-            ).fetchone()
-        if row is None:
-            invoice = self.crypto_invoice_for_id(invoice_id)
-            if invoice is None:
-                raise ValueError("crypto invoice not found")
-            return invoice
-        invoice = self._crypto_invoice_from_row(row)
-        self.save_subscription_plan(invoice.user_id, invoice.plan)
-        return invoice
-
-    def crypto_invoice_for_id(self, invoice_id: int) -> CryptoInvoice | None:
-        with self._connect() as conn:
-            row = conn.execute(
-                """
-                select id, user_id, plan, amount, currency, reference, status, created_at, updated_at,
-                       paid_at, network, tx_hash
-                from crypto_invoices
-                where id = ?
-                """,
-                (invoice_id,),
-            ).fetchone()
-        return self._crypto_invoice_from_row(row) if row is not None else None
 
     def settings_for_user(self, user_id: int) -> UserSettings:
         with self._connect() as conn:
@@ -429,20 +328,6 @@ class UserStore:
                   max_daily_loss_pct real not null default 0.05,
                   updated_at real not null
                 );
-                create table if not exists crypto_invoices(
-                  id integer primary key,
-                  user_id integer not null references users(id) on delete cascade,
-                  plan text not null,
-                  amount real not null,
-                  currency text not null,
-                  reference text not null unique,
-                  status text not null,
-                  created_at real not null,
-                  updated_at real not null,
-                  paid_at real,
-                  network text not null default '',
-                  tx_hash text not null default ''
-                );
                 """
             )
             existing = {
@@ -466,20 +351,3 @@ class UserStore:
             raise ValueError("username must be at least 3 characters")
         if len(password) < 8:
             raise ValueError("password must be at least 8 characters")
-
-    @staticmethod
-    def _crypto_invoice_from_row(row: sqlite3.Row) -> CryptoInvoice:
-        return CryptoInvoice(
-            id=int(row["id"]),
-            user_id=int(row["user_id"]),
-            plan=str(row["plan"]),
-            amount=float(row["amount"]),
-            currency=str(row["currency"]),
-            reference=str(row["reference"]),
-            status=str(row["status"]),
-            created_at=float(row["created_at"]),
-            updated_at=float(row["updated_at"]),
-            paid_at=float(row["paid_at"]) if row["paid_at"] is not None else None,
-            network=str(row["network"] or ""),
-            tx_hash=str(row["tx_hash"] or ""),
-        )

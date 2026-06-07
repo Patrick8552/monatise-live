@@ -50,7 +50,7 @@ def test_user_store_encrypts_credentials_per_user() -> None:
         _restore_key(old_key)
 
 
-def test_user_store_saves_asset_and_subscription_settings() -> None:
+def test_user_store_saves_asset_and_free_access_settings() -> None:
     old_key = _with_key()
     try:
         with tempfile.NamedTemporaryFile() as db:
@@ -60,34 +60,20 @@ def test_user_store_saves_asset_and_subscription_settings() -> None:
             assert store.settings_for_user(user.id).selected_symbol == "BTC"
             settings = store.save_selected_symbol(user.id, "eth")
             assert settings.selected_symbol == "ETH"
-            settings = store.save_subscription_plan(user.id, "pro")
-            assert settings.subscription_plan == "pro"
+            settings = store.save_subscription_plan(user.id, "free")
+            assert settings.subscription_plan == "free"
             assert settings.subscription_status == "active"
     finally:
         _restore_key(old_key)
 
 
-def test_user_store_saves_trading_rules_and_gates_one_minute_to_pro() -> None:
+def test_user_store_saves_one_minute_trading_rules_on_free_access() -> None:
     old_key = _with_key()
     try:
         with tempfile.NamedTemporaryFile() as db:
             store = UserStore(db.name)
             user = store.create_user("trader-four", "password123")
 
-            try:
-                store.save_trading_rules(
-                    user.id,
-                    chart_interval="1m",
-                    london_commodity_only=True,
-                    max_daily_loss_pct=0.05,
-                    session_guard_minutes=60,
-                    stale_grid_cancel=True,
-                )
-                raise AssertionError("expected free 1m rule to fail")
-            except ValueError as error:
-                assert "Pro" in str(error)
-
-            store.save_subscription_plan(user.id, "pro")
             settings = store.save_trading_rules(
                 user.id,
                 chart_interval="1m",
