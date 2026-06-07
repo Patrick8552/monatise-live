@@ -1863,6 +1863,7 @@ function setupCanvas(canvas) {
 }
 
 function drawLiquidity(options = {}) {
+  if (!els.liquidityCanvas) return;
   const { ctx, height, width } = setupCanvas(els.liquidityCanvas);
   const candle = state.candles[Math.max(0, Math.min(state.activeIndex, state.candles.length - 1))];
   const mark = Number(options.mark ?? currentMarketPrice() ?? candle.close);
