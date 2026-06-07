@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Onboarding & Withdrawals | Monatise</title>
+    <link rel="stylesheet" href="./styles.css?v=20260607-onboarding" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar page-topbar">
+        <div>
+          <p class="eyebrow">Mainnet onboarding</p>
+          <h1>Start Safely</h1>
+        </div>
+        <nav class="desk-nav" aria-label="primary navigation">
+          <a href="./index.html">Desk</a>
+          <a href="./onboarding.html" aria-current="page">Onboarding</a>
+          <a href="./learn.html">Learn</a>
+          <a href="./about.html">About</a>
+          <a href="./contact.html">Contact</a>
+        </nav>
+        <div class="status-strip" aria-label="onboarding posture">
+          <span>Non-custodial</span>
+          <span>User wallet</span>
+          <span>Small live</span>
+        </div>
+      </header>
+
+      <section class="ops-ribbon" aria-label="funds flow">
+        <article>
+          <span>Funds</span>
+          <strong>Your wallet</strong>
+        </article>
+        <article>
+          <span>Trading venue</span>
+          <strong>Hyperliquid</strong>
+        </article>
+        <article>
+          <span>Monatise role</span>
+          <strong>Software access</strong>
+        </article>
+        <article>
+          <span>Withdrawals</span>
+          <strong>At venue</strong>
+        </article>
+      </section>
+
+      <section class="page-grid onboarding-grid" aria-label="Monatise onboarding">
+        <section class="page-panel page-lede">
+          <p class="eyebrow">Money flow</p>
+          <h2>Monatise does not custody trading funds. Your capital stays in your own exchange wallet.</h2>
+          <p>
+            The app gives you a grid-trading console, risk controls, and order automation. It does not hold your
+            deposits, process trading withdrawals, or become the place where your market capital lives.
+          </p>
+        </section>
+
+        <aside class="page-panel dark-callout">
+          <p class="eyebrow">Plain answer</p>
+          <h2>Where do withdrawals happen?</h2>
+          <ul class="desk-list">
+            <li>Withdraw trading funds from Hyperliquid or your wallet route</li>
+            <li>Cancel or stop Monatise before moving funds</li>
+            <li>Confirm no live grid orders are resting</li>
+            <li>Monatise subscription payments are separate from trading capital</li>
+          </ul>
+        </aside>
+
+        <section class="page-panel">
+          <div class="panel-head">
+            <h2>Choose Your Path</h2>
+            <span>No account yet?</span>
+          </div>
+          <div class="path-grid">
+            <article>
+              <span>01</span>
+              <strong>Learn Mode</strong>
+              <p>No Hyperliquid account or wallet required. Use the Learn page and strategy preview to understand grids, fees, and risk.</p>
+            </article>
+            <article>
+              <span>02</span>
+              <strong>Paper Mode</strong>
+              <p>Watch live market prices and practice the workflow without routing real orders or risking market capital.</p>
+            </article>
+            <article>
+              <span>03</span>
+              <strong>Connect Hyperliquid</strong>
+              <p>Create or use your own account, fund it directly, save your API wallet in Monatise, and start with small order clips.</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="page-panel">
+          <div class="panel-head">
+            <h2>Connect Checklist</h2>
+            <span>Before live</span>
+          </div>
+          <ol class="learning-path">
+            <li>
+              <strong>Create or prepare a wallet</strong>
+              <span>Use a wallet and Hyperliquid flow you control. Keep seed phrases and private keys outside Monatise.</span>
+            </li>
+            <li>
+              <strong>Fund the venue directly</strong>
+              <span>Deposit through Hyperliquid-supported routes. Monatise should not receive trading deposits.</span>
+            </li>
+            <li>
+              <strong>Create an API wallet</strong>
+              <span>Use a trading API wallet for execution. Avoid pasting primary wallet secrets into web apps.</span>
+            </li>
+            <li>
+              <strong>Save credentials in the desk</strong>
+              <span>Log in, add account address and API wallet secret, then confirm the dashboard reports credentials saved.</span>
+            </li>
+            <li>
+              <strong>Start tiny</strong>
+              <span>Use the default small order clip, watch exchange order count, and stop immediately if sync looks wrong.</span>
+            </li>
+          </ol>
+        </section>
+
+        <section class="page-panel">
+          <div class="panel-head">
+            <h2>Withdrawal Workflow</h2>
+            <span>Do this first</span>
+          </div>
+          <div class="withdrawal-flow">
+            <article>
+              <strong>Stop the desk</strong>
+              <p>Press Stop and wait for the Runtime Log to show the loop is no longer placing or refreshing orders.</p>
+            </article>
+            <article>
+              <strong>Check open orders</strong>
+              <p>Confirm Live Orders is empty or cancel resting orders at the venue before removing funds.</p>
+            </article>
+            <article>
+              <strong>Withdraw at Hyperliquid</strong>
+              <p>Use Hyperliquid or your connected wallet route. Monatise cannot release funds it never custodies.</p>
+            </article>
+            <article>
+              <strong>Return carefully</strong>
+              <p>After balances change, refresh the desk and let the risk console recalculate before restarting live trading.</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="page-panel faq-panel">
+          <div class="panel-head">
+            <h2>Quick FAQ</h2>
+            <span>Trust basics</span>
+          </div>
+          <details open>
+            <summary>Can I use Monatise without Hyperliquid?</summary>
+            <p>Yes. You can learn, inspect live market prices, and use strategy preview without connecting a funded account.</p>
+          </details>
+          <details>
+            <summary>Can Monatise withdraw my trading funds?</summary>
+            <p>No. Monatise is designed as non-custodial software. Withdrawals happen from the venue or wallet where your funds are held.</p>
+          </details>
+          <details>
+            <summary>What does Pro or Business pay for?</summary>
+            <p>Subscription access pays for the software layer. It is separate from your trading capital, exchange balances, and withdrawals.</p>
+          </details>
+          <details>
+            <summary>What should I do before funding bigger size?</summary>
+            <p>Run paper mode, start with small clips, review fills, verify cancellations, and keep daily loss limits conservative.</p>
+          </details>
+        </section>
+
+        <section class="page-panel risk-note">
+          <div class="panel-head">
+            <h2>Do Not Deposit Into Monatise</h2>
+            <span>Current policy</span>
+          </div>
+          <p>
+            Monatise should not collect user trading deposits, hold customer crypto, or promise withdrawals from an internal balance.
+            That would require a much heavier compliance, custody, reconciliation, and fraud-control program.
+          </p>
+        </section>
+      </section>
+    </main>
+  </body>
+</html>
