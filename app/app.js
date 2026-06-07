@@ -102,7 +102,6 @@ const els = {
   ticketChart: document.querySelector("#ticketChart"),
   ticketDrawdown: document.querySelector("#ticketDrawdown"),
   ticketExposure: document.querySelector("#ticketExposure"),
-  ticketHedge: document.querySelector("#ticketHedge"),
   ticketNote: document.querySelector("#ticketNote"),
   ticketStatus: document.querySelector("#ticketStatus"),
   ticketSummary: document.querySelector("#ticketSummary"),
@@ -356,7 +355,7 @@ function strategyHealth(mark, orders, snapshot = null) {
     /max daily loss|exceeds|below minimum|shock|guard/i.test(riskStatus) ||
     indicatorAction === "halt";
   const warnings = [];
-  if (structureBreak) warnings.push("price broke structure; hedge grid watch only");
+  if (structureBreak) warnings.push("price broke structure; stop fresh grid entries");
   if (outsideGrid) warnings.push("mark is outside the planned grid range");
   if (!fibOk) warnings.push("live Fibonacci candles pending");
   if (indicatorAction === "reduce") warnings.push("context radar says reduce size");
@@ -387,10 +386,6 @@ function renderStrategyReadout(orders, options = {}) {
   const source = options.source || "preview";
   const sourceLabel = source === "live" ? "Exchange orders" : source === "backend" ? "Backend state" : "Strategy preview only";
   const warningText = health.warnings.length ? health.warnings.join(" · ") : "structure, risk, session, and doctrine are aligned";
-  const hedgeMode = health.structureBreak;
-  const hedgeText = hedgeMode
-    ? "Break structure: stop fresh grid entries, cancel stale resting orders, and use a smaller protective hedge grid only after live gates confirm exposure."
-    : "Standby: hedge grid remains inactive while price trades inside structure.";
   els.strategyReadout.innerHTML = `
     <div class="strategy-status ${health.status.toLowerCase()}">
       <strong>${health.status}</strong>
@@ -405,10 +400,6 @@ function renderStrategyReadout(orders, options = {}) {
       <span>Invalidation <strong>${Number.isFinite(health.invalidation) ? money(health.invalidation) : "pending"}</strong></span>
       <span>Session <strong>${activeSessionGuard(selectedAsset).active ? "blocked" : "clear"}</strong></span>
       <span>Doctrine <strong>no trade remains valid</strong></span>
-    </div>
-    <div class="hedge-protocol ${hedgeMode ? "active" : ""}">
-      <strong>${hedgeMode ? "Hedge grid watch" : "Hedge grid standby"}</strong>
-      <span>${hedgeText}</span>
     </div>
     <p>${warningText}</p>
   `;
@@ -440,7 +431,6 @@ function renderExecutionTicket(orders = [], options = {}) {
   els.ticketExposure.textContent = `${money(openExposure)} (${(exposurePct * 100).toFixed(2)}%)`;
   els.ticketDrawdown.textContent = `${(drawdownPct * 100).toFixed(2)}%`;
   els.ticketChart.textContent = tradingRules.chartInterval;
-  els.ticketHedge.textContent = health.structureBreak ? "Active watch" : "Structure break";
   els.ticketSummary.innerHTML = `
     <div class="ticket-call ${canReview ? "ready" : "blocked"}">
       <strong>${canReview ? "Operator review ready" : "Do not arm yet"}</strong>

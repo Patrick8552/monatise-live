@@ -1828,32 +1828,6 @@ canvas {
   margin: 0;
 }
 
-.hedge-protocol {
-  background: rgba(54, 95, 107, 0.08);
-  border: 1px solid rgba(54, 95, 107, 0.2);
-  border-radius: 6px;
-  display: grid;
-  gap: 4px;
-  padding: 9px;
-}
-
-.hedge-protocol.active {
-  background: rgba(230, 57, 70, 0.08);
-  border-color: rgba(230, 57, 70, 0.28);
-}
-
-.hedge-protocol strong {
-  color: var(--ink);
-  font-size: 0.78rem;
-}
-
-.hedge-protocol span {
-  color: var(--muted);
-  font-size: 0.72rem;
-  font-weight: 750;
-  line-height: 1.35;
-}
-
 .live-desk {
   background:
     linear-gradient(145deg, rgba(8, 13, 13, 0.98), rgba(17, 24, 23, 0.96) 56%, rgba(24, 38, 35, 0.96)),
