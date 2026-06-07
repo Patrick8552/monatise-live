@@ -609,6 +609,35 @@ function assetRoute(symbol) {
   return assetMetadata[symbol]?.route || "Watchlist or strategy-preview asset";
 }
 
+function maskAddress(address = "") {
+  const value = String(address || "");
+  if (value.length <= 14) return value;
+  return `${value.slice(0, 6)}...${value.slice(-6)}`;
+}
+
+async function copyText(value, label = "Value") {
+  const text = String(value || "");
+  if (!text) return;
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      const field = document.createElement("textarea");
+      field.value = text;
+      field.setAttribute("readonly", "");
+      field.style.position = "fixed";
+      field.style.left = "-9999px";
+      document.body.appendChild(field);
+      field.select();
+      document.execCommand("copy");
+      field.remove();
+    }
+    addAuditEvent("copy", `${label} copied`, "clipboard");
+  } catch {
+    addAuditEvent("copy failed", `${label} copy failed`, "select and copy manually");
+  }
+}
+
 function minutesSinceUtcMidnight(date) {
   return date.getUTCHours() * 60 + date.getUTCMinutes();
 }
@@ -1269,12 +1298,7 @@ async function checkoutPlan(plan) {
     return;
   }
   if (payload.provider === "crypto") {
-    const cryptoRails = Array.isArray(payload.networks)
-      ? payload.networks.map((rail) => `${rail.network}: ${rail.address}`).join(" · ")
-      : `${payload.network}: ${payload.address}`;
-    els.paymentStatus.textContent = payload.setupRequired
-      ? "crypto address not configured"
-      : `${payload.recipient || "Monatise"} receives exactly ${payload.amount} ${payload.currency}. Send on one rail only: ${cryptoRails}. Ref ${payload.reference}`;
+    renderCryptoPaymentTicket(payload);
     addAuditEvent("payment instruction", "Crypto payment instructions returned", payload.setupRequired ? "address not configured" : "USDC rails");
     return;
   }
@@ -1289,6 +1313,42 @@ async function checkoutPlan(plan) {
     els.paymentStatus.textContent = `${payload.subscription.plan} active`;
     addAuditEvent("payment active", "Subscription updated", `${payload.subscription.plan} ${payload.subscription.status}`);
   }
+}
+
+function renderCryptoPaymentTicket(payload) {
+  if (payload.setupRequired) {
+    els.paymentStatus.textContent = "crypto address not configured";
+    return;
+  }
+  const rails = Array.isArray(payload.networks) ? payload.networks : [{ network: payload.network, address: payload.address }];
+  els.paymentStatus.innerHTML = `
+    <section class="crypto-ticket" aria-label="crypto payment ticket">
+      <div class="crypto-ticket-head">
+        <div>
+          <span>USDC Payment Ticket</span>
+          <strong>${payload.amount} ${payload.currency}</strong>
+        </div>
+        <button type="button" data-copy="${payload.amount}" data-copy-label="Exact amount">Copy Amount</button>
+      </div>
+      <div class="crypto-reference">
+        <span>Reference</span>
+        <strong>${payload.reference}</strong>
+        <button type="button" data-copy="${payload.reference}" data-copy-label="Payment reference">Copy Ref</button>
+      </div>
+      <div class="crypto-rail-grid">
+        ${rails
+          .map(
+            (rail) => `<article>
+              <span>${rail.network}</span>
+              <strong>${maskAddress(rail.address)}</strong>
+              <button type="button" data-copy="${rail.address}" data-copy-label="${rail.network} address">Copy Address</button>
+            </article>`
+          )
+          .join("")}
+      </div>
+      <p>Send the exact amount on one network only. The watcher confirms the matching transfer automatically.</p>
+    </section>
+  `;
 }
 
 async function loadPaymentConfig() {
@@ -1310,9 +1370,9 @@ function renderPaymentDestination() {
   if (rails.flutterwave?.configured) ready.push("Flutterwave merchant account");
   if (rails.crypto?.configured) {
     const cryptoDestination = Array.isArray(rails.crypto.networks)
-      ? rails.crypto.networks.map((rail) => `${rail.network}: ${rail.address}`).join(" · ")
-      : `${rails.crypto.network}: ${rails.crypto.destination}`;
-    ready.push(cryptoDestination);
+      ? rails.crypto.networks.map((rail) => rail.network.replace(/^USDC on /i, "")).join(", ")
+      : String(rails.crypto.network || "USDC");
+    ready.push(`Crypto USDC: ${cryptoDestination}`);
   }
   const missing = [];
   if (rails.stripe && !rails.stripe.configured) {
@@ -2206,6 +2266,11 @@ els.drawdownLimitInput.addEventListener("input", previewTradingRules);
 els.drawdownLimitInput.addEventListener("change", previewTradingRules);
 els.freePlanButton.addEventListener("click", () => checkoutPlan("free"));
 els.proPlanButton.addEventListener("click", () => checkoutPlan("pro"));
+els.paymentStatus.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-copy]");
+  if (!button) return;
+  copyText(button.dataset.copy, button.dataset.copyLabel || "Payment value");
+});
 els.backendStartButton.addEventListener("click", () => backendCommand("/api/start").catch(refreshBackend));
 els.backendStopButton.addEventListener("click", () => backendCommand("/api/stop").catch(refreshBackend));
 ["input", "change"].forEach((eventName) => {

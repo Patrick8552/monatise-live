@@ -2392,6 +2392,91 @@ button:disabled {
   padding: 9px 10px;
 }
 
+.crypto-ticket {
+  background:
+    linear-gradient(145deg, rgba(17, 24, 23, 0.98), rgba(25, 38, 36, 0.96)),
+    var(--terminal);
+  border: 1px solid rgba(0, 184, 217, 0.24);
+  border-left: 3px solid var(--cyan);
+  border-radius: 8px;
+  color: #f9fffb;
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 12px;
+}
+
+.crypto-ticket-head,
+.crypto-reference {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.crypto-ticket span,
+.crypto-reference span,
+.crypto-rail-grid span {
+  color: rgba(249, 255, 251, 0.58);
+  display: block;
+  font-size: 0.68rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.crypto-ticket strong {
+  color: #ffffff;
+  display: block;
+  font-size: 0.95rem;
+  font-variant-numeric: tabular-nums;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+
+.crypto-ticket-head strong {
+  font-size: 1.18rem;
+}
+
+.crypto-ticket button {
+  background: rgba(0, 184, 217, 0.14);
+  border-color: rgba(0, 184, 217, 0.34);
+  color: #ffffff;
+  min-height: 34px;
+  padding: 7px 10px;
+  white-space: nowrap;
+}
+
+.crypto-reference {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  padding: 9px;
+}
+
+.crypto-rail-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.crypto-rail-grid article {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.055);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 6px;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 9px;
+}
+
+.crypto-ticket p {
+  color: rgba(249, 255, 251, 0.66);
+  font-size: 0.74rem;
+  font-weight: 800;
+  line-height: 1.35;
+  margin: 0;
+}
+
 .plan-grid strong {
   font-size: 0.95rem;
 }
@@ -2683,6 +2768,16 @@ button:disabled {
 
   .readiness-grid {
     grid-template-columns: 1fr;
+  }
+
+  .crypto-ticket-head,
+  .crypto-reference,
+  .crypto-rail-grid article {
+    grid-template-columns: 1fr;
+  }
+
+  .crypto-ticket button {
+    width: 100%;
   }
 }
 
