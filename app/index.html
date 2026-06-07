@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Monatise Trading Console</title>
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./styles.css?v=20260607-desk" />
   </head>
   <body>
     <main class="shell">
@@ -20,6 +20,25 @@
           <span id="fillCount">0 fills</span>
         </div>
       </header>
+
+      <section class="ops-ribbon" aria-label="desk overview">
+        <article>
+          <span>Venue</span>
+          <strong>Hyperliquid</strong>
+        </article>
+        <article>
+          <span>Environment</span>
+          <strong>Testnet</strong>
+        </article>
+        <article>
+          <span>Grid Cap</span>
+          <strong>$150</strong>
+        </article>
+        <article>
+          <span>Order Clip</span>
+          <strong>$25</strong>
+        </article>
+      </section>
 
       <section class="workspace" aria-label="Monatise dashboard">
         <aside class="panel controls">
@@ -56,53 +75,64 @@
             </div>
           </div>
 
-          <label>
-            Trading asset
-            <select id="assetSelect"></select>
-          </label>
-
-          <label>
-            Local simulation symbol
-            <input id="symbolInput" type="text" value="BTC-USD" />
-          </label>
-
-          <div class="input-row">
+          <div class="control-group">
+            <div class="group-title">
+              <span>Market</span>
+              <strong>Routing</strong>
+            </div>
             <label>
-              Quote
-              <input id="quoteInput" type="number" value="10000" min="0" step="100" />
+              Trading asset
+              <select id="assetSelect"></select>
             </label>
             <label>
-              Base
-              <input id="baseInput" type="number" value="0.05" min="0" step="0.01" />
+              Local simulation symbol
+              <input id="symbolInput" type="text" value="BTC-USD" />
             </label>
           </div>
 
-          <label>
-            Grid spacing
-            <input id="spacingInput" type="range" min="0.1" max="2" step="0.1" value="0.5" />
-            <span class="range-readout"><span id="spacingValue">0.5</span>%</span>
-          </label>
+          <div class="control-group">
+            <div class="group-title">
+              <span>Strategy</span>
+              <strong>Grid</strong>
+            </div>
+            <div class="input-row">
+              <label>
+                Quote
+                <input id="quoteInput" type="number" value="10000" min="0" step="100" />
+              </label>
+              <label>
+                Base
+                <input id="baseInput" type="number" value="0.05" min="0" step="0.01" />
+              </label>
+            </div>
 
-          <label>
-            Levels each side
-            <input id="levelsInput" type="range" min="1" max="12" step="1" value="5" />
-            <span class="range-readout"><span id="levelsValue">5</span> levels</span>
-          </label>
+            <label>
+              Grid spacing
+              <input id="spacingInput" type="range" min="0.1" max="2" step="0.1" value="0.5" />
+              <span class="range-readout"><span id="spacingValue">0.5</span>%</span>
+            </label>
 
-          <label>
-            Order quote size
-            <input id="orderSizeInput" type="number" value="250" min="10" step="10" />
-          </label>
+            <label>
+              Levels each side
+              <input id="levelsInput" type="range" min="1" max="12" step="1" value="5" />
+              <span class="range-readout"><span id="levelsValue">5</span> levels</span>
+            </label>
 
-          <label>
-            Fee rate
-            <input id="feeInput" type="number" value="0.04" min="0" step="0.01" />
-            <span class="range-readout">percent per fill</span>
-          </label>
+            <div class="input-row">
+              <label>
+                Order quote size
+                <input id="orderSizeInput" type="number" value="250" min="10" step="10" />
+              </label>
+              <label>
+                Fee rate
+                <input id="feeInput" type="number" value="0.04" min="0" step="0.01" />
+              </label>
+            </div>
 
-          <div class="button-row">
-            <button id="runButton" class="primary" type="button">Run</button>
-            <button id="stepButton" type="button">Step</button>
+            <div class="button-row">
+              <button id="runButton" class="primary" type="button">Run</button>
+              <button id="stepButton" type="button">Step</button>
+            </div>
           </div>
 
           <div class="auth-box" aria-label="user account controls">
@@ -307,6 +337,6 @@
     </main>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="./app.js?v=20260605-stripe-3d"></script>
+    <script src="./app.js?v=20260607-desk"></script>
   </body>
 </html>
