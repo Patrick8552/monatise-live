@@ -37,12 +37,17 @@ class RiskManager:
     def resume(self) -> None:
         self.kill_switch = False
 
+    def daily_loss_limit(self) -> float:
+        if self.config.max_daily_loss_pct is not None:
+            return self.starting_equity * self.config.max_daily_loss_pct
+        return self.config.max_daily_loss
+
     def check_batch(self, orders: list[Order], portfolio: Portfolio, mark_price: float) -> RiskDecision:
         if self.kill_switch:
             return RiskDecision(False, "kill switch is active")
 
         equity = portfolio.equity(mark_price)
-        if self.starting_equity - equity > self.config.max_daily_loss:
+        if self.starting_equity - equity > self.daily_loss_limit():
             self.kill_switch = True
             return RiskDecision(False, "max daily loss reached")
 
@@ -68,8 +73,8 @@ class RiskManager:
             kill_switch=self.kill_switch,
             open_order_notional=sum(order.notional for order in orders),
             max_total_notional=self.config.max_total_notional,
-            max_daily_loss=self.config.max_daily_loss,
-            max_daily_loss_pct=0.0 if self.starting_equity <= 0 else self.config.max_daily_loss / self.starting_equity,
+            max_daily_loss=self.daily_loss_limit(),
+            max_daily_loss_pct=0.0 if self.starting_equity <= 0 else self.daily_loss_limit() / self.starting_equity,
         )
 
     def check_order(self, order: Order, portfolio: Portfolio) -> RiskDecision:

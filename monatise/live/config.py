@@ -26,6 +26,7 @@ class RuntimeConfig:
     max_total_notional: float | None = None
     max_base_inventory: float = 0.1
     max_daily_loss: float = 500.0
+    max_daily_loss_pct: float | None = None
     max_mark_move_pct: float = 0.03
     max_position_value: float = 1_000.0
     min_account_value: float = 0.0
@@ -65,6 +66,7 @@ class RuntimeConfig:
             max_total_notional=float(max_total_notional) if max_total_notional else quote,
             max_base_inventory=float(os.getenv("MONATISE_MAX_BASE_INVENTORY", "0.1")),
             max_daily_loss=float(os.getenv("MONATISE_MAX_DAILY_LOSS", str(quote * 0.05))),
+            max_daily_loss_pct=float(os.getenv("MONATISE_MAX_DAILY_LOSS_PCT", "0.05")),
             max_mark_move_pct=float(os.getenv("MONATISE_MAX_MARK_MOVE_PCT", "0.03")),
             max_position_value=float(os.getenv("MONATISE_MAX_POSITION_VALUE", "1000")),
             min_account_value=float(os.getenv("MONATISE_MIN_ACCOUNT_VALUE", "0")),
@@ -123,6 +125,10 @@ class RuntimeConfig:
             raise ValueError("order quote size cannot exceed max order notional")
         if self.max_total_notional <= 0:
             raise ValueError("MONATISE_MAX_TOTAL_NOTIONAL must be positive")
+        if self.max_daily_loss <= 0:
+            raise ValueError("MONATISE_MAX_DAILY_LOSS must be positive")
+        if self.max_daily_loss_pct is not None and not 0 < self.max_daily_loss_pct <= 0.2:
+            raise ValueError("MONATISE_MAX_DAILY_LOSS_PCT must be greater than 0 and no more than 0.2")
         if self.max_mark_move_pct <= 0:
             raise ValueError("MONATISE_MAX_MARK_MOVE_PCT must be positive")
         if self.order_refresh_seconds <= 0:

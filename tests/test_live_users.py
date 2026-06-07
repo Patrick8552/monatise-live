@@ -79,6 +79,7 @@ def test_user_store_saves_trading_rules_and_gates_one_minute_to_pro() -> None:
                     user.id,
                     chart_interval="1m",
                     london_commodity_only=True,
+                    max_daily_loss_pct=0.05,
                     session_guard_minutes=60,
                     stale_grid_cancel=True,
                 )
@@ -91,13 +92,38 @@ def test_user_store_saves_trading_rules_and_gates_one_minute_to_pro() -> None:
                 user.id,
                 chart_interval="1m",
                 london_commodity_only=False,
+                max_daily_loss_pct=0.12,
                 session_guard_minutes=15,
                 stale_grid_cancel=False,
             )
 
             assert settings.chart_interval == "1m"
+            assert settings.max_daily_loss_pct == 0.12
             assert settings.session_guard_minutes == 15
             assert not settings.stale_grid_cancel
             assert not settings.london_commodity_only
+    finally:
+        _restore_key(old_key)
+
+
+def test_user_store_rejects_excessive_drawdown_limit() -> None:
+    old_key = _with_key()
+    try:
+        with tempfile.NamedTemporaryFile() as db:
+            store = UserStore(db.name)
+            user = store.create_user("trader-five", "password123")
+
+            try:
+                store.save_trading_rules(
+                    user.id,
+                    chart_interval="1h",
+                    london_commodity_only=True,
+                    max_daily_loss_pct=0.25,
+                    session_guard_minutes=60,
+                    stale_grid_cancel=True,
+                )
+                raise AssertionError("expected excessive drawdown limit to fail")
+            except ValueError as error:
+                assert "drawdown limit" in str(error)
     finally:
         _restore_key(old_key)

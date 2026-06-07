@@ -29,9 +29,16 @@ const els = {
   credentialStatus: document.querySelector("#credentialStatus"),
   contextRadar: document.querySelector("#contextRadar"),
   csvInput: document.querySelector("#csvInput"),
+  decisionAccount: document.querySelector("#decisionAccount"),
+  decisionAsset: document.querySelector("#decisionAsset"),
+  decisionDetail: document.querySelector("#decisionDetail"),
+  decisionDrawdown: document.querySelector("#decisionDrawdown"),
+  decisionExposure: document.querySelector("#decisionExposure"),
+  decisionState: document.querySelector("#decisionState"),
   equityCanvas: document.querySelector("#equityCanvas"),
   equityMetric: document.querySelector("#equityMetric"),
   drawdownMetric: document.querySelector("#drawdownMetric"),
+  drawdownLimitInput: document.querySelector("#drawdownLimitInput"),
   feeInput: document.querySelector("#feeInput"),
   feesMetric: document.querySelector("#feesMetric"),
   fillCount: document.querySelector("#fillCount"),
@@ -136,6 +143,7 @@ let pendingArmReview = false;
 let tradingRules = {
   chartInterval: "1h",
   londonCommodityOnly: true,
+  maxDailyLossPct: 0.05,
   sessionGuardMinutes: 60,
   staleGridCancel: true
 };
@@ -421,7 +429,7 @@ function renderExecutionTicket(orders = [], options = {}) {
   const inputCapital = Number(els.quoteInput?.value || 0) + Number(els.baseInput?.value || 0) * (Number.isFinite(mark) ? mark : 0);
   const accountValue = Number(snapshot?.account?.displayValue ?? snapshot?.account?.accountValue);
   const capital = Number.isFinite(accountValue) && accountValue > 0 ? accountValue : inputCapital;
-  const drawdownPct = Number(snapshot?.risk?.max_daily_loss_pct ?? 0.05);
+  const drawdownPct = Number(snapshot?.risk?.max_daily_loss_pct ?? tradingRules.maxDailyLossPct ?? 0.05);
   const exposurePct = capital > 0 ? openExposure / capital : 0;
   const canReview = !health.blocked && blocks.length === 0;
   const mode = String(snapshot?.mode || (backendOnline ? "backend" : "preview")).toUpperCase();
@@ -431,6 +439,8 @@ function renderExecutionTicket(orders = [], options = {}) {
   els.ticketExposure.textContent = `${money(openExposure)} (${(exposurePct * 100).toFixed(2)}%)`;
   els.ticketDrawdown.textContent = `${(drawdownPct * 100).toFixed(2)}%`;
   els.ticketChart.textContent = tradingRules.chartInterval;
+  els.decisionExposure.textContent = `${money(openExposure)} (${(exposurePct * 100).toFixed(2)}%)`;
+  els.decisionDrawdown.textContent = `${(drawdownPct * 100).toFixed(2)}%`;
   els.ticketSummary.innerHTML = `
     <div class="ticket-call ${canReview ? "ready" : "blocked"}">
       <strong>${canReview ? "Operator review ready" : "Do not arm yet"}</strong>
@@ -443,6 +453,52 @@ function renderExecutionTicket(orders = [], options = {}) {
     : `Blocked: ${primaryBlock}`;
   els.armStrategyButton.disabled = false;
   els.armStrategyButton.textContent = canReview ? "Review Live Gates" : "Show Blocks";
+  updateDecisionSurface(snapshot);
+}
+
+function updateDecisionSurface(snapshot = null) {
+  if (!els.decisionState) return;
+  const loggedIn = Boolean(currentUser.authenticated);
+  const hasCredentials = Boolean(currentUser.credentialsConfigured);
+  const blocks = readinessBlocks(snapshot);
+  const running = Boolean(snapshot?.running);
+  const riskStatus = String(snapshot?.riskStatus || "");
+  const mode = String(snapshot?.mode || (backendOnline ? "backend" : "local"));
+  const network = String(snapshot?.network || "desk");
+  const risk = snapshot?.risk || {};
+  const openNotional = Number(risk.open_order_notional);
+  const drawdownPct = Number(risk.max_daily_loss_pct ?? tradingRules.maxDailyLossPct ?? 0.05);
+
+  let state = "Login required";
+  let detail = "Connect account before live routing.";
+  let className = "blocked";
+  if (loggedIn && !hasCredentials) {
+    state = "API wallet needed";
+    detail = "Save the funded account and API wallet before live routing.";
+  } else if (loggedIn && hasCredentials && blocks.length) {
+    state = "Risk blocked";
+    detail = blocks[0]?.detail || riskStatus || "Readiness gate has not cleared.";
+  } else if (running) {
+    state = "Live running";
+    detail = `${mode} ${network} routing is active for ${assetLabel(selectedAsset)}.`;
+    className = "ready";
+  } else if (loggedIn && hasCredentials) {
+    state = "Ready for review";
+    detail = riskStatus && !/ready|local/i.test(riskStatus) ? riskStatus : "Review exposure, drawdown, and session before starting.";
+    className = "ready";
+  }
+
+  const commandState = els.decisionState.closest(".command-state");
+  commandState?.classList.remove("ready", "blocked");
+  commandState?.classList.add(className);
+  els.decisionState.textContent = state;
+  els.decisionDetail.textContent = detail;
+  els.decisionAccount.textContent = loggedIn ? `${currentUser.username || "client"} · ${currentPlan()}` : "Logged out";
+  els.decisionAsset.textContent = assetLabel(selectedAsset);
+  if (Number.isFinite(openNotional)) {
+    els.decisionExposure.textContent = money(openNotional);
+  }
+  els.decisionDrawdown.textContent = `${(drawdownPct * 100).toFixed(2)}%`;
 }
 
 function updateLiveDesk(snapshot = null) {
@@ -503,6 +559,7 @@ function updateLiveDesk(snapshot = null) {
     els.riskStatus.textContent = sessionGuard.message || "forex session-break guard";
   }
   renderReadinessChecklist(snapshot);
+  updateDecisionSurface(snapshot);
 }
 
 async function apiFetch(path, options = {}) {
@@ -722,9 +779,12 @@ function renderForexSessions(date = new Date()) {
 
 function normalizedTradingRules(rules = {}) {
   const interval = String(rules.chartInterval || "1h");
+  const rawLossPct = Number(rules.maxDailyLossPct ?? 0.05);
+  const maxDailyLossPct = Number.isFinite(rawLossPct) ? Math.min(0.2, Math.max(0.01, rawLossPct)) : 0.05;
   return {
     chartInterval: ["1h", "15m", "5m", "1m"].includes(interval) ? interval : "1h",
     londonCommodityOnly: rules.londonCommodityOnly !== false,
+    maxDailyLossPct,
     sessionGuardMinutes: [5, 15, 30, 60, 90].includes(Number(rules.sessionGuardMinutes))
       ? Number(rules.sessionGuardMinutes)
       : 60,
@@ -740,6 +800,7 @@ function applyTradingRules(rules = {}) {
   els.chartIntervalSelect.value = tradingRules.chartInterval;
   els.chartIntervalSelect.querySelector('option[value="1m"]').disabled = !hasLivePlan();
   els.sessionGuardSelect.value = String(tradingRules.sessionGuardMinutes);
+  els.drawdownLimitInput.value = (tradingRules.maxDailyLossPct * 100).toFixed(1).replace(/\.0$/, "");
   els.staleGridCancelInput.checked = tradingRules.staleGridCancel;
   els.londonCommodityInput.checked = tradingRules.londonCommodityOnly;
   renderTradingRules();
@@ -747,12 +808,16 @@ function applyTradingRules(rules = {}) {
 
 function renderTradingRules() {
   const proNote = hasLivePlan() ? "Pro enabled" : "1m requires Pro";
+  const drawdownLabel = `${(tradingRules.maxDailyLossPct * 100).toFixed(1).replace(/\.0$/, "")}% drawdown cap`;
   els.rulesStatus.textContent = `${tradingRules.chartInterval} grid feed`;
   els.rulesSummary.textContent = `${tradingRules.chartInterval} analysis · ${tradingRules.sessionGuardMinutes}m session guard · ${
     tradingRules.londonCommodityOnly ? "London commodity guard on" : "London commodity guard off"
-  } · ${tradingRules.staleGridCancel ? "stale cancel on" : "stale cancel off"} · ${proNote}`;
+  } · ${drawdownLabel} · ${tradingRules.staleGridCancel ? "stale cancel on" : "stale cancel off"} · ${proNote}`;
+  els.ticketDrawdown.textContent = `${(tradingRules.maxDailyLossPct * 100).toFixed(2)}%`;
+  els.decisionDrawdown.textContent = `${(tradingRules.maxDailyLossPct * 100).toFixed(2)}%`;
   els.chartIntervalSelect.querySelector('option[value="1m"]').disabled = !hasLivePlan();
   renderForexSessions();
+  updateDecisionSurface(lastBackendSnapshot);
 }
 
 function hasLivePlan() {
@@ -786,6 +851,7 @@ function renderAuth(me) {
   }
   updateLiveDesk();
   syncSelectedAsset();
+  updateDecisionSurface(lastBackendSnapshot);
 }
 
 async function loadMe() {
@@ -1203,10 +1269,13 @@ async function checkoutPlan(plan) {
     return;
   }
   if (payload.provider === "crypto") {
+    const cryptoRails = Array.isArray(payload.networks)
+      ? payload.networks.map((rail) => `${rail.network}: ${rail.address}`).join(" · ")
+      : `${payload.network}: ${payload.address}`;
     els.paymentStatus.textContent = payload.setupRequired
       ? "crypto address not configured"
-      : `${payload.recipient || "Monatise"} receives ${payload.amount} ${payload.currency} on ${payload.network}: ${payload.address} ref ${payload.reference}`;
-    addAuditEvent("payment instruction", "Crypto payment instructions returned", payload.setupRequired ? "address not configured" : payload.network);
+      : `${payload.recipient || "Monatise"} receives exactly ${payload.amount} ${payload.currency}. Send on one rail only: ${cryptoRails}. Ref ${payload.reference}`;
+    addAuditEvent("payment instruction", "Crypto payment instructions returned", payload.setupRequired ? "address not configured" : "USDC rails");
     return;
   }
   if (payload.status === "setup_required") {
@@ -1239,7 +1308,12 @@ function renderPaymentDestination() {
   const ready = [];
   if (rails.stripe?.configured) ready.push("Stripe merchant account");
   if (rails.flutterwave?.configured) ready.push("Flutterwave merchant account");
-  if (rails.crypto?.configured) ready.push(`${rails.crypto.network}: ${rails.crypto.destination}`);
+  if (rails.crypto?.configured) {
+    const cryptoDestination = Array.isArray(rails.crypto.networks)
+      ? rails.crypto.networks.map((rail) => `${rail.network}: ${rail.address}`).join(" · ")
+      : `${rails.crypto.network}: ${rails.crypto.destination}`;
+    ready.push(cryptoDestination);
+  }
   const missing = [];
   if (rails.stripe && !rails.stripe.configured) {
     missing.push(rails.stripe.webhookConfigured ? "Stripe secret" : "Stripe secret/webhook");
@@ -1954,6 +2028,7 @@ async function saveTradingRules() {
   const nextRules = normalizedTradingRules({
     chartInterval: els.chartIntervalSelect.value,
     londonCommodityOnly: els.londonCommodityInput.checked,
+    maxDailyLossPct: Number(els.drawdownLimitInput.value) / 100,
     sessionGuardMinutes: Number(els.sessionGuardSelect.value),
     staleGridCancel: els.staleGridCancelInput.checked
   });
@@ -1983,7 +2058,13 @@ async function saveTradingRules() {
   contextRadar = null;
   loadFibonacciAnalysis({ force: true });
   loadContextRadar({ force: true });
-  addAuditEvent("rules updated", "Trading rules saved", `${payload.tradingRules.chartInterval} · ${payload.tradingRules.sessionGuardMinutes}m guard`);
+  addAuditEvent(
+    "rules updated",
+    "Trading rules saved",
+    `${payload.tradingRules.chartInterval} · ${payload.tradingRules.sessionGuardMinutes}m guard · ${(
+      payload.tradingRules.maxDailyLossPct * 100
+    ).toFixed(1)}% drawdown`
+  );
   refreshBackend();
 }
 
@@ -2103,22 +2184,26 @@ els.logoutButton.addEventListener("click", async () => {
 });
 els.saveCredentialsButton.addEventListener("click", saveCredentials);
 els.saveRulesButton.addEventListener("click", saveTradingRules);
-[els.chartIntervalSelect, els.sessionGuardSelect, els.staleGridCancelInput, els.londonCommodityInput].forEach((input) => {
-  input.addEventListener("change", () => {
-    const nextRules = normalizedTradingRules({
-      chartInterval: els.chartIntervalSelect.value,
-      londonCommodityOnly: els.londonCommodityInput.checked,
-      sessionGuardMinutes: Number(els.sessionGuardSelect.value),
-      staleGridCancel: els.staleGridCancelInput.checked
-    });
-    if (nextRules.chartInterval === "1m" && !hasLivePlan()) {
-      els.rulesStatus.textContent = "Pro required for 1m";
-      els.chartIntervalSelect.value = tradingRules.chartInterval;
-      return;
-    }
-    applyTradingRules(nextRules);
+function previewTradingRules() {
+  const nextRules = normalizedTradingRules({
+    chartInterval: els.chartIntervalSelect.value,
+    londonCommodityOnly: els.londonCommodityInput.checked,
+    maxDailyLossPct: Number(els.drawdownLimitInput.value) / 100,
+    sessionGuardMinutes: Number(els.sessionGuardSelect.value),
+    staleGridCancel: els.staleGridCancelInput.checked
   });
+  if (nextRules.chartInterval === "1m" && !hasLivePlan()) {
+    els.rulesStatus.textContent = "Pro required for 1m";
+    els.chartIntervalSelect.value = tradingRules.chartInterval;
+    return;
+  }
+  applyTradingRules(nextRules);
+}
+[els.chartIntervalSelect, els.sessionGuardSelect, els.staleGridCancelInput, els.londonCommodityInput].forEach((input) => {
+  input.addEventListener("change", previewTradingRules);
 });
+els.drawdownLimitInput.addEventListener("input", previewTradingRules);
+els.drawdownLimitInput.addEventListener("change", previewTradingRules);
 els.freePlanButton.addEventListener("click", () => checkoutPlan("free"));
 els.proPlanButton.addEventListener("click", () => checkoutPlan("pro"));
 els.backendStartButton.addEventListener("click", () => backendCommand("/api/start").catch(refreshBackend));

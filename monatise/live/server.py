@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import hashlib
 import hmac
+import secrets
 import threading
 import time
 import urllib.error
@@ -19,7 +20,7 @@ from monatise.adapters.hyperliquid import HyperliquidAdapter
 from monatise.live.config import RuntimeConfig
 from monatise.live.secrets import secret_value
 from monatise.live.service import JsonEncoder, TradingService
-from monatise.live.users import User, UserCredentials, UserStore, encryption_key_configured
+from monatise.live.users import CryptoInvoice, User, UserCredentials, UserStore, encryption_key_configured
 
 
 PLAN_PRICES = {
@@ -54,6 +55,7 @@ class TenantServices:
                 account_address=credentials.account_address,
                 chart_interval=settings.chart_interval,
                 london_commodity_only=settings.london_commodity_only,
+                max_daily_loss_pct=settings.max_daily_loss_pct,
                 secret_key=credentials.secret_key,
                 session_guard_minutes=settings.session_guard_minutes,
                 stale_grid_cancel=settings.stale_grid_cancel,
@@ -73,6 +75,7 @@ def settings_payload(settings) -> dict:  # noqa: ANN001
     return {
         "chartInterval": settings.chart_interval,
         "londonCommodityOnly": settings.london_commodity_only,
+        "maxDailyLossPct": settings.max_daily_loss_pct,
         "sessionGuardMinutes": settings.session_guard_minutes,
         "staleGridCancel": settings.stale_grid_cancel,
     }
@@ -131,12 +134,20 @@ class MarketFeed:
 
 
 class PaymentGateway:
+    DEFAULT_CRYPTO_RAILS = (
+        ("USDC on Solana", "dJs4k4PUfH8WVWoECJ925WWP91LcUq8nbZPZcHZCWHp"),
+        ("USDC on Arbitrum", "0xbD0B18D46B7afA6E5874A6e0eebbfD28276EA560"),
+        ("USDC on Polygon", "0xbD0B18D46B7afA6E5874A6e0eebbfD28276EA560"),
+    )
+
+    def __init__(self, store: UserStore | None = None) -> None:
+        self.store = store
+
     def config(self) -> dict:
         recipient = self._recipient_name()
         stripe_ready = bool(secret_value("STRIPE_SECRET_KEY", "")) and bool(secret_value("STRIPE_WEBHOOK_SECRET", ""))
         flutterwave_ready = bool(secret_value("FLUTTERWAVE_SECRET_KEY", ""))
-        crypto_address = secret_value("MONATISE_CRYPTO_PAYMENT_ADDRESS", "")
-        crypto_network = os.getenv("MONATISE_CRYPTO_PAYMENT_NETWORK", "USDC on Arbitrum or HyperEVM")
+        crypto_rails = self._crypto_rails()
         return {
             "recipient": recipient,
             "rails": {
@@ -150,9 +161,9 @@ class PaymentGateway:
                     "destination": f"{recipient} Flutterwave merchant account",
                 },
                 "crypto": {
-                    "configured": bool(crypto_address),
-                    "destination": crypto_address,
-                    "network": crypto_network,
+                    "configured": bool(crypto_rails),
+                    "destination": self._format_crypto_destination(crypto_rails),
+                    "networks": crypto_rails,
                 },
             },
         }
@@ -284,20 +295,28 @@ class PaymentGateway:
         }
 
     def _crypto_checkout(self, user: User, plan: str, price: dict) -> dict:
-        address = secret_value("MONATISE_CRYPTO_PAYMENT_ADDRESS", "")
-        network = os.getenv("MONATISE_CRYPTO_PAYMENT_NETWORK", "USDC on Arbitrum or HyperEVM")
+        crypto_rails = self._crypto_rails()
+        default_rail = crypto_rails[0] if crypto_rails else {"network": "", "address": ""}
+        reference = f"monatise-{user.id}-{plan}-{int(time.time())}-{secrets.token_hex(4)}"
+        amount = self._unique_crypto_amount(float(price["amount"]))
+        invoice_id = None
+        if self.store is not None:
+            invoice = self.store.create_crypto_invoice(user.id, plan, amount, "USDC", reference)
+            invoice_id = invoice.id
         return {
             "provider": "crypto",
             "status": "pending",
             "plan": plan,
-            "amount": price["amount"],
+            "amount": amount,
             "currency": "USDC",
-            "network": network,
-            "address": address,
-            "destination": address,
+            "network": default_rail["network"],
+            "address": default_rail["address"],
+            "destination": self._format_crypto_destination(crypto_rails),
+            "networks": crypto_rails,
             "recipient": self._recipient_name(),
-            "reference": f"monatise-{user.id}-{plan}",
-            "setupRequired": not bool(address),
+            "reference": reference,
+            "invoiceId": invoice_id,
+            "setupRequired": not bool(crypto_rails),
         }
 
     def _recipient_name(self) -> str:
@@ -305,6 +324,203 @@ class PaymentGateway:
 
     def _destination(self, rail: str) -> dict:
         return {"recipient": self._recipient_name(), "rail": rail}
+
+    def _crypto_rails(self) -> list[dict]:
+        configured = secret_value("MONATISE_CRYPTO_PAYMENT_RAILS", "")
+        if not configured:
+            configured = ",".join(f"{network}|{address}" for network, address in self.DEFAULT_CRYPTO_RAILS)
+        rails = []
+        for raw_rail in configured.split(","):
+            network, _, address = raw_rail.strip().partition("|")
+            if not network or not address:
+                continue
+            rails.append({"network": network.strip(), "address": address.strip()})
+        if rails:
+            return rails
+
+        address = secret_value("MONATISE_CRYPTO_PAYMENT_ADDRESS", "")
+        network = os.getenv("MONATISE_CRYPTO_PAYMENT_NETWORK", "USDC on Arbitrum or HyperEVM")
+        if address:
+            return [{"network": network, "address": address}]
+        return []
+
+    @staticmethod
+    def _format_crypto_destination(rails: list[dict]) -> str:
+        return " · ".join(f"{rail['network']}: {rail['address']}" for rail in rails)
+
+    @staticmethod
+    def _unique_crypto_amount(base_amount: float) -> float:
+        base_units = int(round(base_amount * 1_000_000))
+        return (base_units + secrets.randbelow(9_000) + 1_000) / 1_000_000
+
+
+class CryptoPaymentWatcher:
+    TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+    EVM_USDC_CONTRACTS = {
+        "arbitrum": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+        "polygon": "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
+    }
+    EVM_RPC_DEFAULTS = {
+        "arbitrum": "https://arb1.arbitrum.io/rpc",
+        "polygon": "https://polygon-rpc.com",
+    }
+    SOLANA_USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+
+    def __init__(self, store: UserStore, gateway: PaymentGateway) -> None:
+        self.store = store
+        self.gateway = gateway
+        self.poll_seconds = float(os.getenv("MONATISE_CRYPTO_WATCHER_SECONDS", "60"))
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        if os.getenv("MONATISE_CRYPTO_WATCHER_ENABLED", "true").lower() != "true":
+            return
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            try:
+                self.check_once()
+            except Exception as error:  # noqa: BLE001
+                print(f"crypto watcher error: {error}", flush=True)
+            self._stop.wait(self.poll_seconds)
+
+    def check_once(self) -> int:
+        confirmed = 0
+        rails = self.gateway._crypto_rails()
+        for invoice in self.store.pending_crypto_invoices():
+            match = self._find_payment(invoice, rails)
+            if match is None:
+                continue
+            self.store.mark_crypto_invoice_paid(invoice.id, network=match["network"], tx_hash=match["tx_hash"])
+            confirmed += 1
+            print(f"crypto invoice paid: {invoice.reference} {match['network']} {match['tx_hash']}", flush=True)
+        return confirmed
+
+    def _find_payment(self, invoice: CryptoInvoice, rails: list[dict]) -> dict | None:
+        for rail in rails:
+            network = str(rail.get("network", ""))
+            lowered = network.lower()
+            if "solana" in lowered:
+                match = self._find_solana_payment(invoice, rail)
+            elif "arbitrum" in lowered or "polygon" in lowered:
+                match = self._find_evm_payment(invoice, rail)
+            else:
+                match = None
+            if match is not None:
+                return match
+        return None
+
+    def _find_evm_payment(self, invoice: CryptoInvoice, rail: dict) -> dict | None:
+        network = str(rail["network"])
+        network_key = "arbitrum" if "arbitrum" in network.lower() else "polygon"
+        rpc_url = self._evm_rpc_url(network_key)
+        if not rpc_url:
+            return None
+        latest_hex = self._rpc_json(rpc_url, "eth_blockNumber", [])
+        latest = int(str(latest_hex), 16)
+        lookback = int(os.getenv("MONATISE_CRYPTO_EVM_BLOCK_LOOKBACK", "20000"))
+        from_block = max(0, latest - lookback)
+        to_topic = "0x" + "0" * 24 + str(rail["address"]).lower().removeprefix("0x")
+        logs = self._rpc_json(
+            rpc_url,
+            "eth_getLogs",
+            [
+                {
+                    "address": self.EVM_USDC_CONTRACTS[network_key],
+                    "fromBlock": hex(from_block),
+                    "toBlock": "latest",
+                    "topics": [self.TRANSFER_TOPIC, None, to_topic],
+                }
+            ],
+        )
+        required_units = int(round(invoice.amount * 1_000_000))
+        for event in logs or []:
+            amount = int(str(event.get("data", "0x0")), 16)
+            if amount == required_units:
+                return {"network": network, "tx_hash": str(event.get("transactionHash", ""))}
+        return None
+
+    def _find_solana_payment(self, invoice: CryptoInvoice, rail: dict) -> dict | None:
+        rpc_url = os.getenv("MONATISE_SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com")
+        token_accounts = self._solana_token_accounts(rpc_url, str(rail["address"]))
+        required_units = int(round(invoice.amount * 1_000_000))
+        for token_account in token_accounts:
+            signatures = self._rpc_json(
+                rpc_url,
+                "getSignaturesForAddress",
+                [token_account, {"limit": int(os.getenv("MONATISE_CRYPTO_SOLANA_SIGNATURE_LIMIT", "25"))}],
+            )
+            for item in signatures or []:
+                signature = str(item.get("signature", ""))
+                if not signature:
+                    continue
+                transaction = self._rpc_json(
+                    rpc_url,
+                    "getTransaction",
+                    [signature, {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0}],
+                )
+                if self._solana_transaction_matches(transaction, token_account, required_units):
+                    return {"network": str(rail["network"]), "tx_hash": signature}
+        return None
+
+    def _solana_token_accounts(self, rpc_url: str, owner: str) -> list[str]:
+        result = self._rpc_json(
+            rpc_url,
+            "getTokenAccountsByOwner",
+            [owner, {"mint": self.SOLANA_USDC_MINT}, {"encoding": "jsonParsed"}],
+        )
+        accounts = []
+        for item in result.get("value", []) if isinstance(result, dict) else []:
+            pubkey = item.get("pubkey")
+            if pubkey:
+                accounts.append(str(pubkey))
+        return accounts
+
+    def _solana_transaction_matches(self, transaction: dict, token_account: str, required_units: int) -> bool:
+        meta = transaction.get("meta", {}) if isinstance(transaction, dict) else {}
+        for balance in meta.get("postTokenBalances", []) or []:
+            if balance.get("mint") != self.SOLANA_USDC_MINT:
+                continue
+            if balance.get("accountIndex") is None:
+                continue
+        instructions = self._solana_instructions(transaction)
+        for instruction in instructions:
+            parsed = instruction.get("parsed", {}) if isinstance(instruction, dict) else {}
+            info = parsed.get("info", {}) if isinstance(parsed, dict) else {}
+            if info.get("mint") != self.SOLANA_USDC_MINT:
+                continue
+            if info.get("destination") != token_account:
+                continue
+            amount = info.get("tokenAmount", {}).get("amount") or info.get("amount")
+            if amount is not None and int(amount) == required_units:
+                return True
+        return False
+
+    def _solana_instructions(self, transaction: dict) -> list[dict]:
+        message = transaction.get("transaction", {}).get("message", {}) if isinstance(transaction, dict) else {}
+        instructions = list(message.get("instructions", []) or [])
+        for inner in transaction.get("meta", {}).get("innerInstructions", []) or []:
+            instructions.extend(inner.get("instructions", []) or [])
+        return instructions
+
+    def _evm_rpc_url(self, network_key: str) -> str:
+        env_key = f"MONATISE_{network_key.upper()}_RPC_URL"
+        return os.getenv(env_key, self.EVM_RPC_DEFAULTS[network_key])
+
+    def _rpc_json(self, url: str, method: str, params: list) -> object:
+        body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode("utf-8")
+        request = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(request, timeout=20) as response:  # noqa: S310
+            payload = json.loads(response.read().decode("utf-8"))
+        if payload.get("error"):
+            raise ValueError(f"{method} RPC error: {payload['error']}")
+        return payload.get("result")
 
 
 class MonatiseHandler(SimpleHTTPRequestHandler):
@@ -567,6 +783,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                     user.id,
                     chart_interval=str(payload.get("chartInterval", "")),
                     london_commodity_only=bool(payload.get("londonCommodityOnly", True)),
+                    max_daily_loss_pct=float(payload.get("maxDailyLossPct", 0.05)),
                     session_guard_minutes=int(payload.get("sessionGuardMinutes", 60)),
                     stale_grid_cancel=bool(payload.get("staleGridCancel", True)),
                 )
@@ -819,7 +1036,9 @@ def main() -> int:
     store = UserStore()
     tenants = TenantServices(config, store)
     market_feed = MarketFeed(replace(config, account_address="", secret_key=""))
-    payment_gateway = PaymentGateway()
+    payment_gateway = PaymentGateway(store)
+    crypto_watcher = CryptoPaymentWatcher(store, payment_gateway)
+    crypto_watcher.start()
     app_dir = Path(__file__).resolve().parents[2] / "app"
 
     class Handler(MonatiseHandler):

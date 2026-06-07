@@ -79,6 +79,16 @@ def test_live_snapshot_exposes_readiness_checklist() -> None:
     assert "MONATISE_EXECUTION_MODE=live" in snapshot["requires"]
 
 
+def test_client_drawdown_percentage_sets_daily_loss_limit() -> None:
+    service = TradingService(RuntimeConfig(mode="paper", max_daily_loss=1, max_daily_loss_pct=0.12))
+
+    snapshot = service.snapshot()
+
+    assert snapshot["risk"]["max_daily_loss_pct"] == 0.12
+    assert snapshot["risk"]["max_daily_loss"] == snapshot["risk"]["starting_equity"] * 0.12
+    assert snapshot["tradingRules"]["maxDailyLossPct"] == 0.12
+
+
 def test_market_shock_guard_blocks_fast_mark_move() -> None:
     service = TradingService(
         RuntimeConfig(

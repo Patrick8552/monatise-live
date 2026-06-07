@@ -69,14 +69,18 @@ def test_total_notional_env_override_is_respected() -> None:
 def test_env_daily_loss_defaults_to_five_percent_of_quote() -> None:
     old_quote = os.environ.get("MONATISE_QUOTE")
     old_loss = os.environ.get("MONATISE_MAX_DAILY_LOSS")
+    old_loss_pct = os.environ.get("MONATISE_MAX_DAILY_LOSS_PCT")
     os.environ["MONATISE_QUOTE"] = "25000"
     os.environ.pop("MONATISE_MAX_DAILY_LOSS", None)
+    os.environ.pop("MONATISE_MAX_DAILY_LOSS_PCT", None)
     try:
         config = RuntimeConfig.from_env()
         assert config.max_daily_loss == 1_250
+        assert config.max_daily_loss_pct == 0.05
     finally:
         _restore_env("MONATISE_QUOTE", old_quote)
         _restore_env("MONATISE_MAX_DAILY_LOSS", old_loss)
+        _restore_env("MONATISE_MAX_DAILY_LOSS_PCT", old_loss_pct)
 
 
 def test_global_hyperliquid_credentials_are_ignored_by_default() -> None:

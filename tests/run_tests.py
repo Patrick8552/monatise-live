@@ -52,6 +52,8 @@ TESTS = {
     ],
     "tests.test_live_service": [
         "test_live_tick_initializes_risk_baseline_from_live_mark",
+        "test_live_snapshot_exposes_readiness_checklist",
+        "test_client_drawdown_percentage_sets_daily_loss_limit",
         "test_market_shock_guard_blocks_fast_mark_move",
         "test_live_start_blocks_forex_session_break_guard",
         "test_live_start_blocks_gold_outside_london_when_rule_enabled",
@@ -66,10 +68,18 @@ TESTS = {
         "test_user_store_encrypts_credentials_per_user",
         "test_user_store_saves_asset_and_subscription_settings",
         "test_user_store_saves_trading_rules_and_gates_one_minute_to_pro",
+        "test_user_store_rejects_excessive_drawdown_limit",
     ],
     "tests.test_live_secrets": [
         "test_secret_value_reads_direct_secret_file",
         "test_secret_value_reads_key_value_secret_file",
+    ],
+    "tests.test_payments": [
+        "test_crypto_payment_config_exposes_usdc_networks",
+        "test_crypto_checkout_returns_all_usdc_networks",
+        "test_crypto_checkout_creates_pending_invoice",
+        "test_crypto_watcher_marks_evm_invoice_paid_and_activates_plan",
+        "test_crypto_watcher_marks_solana_invoice_paid_and_activates_plan",
     ],
 }
 

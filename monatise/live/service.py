@@ -164,6 +164,7 @@ class TradingService:
             "tradingRules": {
                 "chartInterval": self.config.chart_interval,
                 "londonCommodityOnly": self.config.london_commodity_only,
+                "maxDailyLossPct": self.config.max_daily_loss_pct,
                 "sessionGuardMinutes": self.config.session_guard_minutes,
                 "staleGridCancel": self.config.stale_grid_cancel,
             },

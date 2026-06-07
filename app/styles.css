@@ -239,11 +239,129 @@ label .range-readout {
   color: var(--ink);
 }
 
+.command-strip {
+  align-items: stretch;
+  background:
+    linear-gradient(135deg, rgba(17, 24, 23, 0.98), rgba(30, 42, 40, 0.96)),
+    var(--terminal);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  box-shadow: 0 18px 34px rgba(17, 24, 23, 0.16);
+  color: #f9fffb;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(250px, 0.78fr) minmax(0, 1.22fr);
+  margin: 0 auto 14px;
+  max-width: 1560px;
+  padding: 12px;
+  position: sticky;
+  top: 10px;
+  z-index: 7;
+}
+
+.command-state {
+  border-left: 4px solid var(--accent);
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 4px 0 4px 12px;
+}
+
+.command-state.ready {
+  border-left-color: var(--buy);
+}
+
+.command-state.blocked {
+  border-left-color: var(--danger);
+}
+
+.command-state span,
+.command-metrics span {
+  color: rgba(249, 255, 251, 0.58);
+  display: block;
+  font-size: 0.68rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.command-state strong {
+  color: #ffffff;
+  font-size: 1.16rem;
+  line-height: 1.05;
+}
+
+.command-state em {
+  color: rgba(249, 255, 251, 0.68);
+  font-size: 0.76rem;
+  font-style: normal;
+  font-weight: 750;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.command-metrics {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.command-metrics article {
+  background: rgba(255, 255, 255, 0.075);
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 6px;
+  min-height: 62px;
+  min-width: 0;
+  padding: 9px 10px;
+}
+
+.command-metrics strong {
+  color: #ffffff;
+  display: block;
+  font-size: 0.92rem;
+  font-variant-numeric: tabular-nums;
+  margin-top: 7px;
+  overflow-wrap: anywhere;
+}
+
 .desk-sections {
   display: grid;
-  gap: 18px;
+  align-items: start;
+  gap: 14px;
+  grid-template-areas:
+    "account trade risk"
+    "account markets risk"
+    "activity activity activity";
+  grid-template-columns: minmax(270px, 320px) minmax(0, 1fr) minmax(310px, 370px);
   margin: 0 auto;
   max-width: 1560px;
+}
+
+#trade {
+  grid-area: trade;
+}
+
+#risk {
+  grid-area: risk;
+  max-height: calc(100vh - 126px);
+  overflow: auto;
+  position: sticky;
+  top: 112px;
+}
+
+#markets {
+  grid-area: markets;
+}
+
+#account {
+  grid-area: account;
+  max-height: calc(100vh - 126px);
+  overflow: auto;
+  position: sticky;
+  top: 112px;
+}
+
+#activity {
+  grid-area: activity;
 }
 
 .desk-section {
@@ -277,15 +395,15 @@ label .range-readout {
 }
 
 .trade-grid {
-  grid-template-columns: minmax(290px, 0.78fr) minmax(330px, 1fr) minmax(300px, 0.78fr);
+  grid-template-columns: minmax(260px, 0.72fr) minmax(320px, 1fr);
 }
 
 .risk-grid {
-  grid-template-columns: minmax(320px, 1.1fr) minmax(280px, 0.9fr);
+  grid-template-columns: 1fr;
 }
 
 .account-grid {
-  grid-template-columns: minmax(300px, 0.8fr) minmax(360px, 1.2fr);
+  grid-template-columns: 1fr;
 }
 
 .activity-grid {
@@ -303,6 +421,7 @@ label .range-readout {
     var(--terminal);
   border-color: rgba(0, 184, 217, 0.24);
   color: #f9fffb;
+  grid-column: 1 / -1;
 }
 
 .panel.execution-ticket .panel-head h2 {
@@ -2039,6 +2158,7 @@ canvas {
   color: rgba(249, 255, 251, 0.72);
 }
 
+.rules-console input,
 .rules-console select {
   background: rgba(255, 255, 255, 0.08);
   border-color: rgba(255, 255, 255, 0.14);
@@ -2296,9 +2416,31 @@ button:disabled {
     grid-template-columns: minmax(260px, 340px) 1fr;
   }
 
+  .command-strip {
+    grid-template-columns: 1fr;
+    position: static;
+  }
+
+  .desk-sections {
+    grid-template-areas:
+      "trade risk"
+      "markets markets"
+      "account account"
+      "activity activity";
+    grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
+  }
+
+  #account,
+  #risk {
+    position: static;
+  }
+
   .trade-grid,
-  .risk-grid,
   .account-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .risk-grid {
     grid-template-columns: 1fr;
   }
 
@@ -2324,8 +2466,24 @@ button:disabled {
   .topbar,
   .workspace,
   .side-stack,
+  .command-metrics,
+  .desk-sections,
   .activity-grid {
     grid-template-columns: 1fr;
+  }
+
+  .desk-sections {
+    grid-template-areas:
+      "trade"
+      "risk"
+      "markets"
+      "account"
+      "activity";
+  }
+
+  .command-strip {
+    margin-bottom: 10px;
+    padding: 10px;
   }
 
   .desk-section {
