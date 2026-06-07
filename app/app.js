@@ -39,6 +39,7 @@ const els = {
   levelsInput: document.querySelector("#levelsInput"),
   levelsValue: document.querySelector("#levelsValue"),
   liquidityCanvas: document.querySelector("#liquidityCanvas"),
+  liquiditySource: document.querySelector("#liquiditySource"),
   credentialGate: document.querySelector("#credentialGate"),
   liveDeskStatus: document.querySelector("#liveDeskStatus"),
   liveModeStatus: document.querySelector("#liveModeStatus"),
@@ -55,6 +56,7 @@ const els = {
   openNotionalMetric: document.querySelector("#openNotionalMetric"),
   openOrderBook: document.querySelector("#openOrderBook"),
   openOrderCount: document.querySelector("#openOrderCount"),
+  openGridTitle: document.querySelector("#openGridTitle"),
   orderAgeMetric: document.querySelector("#orderAgeMetric"),
   paymentCurrencySelect: document.querySelector("#paymentCurrencySelect"),
   paymentEmailInput: document.querySelector("#paymentEmailInput"),
@@ -92,6 +94,7 @@ let markets = [];
 let marketGroups = {};
 let selectedAsset = "BTC";
 let marketScene = null;
+let lastBackendSnapshot = null;
 localStorage.removeItem("monatiseControlToken");
 
 function setGate(element, label, status, className = "") {
@@ -104,10 +107,11 @@ function setGate(element, label, status, className = "") {
 function updateLiveDesk(snapshot = null) {
   const loggedIn = Boolean(currentUser.authenticated);
   const hasCredentials = Boolean(currentUser.credentialsConfigured);
+  const paidLive = hasLivePlan();
   const mode = snapshot?.mode || "paper";
   const network = snapshot?.network || "local";
   const running = Boolean(snapshot?.running);
-  const liveReady = Boolean(snapshot?.liveReady);
+  const liveReady = Boolean(snapshot?.liveReady && paidLive);
   const requires = Array.isArray(snapshot?.requires) ? snapshot.requires : [];
 
   setGate(els.loginGate, "Login", loggedIn ? "Ready" : "Needed", loggedIn ? "ready" : "warn");
@@ -125,7 +129,9 @@ function updateLiveDesk(snapshot = null) {
     : liveReady
       ? "Live armed"
       : loggedIn && hasCredentials
-        ? "Ready to arm"
+        ? paidLive
+          ? "Ready to arm"
+          : "Pro required"
         : "Not armed";
   els.liveModeStatus.textContent = running
     ? `${mode.toUpperCase()} running`
@@ -134,7 +140,13 @@ function updateLiveDesk(snapshot = null) {
       : `${mode.toUpperCase()} idle`;
   els.liveModeStatus.classList.toggle("live-mode", mode === "live");
   els.backendStartButton.classList.toggle("live-running", running);
-  els.backendStartButton.textContent = running ? "Running" : mode === "live" ? "Start Live" : "Start Paper";
+  els.backendStartButton.textContent = running
+    ? "Running"
+    : mode === "live" && !paidLive
+      ? "Pro Required"
+      : mode === "live"
+        ? "Start Live"
+        : "Start Paper";
 }
 
 async function apiFetch(path, options = {}) {
@@ -159,6 +171,14 @@ function setAuthStatus(message) {
   els.authStatus.textContent = message;
 }
 
+function currentPlan() {
+  return String(currentUser.subscription?.plan || "free").toLowerCase();
+}
+
+function hasLivePlan() {
+  return ["pro", "business"].includes(currentPlan());
+}
+
 function renderAuth(me) {
   currentUser = me;
   selectedAsset = me.selectedSymbol || selectedAsset;
@@ -174,8 +194,11 @@ function renderAuth(me) {
     : "Register or log in to connect your own Hyperliquid account.";
   els.logoutButton.disabled = !loggedIn;
   els.saveCredentialsButton.disabled = !loggedIn;
-  els.backendStartButton.disabled = !loggedIn || !me.credentialsConfigured;
+  els.backendStartButton.disabled = !loggedIn || !me.credentialsConfigured || !hasLivePlan();
   els.backendStopButton.disabled = !loggedIn;
+  if (loggedIn && me.credentialsConfigured && !hasLivePlan()) {
+    els.backendStatus.textContent = "Pro required for mainnet live";
+  }
   if (!loggedIn) {
     backendOnline = false;
     els.backendStatus.textContent = "Login required";
@@ -250,7 +273,7 @@ async function loadMarkets() {
       const active = markets.find((asset) => asset.symbol === selectedAsset);
       if (active) {
         els.markPrice.textContent = money(active.price);
-        els.marketTitle.textContent = `${selectedAsset}-USD liquidity map`;
+        els.marketTitle.textContent = `${selectedAsset}-USD strategy map`;
       }
     }
   } catch {
@@ -496,6 +519,11 @@ function money(value) {
   }).format(value || 0);
 }
 
+function currentMarketPrice() {
+  const live = markets.find((asset) => asset.symbol === selectedAsset);
+  return Number.isFinite(Number(live?.price)) ? Number(live.price) : null;
+}
+
 function parseCsv(text) {
   const rows = text.trim().split(/\r?\n/).filter(Boolean);
   const headers = rows.shift().split(",").map((header) => header.trim());
@@ -675,14 +703,22 @@ function setupCanvas(canvas) {
   return { ctx, height: rect.height, width: rect.width };
 }
 
-function drawLiquidity() {
+function drawLiquidity(options = {}) {
   const { ctx, height, width } = setupCanvas(els.liquidityCanvas);
   const candle = state.candles[Math.max(0, Math.min(state.activeIndex, state.candles.length - 1))];
-  const levels = buildLevels(candle.close);
-  const prices = [...levels.map((level) => level.price), candle.high, candle.low, candle.close];
+  const mark = Number(options.mark ?? currentMarketPrice() ?? candle.close);
+  const sourceType = options.sourceType || "preview";
+  const sourceLabel = options.sourceLabel || "Strategy preview from local sample candles";
+  const orders = Array.isArray(options.orders) ? options.orders : buildLevels(mark);
+  const prices = [
+    ...orders.map((order) => Number(order.price)).filter((price) => Number.isFinite(price)),
+    candle.high,
+    candle.low,
+    mark
+  ];
   const min = Math.min(...prices) * 0.998;
   const max = Math.max(...prices) * 1.002;
-  const yFor = (price) => height - 34 - ((price - min) / (max - min)) * (height - 72);
+  const yFor = (price) => height - 34 - ((price - min) / (max - min || 1)) * (height - 72);
 
   ctx.clearRect(0, 0, width, height);
   ctx.fillStyle = "#fbfcfa";
@@ -698,13 +734,48 @@ function drawLiquidity() {
     ctx.stroke();
   }
 
-  levels.forEach((level) => {
-    const y = yFor(level.price);
-    const isBuy = level.side === "buy";
+  ctx.fillStyle = sourceType === "live" ? "#eafff5" : sourceType === "backend" ? "#eef7ff" : "#fff8df";
+  ctx.strokeStyle = sourceType === "live" ? "#0f9f7a" : sourceType === "backend" ? "#246bfe" : "#d69b00";
+  ctx.lineWidth = 1;
+  const badgeWidth = Math.min(width - 48, 450);
+  ctx.fillRect(24, 16, badgeWidth, 30);
+  ctx.strokeRect(24, 16, badgeWidth, 30);
+  ctx.fillStyle = "#202523";
+  ctx.font = "800 12px system-ui";
+  ctx.textAlign = "left";
+  ctx.fillText(sourceLabel, 36, 36);
+
+  const markY = yFor(mark);
+  ctx.strokeStyle = "#20323a";
+  ctx.lineWidth = 2;
+  ctx.setLineDash([7, 7]);
+  ctx.beginPath();
+  ctx.moveTo(32, markY);
+  ctx.lineTo(width - 32, markY);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = "#202523";
+  ctx.font = "850 12px system-ui";
+  ctx.textAlign = "center";
+  ctx.fillText(`MARK ${money(mark)}`, width / 2, Math.max(58, markY - 10));
+
+  if (!orders.length) {
+    ctx.fillStyle = "#56605c";
+    ctx.font = "850 14px system-ui";
+    ctx.textAlign = "center";
+    ctx.fillText("No resting exchange orders yet", width / 2, height / 2);
+  }
+
+  orders.forEach((level) => {
+    const price = Number(level.price);
+    if (!Number.isFinite(price)) return;
+    const y = yFor(price);
+    const side = String(level.side || "").toLowerCase();
+    const isBuy = side === "buy" || side === "b";
     const start = isBuy ? 40 : width * 0.52;
     const end = isBuy ? width * 0.48 : width - 40;
     ctx.strokeStyle = isBuy ? "#0f9f7a" : "#c74747";
-    ctx.lineWidth = 5;
+    ctx.lineWidth = sourceType === "live" ? 7 : 4;
     ctx.beginPath();
     ctx.moveTo(start, y);
     ctx.lineTo(end, y);
@@ -713,7 +784,10 @@ function drawLiquidity() {
     ctx.fillStyle = "#202523";
     ctx.font = "700 12px system-ui";
     ctx.textAlign = isBuy ? "left" : "right";
-    ctx.fillText(`${level.side.toUpperCase()} ${money(level.price)}`, isBuy ? 42 : width - 42, y - 9);
+    const quantity = Number(level.quantity || 0);
+    const prefix = sourceType === "live" ? "LIVE" : "PREVIEW";
+    const size = quantity > 0 ? ` · ${quantity.toFixed(5)} ${selectedAsset}` : "";
+    ctx.fillText(`${prefix} ${isBuy ? "BUY" : "SELL"} ${money(price)}${size}`, isBuy ? 42 : width - 42, y - 9);
   });
 
   const candleX = width / 2;
@@ -742,7 +816,7 @@ function drawLiquidity() {
   ctx.fillStyle = "#6b746f";
   ctx.font = "750 12px system-ui";
   ctx.textAlign = "center";
-  ctx.fillText(candle.timestamp, width / 2, height - 12);
+  ctx.fillText(sourceType === "preview" ? `sample candle ${candle.timestamp}` : `live ${selectedAsset} order state`, width / 2, height - 12);
 }
 
 function drawEquity() {
@@ -799,6 +873,7 @@ function renderTape() {
 
 function renderBackend(snapshot) {
   backendOnline = true;
+  lastBackendSnapshot = snapshot;
   els.backendStatus.textContent = `${snapshot.mode} ${snapshot.running ? "running" : "stopped"}`;
   els.candleCount.textContent = snapshot.running ? "backend loop" : "backend idle";
     els.riskStatus.textContent = snapshot.riskStatus || "ready";
@@ -837,7 +912,25 @@ function renderBackend(snapshot) {
     els.syncMetric.textContent = `${snapshot.desk.reconciledFillCount || 0} fills / ${Math.round(snapshot.desk.lastReconciliationSeconds || 0)}s`;
     els.exchangeOrderMetric.textContent = String(snapshot.desk.exchangeOrderCount || 0);
   }
-  renderOpenOrders(snapshot.openOrders || []);
+  const liveOrders = snapshot.openOrders || [];
+  const hasExchangeState = Boolean(snapshot.running || snapshot.liveReady || snapshot.desk?.exchangeOrderCount || liveOrders.length);
+  renderOpenOrders(liveOrders, {
+    emptyText: hasExchangeState ? "No resting exchange orders" : "Backend connected",
+    emptyHint: hasExchangeState ? "Arm the desk to place live grid orders" : "No live orders are being shown",
+    source: hasExchangeState ? "live" : "backend",
+    title: hasExchangeState ? "Live Orders" : "Backend State"
+  });
+  const liveMark = Number(snapshot.markPrice ?? currentMarketPrice());
+  const sourceLabel = hasExchangeState
+    ? `${String(snapshot.mode || "live").toUpperCase()} ${String(snapshot.network || "mainnet").toUpperCase()} exchange/order state`
+    : "Backend connected - no resting exchange orders";
+  els.liquiditySource.textContent = sourceLabel;
+  drawLiquidity({
+    mark: Number.isFinite(liveMark) ? liveMark : undefined,
+    orders: liveOrders,
+    sourceLabel,
+    sourceType: hasExchangeState ? "live" : "backend"
+  });
   if (Array.isArray(snapshot.fills)) {
     els.fillCount.textContent = `${snapshot.fills.length} fills`;
     const fills = snapshot.fills.slice(-20).reverse();
@@ -863,25 +956,28 @@ function renderBackend(snapshot) {
   }
 }
 
-function renderOpenOrders(orders) {
+function renderOpenOrders(orders, options = {}) {
+  const source = options.source || "preview";
+  els.openGridTitle.textContent = options.title || (source === "live" ? "Live Orders" : "Strategy Preview");
   els.openOrderCount.textContent = `${orders.length} orders`;
   els.openOrderBook.innerHTML = orders.length
     ? orders
         .slice(0, 12)
         .map(
-          (order) => `<article class="order-row ${order.side}">
+          (order) => `<article class="order-row ${order.side} ${source}">
             <strong>${String(order.side).toUpperCase()} ${money(order.price)}</strong>
             <span>${Number(order.quantity || 0).toFixed(5)} ${order.symbol || selectedAsset}</span>
           </article>`
         )
         .join("")
-    : "<article class=\"order-row empty\"><strong>No resting grid</strong><span>Waiting for arm</span></article>";
+    : `<article class="order-row empty"><strong>${options.emptyText || "No resting grid"}</strong><span>${options.emptyHint || "Waiting for arm"}</span></article>`;
 }
 
 async function refreshBackend() {
   try {
     if (!currentUser.authenticated) {
       backendOnline = false;
+      lastBackendSnapshot = null;
       els.backendStatus.textContent = "Login required";
       updateLiveDesk();
       return;
@@ -889,6 +985,7 @@ async function refreshBackend() {
     const response = await apiFetch("/api/status", { cache: "no-store" });
     if (response.status === 401) {
       backendOnline = false;
+      lastBackendSnapshot = null;
       els.backendStatus.textContent = "Login required";
       renderAuth({ authenticated: false, credentialsConfigured: false });
       return;
@@ -897,6 +994,7 @@ async function refreshBackend() {
     renderBackend(await response.json());
   } catch {
     backendOnline = false;
+    lastBackendSnapshot = null;
     els.backendStatus.textContent = "Offline";
     updateLiveDesk();
   }
@@ -904,7 +1002,11 @@ async function refreshBackend() {
 
 async function backendCommand(path) {
   const response = await jsonPost(path);
-  if (!response.ok) throw new Error(`request failed: ${path}`);
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    els.riskStatus.textContent = payload.error || `request failed: ${path}`;
+    throw new Error(payload.error || `request failed: ${path}`);
+  }
   renderBackend(await response.json());
 }
 
@@ -924,13 +1026,24 @@ function render() {
   els.orderAgeMetric.textContent = "0s";
   els.syncMetric.textContent = "local";
   els.exchangeOrderMetric.textContent = "local";
-  renderOpenOrders(state.openOrders);
+  renderOpenOrders(state.openOrders, {
+    emptyHint: "Run a sample or connect the backend",
+    emptyText: "No preview levels",
+    source: "preview",
+    title: "Strategy Preview"
+  });
   const live = markets.find((asset) => asset.symbol === selectedAsset);
   els.markPrice.textContent = live ? money(live.price) : money(mark);
-  els.marketTitle.textContent = `${selectedAsset}-USD liquidity map`;
+  els.marketTitle.textContent = `${selectedAsset}-USD strategy map`;
+  els.liquiditySource.textContent = "Strategy preview from local sample candles. These are not exchange orders.";
   els.runState.textContent = state.activeIndex >= state.candles.length ? "Complete" : "Ready";
   renderTape();
-  drawLiquidity();
+  drawLiquidity({
+    mark: live ? Number(live.price) : mark,
+    orders: state.openOrders,
+    sourceLabel: "Strategy preview - not exchange orders",
+    sourceType: "preview"
+  });
   drawEquity();
   if (!backendOnline) {
     els.runtimeLog.innerHTML = "<article>Serve with the live backend to control paper/live loops.</article>";

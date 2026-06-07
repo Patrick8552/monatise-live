@@ -445,8 +445,12 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             if user is None:
                 return
             payload = self._read_json()
+            plan = str(payload.get("plan", "")).strip().lower()
+            if plan != "free":
+                self._error(402, "paid plans must be activated through verified checkout")
+                return
             try:
-                settings = self.store.save_subscription_plan(user.id, str(payload.get("plan", "")))
+                settings = self.store.save_subscription_plan(user.id, plan)
                 self._json(
                     {
                         "subscription": {
@@ -481,6 +485,14 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/start":
             user = self._require_user()
             if user is None:
+                return
+            settings = self.store.settings_for_user(user.id)
+            if (
+                self.tenants.base_config.mode == "live"
+                and self.tenants.base_config.network == "mainnet"
+                and settings.subscription_plan not in {"pro", "business"}
+            ):
+                self._error(402, "Pro or Business is required before starting mainnet live trading")
                 return
             try:
                 self._json(self.tenants.service_for_user(user).start())
