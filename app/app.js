@@ -12,6 +12,7 @@ const sampleCsv = `timestamp,open,high,low,close,volume
 
 const els = {
   accountAddressInput: document.querySelector("#accountAddressInput"),
+  assetDetail: document.querySelector("#assetDetail"),
   assetGroups: document.querySelector("#assetGroups"),
   assetSelect: document.querySelector("#assetSelect"),
   baseInput: document.querySelector("#baseInput"),
@@ -97,6 +98,19 @@ let marketScene = null;
 let lastBackendSnapshot = null;
 localStorage.removeItem("monatiseControlToken");
 
+const assetMetadata = {
+  BNB: { name: "BNB", route: "Core Hyperliquid perp" },
+  BRENTOIL: { name: "Brent Oil", route: "Hyperliquid xyz:BRENTOIL builder perp" },
+  BTC: { name: "Bitcoin", route: "Core Hyperliquid perp" },
+  CL: { name: "WTI Crude Oil", route: "Hyperliquid xyz:CL builder perp" },
+  DOGE: { name: "Dogecoin", route: "Core Hyperliquid perp" },
+  ETH: { name: "Ethereum", route: "Core Hyperliquid perp" },
+  GOLD: { name: "Gold", route: "Hyperliquid xyz:GOLD builder perp" },
+  HYPE: { name: "Hyperliquid", route: "Core Hyperliquid perp" },
+  SOL: { name: "Solana", route: "Core Hyperliquid perp" },
+  XRP: { name: "XRP", route: "Core Hyperliquid perp" }
+};
+
 function setGate(element, label, status, className = "") {
   element.classList.remove("ready", "warn", "hot");
   if (className) element.classList.add(className);
@@ -175,6 +189,15 @@ function currentPlan() {
   return String(currentUser.subscription?.plan || "free").toLowerCase();
 }
 
+function assetLabel(symbol) {
+  const meta = assetMetadata[symbol] || {};
+  return meta.name ? `${symbol} - ${meta.name}` : symbol;
+}
+
+function assetRoute(symbol) {
+  return assetMetadata[symbol]?.route || "Watchlist or strategy-preview asset";
+}
+
 function hasLivePlan() {
   return ["pro", "business"].includes(currentPlan());
 }
@@ -250,6 +273,13 @@ function syncSelectedAsset() {
     els.assetSelect.value = selectedAsset;
   }
   els.symbolInput.value = `${selectedAsset}-USD`;
+  const live = markets.find((asset) => asset.symbol === selectedAsset);
+  if (els.assetDetail) {
+    els.assetDetail.innerHTML = `
+      <strong>${assetLabel(selectedAsset)}</strong>
+      <span>${assetRoute(selectedAsset)}${live ? ` · live mark ${money(live.price)}` : " · not returned by current venue feed"}</span>
+    `;
+  }
   renderMarkets();
 }
 
@@ -262,7 +292,7 @@ async function loadMarkets() {
     marketGroups = payload.groups || {};
     if (!els.assetSelect.options.length && markets.length) {
       els.assetSelect.innerHTML = markets
-        .map((asset) => `<option value="${asset.symbol}">${asset.symbol}</option>`)
+        .map((asset) => `<option value="${asset.symbol}">${assetLabel(asset.symbol)}</option>`)
         .join("");
     }
     if (!markets.some((asset) => asset.symbol === selectedAsset) && markets[0]) {
@@ -279,7 +309,7 @@ async function loadMarkets() {
   } catch {
     if (!els.assetSelect.options.length) {
       ["BTC", "ETH", "SOL", "HYPE", "BNB", "XRP", "DOGE"].forEach((symbol) => {
-        els.assetSelect.add(new Option(symbol, symbol));
+        els.assetSelect.add(new Option(assetLabel(symbol), symbol));
       });
     }
   }
@@ -289,7 +319,7 @@ function renderMarkets() {
   els.marketStrip.innerHTML = markets
     .map(
       (asset) => `<button type="button" data-symbol="${asset.symbol}" class="${asset.symbol === selectedAsset ? "active" : ""}">
-        <strong>${asset.symbol}</strong>
+        <strong>${assetLabel(asset.symbol)}</strong>
         <span>${money(asset.price)}</span>
       </button>`
     )
@@ -329,9 +359,9 @@ function renderAssetGroups() {
                   .map((asset) => {
                     const tradable = asset.tradable && Number.isFinite(Number(asset.price));
                     if (tradable) {
-                      return `<button type="button" data-symbol="${asset.symbol}">${asset.symbol} ${money(asset.price)}</button>`;
+                      return `<button type="button" data-symbol="${asset.symbol}">${assetLabel(asset.symbol)} ${money(asset.price)}</button>`;
                     }
-                    return `<span class="asset-chip unavailable">${asset.symbol}</span>`;
+                    return `<span class="asset-chip unavailable">${assetLabel(asset.symbol)}</span>`;
                   })
                   .join("")
               : '<span class="asset-chip unavailable">No live listings</span>'
@@ -345,6 +375,7 @@ function renderAssetGroups() {
 async function saveSelectedAsset(symbol) {
   selectedAsset = symbol;
   syncSelectedAsset();
+  rebuildFromInputs();
   if (!currentUser.authenticated) {
     render();
     return;
@@ -553,8 +584,22 @@ function parseCsv(text) {
   });
 }
 
+function scaleCandlesToSelectedAsset(candles) {
+  const liveMark = currentMarketPrice();
+  const reference = Number(candles[0]?.close || candles[0]?.open || 0);
+  if (!liveMark || !reference) return candles;
+  const scale = liveMark / reference;
+  return candles.map((candle) => ({
+    ...candle,
+    close: candle.close * scale,
+    high: candle.high * scale,
+    low: candle.low * scale,
+    open: candle.open * scale
+  }));
+}
+
 function configFromInputs() {
-  const candles = parseCsv(els.csvInput.value);
+  const candles = scaleCandlesToSelectedAsset(parseCsv(els.csvInput.value));
   if (!candles.length) {
     throw new Error("No candles found");
   }

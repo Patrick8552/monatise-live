@@ -258,6 +258,27 @@ label .range-readout {
   padding-left: 12px;
 }
 
+.asset-detail {
+  background: rgba(0, 168, 120, 0.07);
+  border: 1px solid rgba(0, 168, 120, 0.18);
+  border-radius: 6px;
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+}
+
+.asset-detail strong {
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+.asset-detail span {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 750;
+  line-height: 1.35;
+}
+
 .group-title {
   align-items: end;
   display: flex;
@@ -808,9 +829,15 @@ canvas {
   color: #f9fffb;
   display: grid;
   gap: 6px;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) auto;
   min-height: 42px;
   white-space: normal;
+}
+
+.market-strip button strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: left;
 }
 
 .market-strip button span {
@@ -906,8 +933,11 @@ canvas {
   color: rgba(249, 255, 251, 0.86);
   border-radius: 999px;
   font-size: 0.74rem;
+  line-height: 1.2;
   min-height: 28px;
+  overflow-wrap: anywhere;
   padding: 5px 8px;
+  text-align: left;
 }
 
 .asset-chip.unavailable {
