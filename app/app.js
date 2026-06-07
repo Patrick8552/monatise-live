@@ -52,7 +52,6 @@ const els = {
   lastFill: document.querySelector("#lastFill"),
   levelsInput: document.querySelector("#levelsInput"),
   levelsValue: document.querySelector("#levelsValue"),
-  liquidityCanvas: document.querySelector("#liquidityCanvas"),
   liquiditySource: document.querySelector("#liquiditySource"),
   credentialGate: document.querySelector("#credentialGate"),
   liveDeskStatus: document.querySelector("#liveDeskStatus"),
@@ -1862,147 +1861,6 @@ function setupCanvas(canvas) {
   return { ctx, height: rect.height, width: rect.width };
 }
 
-function drawLiquidity(options = {}) {
-  if (!els.liquidityCanvas) return;
-  const { ctx, height, width } = setupCanvas(els.liquidityCanvas);
-  const candle = state.candles[Math.max(0, Math.min(state.activeIndex, state.candles.length - 1))];
-  const mark = Number(options.mark ?? currentMarketPrice() ?? candle.close);
-  const sourceType = options.sourceType || "preview";
-  const sourceLabel = options.sourceLabel || "Strategy preview only. No exchange orders.";
-  const orders = Array.isArray(options.orders) ? options.orders : buildLevels(mark);
-  const prices = [
-    ...orders.map((order) => Number(order.price)).filter((price) => Number.isFinite(price)),
-    ...((fibAnalysis?.levels || []).map((level) => Number(level.price)).filter((price) => Number.isFinite(price))),
-    Number(fibAnalysis?.grid_floor),
-    Number(fibAnalysis?.grid_ceiling),
-    candle.high,
-    candle.low,
-    mark
-  ].filter((price) => Number.isFinite(price));
-  const min = Math.min(...prices) * 0.998;
-  const max = Math.max(...prices) * 1.002;
-  const yFor = (price) => height - 34 - ((price - min) / (max - min || 1)) * (height - 72);
-
-  ctx.clearRect(0, 0, width, height);
-  ctx.fillStyle = "#fbfcfa";
-  ctx.fillRect(0, 0, width, height);
-
-  ctx.strokeStyle = "#d9ded8";
-  ctx.lineWidth = 1;
-  for (let i = 0; i < 6; i += 1) {
-    const y = 30 + (i * (height - 64)) / 5;
-    ctx.beginPath();
-    ctx.moveTo(24, y);
-    ctx.lineTo(width - 24, y);
-    ctx.stroke();
-  }
-
-  ctx.fillStyle = sourceType === "live" ? "#eafff5" : sourceType === "backend" ? "#eef7ff" : "#fff8df";
-  ctx.strokeStyle = sourceType === "live" ? "#0f9f7a" : sourceType === "backend" ? "#246bfe" : "#d69b00";
-  ctx.lineWidth = 1;
-  const badgeWidth = Math.min(width - 48, 450);
-  ctx.fillRect(24, 16, badgeWidth, 30);
-  ctx.strokeRect(24, 16, badgeWidth, 30);
-  ctx.fillStyle = "#202523";
-  ctx.font = "800 12px system-ui";
-  ctx.textAlign = "left";
-  ctx.fillText(sourceLabel, 36, 36);
-
-  const markY = yFor(mark);
-  ctx.strokeStyle = "#20323a";
-  ctx.lineWidth = 2;
-  ctx.setLineDash([7, 7]);
-  ctx.beginPath();
-  ctx.moveTo(32, markY);
-  ctx.lineTo(width - 32, markY);
-  ctx.stroke();
-  ctx.setLineDash([]);
-  ctx.fillStyle = "#202523";
-  ctx.font = "850 12px system-ui";
-  ctx.textAlign = "center";
-  ctx.fillText(`MARK ${money(mark)}`, width / 2, Math.max(58, markY - 10));
-
-  if (fibAnalysis && !fibAnalysis.error && fibAnalysis.symbol === selectedAsset) {
-    ctx.font = "800 11px system-ui";
-    (fibAnalysis.levels || []).forEach((level) => {
-      const price = Number(level.price);
-      if (!Number.isFinite(price)) return;
-      const y = yFor(price);
-      const isExtension = level.kind === "extension";
-      ctx.strokeStyle = isExtension ? "rgba(199, 71, 71, 0.72)" : "rgba(15, 159, 122, 0.72)";
-      ctx.lineWidth = isExtension ? 2 : 1.5;
-      ctx.setLineDash(isExtension ? [9, 7] : [4, 5]);
-      ctx.beginPath();
-      ctx.moveTo(32, y);
-      ctx.lineTo(width - 32, y);
-      ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.fillStyle = isExtension ? "#9e2f2f" : "#0b755b";
-      ctx.textAlign = "left";
-      ctx.fillText(`FIB ${level.label} ${money(price)}`, 38, Math.max(54, y - 6));
-    });
-  }
-
-  if (!orders.length) {
-    ctx.fillStyle = "#56605c";
-    ctx.font = "850 14px system-ui";
-    ctx.textAlign = "center";
-    ctx.fillText("No resting exchange orders yet", width / 2, height / 2);
-  }
-
-  orders.forEach((level) => {
-    const price = Number(level.price);
-    if (!Number.isFinite(price)) return;
-    const y = yFor(price);
-    const side = String(level.side || "").toLowerCase();
-    const isBuy = side === "buy" || side === "b";
-    const start = isBuy ? 40 : width * 0.52;
-    const end = isBuy ? width * 0.48 : width - 40;
-    ctx.strokeStyle = isBuy ? "#0f9f7a" : "#c74747";
-    ctx.lineWidth = sourceType === "live" ? 7 : 4;
-    ctx.beginPath();
-    ctx.moveTo(start, y);
-    ctx.lineTo(end, y);
-    ctx.stroke();
-
-    ctx.fillStyle = "#202523";
-    ctx.font = "700 12px system-ui";
-    ctx.textAlign = isBuy ? "left" : "right";
-    const quantity = Number(level.quantity || 0);
-    const prefix = sourceType === "live" ? "LIVE" : "PREVIEW";
-    const size = quantity > 0 ? ` · ${quantity.toFixed(5)} ${selectedAsset}` : "";
-    ctx.fillText(`${prefix} ${isBuy ? "BUY" : "SELL"} ${money(price)}${size}`, isBuy ? 42 : width - 42, y - 9);
-  });
-
-  const candleX = width / 2;
-  ctx.strokeStyle = "#365f6b";
-  ctx.lineWidth = 10;
-  ctx.beginPath();
-  ctx.moveTo(candleX, yFor(candle.low));
-  ctx.lineTo(candleX, yFor(candle.high));
-  ctx.stroke();
-  ctx.fillStyle = "#d29d2b";
-  ctx.beginPath();
-  ctx.arc(candleX, yFor(candle.close), 7, 0, Math.PI * 2);
-  ctx.fill();
-
-  state.fills.slice(-12).forEach((fill, index) => {
-    const x = 80 + index * Math.max(24, (width - 160) / 12);
-    const y = yFor(fill.price);
-    ctx.fillStyle = fill.side === "buy" ? "#0f9f7a" : "#c74747";
-    ctx.globalAlpha = 0.22 + index / 18;
-    ctx.beginPath();
-    ctx.arc(x, y, 7, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.globalAlpha = 1;
-  });
-
-  ctx.fillStyle = "#6b746f";
-  ctx.font = "750 12px system-ui";
-  ctx.textAlign = "center";
-  ctx.fillText(sourceType === "preview" ? `preview ${selectedAsset} grid state` : `live ${selectedAsset} order state`, width / 2, height - 12);
-}
-
 function drawEquity() {
   const { ctx, height, width } = setupCanvas(els.equityCanvas);
   const points = state.equityCurve;
@@ -2111,12 +1969,6 @@ function renderBackend(snapshot) {
     ? `${String(snapshot.mode || "live").toUpperCase()} ${String(snapshot.network || "mainnet").toUpperCase()} exchange/order state`
     : "Backend connected - no resting exchange orders";
   els.liquiditySource.textContent = sourceLabel;
-  drawLiquidity({
-    mark: Number.isFinite(liveMark) ? liveMark : undefined,
-    orders: liveOrders,
-    sourceLabel,
-    sourceType: hasExchangeState ? "live" : "backend"
-  });
   if (Array.isArray(snapshot.fills)) {
     els.fillCount.textContent = `${snapshot.fills.length} fills`;
     const fills = snapshot.fills.slice(-20).reverse();
@@ -2290,12 +2142,6 @@ function render() {
   els.runState.textContent = state.activeIndex >= state.candles.length ? "Complete" : "Ready";
   renderTape();
   renderAuditLog();
-  drawLiquidity({
-    mark: live ? Number(live.price) : mark,
-    orders: state.openOrders,
-    sourceLabel: "Strategy preview only. No exchange orders.",
-    sourceType: "preview"
-  });
   drawEquity();
   if (!backendOnline) {
     els.runtimeLog.innerHTML = "<article>Serve with the live backend to control paper/live loops.</article>";

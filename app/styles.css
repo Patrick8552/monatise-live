@@ -730,11 +730,6 @@ button.live-running {
   padding-right: 4px;
 }
 
-#markets #liquidityCanvas {
-  height: 420px;
-  min-height: 360px;
-}
-
 .page-lede {
   background:
     linear-gradient(90deg, rgba(17, 24, 23, 0.98), rgba(26, 37, 35, 0.96)),
@@ -1163,15 +1158,6 @@ button.live-running {
 canvas {
   display: block;
   max-width: 100%;
-}
-
-#liquidityCanvas {
-  background: linear-gradient(180deg, #f8faf5 0%, #e6eee8 100%);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 6px;
-  height: min(58vh, 560px);
-  min-height: 420px;
-  width: 100%;
 }
 
 .market-strip {
@@ -2859,11 +2845,6 @@ button:disabled {
     overflow: visible;
   }
 
-  #liquidityCanvas {
-    height: 360px;
-    min-height: 320px;
-  }
-
   .asset-groups {
     grid-template-columns: 1fr;
   }
@@ -2994,12 +2975,6 @@ button:disabled {
 
   .market-3d-map {
     height: 180px;
-  }
-
-  #liquidityCanvas,
-  #markets #liquidityCanvas {
-    height: 300px;
-    min-height: 280px;
   }
 
   #equityCanvas {
