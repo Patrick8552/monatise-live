@@ -64,6 +64,8 @@ const els = {
   marketRadar: document.querySelector("#marketRadar"),
   marketStrip: document.querySelector("#marketStrip"),
   marketTitle: document.querySelector("#marketTitle"),
+  maxPositionValueInput: document.querySelector("#maxPositionValueInput"),
+  maxTotalNotionalInput: document.querySelector("#maxTotalNotionalInput"),
   orderSizeInput: document.querySelector("#orderSizeInput"),
   executionModeMetric: document.querySelector("#executionModeMetric"),
   openNotionalMetric: document.querySelector("#openNotionalMetric"),
@@ -83,6 +85,7 @@ const els = {
   riskStatus: document.querySelector("#riskStatus"),
   rulesStatus: document.querySelector("#rulesStatus"),
   rulesSummary: document.querySelector("#rulesSummary"),
+  ruleOrderSizeInput: document.querySelector("#ruleOrderSizeInput"),
   runButton: document.querySelector("#runButton"),
   runState: document.querySelector("#runState"),
   saveRulesButton: document.querySelector("#saveRulesButton"),
@@ -142,8 +145,13 @@ let lastTicketHealth = null;
 let pendingArmReview = false;
 let tradingRules = {
   chartInterval: "1h",
+  leverage: 10,
   londonCommodityOnly: true,
   maxDailyLossPct: 0.05,
+  orderQuoteSize: 25,
+  maxOrderNotional: 25,
+  maxTotalNotional: 150,
+  maxPositionValue: 250,
   sessionGuardMinutes: 60,
   staleGridCancel: true
 };
@@ -847,10 +855,23 @@ function normalizedTradingRules(rules = {}) {
   const interval = String(rules.chartInterval || "1h");
   const rawLossPct = Number(rules.maxDailyLossPct ?? 0.05);
   const maxDailyLossPct = Number.isFinite(rawLossPct) ? Math.min(0.2, Math.max(0.01, rawLossPct)) : 0.05;
+  const rawOrderQuoteSize = Number(rules.orderQuoteSize ?? rules.maxOrderNotional ?? 25);
+  const rawMaxTotalNotional = Number(rules.maxTotalNotional ?? 150);
+  const rawMaxPositionValue = Number(rules.maxPositionValue ?? 250);
+  const orderQuoteSize = Number.isFinite(rawOrderQuoteSize) ? Math.max(1, rawOrderQuoteSize) : 25;
+  const maxTotalNotional = Number.isFinite(rawMaxTotalNotional)
+    ? Math.max(orderQuoteSize, rawMaxTotalNotional)
+    : Math.max(orderQuoteSize, 150);
+  const maxPositionValue = Number.isFinite(rawMaxPositionValue) ? Math.max(1, rawMaxPositionValue) : 250;
   return {
     chartInterval: ["1h", "15m", "5m", "1m"].includes(interval) ? interval : "1h",
+    leverage: 10,
     londonCommodityOnly: rules.londonCommodityOnly !== false,
     maxDailyLossPct,
+    orderQuoteSize,
+    maxOrderNotional: orderQuoteSize,
+    maxTotalNotional,
+    maxPositionValue,
     sessionGuardMinutes: [5, 15, 30, 60, 90].includes(Number(rules.sessionGuardMinutes))
       ? Number(rules.sessionGuardMinutes)
       : 60,
@@ -863,6 +884,10 @@ function applyTradingRules(rules = {}) {
   els.chartIntervalSelect.value = tradingRules.chartInterval;
   els.sessionGuardSelect.value = String(tradingRules.sessionGuardMinutes);
   els.drawdownLimitInput.value = (tradingRules.maxDailyLossPct * 100).toFixed(1).replace(/\.0$/, "");
+  els.ruleOrderSizeInput.value = formatInputNumber(tradingRules.orderQuoteSize);
+  els.maxTotalNotionalInput.value = formatInputNumber(tradingRules.maxTotalNotional);
+  els.maxPositionValueInput.value = formatInputNumber(tradingRules.maxPositionValue);
+  els.orderSizeInput.value = formatInputNumber(tradingRules.orderQuoteSize);
   els.staleGridCancelInput.checked = tradingRules.staleGridCancel;
   els.londonCommodityInput.checked = tradingRules.londonCommodityOnly;
   renderTradingRules();
@@ -871,7 +896,9 @@ function applyTradingRules(rules = {}) {
 function renderTradingRules() {
   const drawdownLabel = `${(tradingRules.maxDailyLossPct * 100).toFixed(1).replace(/\.0$/, "")}% drawdown cap`;
   els.rulesStatus.textContent = `${tradingRules.chartInterval} grid feed`;
-  els.rulesSummary.textContent = `${tradingRules.chartInterval} analysis · ${tradingRules.sessionGuardMinutes}m session guard · ${
+  els.rulesSummary.textContent = `10x leverage · ${money(tradingRules.orderQuoteSize)} per order · ${money(
+    tradingRules.maxTotalNotional
+  )} open grid · ${money(tradingRules.maxPositionValue)} max position · ${tradingRules.chartInterval} analysis · ${tradingRules.sessionGuardMinutes}m session guard · ${
     tradingRules.londonCommodityOnly ? "London commodity guard on" : "London commodity guard off"
   } · ${drawdownLabel} · ${tradingRules.staleGridCancel ? "stale cancel on" : "stale cancel off"} · free access`;
   els.ticketDrawdown.textContent = `${(tradingRules.maxDailyLossPct * 100).toFixed(2)}%`;
@@ -1467,6 +1494,12 @@ function money(value) {
   }).format(value || 0);
 }
 
+function formatInputNumber(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return "";
+  return Number.isInteger(numeric) ? String(numeric) : String(Number(numeric.toFixed(2)));
+}
+
 function currentMarketPrice() {
   const live = markets.find((asset) => asset.symbol === selectedAsset);
   return Number.isFinite(Number(live?.price)) ? Number(live.price) : null;
@@ -1796,7 +1829,7 @@ function renderBackend(snapshot) {
   if (snapshot.risk) {
     els.drawdownMetric.textContent = `${money(snapshot.risk.drawdown)} (${((snapshot.risk.drawdown_pct || 0) * 100).toFixed(2)}%)`;
     els.openNotionalMetric.textContent = money(snapshot.risk.open_order_notional || 0);
-    els.riskBudgetMetric.textContent = `${money(snapshot.risk.max_daily_loss || 0)} (${((snapshot.risk.max_daily_loss_pct || 0) * 100).toFixed(2)}%)`;
+    els.riskBudgetMetric.textContent = `${money(snapshot.risk.estimated_margin_used || 0)} / ${money(snapshot.risk.max_grid_margin || 0)}`;
   }
   if (snapshot.desk) {
     els.executionModeMetric.textContent = snapshot.desk.executionMode || snapshot.executionMode || "dry_run";
@@ -1923,11 +1956,15 @@ async function saveTradingRules() {
     chartInterval: els.chartIntervalSelect.value,
     londonCommodityOnly: els.londonCommodityInput.checked,
     maxDailyLossPct: Number(els.drawdownLimitInput.value) / 100,
+    orderQuoteSize: Number(els.ruleOrderSizeInput.value),
+    maxTotalNotional: Number(els.maxTotalNotionalInput.value),
+    maxPositionValue: Number(els.maxPositionValueInput.value),
     sessionGuardMinutes: Number(els.sessionGuardSelect.value),
     staleGridCancel: els.staleGridCancelInput.checked
   });
   if (!currentUser.authenticated) {
     applyTradingRules(nextRules);
+    rebuildFromInputs();
     fibAnalysis = null;
     contextRadar = null;
     loadFibonacciAnalysis({ force: true });
@@ -1942,6 +1979,7 @@ async function saveTradingRules() {
     return;
   }
   applyTradingRules(payload.tradingRules);
+  rebuildFromInputs();
   fibAnalysis = null;
   contextRadar = null;
   loadFibonacciAnalysis({ force: true });
@@ -2086,16 +2124,22 @@ function previewTradingRules() {
     chartInterval: els.chartIntervalSelect.value,
     londonCommodityOnly: els.londonCommodityInput.checked,
     maxDailyLossPct: Number(els.drawdownLimitInput.value) / 100,
+    orderQuoteSize: Number(els.ruleOrderSizeInput.value),
+    maxTotalNotional: Number(els.maxTotalNotionalInput.value),
+    maxPositionValue: Number(els.maxPositionValueInput.value),
     sessionGuardMinutes: Number(els.sessionGuardSelect.value),
     staleGridCancel: els.staleGridCancelInput.checked
   });
   applyTradingRules(nextRules);
+  rebuildFromInputs();
 }
 [els.chartIntervalSelect, els.sessionGuardSelect, els.staleGridCancelInput, els.londonCommodityInput].forEach((input) => {
   input.addEventListener("change", previewTradingRules);
 });
-els.drawdownLimitInput.addEventListener("input", previewTradingRules);
-els.drawdownLimitInput.addEventListener("change", previewTradingRules);
+[els.drawdownLimitInput, els.ruleOrderSizeInput, els.maxTotalNotionalInput, els.maxPositionValueInput].forEach((input) => {
+  input.addEventListener("input", previewTradingRules);
+  input.addEventListener("change", previewTradingRules);
+});
 els.backendStartButton.addEventListener("click", () => backendCommand("/api/start").catch(refreshBackend));
 els.backendStopButton.addEventListener("click", () => backendCommand("/api/stop").catch(refreshBackend));
 ["input", "change"].forEach((eventName) => {

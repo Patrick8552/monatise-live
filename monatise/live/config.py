@@ -18,6 +18,7 @@ class RuntimeConfig:
     base: float = 0.05
     spacing_pct: float = 0.005
     levels_each_side: int = 5
+    leverage: float = 10.0
     order_quote_size: float = 250.0
     fee_rate: float = 0.0004
     poll_seconds: float = 5.0
@@ -58,6 +59,7 @@ class RuntimeConfig:
             base=float(os.getenv("MONATISE_BASE", "0.05")),
             spacing_pct=float(os.getenv("MONATISE_SPACING_PCT", "0.005")),
             levels_each_side=int(os.getenv("MONATISE_LEVELS_EACH_SIDE", "5")),
+            leverage=float(os.getenv("MONATISE_LEVERAGE", "10")),
             order_quote_size=float(os.getenv("MONATISE_ORDER_QUOTE_SIZE", "250")),
             fee_rate=float(os.getenv("MONATISE_FEE_RATE", "0.0004")),
             poll_seconds=float(os.getenv("MONATISE_POLL_SECONDS", "5")),
@@ -117,6 +119,8 @@ class RuntimeConfig:
             raise ValueError("MONATISE_NETWORK must be testnet or mainnet")
         if self.execution_mode not in {"observe", "dry_run", "live"}:
             raise ValueError("MONATISE_EXECUTION_MODE must be observe, dry_run, or live")
+        if self.leverage <= 0:
+            raise ValueError("MONATISE_LEVERAGE must be positive")
         if self.order_quote_size <= 0:
             raise ValueError("MONATISE_ORDER_QUOTE_SIZE must be positive")
         if self.max_order_notional <= 0:

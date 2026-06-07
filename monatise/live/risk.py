@@ -19,8 +19,11 @@ class RiskSnapshot:
     drawdown: float
     drawdown_pct: float
     kill_switch: bool
+    leverage: float
     open_order_notional: float
+    estimated_margin_used: float
     max_total_notional: float
+    max_grid_margin: float
     max_daily_loss: float
     max_daily_loss_pct: float
 
@@ -65,14 +68,19 @@ class RiskManager:
         equity = portfolio.equity(mark_price)
         drawdown = max(0.0, self.starting_equity - equity)
         drawdown_pct = 0.0 if self.starting_equity <= 0 else drawdown / self.starting_equity
+        open_order_notional = sum(order.notional for order in orders)
+        leverage = max(self.config.leverage, 1e-9)
         return RiskSnapshot(
             starting_equity=self.starting_equity,
             equity=equity,
             drawdown=drawdown,
             drawdown_pct=drawdown_pct,
             kill_switch=self.kill_switch,
-            open_order_notional=sum(order.notional for order in orders),
+            leverage=self.config.leverage,
+            open_order_notional=open_order_notional,
+            estimated_margin_used=open_order_notional / leverage,
             max_total_notional=self.config.max_total_notional,
+            max_grid_margin=self.config.max_total_notional / leverage,
             max_daily_loss=self.daily_loss_limit(),
             max_daily_loss_pct=0.0 if self.starting_equity <= 0 else self.daily_loss_limit() / self.starting_equity,
         )

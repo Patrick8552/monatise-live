@@ -84,10 +84,65 @@ def test_user_store_saves_one_minute_trading_rules_on_free_access() -> None:
             )
 
             assert settings.chart_interval == "1m"
+            assert settings.leverage == 10
             assert settings.max_daily_loss_pct == 0.12
             assert settings.session_guard_minutes == 15
             assert not settings.stale_grid_cancel
             assert not settings.london_commodity_only
+    finally:
+        _restore_key(old_key)
+
+
+def test_user_store_saves_grid_sizing_rules() -> None:
+    old_key = _with_key()
+    try:
+        with tempfile.NamedTemporaryFile() as db:
+            store = UserStore(db.name)
+            user = store.create_user("trader-six", "password123")
+
+            settings = store.save_trading_rules(
+                user.id,
+                chart_interval="5m",
+                london_commodity_only=True,
+                max_daily_loss_pct=0.05,
+                session_guard_minutes=30,
+                stale_grid_cancel=True,
+                order_quote_size=40,
+                max_total_notional=240,
+                max_position_value=400,
+            )
+
+            assert settings.leverage == 10
+            assert settings.order_quote_size == 40
+            assert settings.max_order_notional == 40
+            assert settings.max_total_notional == 240
+            assert settings.max_position_value == 400
+    finally:
+        _restore_key(old_key)
+
+
+def test_user_store_rejects_order_size_above_total_open_grid() -> None:
+    old_key = _with_key()
+    try:
+        with tempfile.NamedTemporaryFile() as db:
+            store = UserStore(db.name)
+            user = store.create_user("trader-seven", "password123")
+
+            try:
+                store.save_trading_rules(
+                    user.id,
+                    chart_interval="1h",
+                    london_commodity_only=True,
+                    max_daily_loss_pct=0.05,
+                    session_guard_minutes=60,
+                    stale_grid_cancel=True,
+                    order_quote_size=250,
+                    max_total_notional=100,
+                    max_position_value=400,
+                )
+                raise AssertionError("expected invalid sizing to fail")
+            except ValueError as error:
+                assert "total open grid" in str(error)
     finally:
         _restore_key(old_key)
 

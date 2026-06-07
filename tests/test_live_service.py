@@ -80,12 +80,16 @@ def test_live_snapshot_exposes_readiness_checklist() -> None:
 
 
 def test_client_drawdown_percentage_sets_daily_loss_limit() -> None:
-    service = TradingService(RuntimeConfig(mode="paper", max_daily_loss=1, max_daily_loss_pct=0.12))
+    service = TradingService(
+        RuntimeConfig(mode="paper", leverage=10, max_daily_loss=1, max_daily_loss_pct=0.12, max_total_notional=150)
+    )
 
     snapshot = service.snapshot()
 
     assert snapshot["risk"]["max_daily_loss_pct"] == 0.12
     assert snapshot["risk"]["max_daily_loss"] == snapshot["risk"]["starting_equity"] * 0.12
+    assert snapshot["risk"]["leverage"] == 10
+    assert snapshot["risk"]["max_grid_margin"] == 15
     assert snapshot["tradingRules"]["maxDailyLossPct"] == 0.12
 
 

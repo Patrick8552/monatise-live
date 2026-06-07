@@ -50,20 +50,36 @@ def test_total_notional_defaults_to_trading_capital() -> None:
     config = RuntimeConfig(quote=25_000)
 
     assert config.max_total_notional == 25_000
+    assert config.leverage == 10
 
 
 def test_total_notional_env_override_is_respected() -> None:
     old_quote = os.environ.get("MONATISE_QUOTE")
     old_limit = os.environ.get("MONATISE_MAX_TOTAL_NOTIONAL")
+    old_leverage = os.environ.get("MONATISE_LEVERAGE")
     os.environ["MONATISE_QUOTE"] = "25000"
     os.environ["MONATISE_MAX_TOTAL_NOTIONAL"] = "5000"
+    os.environ["MONATISE_LEVERAGE"] = "10"
     try:
         config = RuntimeConfig.from_env()
         assert config.quote == 25_000
         assert config.max_total_notional == 5_000
+        assert config.leverage == 10
     finally:
         _restore_env("MONATISE_QUOTE", old_quote)
         _restore_env("MONATISE_MAX_TOTAL_NOTIONAL", old_limit)
+        _restore_env("MONATISE_LEVERAGE", old_leverage)
+
+
+def test_leverage_must_be_positive() -> None:
+    config = RuntimeConfig(leverage=0)
+
+    try:
+        config.validate()
+    except ValueError as error:
+        assert "LEVERAGE" in str(error)
+    else:
+        raise AssertionError("expected invalid leverage to fail")
 
 
 def test_env_daily_loss_defaults_to_five_percent_of_quote() -> None:

@@ -36,6 +36,11 @@ class UserSettings:
     subscription_plan: str = "free"
     subscription_status: str = "active"
     chart_interval: str = "1h"
+    leverage: float = 10.0
+    order_quote_size: float = 25.0
+    max_order_notional: float = 25.0
+    max_total_notional: float = 150.0
+    max_position_value: float = 250.0
     session_guard_minutes: int = 60
     stale_grid_cancel: bool = True
     london_commodity_only: bool = True
@@ -185,6 +190,9 @@ class UserStore:
         max_daily_loss_pct: float,
         session_guard_minutes: int,
         stale_grid_cancel: bool,
+        order_quote_size: float | None = None,
+        max_total_notional: float | None = None,
+        max_position_value: float | None = None,
     ) -> UserSettings:
         settings = self.settings_for_user(user_id)
         chart_interval = chart_interval.strip()
@@ -194,17 +202,34 @@ class UserStore:
             raise ValueError("session guard must be 5, 15, 30, 60, or 90 minutes")
         if not 0 < max_daily_loss_pct <= 0.2:
             raise ValueError("drawdown limit must be greater than 0% and no more than 20%")
+        order_quote_size = settings.order_quote_size if order_quote_size is None else float(order_quote_size)
+        max_total_notional = settings.max_total_notional if max_total_notional is None else float(max_total_notional)
+        max_position_value = settings.max_position_value if max_position_value is None else float(max_position_value)
+        if order_quote_size <= 0:
+            raise ValueError("per-order size must be positive")
+        if max_total_notional <= 0:
+            raise ValueError("total open grid limit must be positive")
+        if max_position_value <= 0:
+            raise ValueError("max position value must be positive")
+        if order_quote_size > max_total_notional:
+            raise ValueError("per-order size cannot exceed total open grid")
         with self._connect() as conn:
             conn.execute(
                 """
                 insert into user_settings(
                   user_id, selected_symbol, subscription_plan, subscription_status,
-                  chart_interval, session_guard_minutes, stale_grid_cancel, london_commodity_only,
+                  chart_interval, leverage, order_quote_size, max_order_notional, max_total_notional,
+                  max_position_value, session_guard_minutes, stale_grid_cancel, london_commodity_only,
                   max_daily_loss_pct, updated_at
                 )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 on conflict(user_id) do update set
                   chart_interval = excluded.chart_interval,
+                  leverage = excluded.leverage,
+                  order_quote_size = excluded.order_quote_size,
+                  max_order_notional = excluded.max_order_notional,
+                  max_total_notional = excluded.max_total_notional,
+                  max_position_value = excluded.max_position_value,
                   session_guard_minutes = excluded.session_guard_minutes,
                   stale_grid_cancel = excluded.stale_grid_cancel,
                   london_commodity_only = excluded.london_commodity_only,
@@ -217,6 +242,11 @@ class UserStore:
                     settings.subscription_plan,
                     settings.subscription_status,
                     chart_interval,
+                    10.0,
+                    order_quote_size,
+                    order_quote_size,
+                    max_total_notional,
+                    max_position_value,
                     session_guard_minutes,
                     int(stale_grid_cancel),
                     int(london_commodity_only),
@@ -250,7 +280,8 @@ class UserStore:
             row = conn.execute(
                 """
                 select selected_symbol, subscription_plan, subscription_status,
-                       chart_interval, session_guard_minutes, stale_grid_cancel, london_commodity_only,
+                       chart_interval, leverage, order_quote_size, max_order_notional, max_total_notional,
+                       max_position_value, session_guard_minutes, stale_grid_cancel, london_commodity_only,
                        max_daily_loss_pct
                 from user_settings
                 where user_id = ?
@@ -264,6 +295,11 @@ class UserStore:
             subscription_plan=str(row["subscription_plan"]),
             subscription_status=str(row["subscription_status"]),
             chart_interval=str(row["chart_interval"] or "1h"),
+            leverage=float(row["leverage"] or 10.0),
+            order_quote_size=float(row["order_quote_size"] or 25.0),
+            max_order_notional=float(row["max_order_notional"] or row["order_quote_size"] or 25.0),
+            max_total_notional=float(row["max_total_notional"] or 150.0),
+            max_position_value=float(row["max_position_value"] or 250.0),
             session_guard_minutes=int(row["session_guard_minutes"] or 60),
             stale_grid_cancel=bool(row["stale_grid_cancel"]),
             london_commodity_only=bool(row["london_commodity_only"]),
@@ -322,6 +358,11 @@ class UserStore:
                   subscription_plan text not null,
                   subscription_status text not null,
                   chart_interval text not null default '1h',
+                  leverage real not null default 10,
+                  order_quote_size real not null default 25,
+                  max_order_notional real not null default 25,
+                  max_total_notional real not null default 150,
+                  max_position_value real not null default 250,
                   session_guard_minutes integer not null default 60,
                   stale_grid_cancel integer not null default 1,
                   london_commodity_only integer not null default 1,
@@ -336,6 +377,11 @@ class UserStore:
             }
             migrations = {
                 "chart_interval": "alter table user_settings add column chart_interval text not null default '1h'",
+                "leverage": "alter table user_settings add column leverage real not null default 10",
+                "order_quote_size": "alter table user_settings add column order_quote_size real not null default 25",
+                "max_order_notional": "alter table user_settings add column max_order_notional real not null default 25",
+                "max_total_notional": "alter table user_settings add column max_total_notional real not null default 150",
+                "max_position_value": "alter table user_settings add column max_position_value real not null default 250",
                 "session_guard_minutes": "alter table user_settings add column session_guard_minutes integer not null default 60",
                 "stale_grid_cancel": "alter table user_settings add column stale_grid_cancel integer not null default 1",
                 "london_commodity_only": "alter table user_settings add column london_commodity_only integer not null default 1",

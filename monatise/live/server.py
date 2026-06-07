@@ -42,6 +42,11 @@ class TenantServices:
                 symbol=settings.selected_symbol,
                 account_address=credentials.account_address,
                 chart_interval=settings.chart_interval,
+                leverage=settings.leverage,
+                order_quote_size=settings.order_quote_size,
+                max_order_notional=settings.max_order_notional,
+                max_total_notional=settings.max_total_notional,
+                max_position_value=settings.max_position_value,
                 london_commodity_only=settings.london_commodity_only,
                 max_daily_loss_pct=settings.max_daily_loss_pct,
                 secret_key=credentials.secret_key,
@@ -62,6 +67,11 @@ class TenantServices:
 def settings_payload(settings) -> dict:  # noqa: ANN001
     return {
         "chartInterval": settings.chart_interval,
+        "leverage": settings.leverage,
+        "orderQuoteSize": settings.order_quote_size,
+        "maxOrderNotional": settings.max_order_notional,
+        "maxTotalNotional": settings.max_total_notional,
+        "maxPositionValue": settings.max_position_value,
         "londonCommodityOnly": settings.london_commodity_only,
         "maxDailyLossPct": settings.max_daily_loss_pct,
         "sessionGuardMinutes": settings.session_guard_minutes,
@@ -375,6 +385,9 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                     max_daily_loss_pct=float(payload.get("maxDailyLossPct", 0.05)),
                     session_guard_minutes=int(payload.get("sessionGuardMinutes", 60)),
                     stale_grid_cancel=bool(payload.get("staleGridCancel", True)),
+                    order_quote_size=float(payload.get("orderQuoteSize", 25)),
+                    max_total_notional=float(payload.get("maxTotalNotional", 150)),
+                    max_position_value=float(payload.get("maxPositionValue", 250)),
                 )
                 self.tenants.reset_user(user.id)
                 self._json({"tradingRules": settings_payload(settings)})

@@ -163,8 +163,13 @@ class TradingService:
             "sessionGuard": self.state.session_guard,
             "tradingRules": {
                 "chartInterval": self.config.chart_interval,
+                "leverage": self.config.leverage,
                 "londonCommodityOnly": self.config.london_commodity_only,
                 "maxDailyLossPct": self.config.max_daily_loss_pct,
+                "orderQuoteSize": self.config.order_quote_size,
+                "maxOrderNotional": self.config.max_order_notional,
+                "maxTotalNotional": self.config.max_total_notional,
+                "maxPositionValue": self.config.max_position_value,
                 "sessionGuardMinutes": self.config.session_guard_minutes,
                 "staleGridCancel": self.config.stale_grid_cancel,
             },

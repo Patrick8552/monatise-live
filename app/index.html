@@ -274,6 +274,18 @@
                   Drawdown cap
                   <input id="drawdownLimitInput" type="number" min="1" max="20" step="0.5" value="5" />
                 </label>
+                <label>
+                  Per order
+                  <input id="ruleOrderSizeInput" type="number" min="1" step="1" value="25" />
+                </label>
+                <label>
+                  Total open grid
+                  <input id="maxTotalNotionalInput" type="number" min="1" step="1" value="150" />
+                </label>
+                <label>
+                  Max position value
+                  <input id="maxPositionValueInput" type="number" min="1" step="1" value="250" />
+                </label>
               </div>
               <label class="toggle-rule">
                 <input id="staleGridCancelInput" type="checkbox" checked />
@@ -327,7 +339,7 @@
                   <strong id="orderAgeMetric">0s</strong>
                 </article>
                 <article>
-                  <span>Budget</span>
+                  <span>10x Margin</span>
                   <strong id="riskBudgetMetric">$0.00</strong>
                 </article>
                 <article>
