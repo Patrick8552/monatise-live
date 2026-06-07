@@ -52,7 +52,11 @@ class TenantServices:
                 self.base_config,
                 symbol=settings.selected_symbol,
                 account_address=credentials.account_address,
+                chart_interval=settings.chart_interval,
+                london_commodity_only=settings.london_commodity_only,
                 secret_key=credentials.secret_key,
+                session_guard_minutes=settings.session_guard_minutes,
+                stale_grid_cancel=settings.stale_grid_cancel,
             )
             service = TradingService(config)
             self._services[user.id] = service
@@ -63,6 +67,15 @@ class TenantServices:
             service = self._services.pop(user_id, None)
         if service is not None:
             service.stop()
+
+
+def settings_payload(settings) -> dict:  # noqa: ANN001
+    return {
+        "chartInterval": settings.chart_interval,
+        "londonCommodityOnly": settings.london_commodity_only,
+        "sessionGuardMinutes": settings.session_guard_minutes,
+        "staleGridCancel": settings.stale_grid_cancel,
+    }
 
 
 class MarketFeed:
@@ -396,6 +409,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                         "plan": settings.subscription_plan,
                         "status": settings.subscription_status,
                     },
+                    "tradingRules": settings_payload(settings),
                 }
             )
             return
@@ -439,7 +453,20 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             try:
                 user = self.store.create_user(str(payload.get("username", "")), str(payload.get("password", "")))
                 self._set_session_cookie(self.store.create_session(user.id))
-                self._json({"authenticated": True, "username": user.username, "credentialsConfigured": False})
+                settings = self.store.settings_for_user(user.id)
+                self._json(
+                    {
+                        "authenticated": True,
+                        "username": user.username,
+                        "credentialsConfigured": False,
+                        "selectedSymbol": settings.selected_symbol,
+                        "subscription": {
+                            "plan": settings.subscription_plan,
+                            "status": settings.subscription_status,
+                        },
+                        "tradingRules": settings_payload(settings),
+                    }
+                )
             except ValueError as error:
                 self._error(400, str(error))
             return
@@ -450,11 +477,18 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                 self._error(401, "invalid username or password")
                 return
             self._set_session_cookie(self.store.create_session(user.id))
+            settings = self.store.settings_for_user(user.id)
             self._json(
                 {
                     "authenticated": True,
                     "username": user.username,
                     "credentialsConfigured": self.store.has_credentials(user.id),
+                    "selectedSymbol": settings.selected_symbol,
+                    "subscription": {
+                        "plan": settings.subscription_plan,
+                        "status": settings.subscription_status,
+                    },
+                    "tradingRules": settings_payload(settings),
                 }
             )
             return
@@ -498,9 +532,28 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                             "plan": settings.subscription_plan,
                             "status": settings.subscription_status,
                         },
+                        "tradingRules": settings_payload(settings),
                     }
                 )
             except ValueError as error:
+                self._error(400, str(error))
+            return
+        if parsed.path == "/api/trading-rules":
+            user = self._require_user()
+            if user is None:
+                return
+            payload = self._read_json()
+            try:
+                settings = self.store.save_trading_rules(
+                    user.id,
+                    chart_interval=str(payload.get("chartInterval", "")),
+                    london_commodity_only=bool(payload.get("londonCommodityOnly", True)),
+                    session_guard_minutes=int(payload.get("sessionGuardMinutes", 60)),
+                    stale_grid_cancel=bool(payload.get("staleGridCancel", True)),
+                )
+                self.tenants.reset_user(user.id)
+                self._json({"tradingRules": settings_payload(settings)})
+            except (TypeError, ValueError) as error:
                 self._error(400, str(error))
             return
         if parsed.path == "/api/subscription":

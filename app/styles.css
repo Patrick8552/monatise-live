@@ -1569,6 +1569,98 @@ canvas {
   min-height: 44px;
 }
 
+.rules-console {
+  background:
+    linear-gradient(145deg, rgba(17, 24, 23, 0.96), rgba(26, 37, 35, 0.94)),
+    var(--terminal);
+  border: 1px solid rgba(0, 184, 217, 0.24);
+  border-left: 3px solid var(--cyan);
+  border-radius: 8px;
+  color: #f9fffb;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.rules-head {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.rules-head div {
+  display: grid;
+  gap: 2px;
+}
+
+.rules-head span,
+.rules-summary {
+  color: rgba(249, 255, 251, 0.68);
+  font-size: 0.72rem;
+  font-weight: 850;
+}
+
+.rules-head span {
+  text-transform: uppercase;
+}
+
+.rules-head strong {
+  color: #ffffff;
+  font-size: 0.94rem;
+}
+
+.rules-head button {
+  background: rgba(0, 184, 217, 0.16);
+  border-color: rgba(0, 184, 217, 0.38);
+  color: #f9fffb;
+  min-height: 34px;
+  padding: 7px 10px;
+}
+
+.rule-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.rules-console label {
+  color: rgba(249, 255, 251, 0.72);
+}
+
+.rules-console select {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.14);
+  color: #ffffff;
+}
+
+.toggle-rule {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  grid-template-columns: auto 1fr;
+}
+
+.toggle-rule input {
+  accent-color: var(--cyan);
+  min-width: 16px;
+}
+
+.toggle-rule span {
+  color: rgba(249, 255, 251, 0.78);
+  font-size: 0.76rem;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.rules-summary {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  line-height: 1.35;
+  padding: 8px;
+}
+
 .backend-box {
   border: 1px solid var(--line);
   border-radius: 6px;

@@ -65,3 +65,39 @@ def test_user_store_saves_asset_and_subscription_settings() -> None:
             assert settings.subscription_status == "active"
     finally:
         _restore_key(old_key)
+
+
+def test_user_store_saves_trading_rules_and_gates_one_minute_to_pro() -> None:
+    old_key = _with_key()
+    try:
+        with tempfile.NamedTemporaryFile() as db:
+            store = UserStore(db.name)
+            user = store.create_user("trader-four", "password123")
+
+            try:
+                store.save_trading_rules(
+                    user.id,
+                    chart_interval="1m",
+                    london_commodity_only=True,
+                    session_guard_minutes=60,
+                    stale_grid_cancel=True,
+                )
+                raise AssertionError("expected free 1m rule to fail")
+            except ValueError as error:
+                assert "Pro" in str(error)
+
+            store.save_subscription_plan(user.id, "pro")
+            settings = store.save_trading_rules(
+                user.id,
+                chart_interval="1m",
+                london_commodity_only=False,
+                session_guard_minutes=15,
+                stale_grid_cancel=False,
+            )
+
+            assert settings.chart_interval == "1m"
+            assert settings.session_guard_minutes == 15
+            assert not settings.stale_grid_cancel
+            assert not settings.london_commodity_only
+    finally:
+        _restore_key(old_key)

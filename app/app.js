@@ -23,6 +23,7 @@ const els = {
   authStatus: document.querySelector("#authStatus"),
   candleCount: document.querySelector("#candleCount"),
   cashMetricLabel: document.querySelector("#cashMetricLabel"),
+  chartIntervalSelect: document.querySelector("#chartIntervalSelect"),
   credentialStatus: document.querySelector("#credentialStatus"),
   contextRadar: document.querySelector("#contextRadar"),
   csvInput: document.querySelector("#csvInput"),
@@ -76,17 +77,23 @@ const els = {
   resetButton: document.querySelector("#resetButton"),
   riskGate: document.querySelector("#riskGate"),
   riskStatus: document.querySelector("#riskStatus"),
+  rulesStatus: document.querySelector("#rulesStatus"),
+  rulesSummary: document.querySelector("#rulesSummary"),
   runButton: document.querySelector("#runButton"),
   runState: document.querySelector("#runState"),
+  saveRulesButton: document.querySelector("#saveRulesButton"),
   saveCredentialsButton: document.querySelector("#saveCredentialsButton"),
+  sessionGuardSelect: document.querySelector("#sessionGuardSelect"),
   secretKeyInput: document.querySelector("#secretKeyInput"),
   runtimeLog: document.querySelector("#runtimeLog"),
   spacingInput: document.querySelector("#spacingInput"),
   spacingValue: document.querySelector("#spacingValue"),
   stepButton: document.querySelector("#stepButton"),
+  staleGridCancelInput: document.querySelector("#staleGridCancelInput"),
   subscriptionStatus: document.querySelector("#subscriptionStatus"),
   symbolInput: document.querySelector("#symbolInput"),
   syncMetric: document.querySelector("#syncMetric"),
+  londonCommodityInput: document.querySelector("#londonCommodityInput"),
   usernameInput: document.querySelector("#usernameInput")
 };
 
@@ -107,6 +114,12 @@ let contextRadar = null;
 let contextLoading = false;
 let contextLastLoadedAt = 0;
 let contextLastSymbol = "";
+let tradingRules = {
+  chartInterval: "1h",
+  londonCommodityOnly: true,
+  sessionGuardMinutes: 60,
+  staleGridCancel: true
+};
 localStorage.removeItem("monatiseControlToken");
 
 const assetMetadata = {
@@ -128,8 +141,8 @@ const forexSessions = [
   { closeHour: 16, name: "London", openHour: 7, pairs: ["EURUSD", "GBPUSD", "EURGBP"] },
   { closeHour: 21, name: "New York", openHour: 12, pairs: ["EURUSD", "GBPUSD", "USDJPY"] }
 ];
-const forexBreakGuardMinutes = 60;
 const forexPairs = Array.from(new Set(forexSessions.flatMap((session) => session.pairs)));
+const commoditySymbols = ["GOLD", "CL", "BRENTOIL"];
 
 function normalizeForexSymbol(symbol) {
   return String(symbol || "").replace(/[-/]/g, "").toUpperCase();
@@ -150,7 +163,7 @@ function updateLiveDesk(snapshot = null) {
   const network = snapshot?.network || "local";
   const running = Boolean(snapshot?.running);
   const backendSessionGuard = snapshot?.sessionGuard || {};
-  const localSessionGuard = forexSessionBreakGuard(selectedAsset);
+  const localSessionGuard = activeSessionGuard(selectedAsset);
   const sessionGuard = backendSessionGuard.active ? backendSessionGuard : localSessionGuard;
   const sessionBlocked = Boolean(sessionGuard.active && mode === "live");
   const liveReady = Boolean(snapshot?.liveReady && paidLive && !sessionBlocked);
@@ -273,6 +286,10 @@ function minutesUntilSessionChange(session, date) {
   return (target - now + 1440) % 1440;
 }
 
+function londonSession() {
+  return forexSessions.find((session) => session.name === "London");
+}
+
 function minutesFromUtcMinute(now, target) {
   const before = (target - now + 1440) % 1440;
   const after = (now - target + 1440) % 1440;
@@ -294,12 +311,13 @@ function sessionBreakProximity(session, date) {
 function forexSessionBreakGuard(symbol = selectedAsset, date = new Date()) {
   const pair = normalizeForexSymbol(symbol);
   if (!forexPairs.includes(pair)) return { active: false, symbol: pair };
+  const guardMinutes = Number(tradingRules.sessionGuardMinutes || 60);
   const guarded = forexSessions
     .filter((session) => session.pairs.includes(pair))
     .map((session) => {
       const proximity = sessionBreakProximity(session, date);
       return {
-        active: proximity.minutes <= forexBreakGuardMinutes,
+        active: proximity.minutes <= guardMinutes,
         direction: proximity.direction,
         minutes: proximity.minutes,
         pairs: session.pairs,
@@ -315,13 +333,38 @@ function forexSessionBreakGuard(symbol = selectedAsset, date = new Date()) {
     active: true,
     affectedPairs: primary.pairs,
     direction: primary.direction,
-    guardMinutes: forexBreakGuardMinutes,
+    guardMinutes,
     message: `forex session-break guard: ${pair} is ${primary.minutes}m ${primary.direction} ${primary.session} ${primary.transition}`,
     minutes: primary.minutes,
     session: primary.session,
     symbol: pair,
     transition: primary.transition
   };
+}
+
+function commodityLondonGuard(symbol = selectedAsset, date = new Date()) {
+  const asset = radarSymbol(symbol);
+  const london = londonSession();
+  if (!tradingRules.londonCommodityOnly || !commoditySymbols.includes(asset) || !london) {
+    return { active: false, symbol: asset };
+  }
+  if (isSessionOpen(london, date)) return { active: false, symbol: asset, session: "London" };
+  const proximity = sessionBreakProximity(london, date);
+  return {
+    active: true,
+    direction: proximity.direction,
+    message: `commodity session guard: ${asset} live grid orders are limited to the London session`,
+    minutes: proximity.minutes,
+    session: "London",
+    symbol: asset,
+    transition: proximity.transition
+  };
+}
+
+function activeSessionGuard(symbol = selectedAsset, date = new Date()) {
+  const forexGuard = forexSessionBreakGuard(symbol, date);
+  if (forexGuard.active) return forexGuard;
+  return commodityLondonGuard(symbol, date);
 }
 
 function durationLabel(totalMinutes) {
@@ -349,13 +392,13 @@ function activeForexPairs(date = new Date()) {
 function renderForexSessions(date = new Date()) {
   if (!els.forexSessions) return;
   const activePairs = activeForexPairs(date);
-  const sessionGuard = forexSessionBreakGuard(selectedAsset, date);
+  const sessionGuard = activeSessionGuard(selectedAsset, date);
   const rows = forexSessions
     .map((session) => {
       const open = isSessionOpen(session, date);
       const change = minutesUntilSessionChange(session, date);
       const proximity = sessionBreakProximity(session, date);
-      const guarded = proximity.minutes <= forexBreakGuardMinutes;
+      const guarded = proximity.minutes <= Number(tradingRules.sessionGuardMinutes || 60);
       return `<article class="session-row ${open ? "open" : "closed"} ${guarded ? "guarded" : ""}">
         <div>
           <strong>${session.name}</strong>
@@ -386,6 +429,41 @@ function renderForexSessions(date = new Date()) {
   updateLiveDesk(lastBackendSnapshot);
 }
 
+function normalizedTradingRules(rules = {}) {
+  const interval = String(rules.chartInterval || "1h");
+  return {
+    chartInterval: ["1h", "15m", "5m", "1m"].includes(interval) ? interval : "1h",
+    londonCommodityOnly: rules.londonCommodityOnly !== false,
+    sessionGuardMinutes: [5, 15, 30, 60, 90].includes(Number(rules.sessionGuardMinutes))
+      ? Number(rules.sessionGuardMinutes)
+      : 60,
+    staleGridCancel: rules.staleGridCancel !== false
+  };
+}
+
+function applyTradingRules(rules = {}) {
+  tradingRules = normalizedTradingRules(rules);
+  if (tradingRules.chartInterval === "1m" && !hasLivePlan()) {
+    tradingRules.chartInterval = "5m";
+  }
+  els.chartIntervalSelect.value = tradingRules.chartInterval;
+  els.chartIntervalSelect.querySelector('option[value="1m"]').disabled = !hasLivePlan();
+  els.sessionGuardSelect.value = String(tradingRules.sessionGuardMinutes);
+  els.staleGridCancelInput.checked = tradingRules.staleGridCancel;
+  els.londonCommodityInput.checked = tradingRules.londonCommodityOnly;
+  renderTradingRules();
+}
+
+function renderTradingRules() {
+  const proNote = hasLivePlan() ? "Pro enabled" : "1m requires Pro";
+  els.rulesStatus.textContent = `${tradingRules.chartInterval} grid feed`;
+  els.rulesSummary.textContent = `${tradingRules.chartInterval} analysis · ${tradingRules.sessionGuardMinutes}m session guard · ${
+    tradingRules.londonCommodityOnly ? "London commodity guard on" : "London commodity guard off"
+  } · ${tradingRules.staleGridCancel ? "stale cancel on" : "stale cancel off"} · ${proNote}`;
+  els.chartIntervalSelect.querySelector('option[value="1m"]').disabled = !hasLivePlan();
+  renderForexSessions();
+}
+
 function hasLivePlan() {
   return currentPlan() === "pro";
 }
@@ -393,6 +471,7 @@ function hasLivePlan() {
 function renderAuth(me) {
   currentUser = me;
   selectedAsset = me.selectedSymbol || selectedAsset;
+  applyTradingRules(me.tradingRules || tradingRules);
   const loggedIn = Boolean(me.authenticated);
   els.authStatus.textContent = loggedIn ? me.username : "Logged out";
   els.subscriptionStatus.textContent = me.subscription
@@ -508,32 +587,34 @@ async function loadMarkets() {
 async function loadFibonacciAnalysis(options = {}) {
   if (fibLoading && !options.force) return;
   const now = Date.now();
-  if (!options.force && fibLastSymbol === selectedAsset && now - fibLastLoadedAt < 60_000) return;
+  const interval = tradingRules.chartInterval;
+  if (!options.force && fibLastSymbol === `${selectedAsset}:${interval}` && now - fibLastLoadedAt < 60_000) return;
   const requestSymbol = selectedAsset;
+  const requestInterval = interval;
   let shouldRender = true;
   fibLoading = true;
   try {
     const response = await apiFetch(
-      `/api/analysis/fibonacci?symbol=${encodeURIComponent(requestSymbol)}&interval=1h&limit=120`,
+      `/api/analysis/fibonacci?symbol=${encodeURIComponent(requestSymbol)}&interval=${encodeURIComponent(requestInterval)}&limit=120`,
       { cache: "no-store" }
     );
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.error || "fibonacci analysis unavailable");
-    if (requestSymbol !== selectedAsset) {
+    if (requestSymbol !== selectedAsset || requestInterval !== tradingRules.chartInterval) {
       shouldRender = false;
       return;
     }
     fibAnalysis = payload.analysis;
     fibLastLoadedAt = now;
-    fibLastSymbol = requestSymbol;
+    fibLastSymbol = `${requestSymbol}:${requestInterval}`;
   } catch (error) {
-    if (requestSymbol !== selectedAsset) {
+    if (requestSymbol !== selectedAsset || requestInterval !== tradingRules.chartInterval) {
       shouldRender = false;
       return;
     }
     fibAnalysis = { error: error.message || "fibonacci analysis unavailable", symbol: requestSymbol };
     fibLastLoadedAt = now;
-    fibLastSymbol = requestSymbol;
+    fibLastSymbol = `${requestSymbol}:${requestInterval}`;
   } finally {
     fibLoading = false;
     if (!shouldRender) return;
@@ -583,32 +664,34 @@ function renderFibonacciAnalysis() {
 async function loadContextRadar(options = {}) {
   if (contextLoading && !options.force) return;
   const now = Date.now();
-  if (!options.force && contextLastSymbol === selectedAsset && now - contextLastLoadedAt < 60_000) return;
+  const interval = tradingRules.chartInterval;
+  if (!options.force && contextLastSymbol === `${selectedAsset}:${interval}` && now - contextLastLoadedAt < 60_000) return;
   const requestSymbol = selectedAsset;
+  const requestInterval = interval;
   let shouldRender = true;
   contextLoading = true;
   try {
     const response = await apiFetch(
-      `/api/context/radar?symbol=${encodeURIComponent(requestSymbol)}&interval=1h&limit=120`,
+      `/api/context/radar?symbol=${encodeURIComponent(requestSymbol)}&interval=${encodeURIComponent(requestInterval)}&limit=120`,
       { cache: "no-store" }
     );
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.error || "context radar unavailable");
-    if (requestSymbol !== selectedAsset) {
+    if (requestSymbol !== selectedAsset || requestInterval !== tradingRules.chartInterval) {
       shouldRender = false;
       return;
     }
     contextRadar = payload;
     contextLastLoadedAt = now;
-    contextLastSymbol = requestSymbol;
+    contextLastSymbol = `${requestSymbol}:${requestInterval}`;
   } catch (error) {
-    if (requestSymbol !== selectedAsset) {
+    if (requestSymbol !== selectedAsset || requestInterval !== tradingRules.chartInterval) {
       shouldRender = false;
       return;
     }
     contextRadar = { error: error.message || "context radar unavailable", symbol: requestSymbol };
     contextLastLoadedAt = now;
-    contextLastSymbol = requestSymbol;
+    contextLastSymbol = `${requestSymbol}:${requestInterval}`;
   } finally {
     contextLoading = false;
     if (shouldRender) renderContextRadar();
@@ -1482,7 +1565,7 @@ async function refreshBackend() {
 }
 
 async function backendCommand(path) {
-  const sessionGuard = forexSessionBreakGuard(selectedAsset);
+  const sessionGuard = activeSessionGuard(selectedAsset);
   if (path === "/api/start" && sessionGuard.active && lastBackendSnapshot?.mode === "live") {
     els.riskStatus.textContent = sessionGuard.message;
     updateLiveDesk(lastBackendSnapshot);
@@ -1495,6 +1578,40 @@ async function backendCommand(path) {
     throw new Error(payload.error || `request failed: ${path}`);
   }
   renderBackend(await response.json());
+}
+
+async function saveTradingRules() {
+  const nextRules = normalizedTradingRules({
+    chartInterval: els.chartIntervalSelect.value,
+    londonCommodityOnly: els.londonCommodityInput.checked,
+    sessionGuardMinutes: Number(els.sessionGuardSelect.value),
+    staleGridCancel: els.staleGridCancelInput.checked
+  });
+  if (nextRules.chartInterval === "1m" && !hasLivePlan()) {
+    els.rulesStatus.textContent = "Pro required for 1m";
+    els.chartIntervalSelect.value = tradingRules.chartInterval;
+    return;
+  }
+  if (!currentUser.authenticated) {
+    applyTradingRules(nextRules);
+    fibAnalysis = null;
+    contextRadar = null;
+    loadFibonacciAnalysis({ force: true });
+    loadContextRadar({ force: true });
+    return;
+  }
+  const response = await jsonPost("/api/trading-rules", nextRules);
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    els.rulesStatus.textContent = payload.error || "rules not saved";
+    return;
+  }
+  applyTradingRules(payload.tradingRules);
+  fibAnalysis = null;
+  contextRadar = null;
+  loadFibonacciAnalysis({ force: true });
+  loadContextRadar({ force: true });
+  refreshBackend();
 }
 
 function render() {
@@ -1591,6 +1708,23 @@ els.logoutButton.addEventListener("click", async () => {
   renderAuth({ authenticated: false, credentialsConfigured: false });
 });
 els.saveCredentialsButton.addEventListener("click", saveCredentials);
+els.saveRulesButton.addEventListener("click", saveTradingRules);
+[els.chartIntervalSelect, els.sessionGuardSelect, els.staleGridCancelInput, els.londonCommodityInput].forEach((input) => {
+  input.addEventListener("change", () => {
+    const nextRules = normalizedTradingRules({
+      chartInterval: els.chartIntervalSelect.value,
+      londonCommodityOnly: els.londonCommodityInput.checked,
+      sessionGuardMinutes: Number(els.sessionGuardSelect.value),
+      staleGridCancel: els.staleGridCancelInput.checked
+    });
+    if (nextRules.chartInterval === "1m" && !hasLivePlan()) {
+      els.rulesStatus.textContent = "Pro required for 1m";
+      els.chartIntervalSelect.value = tradingRules.chartInterval;
+      return;
+    }
+    applyTradingRules(nextRules);
+  });
+});
 els.freePlanButton.addEventListener("click", () => checkoutPlan("free"));
 els.proPlanButton.addEventListener("click", () => checkoutPlan("pro"));
 els.backendStartButton.addEventListener("click", () => backendCommand("/api/start").catch(refreshBackend));

@@ -85,7 +85,7 @@ def test_market_shock_guard_blocks_fast_mark_move() -> None:
 
 def test_live_start_blocks_forex_session_break_guard() -> None:
     original_guard = service_module.forex_session_break_guard
-    service_module.forex_session_break_guard = lambda symbol: {
+    service_module.forex_session_break_guard = lambda symbol, guard_minutes=60: {
         "active": True,
         "message": "forex session-break guard: EURUSD is 20m before London close",
     }
@@ -99,6 +99,27 @@ def test_live_start_blocks_forex_session_break_guard() -> None:
         assert snapshot["sessionGuard"]["active"]
     finally:
         service_module.forex_session_break_guard = original_guard
+
+
+def test_live_start_blocks_gold_outside_london_when_rule_enabled() -> None:
+    original_forex_guard = service_module.forex_session_break_guard
+    original_commodity_guard = service_module.commodity_london_guard
+    service_module.forex_session_break_guard = lambda symbol, guard_minutes=60: {"active": False, "symbol": symbol}
+    service_module.commodity_london_guard = lambda symbol: {
+        "active": True,
+        "message": "commodity session guard: GOLD live grid orders are limited to the London session",
+    }
+    try:
+        service = TradingService(RuntimeConfig(mode="live", symbol="GOLD", london_commodity_only=True))
+
+        snapshot = service.start()
+
+        assert not snapshot["running"]
+        assert snapshot["riskStatus"] == "commodity session guard: GOLD live grid orders are limited to the London session"
+        assert snapshot["sessionGuard"]["active"]
+    finally:
+        service_module.forex_session_break_guard = original_forex_guard
+        service_module.commodity_london_guard = original_commodity_guard
 
 
 def test_stale_live_grid_cancels_exchange_orders_before_replace() -> None:
@@ -135,7 +156,7 @@ def test_live_tick_cancels_orders_during_forex_session_break_guard() -> None:
     original_guard = service_module.forex_session_break_guard
     guard_calls = {"count": 0}
 
-    def guard(symbol: str) -> dict:
+    def guard(symbol: str, guard_minutes: int = 60) -> dict:
         guard_calls["count"] += 1
         if guard_calls["count"] == 1:
             return {"active": False, "symbol": symbol}

@@ -33,6 +33,8 @@ TESTS = {
         "test_forex_session_break_guard_flags_one_hour_before_london_close",
         "test_forex_session_break_guard_flags_one_hour_after_london_close",
         "test_forex_session_break_guard_ignores_crypto_symbols",
+        "test_commodity_london_guard_blocks_gold_outside_london",
+        "test_commodity_london_guard_allows_oil_during_london",
     ],
     "tests.test_hyperliquid_candles": [
         "test_hyperliquid_candle_snapshot_uses_builder_coin_alias",
@@ -51,6 +53,7 @@ TESTS = {
         "test_live_tick_initializes_risk_baseline_from_live_mark",
         "test_market_shock_guard_blocks_fast_mark_move",
         "test_live_start_blocks_forex_session_break_guard",
+        "test_live_start_blocks_gold_outside_london_when_rule_enabled",
         "test_stale_live_grid_cancels_exchange_orders_before_replace",
         "test_live_tick_cancels_orders_during_forex_session_break_guard",
         "test_live_tick_reconciles_exchange_fills_once",
@@ -61,6 +64,7 @@ TESTS = {
         "test_user_store_authenticates_and_loads_session_user",
         "test_user_store_encrypts_credentials_per_user",
         "test_user_store_saves_asset_and_subscription_settings",
+        "test_user_store_saves_trading_rules_and_gates_one_minute_to_pro",
     ],
     "tests.test_live_secrets": [
         "test_secret_value_reads_direct_secret_file",

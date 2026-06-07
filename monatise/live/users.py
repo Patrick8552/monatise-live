@@ -35,6 +35,10 @@ class UserSettings:
     selected_symbol: str = "BTC"
     subscription_plan: str = "free"
     subscription_status: str = "active"
+    chart_interval: str = "1h"
+    session_guard_minutes: int = 60
+    stale_grid_cancel: bool = True
+    london_commodity_only: bool = True
 
 
 def default_auth_db_path() -> str:
@@ -171,6 +175,52 @@ class UserStore:
             )
         return self.settings_for_user(user_id)
 
+    def save_trading_rules(
+        self,
+        user_id: int,
+        *,
+        chart_interval: str,
+        london_commodity_only: bool,
+        session_guard_minutes: int,
+        stale_grid_cancel: bool,
+    ) -> UserSettings:
+        settings = self.settings_for_user(user_id)
+        chart_interval = chart_interval.strip()
+        if chart_interval not in {"1h", "15m", "5m", "1m"}:
+            raise ValueError("chart interval must be 1h, 15m, 5m, or 1m")
+        if settings.subscription_plan != "pro" and chart_interval == "1m":
+            raise ValueError("1m grid analysis is available for Pro users only")
+        if session_guard_minutes not in {5, 15, 30, 60, 90}:
+            raise ValueError("session guard must be 5, 15, 30, 60, or 90 minutes")
+        with self._connect() as conn:
+            conn.execute(
+                """
+                insert into user_settings(
+                  user_id, selected_symbol, subscription_plan, subscription_status,
+                  chart_interval, session_guard_minutes, stale_grid_cancel, london_commodity_only, updated_at
+                )
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                on conflict(user_id) do update set
+                  chart_interval = excluded.chart_interval,
+                  session_guard_minutes = excluded.session_guard_minutes,
+                  stale_grid_cancel = excluded.stale_grid_cancel,
+                  london_commodity_only = excluded.london_commodity_only,
+                  updated_at = excluded.updated_at
+                """,
+                (
+                    user_id,
+                    settings.selected_symbol,
+                    settings.subscription_plan,
+                    settings.subscription_status,
+                    chart_interval,
+                    session_guard_minutes,
+                    int(stale_grid_cancel),
+                    int(london_commodity_only),
+                    time.time(),
+                ),
+            )
+        return self.settings_for_user(user_id)
+
     def save_subscription_plan(self, user_id: int, plan: str) -> UserSettings:
         plan = plan.strip().lower()
         if plan not in {"free", "pro"}:
@@ -194,7 +244,8 @@ class UserStore:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                select selected_symbol, subscription_plan, subscription_status
+                select selected_symbol, subscription_plan, subscription_status,
+                       chart_interval, session_guard_minutes, stale_grid_cancel, london_commodity_only
                 from user_settings
                 where user_id = ?
                 """,
@@ -206,6 +257,10 @@ class UserStore:
             selected_symbol=str(row["selected_symbol"]),
             subscription_plan=str(row["subscription_plan"]),
             subscription_status=str(row["subscription_status"]),
+            chart_interval=str(row["chart_interval"] or "1h"),
+            session_guard_minutes=int(row["session_guard_minutes"] or 60),
+            stale_grid_cancel=bool(row["stale_grid_cancel"]),
+            london_commodity_only=bool(row["london_commodity_only"]),
         )
 
     def credentials_for_user(self, user_id: int) -> UserCredentials | None:
@@ -259,10 +314,27 @@ class UserStore:
                   selected_symbol text not null,
                   subscription_plan text not null,
                   subscription_status text not null,
+                  chart_interval text not null default '1h',
+                  session_guard_minutes integer not null default 60,
+                  stale_grid_cancel integer not null default 1,
+                  london_commodity_only integer not null default 1,
                   updated_at real not null
                 );
                 """
             )
+            existing = {
+                str(row["name"])
+                for row in conn.execute("pragma table_info(user_settings)").fetchall()
+            }
+            migrations = {
+                "chart_interval": "alter table user_settings add column chart_interval text not null default '1h'",
+                "session_guard_minutes": "alter table user_settings add column session_guard_minutes integer not null default 60",
+                "stale_grid_cancel": "alter table user_settings add column stale_grid_cancel integer not null default 1",
+                "london_commodity_only": "alter table user_settings add column london_commodity_only integer not null default 1",
+            }
+            for column, statement in migrations.items():
+                if column not in existing:
+                    conn.execute(statement)
 
     @staticmethod
     def _validate_username_password(username: str, password: str) -> None:

@@ -10,7 +10,7 @@ from monatise.adapters.hyperliquid import HyperliquidAdapter
 from monatise.core.models import Candle, Fill, Order, OrderSide, Portfolio
 from monatise.live.config import RuntimeConfig
 from monatise.live.risk import RiskDecision, RiskManager
-from monatise.live.sessions import forex_session_break_guard
+from monatise.live.sessions import commodity_london_guard, forex_session_break_guard
 from monatise.sim.csv_data import load_candles
 from monatise.strategy.harvester import LiquidityHarvester, LiquidityHarvesterConfig
 
@@ -71,7 +71,7 @@ class TradingService:
         with self._lock:
             if self.state.running:
                 return self._snapshot_unlocked()
-            session_guard = forex_session_break_guard(self.config.symbol)
+            session_guard = self._session_guard()
             self.state.session_guard = session_guard
             if self.config.mode == "live" and session_guard.get("active"):
                 self.state.risk_status = str(session_guard.get("message", "forex session-break guard"))
@@ -160,6 +160,12 @@ class TradingService:
             "riskStatus": self.state.risk_status,
             "requires": self.requirements(),
             "sessionGuard": self.state.session_guard,
+            "tradingRules": {
+                "chartInterval": self.config.chart_interval,
+                "londonCommodityOnly": self.config.london_commodity_only,
+                "sessionGuardMinutes": self.config.session_guard_minutes,
+                "staleGridCancel": self.config.stale_grid_cancel,
+            },
             "account": self.state.account,
             "risk": asdict(self.risk.snapshot(self.state.open_orders, self.portfolio, mark)),
             "desk": {
@@ -237,7 +243,7 @@ class TradingService:
             self.state.mark_price = mark
             self.state.account = account
             self.state.last_mark_price = mark
-            if self.state.open_orders and self._open_orders_stale():
+            if self.config.stale_grid_cancel and self.state.open_orders and self._open_orders_stale():
                 self._cancel_live_orders("stale grid cancel")
                 self._event("info", "refreshing stale live grid")
                 self.state.open_orders = []
@@ -321,7 +327,7 @@ class TradingService:
         }
 
     def _market_guard(self, mark: float, account: dict) -> RiskDecision:
-        session_guard = forex_session_break_guard(self.config.symbol)
+        session_guard = self._session_guard()
         self.state.session_guard = session_guard
         if session_guard.get("active"):
             return RiskDecision(False, str(session_guard.get("message", "forex session-break guard")))
@@ -336,6 +342,16 @@ class TradingService:
         if position_value > self.config.max_position_value:
             return RiskDecision(False, "position exposure exceeds limit")
         return RiskDecision(True)
+
+    def _session_guard(self) -> dict:
+        forex_guard = forex_session_break_guard(self.config.symbol, guard_minutes=self.config.session_guard_minutes)
+        if forex_guard.get("active"):
+            return forex_guard
+        if self.config.london_commodity_only:
+            commodity_guard = commodity_london_guard(self.config.symbol)
+            if commodity_guard.get("active"):
+                return commodity_guard
+        return forex_guard
 
     def _fetch_live_fills(self, adapter: HyperliquidAdapter) -> list[dict]:
         if not self.state.exchange_order_ids:

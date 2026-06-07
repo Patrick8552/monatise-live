@@ -30,6 +30,10 @@ class RuntimeConfig:
     max_position_value: float = 1_000.0
     min_account_value: float = 0.0
     order_refresh_seconds: float = 30.0
+    session_guard_minutes: int = 60
+    chart_interval: str = "1h"
+    london_commodity_only: bool = True
+    stale_grid_cancel: bool = True
     allow_live_orders: bool = False
     live_confirmation: str = ""
     account_address: str = ""
@@ -65,6 +69,10 @@ class RuntimeConfig:
             max_position_value=float(os.getenv("MONATISE_MAX_POSITION_VALUE", "1000")),
             min_account_value=float(os.getenv("MONATISE_MIN_ACCOUNT_VALUE", "0")),
             order_refresh_seconds=float(os.getenv("MONATISE_ORDER_REFRESH_SECONDS", "30")),
+            session_guard_minutes=int(os.getenv("MONATISE_SESSION_GUARD_MINUTES", "60")),
+            chart_interval=os.getenv("MONATISE_CHART_INTERVAL", "1h"),
+            london_commodity_only=os.getenv("MONATISE_LONDON_COMMODITY_ONLY", "true").lower() == "true",
+            stale_grid_cancel=os.getenv("MONATISE_STALE_GRID_CANCEL", "true").lower() == "true",
             allow_live_orders=os.getenv("MONATISE_ALLOW_LIVE_ORDERS", "false").lower() == "true",
             live_confirmation=secret_value("MONATISE_LIVE_CONFIRMATION", ""),
             account_address=(
@@ -119,3 +127,7 @@ class RuntimeConfig:
             raise ValueError("MONATISE_MAX_MARK_MOVE_PCT must be positive")
         if self.order_refresh_seconds <= 0:
             raise ValueError("MONATISE_ORDER_REFRESH_SECONDS must be positive")
+        if self.session_guard_minutes not in {5, 15, 30, 60, 90}:
+            raise ValueError("MONATISE_SESSION_GUARD_MINUTES must be 5, 15, 30, 60, or 90")
+        if self.chart_interval not in {"1h", "15m", "5m", "1m"}:
+            raise ValueError("MONATISE_CHART_INTERVAL must be 1h, 15m, 5m, or 1m")

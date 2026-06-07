@@ -23,6 +23,8 @@ FOREX_SESSIONS = (
 )
 
 FOREX_SYMBOLS = frozenset(pair for session in FOREX_SESSIONS for pair in session.pairs)
+COMMODITY_SYMBOLS = frozenset({"GOLD", "CL", "BRENTOIL"})
+LONDON_SESSION = next(session for session in FOREX_SESSIONS if session.name == "London")
 
 
 def normalize_forex_symbol(symbol: str) -> str:
@@ -31,6 +33,10 @@ def normalize_forex_symbol(symbol: str) -> str:
 
 def is_forex_symbol(symbol: str) -> bool:
     return normalize_forex_symbol(symbol) in FOREX_SYMBOLS
+
+
+def normalize_asset_symbol(symbol: str) -> str:
+    return symbol.replace("xyz:", "").split("-", 1)[0].upper()
 
 
 def minutes_since_utc_midnight(moment: datetime | None = None) -> int:
@@ -115,5 +121,25 @@ def forex_session_break_guard(
         "message": (
             f"forex session-break guard: {pair} is {primary['minutes']}m {primary['direction']} "
             f"{primary['session']} {primary['transition']}"
+        ),
+    }
+
+
+def commodity_london_guard(symbol: str, moment: datetime | None = None) -> dict:
+    asset = normalize_asset_symbol(symbol)
+    if asset not in COMMODITY_SYMBOLS:
+        return {"active": False, "symbol": asset}
+    if is_session_open(LONDON_SESSION, moment):
+        return {"active": False, "symbol": asset, "session": "London"}
+    proximity = session_break_proximity(LONDON_SESSION, moment)
+    return {
+        "active": True,
+        "symbol": asset,
+        "session": "London",
+        "transition": proximity["transition"],
+        "direction": proximity["direction"],
+        "minutes": proximity["minutes"],
+        "message": (
+            f"commodity session guard: {asset} live grid orders are limited to the London session"
         ),
     }

@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Monatise Trading Console</title>
-    <link rel="stylesheet" href="./styles.css?v=20260607-session-guard" />
+    <link rel="stylesheet" href="./styles.css?v=20260607-rules-console" />
   </head>
   <body>
     <main class="shell">
@@ -81,6 +81,46 @@
               <button id="backendStartButton" class="primary danger-primary" type="button">Start Live</button>
               <button id="backendStopButton" type="button">Stop</button>
             </div>
+          </div>
+
+          <div class="rules-console" aria-label="trading rules console">
+            <div class="rules-head">
+              <div>
+                <span>Trading Rules</span>
+                <strong id="rulesStatus">Desk defaults</strong>
+              </div>
+              <button id="saveRulesButton" type="button">Save</button>
+            </div>
+            <div class="rule-grid">
+              <label>
+                Chart
+                <select id="chartIntervalSelect">
+                  <option value="1h">1h</option>
+                  <option value="15m">15m</option>
+                  <option value="5m">5m</option>
+                  <option value="1m">1m Pro</option>
+                </select>
+              </label>
+              <label>
+                Break guard
+                <select id="sessionGuardSelect">
+                  <option value="60">60m</option>
+                  <option value="30">30m</option>
+                  <option value="90">90m</option>
+                  <option value="15">15m</option>
+                  <option value="5">5m</option>
+                </select>
+              </label>
+            </div>
+            <label class="toggle-rule">
+              <input id="staleGridCancelInput" type="checkbox" checked />
+              <span>Auto-cancel stale grids</span>
+            </label>
+            <label class="toggle-rule">
+              <input id="londonCommodityInput" type="checkbox" checked />
+              <span>Gold/oil live grids only during London</span>
+            </label>
+            <div id="rulesSummary" class="rules-summary">1h analysis · 60m session guard · London commodity guard on</div>
           </div>
 
           <div class="control-group">
@@ -375,6 +415,6 @@
     </main>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="./app.js?v=20260607-session-guard"></script>
+    <script src="./app.js?v=20260607-rules-console"></script>
   </body>
 </html>
