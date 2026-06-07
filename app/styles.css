@@ -329,41 +329,8 @@ textarea {
   white-space: pre;
 }
 
-.candle-box {
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  display: grid;
-  gap: 10px;
-  padding: 12px;
-}
-
-.candle-head {
-  align-items: center;
-  display: flex;
-  gap: 10px;
-  justify-content: space-between;
-}
-
-.candle-head div {
-  display: grid;
-  gap: 2px;
-}
-
-.candle-head span {
-  color: var(--muted);
-  font-size: 0.72rem;
-  font-weight: 850;
-  text-transform: uppercase;
-}
-
-.candle-head strong {
-  font-size: 0.86rem;
-  overflow-wrap: anywhere;
-}
-
-.candle-head button {
-  min-height: 34px;
-  padding: 7px 10px;
+.internal-candle-buffer {
+  display: none;
 }
 
 button {

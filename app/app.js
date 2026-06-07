@@ -22,7 +22,6 @@ const els = {
   accountMetricLabel: document.querySelector("#accountMetricLabel"),
   authStatus: document.querySelector("#authStatus"),
   candleCount: document.querySelector("#candleCount"),
-  candleStatus: document.querySelector("#candleStatus"),
   cashMetricLabel: document.querySelector("#cashMetricLabel"),
   chartIntervalSelect: document.querySelector("#chartIntervalSelect"),
   credentialStatus: document.querySelector("#credentialStatus"),
@@ -49,7 +48,6 @@ const els = {
   liveDeskStatus: document.querySelector("#liveDeskStatus"),
   liveModeStatus: document.querySelector("#liveModeStatus"),
   liveNetworkBadge: document.querySelector("#liveNetworkBadge"),
-  loadCandlesButton: document.querySelector("#loadCandlesButton"),
   loginGate: document.querySelector("#loginGate"),
   loginButton: document.querySelector("#loginButton"),
   logoutButton: document.querySelector("#logoutButton"),
@@ -1288,12 +1286,6 @@ async function loadLiveCandles(options = {}) {
   const interval = options.interval || tradingRules.chartInterval;
   const limit = options.limit || 120;
   candleLoading = true;
-  if (els.candleStatus) {
-    els.candleStatus.textContent = `Loading ${symbol} ${interval}`;
-  }
-  if (els.loadCandlesButton) {
-    els.loadCandlesButton.disabled = true;
-  }
   try {
     const response = await apiFetch(
       `/api/candles?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${encodeURIComponent(limit)}`,
@@ -1305,20 +1297,12 @@ async function loadLiveCandles(options = {}) {
     if (!candles.length) throw new Error("no candles returned");
     els.csvInput.value = candlesToCsv(candles);
     candleSource = { interval: payload.interval || interval, symbol: payload.symbol || symbol, type: "live" };
-    if (els.candleStatus) {
-      els.candleStatus.textContent = `${candleSource.symbol} ${candleSource.interval} live candles`;
-    }
     rebuildFromInputs();
   } catch (error) {
     candleSource = { interval: "sample", symbol: selectedAsset, type: "sample" };
-    if (els.candleStatus) {
-      els.candleStatus.textContent = error.message || "Sample candles";
-    }
+    void error;
   } finally {
     candleLoading = false;
-    if (els.loadCandlesButton) {
-      els.loadCandlesButton.disabled = false;
-    }
   }
 }
 
@@ -1930,9 +1914,6 @@ function render() {
 function reset() {
   els.csvInput.value = sampleCsv;
   candleSource = { interval: "sample", symbol: selectedAsset, type: "sample" };
-  if (els.candleStatus) {
-    els.candleStatus.textContent = "Sample candles";
-  }
   els.spacingValue.textContent = els.spacingInput.value;
   els.levelsValue.textContent = els.levelsInput.value;
   state = createState(configFromInputs());
@@ -1984,7 +1965,6 @@ els.logoutButton.addEventListener("click", async () => {
 });
 els.saveCredentialsButton.addEventListener("click", saveCredentials);
 els.saveRulesButton.addEventListener("click", saveTradingRules);
-els.loadCandlesButton.addEventListener("click", () => loadLiveCandles({ force: true }));
 [els.chartIntervalSelect, els.sessionGuardSelect, els.staleGridCancelInput, els.londonCommodityInput].forEach((input) => {
   input.addEventListener("change", () => {
     const nextRules = normalizedTradingRules({
@@ -2011,9 +1991,11 @@ els.backendStopButton.addEventListener("click", () => backendCommand("/api/stop"
   });
 });
 
-[els.symbolInput, els.quoteInput, els.baseInput, els.orderSizeInput, els.feeInput, els.csvInput].forEach((input) => {
-  input.addEventListener("change", rebuildFromInputs);
-});
+[els.symbolInput, els.quoteInput, els.baseInput, els.orderSizeInput, els.feeInput, els.csvInput]
+  .filter(Boolean)
+  .forEach((input) => {
+    input.addEventListener("change", rebuildFromInputs);
+  });
 
 window.addEventListener("resize", render);
 window.addEventListener("resize", resizeMarketMap);

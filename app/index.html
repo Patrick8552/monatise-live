@@ -228,19 +228,7 @@
             </div>
           </div>
 
-          <div class="candle-box">
-            <div class="candle-head">
-              <div>
-                <span>Candle data</span>
-                <strong id="candleStatus">Sample candles</strong>
-              </div>
-              <button id="loadCandlesButton" type="button">Load live candles</button>
-            </div>
-            <label>
-              Live or fallback OHLCV
-              <textarea id="csvInput" spellcheck="false"></textarea>
-            </label>
-          </div>
+          <textarea id="csvInput" class="internal-candle-buffer" spellcheck="false" aria-hidden="true" tabindex="-1"></textarea>
         </aside>
 
         <section class="market-stage" aria-label="market visualization">
