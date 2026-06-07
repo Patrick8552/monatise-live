@@ -49,6 +49,7 @@ const els = {
   logoutButton: document.querySelector("#logoutButton"),
   markPrice: document.querySelector("#markPrice"),
   market3dMap: document.querySelector("#market3dMap"),
+  marketRadar: document.querySelector("#marketRadar"),
   marketStrip: document.querySelector("#marketStrip"),
   marketTitle: document.querySelector("#marketTitle"),
   orderSizeInput: document.querySelector("#orderSizeInput"),
@@ -193,6 +194,18 @@ function assetLabel(symbol) {
   return meta.name ? `${symbol} - ${meta.name}` : symbol;
 }
 
+function radarSymbol(symbol) {
+  return String(symbol || "").replace(/^xyz:/i, "").toUpperCase();
+}
+
+function radarAssetLabel(symbol) {
+  const clean = radarSymbol(symbol);
+  const meta = assetMetadata[clean];
+  if (meta) return assetLabel(clean);
+  if (String(symbol || "").toLowerCase().startsWith("xyz:")) return `${clean} - Builder market`;
+  return clean;
+}
+
 function assetRoute(symbol) {
   return assetMetadata[symbol]?.route || "Watchlist or strategy-preview asset";
 }
@@ -323,8 +336,58 @@ function renderMarkets() {
       </button>`
     )
     .join("");
+  renderMarketRadar();
   renderAssetGroups();
   updateMarketMap();
+}
+
+function radarSection(title, items, limit = 18) {
+  const visible = (items || []).slice(0, limit);
+  return `<section class="market-radar-section">
+    <div class="market-radar-head">
+      <strong>${title}</strong>
+      <span>${visible.length} assets</span>
+    </div>
+    <div class="market-radar-grid">
+      ${
+        visible.length
+          ? visible
+              .map((asset) => {
+                const price = Number(asset.price);
+                const hasPrice = asset.price !== null && asset.price !== undefined && Number.isFinite(price);
+                const clean = radarSymbol(asset.symbol);
+                const selectable = Array.from(els.assetSelect.options).some((option) => option.value === clean);
+                const tag = selectable ? "button" : "span";
+                const status = asset.tradable && hasPrice ? "Live" : hasPrice ? "Watch" : "Offline";
+                const attrs = selectable ? ` type="button" data-symbol="${clean}"` : "";
+                return `<${tag}${attrs} class="market-radar-row ${selectable ? "selectable" : ""} ${clean === selectedAsset ? "active" : ""}">
+                  <strong>${radarAssetLabel(asset.symbol)}</strong>
+                  <span>${hasPrice ? money(price) : "No mark"}</span>
+                  <small>${status}</small>
+                </${tag}>`;
+              })
+              .join("")
+          : '<span class="market-radar-empty">No marks returned</span>'
+      }
+    </div>
+  </section>`;
+}
+
+function renderMarketRadar() {
+  if (!els.marketRadar) return;
+  const commodityWatch = marketGroups.commodities && marketGroups.commodities.length
+    ? marketGroups.commodities
+    : [];
+  const sections = [
+    ["Routed", marketGroups.crypto || markets, 12],
+    ["Gold / Oil", commodityWatch, 8],
+    ["Builder", marketGroups.builder || [], 18],
+    ["Stocks", marketGroups.stocks || [], 8],
+    ["Forex", marketGroups.forex || [], 8]
+  ];
+  els.marketRadar.innerHTML = sections
+    .map(([title, items, limit]) => radarSection(title, items, limit))
+    .join("");
 }
 
 function renderAssetGroups() {
@@ -1142,6 +1205,10 @@ els.stepButton.addEventListener("click", () => {
 els.resetButton.addEventListener("click", reset);
 els.assetSelect.addEventListener("change", () => saveSelectedAsset(els.assetSelect.value));
 els.marketStrip.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-symbol]");
+  if (button) saveSelectedAsset(button.dataset.symbol);
+});
+els.marketRadar.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-symbol]");
   if (button) saveSelectedAsset(button.dataset.symbol);
 });

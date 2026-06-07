@@ -853,6 +853,103 @@ canvas {
     0 12px 26px rgba(58, 134, 255, 0.14);
 }
 
+.market-radar {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-bottom: 12px;
+}
+
+.market-radar-section {
+  background:
+    linear-gradient(160deg, rgba(255, 255, 255, 0.08), rgba(0, 184, 217, 0.05)),
+    rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  min-width: 0;
+  padding: 10px;
+}
+
+.market-radar-head {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.market-radar-head strong {
+  color: #f9fffb;
+  font-size: 0.82rem;
+}
+
+.market-radar-head span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.market-radar-grid {
+  display: grid;
+  gap: 6px;
+}
+
+.market-radar-row,
+.market-radar-empty {
+  align-items: center;
+  background: rgba(4, 9, 11, 0.34);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  color: rgba(249, 255, 251, 0.9);
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1.25fr) minmax(80px, auto) 56px;
+  min-height: 34px;
+  padding: 6px 8px;
+  text-align: left;
+  width: 100%;
+}
+
+.market-radar-row strong {
+  font-size: 0.74rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.market-radar-row span {
+  color: #f9fffb;
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 900;
+  text-align: right;
+}
+
+.market-radar-row small {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 850;
+  text-align: right;
+  text-transform: uppercase;
+}
+
+.market-radar-row.selectable {
+  cursor: pointer;
+}
+
+.market-radar-row.selectable:hover,
+.market-radar-row.active {
+  border-color: rgba(0, 184, 217, 0.56);
+  box-shadow: inset 3px 0 0 rgba(0, 184, 217, 0.74);
+}
+
+.market-radar-empty {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 800;
+  grid-template-columns: 1fr;
+}
+
 .market-3d-map {
   background:
     linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
@@ -1418,6 +1515,10 @@ button:disabled {
 
   .market-stage {
     min-height: auto;
+  }
+
+  .market-radar {
+    grid-template-columns: 1fr;
   }
 
   #liquidityCanvas {
