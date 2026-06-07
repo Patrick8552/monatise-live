@@ -7,6 +7,8 @@ dashboard before starting the trading loop.
 
 ## Before Deploying
 
+- Confirm `python3 -m pytest` passes locally or in GitHub Actions before
+  treating a push as release-ready.
 - Create a user in the Monatise dashboard after deploy.
 - Save that user's Hyperliquid account address and API wallet private key in the
   dashboard.

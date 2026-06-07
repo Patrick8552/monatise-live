@@ -87,6 +87,8 @@ python3 -m monatise.cli examples/sample_prices.csv
 
 ## Tests
 
+GitHub runs the pytest suite on pushes and pull requests to `main`.
+
 ```bash
 python3 -m pytest
 ```
