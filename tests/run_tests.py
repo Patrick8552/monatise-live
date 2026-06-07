@@ -22,6 +22,13 @@ TESTS = {
     "tests.test_simulation": [
         "test_backtest_engine_runs_grid_harvest_cycle",
     ],
+    "tests.test_fibonacci": [
+        "test_fibonacci_analysis_builds_retracements_and_extensions",
+    ],
+    "tests.test_hyperliquid_candles": [
+        "test_hyperliquid_candle_snapshot_uses_builder_coin_alias",
+        "test_parse_candle_and_interval_validation",
+    ],
     "tests.test_live_config": [
         "test_live_mode_requires_all_order_gates",
         "test_live_mode_enables_only_with_explicit_confirmation",

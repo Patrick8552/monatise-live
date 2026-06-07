@@ -32,6 +32,7 @@ const els = {
   feesMetric: document.querySelector("#feesMetric"),
   fillCount: document.querySelector("#fillCount"),
   fillTape: document.querySelector("#fillTape"),
+  fibAnalysis: document.querySelector("#fibAnalysis"),
   freePlanButton: document.querySelector("#freePlanButton"),
   harvestMetric: document.querySelector("#harvestMetric"),
   inventoryMetric: document.querySelector("#inventoryMetric"),
@@ -96,6 +97,10 @@ let marketGroups = {};
 let selectedAsset = "BTC";
 let marketScene = null;
 let lastBackendSnapshot = null;
+let fibAnalysis = null;
+let fibLoading = false;
+let fibLastLoadedAt = 0;
+let fibLastSymbol = "";
 localStorage.removeItem("monatiseControlToken");
 
 const assetMetadata = {
@@ -311,6 +316,7 @@ async function loadMarkets() {
       selectedAsset = markets[0].symbol;
     }
     syncSelectedAsset();
+    loadFibonacciAnalysis();
     if (!backendOnline) {
       const active = markets.find((asset) => asset.symbol === selectedAsset);
       if (active) {
@@ -325,6 +331,81 @@ async function loadMarkets() {
       });
     }
   }
+}
+
+async function loadFibonacciAnalysis(options = {}) {
+  if (fibLoading && !options.force) return;
+  const now = Date.now();
+  if (!options.force && fibLastSymbol === selectedAsset && now - fibLastLoadedAt < 60_000) return;
+  const requestSymbol = selectedAsset;
+  let shouldRender = true;
+  fibLoading = true;
+  try {
+    const response = await apiFetch(
+      `/api/analysis/fibonacci?symbol=${encodeURIComponent(requestSymbol)}&interval=1h&limit=120`,
+      { cache: "no-store" }
+    );
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || "fibonacci analysis unavailable");
+    if (requestSymbol !== selectedAsset) {
+      shouldRender = false;
+      return;
+    }
+    fibAnalysis = payload.analysis;
+    fibLastLoadedAt = now;
+    fibLastSymbol = requestSymbol;
+  } catch (error) {
+    if (requestSymbol !== selectedAsset) {
+      shouldRender = false;
+      return;
+    }
+    fibAnalysis = { error: error.message || "fibonacci analysis unavailable", symbol: requestSymbol };
+    fibLastLoadedAt = now;
+    fibLastSymbol = requestSymbol;
+  } finally {
+    fibLoading = false;
+    if (!shouldRender) return;
+    renderFibonacciAnalysis();
+    if (lastBackendSnapshot) {
+      renderBackend(lastBackendSnapshot);
+    } else {
+      render();
+    }
+  }
+}
+
+function renderFibonacciAnalysis() {
+  if (!els.fibAnalysis) return;
+  if (!fibAnalysis) {
+    els.fibAnalysis.innerHTML = `<div class="fib-head"><strong>Fibonacci Grid Analysis</strong><span>Waiting for live candles</span></div>`;
+    return;
+  }
+  if (fibAnalysis.error) {
+    els.fibAnalysis.innerHTML = `<div class="fib-head"><strong>Fibonacci Grid Analysis</strong><span>${fibAnalysis.error}</span></div>`;
+    return;
+  }
+  const levels = (fibAnalysis.levels || [])
+    .map(
+      (level) => `<span class="fib-level ${level.kind}">
+        <strong>${level.label}</strong>
+        <em>${money(level.price)}</em>
+      </span>`
+    )
+    .join("");
+  els.fibAnalysis.innerHTML = `
+    <div class="fib-head">
+      <strong>Fibonacci Grid Analysis</strong>
+      <span>${fibAnalysis.interval} · ${fibAnalysis.candle_count} live candles · ${fibAnalysis.trend} structure</span>
+    </div>
+    <div class="fib-metrics">
+      <span>High <strong>${money(fibAnalysis.swing_high)}</strong></span>
+      <span>Low <strong>${money(fibAnalysis.swing_low)}</strong></span>
+      <span>Nearest ${fibAnalysis.nearest_level.label} <strong>${money(fibAnalysis.nearest_level.price)}</strong></span>
+      <span>Grid ${money(fibAnalysis.grid_floor)} - ${money(fibAnalysis.grid_ceiling)}</span>
+      <span>Invalidation <strong>${money(fibAnalysis.invalidation)}</strong></span>
+    </div>
+    <div class="fib-levels">${levels}</div>
+  `;
 }
 
 function renderMarkets() {
@@ -436,8 +517,10 @@ function renderAssetGroups() {
 
 async function saveSelectedAsset(symbol) {
   selectedAsset = symbol;
+  fibAnalysis = null;
   syncSelectedAsset();
   rebuildFromInputs();
+  loadFibonacciAnalysis({ force: true });
   if (!currentUser.authenticated) {
     render();
     return;
@@ -831,10 +914,13 @@ function drawLiquidity(options = {}) {
   const orders = Array.isArray(options.orders) ? options.orders : buildLevels(mark);
   const prices = [
     ...orders.map((order) => Number(order.price)).filter((price) => Number.isFinite(price)),
+    ...((fibAnalysis?.levels || []).map((level) => Number(level.price)).filter((price) => Number.isFinite(price))),
+    Number(fibAnalysis?.grid_floor),
+    Number(fibAnalysis?.grid_ceiling),
     candle.high,
     candle.low,
     mark
-  ];
+  ].filter((price) => Number.isFinite(price));
   const min = Math.min(...prices) * 0.998;
   const max = Math.max(...prices) * 1.002;
   const yFor = (price) => height - 34 - ((price - min) / (max - min || 1)) * (height - 72);
@@ -877,6 +963,27 @@ function drawLiquidity(options = {}) {
   ctx.font = "850 12px system-ui";
   ctx.textAlign = "center";
   ctx.fillText(`MARK ${money(mark)}`, width / 2, Math.max(58, markY - 10));
+
+  if (fibAnalysis && !fibAnalysis.error && fibAnalysis.symbol === selectedAsset) {
+    ctx.font = "800 11px system-ui";
+    (fibAnalysis.levels || []).forEach((level) => {
+      const price = Number(level.price);
+      if (!Number.isFinite(price)) return;
+      const y = yFor(price);
+      const isExtension = level.kind === "extension";
+      ctx.strokeStyle = isExtension ? "rgba(199, 71, 71, 0.72)" : "rgba(15, 159, 122, 0.72)";
+      ctx.lineWidth = isExtension ? 2 : 1.5;
+      ctx.setLineDash(isExtension ? [9, 7] : [4, 5]);
+      ctx.beginPath();
+      ctx.moveTo(32, y);
+      ctx.lineTo(width - 32, y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = isExtension ? "#9e2f2f" : "#0b755b";
+      ctx.textAlign = "left";
+      ctx.fillText(`FIB ${level.label} ${money(price)}`, 38, Math.max(54, y - 6));
+    });
+  }
 
   if (!orders.length) {
     ctx.fillStyle = "#56605c";

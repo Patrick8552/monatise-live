@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
 
+from monatise.analysis.fibonacci import analyze_fibonacci
 from monatise.adapters.hyperliquid import HyperliquidAdapter
 from monatise.live.config import RuntimeConfig
 from monatise.live.secrets import secret_value
@@ -297,6 +298,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
     market_feed: MarketFeed
     payment_gateway: PaymentGateway
     store: UserStore
+    config: RuntimeConfig
     app_dir: Path
     rate_limits: dict[str, list[float]] = {}
     rate_lock = threading.Lock()
@@ -312,6 +314,24 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/markets":
             try:
                 self._json(self.market_feed.snapshot())
+            except Exception as error:  # noqa: BLE001
+                self._error(502, str(error))
+            return
+        if parsed.path == "/api/analysis/fibonacci":
+            query = parse_qs(parsed.query)
+            symbol = str(query.get("symbol", [self.config.symbol])[0]).strip().upper()
+            interval = str(query.get("interval", ["1h"])[0]).strip() or "1h"
+            try:
+                limit = max(20, min(240, int(query.get("limit", ["120"])[0])))
+                adapter = HyperliquidAdapter(self.config)
+                candles = adapter.candles(symbol, limit, interval=interval)
+                mark = adapter.latest_price(symbol)
+                self._json(
+                    {
+                        "analysis": analyze_fibonacci(symbol, interval, candles, mark=mark).to_dict(),
+                        "candles": [candle.__dict__ for candle in candles],
+                    }
+                )
             except Exception as error:  # noqa: BLE001
                 self._error(502, str(error))
             return
@@ -695,6 +715,7 @@ def main() -> int:
     Handler.tenants = tenants
     Handler.market_feed = market_feed
     Handler.payment_gateway = payment_gateway
+    Handler.config = config
     Handler.app_dir = app_dir
 
     port = int(os.getenv("MONATISE_PORT", os.getenv("PORT", "4174")))

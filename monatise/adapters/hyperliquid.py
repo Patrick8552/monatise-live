@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import Any
 
-from monatise.core.models import Order, OrderSide
+from monatise.core.models import Candle, Order, OrderSide
 from monatise.core.ports import ExecutionPort, MarketDataPort
 from monatise.live.config import RuntimeConfig
 
@@ -78,8 +79,27 @@ class HyperliquidAdapter(MarketDataPort, ExecutionPort):
                 prices[alias] = prices[coin]
         return prices
 
-    def candles(self, symbol: str, limit: int):  # noqa: ANN201
-        raise NotImplementedError("live candle history is not wired yet; use latest_price polling")
+    def candles(self, symbol: str, limit: int, interval: str = "1h") -> list[Candle]:
+        if limit <= 0:
+            raise ValueError("candle limit must be positive")
+        end_time = int(time.time() * 1000)
+        start_time = end_time - (_interval_millis(interval) * max(1, limit + 2))
+        raw_candles = self.info.post(
+            "/info",
+            {
+                "type": "candleSnapshot",
+                "req": {
+                    "coin": self._coin(symbol),
+                    "interval": interval,
+                    "startTime": start_time,
+                    "endTime": end_time,
+                },
+            },
+        )
+        candles = [_parse_candle(raw) for raw in raw_candles][-limit:]
+        for candle in candles:
+            candle.validate()
+        return candles
 
     def place_orders(self, orders: list[Order]) -> list[SubmittedOrder]:
         if not self.config.live_enabled:
@@ -170,3 +190,30 @@ class HyperliquidAdapter(MarketDataPort, ExecutionPort):
             if filled and "oid" in filled:
                 return str(filled["oid"])
         return ""
+
+
+def _interval_millis(interval: str) -> int:
+    units = {
+        "1m": 60_000,
+        "5m": 5 * 60_000,
+        "15m": 15 * 60_000,
+        "1h": 60 * 60_000,
+        "4h": 4 * 60 * 60_000,
+        "1d": 24 * 60 * 60_000,
+    }
+    try:
+        return units[interval]
+    except KeyError as error:
+        raise ValueError("unsupported Hyperliquid candle interval") from error
+
+
+def _parse_candle(raw: dict[str, Any]) -> Candle:
+    timestamp = raw.get("t", raw.get("T", raw.get("time", "")))
+    return Candle(
+        timestamp=str(timestamp),
+        open=float(raw["o"]),
+        high=float(raw["h"]),
+        low=float(raw["l"]),
+        close=float(raw["c"]),
+        volume=float(raw.get("v", 0.0)),
+    )

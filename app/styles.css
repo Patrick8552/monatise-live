@@ -995,6 +995,100 @@ canvas {
   padding: 8px 10px;
 }
 
+.fib-analysis {
+  background:
+    linear-gradient(160deg, rgba(0, 168, 120, 0.11), rgba(232, 162, 20, 0.08)),
+    rgba(255, 255, 255, 0.055);
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 6px;
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 10px;
+}
+
+.fib-head {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.fib-head strong {
+  color: #f9fffb;
+  font-size: 0.86rem;
+}
+
+.fib-head span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 850;
+  text-align: right;
+}
+
+.fib-metrics {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.fib-metrics span {
+  background: rgba(4, 9, 11, 0.26);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 850;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  padding: 7px;
+}
+
+.fib-metrics strong {
+  color: #f9fffb;
+  display: block;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+}
+
+.fib-levels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.fib-level {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 999px;
+  display: inline-flex;
+  gap: 6px;
+  min-height: 28px;
+  padding: 5px 8px;
+}
+
+.fib-level strong,
+.fib-level em {
+  font-size: 0.7rem;
+  font-style: normal;
+  font-weight: 850;
+}
+
+.fib-level.retracement strong {
+  color: #74f3cf;
+}
+
+.fib-level.extension strong {
+  color: #ffb3a8;
+}
+
+.fib-level em {
+  color: rgba(249, 255, 251, 0.88);
+  font-variant-numeric: tabular-nums;
+}
+
 .asset-groups {
   display: grid;
   gap: 10px;
@@ -1519,6 +1613,19 @@ button:disabled {
 
   .market-radar {
     grid-template-columns: 1fr;
+  }
+
+  .fib-head {
+    align-items: flex-start;
+    display: grid;
+  }
+
+  .fib-head span {
+    text-align: left;
+  }
+
+  .fib-metrics {
+    grid-template-columns: 1fr 1fr;
   }
 
   #liquidityCanvas {

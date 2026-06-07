@@ -11,7 +11,7 @@ class MarketDataPort(Protocol):
     def latest_price(self, symbol: str) -> float:
         raise NotImplementedError
 
-    def candles(self, symbol: str, limit: int) -> list[Candle]:
+    def candles(self, symbol: str, limit: int, interval: str = "1h") -> list[Candle]:
         raise NotImplementedError
 
 
