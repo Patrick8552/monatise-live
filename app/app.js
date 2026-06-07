@@ -34,6 +34,7 @@ const els = {
   fillCount: document.querySelector("#fillCount"),
   fillTape: document.querySelector("#fillTape"),
   fibAnalysis: document.querySelector("#fibAnalysis"),
+  forexSessions: document.querySelector("#forexSessions"),
   freePlanButton: document.querySelector("#freePlanButton"),
   harvestMetric: document.querySelector("#harvestMetric"),
   inventoryMetric: document.querySelector("#inventoryMetric"),
@@ -120,6 +121,13 @@ const assetMetadata = {
   SOL: { name: "Solana", route: "Core Hyperliquid perp" },
   XRP: { name: "XRP", route: "Core Hyperliquid perp" }
 };
+
+const forexSessions = [
+  { closeHour: 6, name: "Sydney", openHour: 21, pairs: ["AUDUSD", "NZDUSD", "AUDJPY"] },
+  { closeHour: 9, name: "Tokyo", openHour: 0, pairs: ["USDJPY", "AUDJPY", "EURJPY"] },
+  { closeHour: 16, name: "London", openHour: 7, pairs: ["EURUSD", "GBPUSD", "EURGBP"] },
+  { closeHour: 21, name: "New York", openHour: 12, pairs: ["EURUSD", "GBPUSD", "USDJPY"] }
+];
 
 function setGate(element, label, status, className = "") {
   element.classList.remove("ready", "warn", "hot");
@@ -218,6 +226,83 @@ function radarAssetLabel(symbol) {
 
 function assetRoute(symbol) {
   return assetMetadata[symbol]?.route || "Watchlist or strategy-preview asset";
+}
+
+function minutesSinceUtcMidnight(date) {
+  return date.getUTCHours() * 60 + date.getUTCMinutes();
+}
+
+function sessionWindow(session) {
+  return {
+    close: session.closeHour * 60,
+    open: session.openHour * 60
+  };
+}
+
+function isSessionOpen(session, date) {
+  const now = minutesSinceUtcMidnight(date);
+  const { close, open } = sessionWindow(session);
+  if (open < close) return now >= open && now < close;
+  return now >= open || now < close;
+}
+
+function minutesUntilSessionChange(session, date) {
+  const now = minutesSinceUtcMidnight(date);
+  const { close, open } = sessionWindow(session);
+  const target = isSessionOpen(session, date) ? close : open;
+  return (target - now + 1440) % 1440;
+}
+
+function durationLabel(totalMinutes) {
+  const minutes = Math.max(0, Math.round(totalMinutes));
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  if (hours <= 0) return `${remainder}m`;
+  return `${hours}h ${String(remainder).padStart(2, "0")}m`;
+}
+
+function utcHourLabel(hour) {
+  return `${String(hour).padStart(2, "0")}:00`;
+}
+
+function activeForexPairs(date = new Date()) {
+  return Array.from(
+    new Set(
+      forexSessions
+        .filter((session) => isSessionOpen(session, date))
+        .flatMap((session) => session.pairs)
+    )
+  );
+}
+
+function renderForexSessions(date = new Date()) {
+  if (!els.forexSessions) return;
+  const activePairs = activeForexPairs(date);
+  const rows = forexSessions
+    .map((session) => {
+      const open = isSessionOpen(session, date);
+      const change = minutesUntilSessionChange(session, date);
+      return `<article class="session-row ${open ? "open" : "closed"}">
+        <div>
+          <strong>${session.name}</strong>
+          <span>${utcHourLabel(session.openHour)}-${utcHourLabel(session.closeHour)} UTC</span>
+        </div>
+        <em>${open ? "Open" : "Closed"}</em>
+        <b>${open ? "closes" : "opens"} in ${durationLabel(change)}</b>
+      </article>`;
+    })
+    .join("");
+  els.forexSessions.innerHTML = `
+    <div class="session-head">
+      <strong>Forex Session Timers</strong>
+      <span>${date.toISOString().slice(11, 19)} UTC</span>
+    </div>
+    <div class="session-grid">${rows}</div>
+    <div class="session-pairs">
+      <strong>Active pairs</strong>
+      <span>${activePairs.length ? activePairs.join(" · ") : "No major session active"}</span>
+    </div>
+  `;
 }
 
 function hasLivePlan() {
@@ -1441,5 +1526,7 @@ loadMarkets();
 loadPaymentConfig();
 loadMe();
 refreshBackend();
+renderForexSessions();
 setInterval(loadMarkets, 5000);
 setInterval(refreshBackend, 2500);
+setInterval(renderForexSessions, 1000);

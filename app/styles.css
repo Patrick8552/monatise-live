@@ -1226,6 +1226,105 @@ canvas {
   padding-left: 16px;
 }
 
+.forex-sessions {
+  background:
+    linear-gradient(160deg, rgba(232, 162, 20, 0.1), rgba(0, 184, 217, 0.06)),
+    rgba(4, 9, 11, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 6px;
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 10px;
+}
+
+.session-head {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.session-head strong {
+  color: #f9fffb;
+  font-size: 0.86rem;
+}
+
+.session-head span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 850;
+}
+
+.session-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.session-row {
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 8px;
+}
+
+.session-row.open {
+  background: rgba(0, 168, 120, 0.16);
+  border-color: rgba(0, 168, 120, 0.34);
+}
+
+.session-row strong {
+  color: #f9fffb;
+  display: block;
+  font-size: 0.78rem;
+}
+
+.session-row span,
+.session-row b,
+.session-row em {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+  font-weight: 850;
+  overflow-wrap: anywhere;
+}
+
+.session-row.open em {
+  color: #74f3cf;
+}
+
+.session-row.closed em {
+  color: #ffb3a8;
+}
+
+.session-pairs {
+  align-items: center;
+  background: rgba(4, 9, 11, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 6px;
+  display: grid;
+  gap: 3px;
+  padding: 8px;
+}
+
+.session-pairs strong {
+  color: #f9fffb;
+  font-size: 0.74rem;
+}
+
+.session-pairs span {
+  color: rgba(249, 255, 251, 0.78);
+  font-size: 0.74rem;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
 .asset-groups {
   display: grid;
   gap: 10px;
@@ -1780,6 +1879,15 @@ button:disabled {
     grid-template-columns: 1fr 1fr;
   }
 
+  .session-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .session-head {
+    align-items: flex-start;
+    display: grid;
+  }
+
   #liquidityCanvas {
     height: 480px;
     min-height: 380px;
@@ -1804,6 +1912,10 @@ button:disabled {
   }
 
   .metric-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .session-grid {
     grid-template-columns: 1fr;
   }
 }
