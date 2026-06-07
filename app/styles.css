@@ -214,6 +214,96 @@ label .range-readout {
   max-width: 1560px;
 }
 
+.desk-jump-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 auto 14px;
+  max-width: 1560px;
+}
+
+.desk-jump-nav a {
+  background: rgba(17, 24, 23, 0.06);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 850;
+  padding: 8px 11px;
+  text-decoration: none;
+  text-transform: uppercase;
+}
+
+.desk-jump-nav a:hover {
+  border-color: rgba(54, 95, 107, 0.38);
+  color: var(--ink);
+}
+
+.desk-sections {
+  display: grid;
+  gap: 18px;
+  margin: 0 auto;
+  max-width: 1560px;
+}
+
+.desk-section {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.74), rgba(246, 249, 245, 0.72)),
+    var(--panel);
+  border: 1px solid rgba(17, 24, 23, 0.08);
+  border-radius: 10px;
+  box-shadow: 0 18px 36px rgba(17, 24, 23, 0.08);
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  scroll-margin-top: 14px;
+}
+
+.section-head {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.section-head h2 {
+  font-size: 1.1rem;
+  line-height: 1.15;
+}
+
+.section-grid {
+  display: grid;
+  gap: 14px;
+}
+
+.trade-grid {
+  grid-template-columns: minmax(300px, 0.8fr) minmax(360px, 1.2fr);
+}
+
+.risk-grid {
+  grid-template-columns: minmax(320px, 1.1fr) minmax(280px, 0.9fr);
+}
+
+.account-grid {
+  grid-template-columns: minmax(300px, 0.8fr) minmax(360px, 1.2fr);
+}
+
+.activity-grid {
+  grid-template-columns: minmax(260px, 0.85fr) minmax(320px, 1fr) minmax(280px, 0.9fr);
+}
+
+.strategy-panel {
+  align-self: start;
+}
+
+.compact-backend {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  min-width: min(100%, 220px);
+}
+
 .panel,
 .market-stage {
   background: var(--panel);
@@ -388,6 +478,27 @@ button.live-running {
   border-radius: 8px;
   box-shadow: var(--shadow);
   padding: 18px;
+}
+
+#markets .market-stage {
+  min-height: 0;
+}
+
+#markets .market-radar {
+  max-height: 520px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+#markets .asset-groups {
+  max-height: 420px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+#markets #liquidityCanvas {
+  height: 420px;
+  min-height: 360px;
 }
 
 .page-lede {
@@ -1617,8 +1728,7 @@ canvas {
   display: grid;
   gap: 12px;
   padding: 13px;
-  position: sticky;
-  top: 12px;
+  position: relative;
   z-index: 3;
 }
 
@@ -2075,6 +2185,16 @@ button:disabled {
     grid-template-columns: minmax(260px, 340px) 1fr;
   }
 
+  .trade-grid,
+  .risk-grid,
+  .account-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .activity-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .ops-ribbon {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -2092,8 +2212,24 @@ button:disabled {
 
   .topbar,
   .workspace,
-  .side-stack {
+  .side-stack,
+  .activity-grid {
     grid-template-columns: 1fr;
+  }
+
+  .desk-section {
+    border-radius: 8px;
+    padding: 12px;
+  }
+
+  .section-head {
+    align-items: flex-start;
+    display: grid;
+  }
+
+  .desk-jump-nav {
+    overflow-x: auto;
+    padding-bottom: 2px;
   }
 
   .topbar {

@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Monatise Trading Console</title>
-    <link rel="stylesheet" href="./styles.css?v=20260607-candles-hedge" />
+    <link rel="stylesheet" href="./styles.css?v=20260607-sectioned-desk" />
   </head>
   <body>
     <main class="shell">
@@ -49,192 +49,242 @@
         </article>
       </section>
 
-      <section class="workspace" aria-label="Monatise dashboard">
-        <aside class="panel controls">
-          <div class="panel-head">
-            <h2>Trading Controls</h2>
+      <nav class="desk-jump-nav" aria-label="desk sections">
+        <a href="#trade">Trade Setup</a>
+        <a href="#risk">Risk Gate</a>
+        <a href="#markets">Markets</a>
+        <a href="#account">Account</a>
+        <a href="#activity">Activity</a>
+      </nav>
+
+      <section class="desk-sections" aria-label="Monatise dashboard">
+        <section id="trade" class="desk-section trade-section">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Trade setup</p>
+              <h2>Build the grid before touching live orders.</h2>
+            </div>
             <button id="resetButton" type="button" title="Reset to defaults">Reset</button>
           </div>
 
-          <div class="live-desk" aria-label="live trading desk">
-            <div class="live-desk-head">
-              <div>
-                <span>Real-money desk</span>
-                <strong id="liveDeskStatus">Not armed</strong>
+          <div class="section-grid trade-grid">
+            <div class="panel controls">
+              <div class="control-group">
+                <div class="group-title">
+                  <span>Market</span>
+                  <strong>Routing</strong>
+                </div>
+                <label>
+                  Trading asset
+                  <select id="assetSelect"></select>
+                </label>
+                <div id="assetDetail" class="asset-detail">
+                  <strong>BTC</strong>
+                  <span>Bitcoin perpetual routed on Hyperliquid.</span>
+                </div>
+                <label>
+                  Local simulation symbol
+                  <input id="symbolInput" type="text" value="BTC-USD" />
+                </label>
               </div>
-              <span id="liveNetworkBadge">paper</span>
-            </div>
-            <div class="readiness-grid">
-              <article id="loginGate">
-                <span>Login</span>
-                <strong>Needed</strong>
-              </article>
-              <article id="credentialGate">
-                <span>API wallet</span>
-                <strong>Needed</strong>
-              </article>
-              <article id="riskGate">
-                <span>Risk gate</span>
-                <strong>Waiting</strong>
-              </article>
-            </div>
-            <div id="readinessChecklist" class="readiness-checklist" aria-label="live readiness checklist"></div>
-            <div class="button-row trade-actions">
-              <button id="backendStartButton" class="primary danger-primary" type="button">Start Live</button>
-              <button id="backendStopButton" type="button">Stop</button>
-            </div>
-          </div>
 
-          <div class="rules-console" aria-label="trading rules console">
-            <div class="rules-head">
-              <div>
-                <span>Trading Rules</span>
-                <strong id="rulesStatus">Desk defaults</strong>
+              <div class="control-group">
+                <div class="group-title">
+                  <span>Strategy</span>
+                  <strong>Grid</strong>
+                </div>
+                <div class="input-row">
+                  <label>
+                    Quote
+                    <input id="quoteInput" type="number" value="10000" min="0" step="100" />
+                  </label>
+                  <label>
+                    Base
+                    <input id="baseInput" type="number" value="0.05" min="0" step="0.01" />
+                  </label>
+                </div>
+                <label>
+                  Grid spacing
+                  <input id="spacingInput" type="range" min="0.1" max="2" step="0.1" value="0.5" />
+                  <span class="range-readout"><span id="spacingValue">0.5</span>%</span>
+                </label>
+                <label>
+                  Levels each side
+                  <input id="levelsInput" type="range" min="1" max="12" step="1" value="5" />
+                  <span class="range-readout"><span id="levelsValue">5</span> levels</span>
+                </label>
+                <div class="input-row">
+                  <label>
+                    Order quote size
+                    <input id="orderSizeInput" type="number" value="250" min="10" step="10" />
+                  </label>
+                  <label>
+                    Fee rate
+                    <input id="feeInput" type="number" value="0.04" min="0" step="0.01" />
+                  </label>
+                </div>
+                <div class="button-row">
+                  <button id="runButton" class="primary" type="button">Run</button>
+                  <button id="stepButton" type="button">Step</button>
+                </div>
               </div>
-              <button id="saveRulesButton" type="button">Save</button>
-            </div>
-            <div class="rule-grid">
-              <label>
-                Chart
-                <select id="chartIntervalSelect">
-                  <option value="1h">1h</option>
-                  <option value="15m">15m</option>
-                  <option value="5m">5m</option>
-                  <option value="1m">1m Pro</option>
-                </select>
-              </label>
-              <label>
-                Break guard
-                <select id="sessionGuardSelect">
-                  <option value="60">60m</option>
-                  <option value="30">30m</option>
-                  <option value="90">90m</option>
-                  <option value="15">15m</option>
-                  <option value="5">5m</option>
-                </select>
-              </label>
-            </div>
-            <label class="toggle-rule">
-              <input id="staleGridCancelInput" type="checkbox" checked />
-              <span>Auto-cancel stale grids</span>
-            </label>
-            <label class="toggle-rule">
-              <input id="londonCommodityInput" type="checkbox" checked />
-              <span>Gold/oil live grids only during London</span>
-            </label>
-            <div id="rulesSummary" class="rules-summary">1h analysis · 60m session guard · London commodity guard on</div>
-          </div>
-
-          <div class="control-group">
-            <div class="group-title">
-              <span>Market</span>
-              <strong>Routing</strong>
-            </div>
-            <label>
-              Trading asset
-              <select id="assetSelect"></select>
-            </label>
-            <div id="assetDetail" class="asset-detail">
-              <strong>BTC</strong>
-              <span>Bitcoin perpetual routed on Hyperliquid.</span>
-            </div>
-            <label>
-              Local simulation symbol
-              <input id="symbolInput" type="text" value="BTC-USD" />
-            </label>
-          </div>
-
-          <div class="control-group">
-            <div class="group-title">
-              <span>Strategy</span>
-              <strong>Grid</strong>
-            </div>
-            <div class="input-row">
-              <label>
-                Quote
-                <input id="quoteInput" type="number" value="10000" min="0" step="100" />
-              </label>
-              <label>
-                Base
-                <input id="baseInput" type="number" value="0.05" min="0" step="0.01" />
-              </label>
+              <textarea id="csvInput" class="internal-candle-buffer" spellcheck="false" aria-hidden="true" tabindex="-1"></textarea>
             </div>
 
-            <label>
-              Grid spacing
-              <input id="spacingInput" type="range" min="0.1" max="2" step="0.1" value="0.5" />
-              <span class="range-readout"><span id="spacingValue">0.5</span>%</span>
-            </label>
-
-            <label>
-              Levels each side
-              <input id="levelsInput" type="range" min="1" max="12" step="1" value="5" />
-              <span class="range-readout"><span id="levelsValue">5</span> levels</span>
-            </label>
-
-            <div class="input-row">
-              <label>
-                Order quote size
-                <input id="orderSizeInput" type="number" value="250" min="10" step="10" />
-              </label>
-              <label>
-                Fee rate
-                <input id="feeInput" type="number" value="0.04" min="0" step="0.01" />
-              </label>
-            </div>
-
-            <div class="button-row">
-              <button id="runButton" class="primary" type="button">Run</button>
-              <button id="stepButton" type="button">Step</button>
-            </div>
-          </div>
-
-          <div class="auth-box" aria-label="user account controls">
-            <div class="auth-head">
-              <div>
-                <span>Account</span>
-                <strong id="authStatus">Logged out</strong>
+            <div class="panel strategy-panel">
+              <div class="panel-head">
+                <h2 id="openGridTitle">Strategy Preview</h2>
+                <span id="openOrderCount">0 orders</span>
               </div>
-              <button id="logoutButton" type="button">Logout</button>
+              <div id="strategyReadout" class="strategy-readout" aria-label="strategy preview readout"></div>
+              <div id="openOrderBook" class="open-order-book"></div>
             </div>
-            <label>
-              Username
-              <input id="usernameInput" type="text" autocomplete="username" />
-            </label>
-            <label>
-              Password
-              <input id="passwordInput" type="password" autocomplete="current-password" />
-            </label>
-            <div class="button-row">
-              <button id="loginButton" class="primary" type="button">Login</button>
-              <button id="registerButton" type="button">Register</button>
-            </div>
-            <label>
-              Funded account address
-              <input id="accountAddressInput" type="text" autocomplete="off" placeholder="0x..." />
-            </label>
-            <label>
-              API wallet secret key
-              <input id="secretKeyInput" type="password" autocomplete="off" />
-            </label>
-            <button id="saveCredentialsButton" type="button">Save credentials</button>
-            <p id="credentialStatus">Per-user Hyperliquid credentials only.</p>
           </div>
+        </section>
 
-          <div class="backend-box" aria-label="backend trading status">
+        <section id="risk" class="desk-section">
+          <div class="section-head">
             <div>
+              <p class="eyebrow">Risk gate</p>
+              <h2>Arm only when readiness, capital, and session rules agree.</h2>
+            </div>
+            <div class="backend-box compact-backend" aria-label="backend trading status">
               <span>Backend</span>
               <strong id="backendStatus">Offline</strong>
             </div>
           </div>
 
-          <textarea id="csvInput" class="internal-candle-buffer" spellcheck="false" aria-hidden="true" tabindex="-1"></textarea>
-        </aside>
+          <div class="section-grid risk-grid">
+            <div class="live-desk" aria-label="live trading desk">
+              <div class="live-desk-head">
+                <div>
+                  <span>Real-money desk</span>
+                  <strong id="liveDeskStatus">Not armed</strong>
+                </div>
+                <span id="liveNetworkBadge">paper</span>
+              </div>
+              <div class="readiness-grid">
+                <article id="loginGate">
+                  <span>Login</span>
+                  <strong>Needed</strong>
+                </article>
+                <article id="credentialGate">
+                  <span>API wallet</span>
+                  <strong>Needed</strong>
+                </article>
+                <article id="riskGate">
+                  <span>Risk gate</span>
+                  <strong>Waiting</strong>
+                </article>
+              </div>
+              <div id="readinessChecklist" class="readiness-checklist" aria-label="live readiness checklist"></div>
+              <div class="button-row trade-actions">
+                <button id="backendStartButton" class="primary danger-primary" type="button">Start Live</button>
+                <button id="backendStopButton" type="button">Stop</button>
+              </div>
+            </div>
 
-        <section class="market-stage" aria-label="market visualization">
-          <div class="stage-head">
+            <div class="rules-console" aria-label="trading rules console">
+              <div class="rules-head">
+                <div>
+                  <span>Trading Rules</span>
+                  <strong id="rulesStatus">Desk defaults</strong>
+                </div>
+                <button id="saveRulesButton" type="button">Save</button>
+              </div>
+              <div class="rule-grid">
+                <label>
+                  Chart
+                  <select id="chartIntervalSelect">
+                    <option value="1h">1h</option>
+                    <option value="15m">15m</option>
+                    <option value="5m">5m</option>
+                    <option value="1m">1m Pro</option>
+                  </select>
+                </label>
+                <label>
+                  Break guard
+                  <select id="sessionGuardSelect">
+                    <option value="60">60m</option>
+                    <option value="30">30m</option>
+                    <option value="90">90m</option>
+                    <option value="15">15m</option>
+                    <option value="5">5m</option>
+                  </select>
+                </label>
+              </div>
+              <label class="toggle-rule">
+                <input id="staleGridCancelInput" type="checkbox" checked />
+                <span>Auto-cancel stale grids</span>
+              </label>
+              <label class="toggle-rule">
+                <input id="londonCommodityInput" type="checkbox" checked />
+                <span>Gold/oil live grids only during London</span>
+              </label>
+              <div id="rulesSummary" class="rules-summary">1h analysis · 60m session guard · London commodity guard on</div>
+            </div>
+
+            <section class="panel metrics">
+              <h2>Portfolio</h2>
+              <div class="metric-grid">
+                <article>
+                  <span>Equity</span>
+                  <strong id="equityMetric">$0.00</strong>
+                </article>
+                <article>
+                  <span id="accountMetricLabel">Harvest</span>
+                  <strong id="harvestMetric">$0.00</strong>
+                </article>
+                <article>
+                  <span id="cashMetricLabel">Fees</span>
+                  <strong id="feesMetric">$0.00</strong>
+                </article>
+                <article>
+                  <span>Inventory</span>
+                  <strong id="inventoryMetric">0.00%</strong>
+                </article>
+              </div>
+            </section>
+
+            <section class="panel metrics">
+              <div class="panel-head">
+                <h2>Risk Console</h2>
+                <span id="executionModeMetric">dry-run</span>
+              </div>
+              <div class="metric-grid compact">
+                <article>
+                  <span>Drawdown</span>
+                  <strong id="drawdownMetric">$0.00</strong>
+                </article>
+                <article>
+                  <span>Open Notional</span>
+                  <strong id="openNotionalMetric">$0.00</strong>
+                </article>
+                <article>
+                  <span>Order Age</span>
+                  <strong id="orderAgeMetric">0s</strong>
+                </article>
+                <article>
+                  <span>Budget</span>
+                  <strong id="riskBudgetMetric">$0.00</strong>
+                </article>
+                <article>
+                  <span>Sync</span>
+                  <strong id="syncMetric">0 fills</strong>
+                </article>
+                <article>
+                  <span>Exchange IDs</span>
+                  <strong id="exchangeOrderMetric">0</strong>
+                </article>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section id="markets" class="desk-section">
+          <div class="section-head">
             <div>
-              <p class="eyebrow">Grid state</p>
+              <p class="eyebrow">Market intelligence</p>
               <h2 id="marketTitle">BTC-USD strategy map</h2>
             </div>
             <div class="price-pill">
@@ -242,179 +292,170 @@
               <strong id="markPrice">$0.00</strong>
             </div>
           </div>
-          <p id="liquiditySource" class="liquidity-source">Strategy preview only. No exchange orders.</p>
-          <div id="fibAnalysis" class="fib-analysis" aria-label="Fibonacci grid analysis">
-            <div class="fib-head">
-              <strong>Fibonacci Grid Analysis</strong>
-              <span>Waiting for live candles</span>
-            </div>
-          </div>
-          <div id="contextRadar" class="context-radar" aria-label="grid context radar">
-            <div class="context-head">
-              <strong>Context Radar</strong>
-              <span>Waiting for indicators</span>
-            </div>
-          </div>
-          <div id="forexSessions" class="forex-sessions" aria-label="forex session timers">
-            <div class="session-head">
-              <strong>Forex Session Timers</strong>
-              <span>UTC market clocks</span>
-            </div>
-          </div>
-          <div id="marketStrip" class="market-strip" aria-label="live market prices"></div>
-          <div id="marketRadar" class="market-radar" aria-label="multi asset market radar"></div>
-          <div id="assetGroups" class="asset-groups" aria-label="asset classes"></div>
-          <div id="market3dMap" class="market-3d-map" aria-label="3D live market map"></div>
-          <canvas id="liquidityCanvas" width="980" height="620" aria-label="Liquidity grid chart"></canvas>
-        </section>
 
-        <aside class="side-stack">
-          <section class="panel metrics">
-            <h2>Portfolio</h2>
-            <div class="metric-grid">
-              <article>
-                <span>Equity</span>
-                <strong id="equityMetric">$0.00</strong>
-              </article>
-              <article>
-                <span id="accountMetricLabel">Harvest</span>
-                <strong id="harvestMetric">$0.00</strong>
-              </article>
-              <article>
-                <span id="cashMetricLabel">Fees</span>
-                <strong id="feesMetric">$0.00</strong>
-              </article>
-              <article>
-                <span>Inventory</span>
-                <strong id="inventoryMetric">0.00%</strong>
-              </article>
-            </div>
-          </section>
-
-          <section class="panel metrics">
-            <div class="panel-head">
-              <h2>Risk Console</h2>
-              <span id="executionModeMetric">dry-run</span>
-            </div>
-            <div class="metric-grid compact">
-              <article>
-                <span>Drawdown</span>
-                <strong id="drawdownMetric">$0.00</strong>
-              </article>
-              <article>
-                <span>Open Notional</span>
-                <strong id="openNotionalMetric">$0.00</strong>
-              </article>
-              <article>
-                <span>Order Age</span>
-                <strong id="orderAgeMetric">0s</strong>
-              </article>
-              <article>
-                <span>Budget</span>
-                <strong id="riskBudgetMetric">$0.00</strong>
-              </article>
-              <article>
-                <span>Sync</span>
-                <strong id="syncMetric">0 fills</strong>
-              </article>
-              <article>
-                <span>Exchange IDs</span>
-                <strong id="exchangeOrderMetric">0</strong>
-              </article>
-            </div>
-          </section>
-
-          <section class="panel">
-            <div class="panel-head">
-              <h2 id="openGridTitle">Strategy Preview</h2>
-              <span id="openOrderCount">0 orders</span>
-            </div>
-            <div id="strategyReadout" class="strategy-readout" aria-label="strategy preview readout"></div>
-            <div id="openOrderBook" class="open-order-book"></div>
-          </section>
-
-          <section class="panel">
-            <div class="panel-head">
-              <h2>Fill Tape</h2>
-              <span id="lastFill">No fills</span>
-            </div>
-            <div id="fillTape" class="fill-tape"></div>
-          </section>
-
-          <section class="panel">
-            <h2>Equity Curve</h2>
-            <canvas id="equityCanvas" width="420" height="220" aria-label="Equity curve"></canvas>
-          </section>
-
-          <section class="panel">
-            <div class="panel-head">
-              <h2>Runtime Log</h2>
-              <span id="riskStatus">ready</span>
-            </div>
-            <div id="runtimeLog" class="runtime-log"></div>
-          </section>
-
-          <section class="panel subscription-panel">
-            <div class="panel-head">
-              <h2>Billing</h2>
-              <span id="subscriptionStatus">Free</span>
-            </div>
-            <div class="billing-fields">
-              <p id="paymentDestination" class="payment-destination">Checking payment destination.</p>
-              <label>
-                Payment method
-                <select id="paymentMethodSelect">
-                  <option value="stripe">Stripe</option>
-                  <option value="flutterwave">Flutterwave</option>
-                  <option value="fiat">Fiat checkout</option>
-                  <option value="crypto">Crypto USDC</option>
-                </select>
-              </label>
-              <div class="input-row">
-                <label>
-                  Currency
-                  <select id="paymentCurrencySelect">
-                    <option value="USD">USD</option>
-                    <option value="NGN">NGN</option>
-                    <option value="GBP">GBP</option>
-                    <option value="EUR">EUR</option>
-                  </select>
-                </label>
-                <label>
-                  Email
-                  <input id="paymentEmailInput" type="email" autocomplete="email" />
-                </label>
+          <section class="market-stage" aria-label="market visualization">
+            <p id="liquiditySource" class="liquidity-source">Strategy preview only. No exchange orders.</p>
+            <div id="fibAnalysis" class="fib-analysis" aria-label="Fibonacci grid analysis">
+              <div class="fib-head">
+                <strong>Fibonacci Grid Analysis</strong>
+                <span>Waiting for live candles</span>
               </div>
             </div>
-            <div class="plan-grid">
-              <article>
-                <strong>Free</strong>
-                <span>$0</span>
-                <ul>
-                  <li>Paper trading and strategy preview</li>
-                  <li>Live market prices</li>
-                  <li>No real order routing</li>
-                </ul>
-                <button id="freePlanButton" type="button">Select</button>
-              </article>
-              <article>
-                <strong>Pro</strong>
-                <span>$29/mo</span>
-                <ul>
-                  <li>Single-user mainnet live trading</li>
-                  <li>Risk console and emergency stop</li>
-                  <li>Live order and fill tracking</li>
-                </ul>
-                <button id="proPlanButton" class="primary" type="button">Select</button>
-              </article>
+            <div id="contextRadar" class="context-radar" aria-label="grid context radar">
+              <div class="context-head">
+                <strong>Context Radar</strong>
+                <span>Waiting for indicators</span>
+              </div>
             </div>
-            <p id="paymentStatus" class="payment-status">Stripe, Flutterwave, fiat, or crypto.</p>
+            <div id="forexSessions" class="forex-sessions" aria-label="forex session timers">
+              <div class="session-head">
+                <strong>Forex Session Timers</strong>
+                <span>UTC market clocks</span>
+              </div>
+            </div>
+            <div id="marketStrip" class="market-strip" aria-label="live market prices"></div>
+            <div id="marketRadar" class="market-radar" aria-label="multi asset market radar"></div>
+            <div id="assetGroups" class="asset-groups" aria-label="asset classes"></div>
+            <div id="market3dMap" class="market-3d-map" aria-label="3D live market map"></div>
+            <canvas id="liquidityCanvas" width="980" height="620" aria-label="Liquidity grid chart"></canvas>
           </section>
-        </aside>
+        </section>
+
+        <section id="account" class="desk-section">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Account & payment</p>
+              <h2>Keep identity, credentials, and subscription separate from trading capital.</h2>
+            </div>
+          </div>
+
+          <div class="section-grid account-grid">
+            <div class="auth-box" aria-label="user account controls">
+              <div class="auth-head">
+                <div>
+                  <span>Account</span>
+                  <strong id="authStatus">Logged out</strong>
+                </div>
+                <button id="logoutButton" type="button">Logout</button>
+              </div>
+              <label>
+                Username
+                <input id="usernameInput" type="text" autocomplete="username" />
+              </label>
+              <label>
+                Password
+                <input id="passwordInput" type="password" autocomplete="current-password" />
+              </label>
+              <div class="button-row">
+                <button id="loginButton" class="primary" type="button">Login</button>
+                <button id="registerButton" type="button">Register</button>
+              </div>
+              <label>
+                Funded account address
+                <input id="accountAddressInput" type="text" autocomplete="off" placeholder="0x..." />
+              </label>
+              <label>
+                API wallet secret key
+                <input id="secretKeyInput" type="password" autocomplete="off" />
+              </label>
+              <button id="saveCredentialsButton" type="button">Save credentials</button>
+              <p id="credentialStatus">Per-user Hyperliquid credentials only.</p>
+            </div>
+
+            <section class="panel subscription-panel">
+              <div class="panel-head">
+                <h2>Billing</h2>
+                <span id="subscriptionStatus">Free</span>
+              </div>
+              <div class="billing-fields">
+                <p id="paymentDestination" class="payment-destination">Checking payment destination.</p>
+                <label>
+                  Payment method
+                  <select id="paymentMethodSelect">
+                    <option value="stripe">Stripe</option>
+                    <option value="flutterwave">Flutterwave</option>
+                    <option value="fiat">Fiat checkout</option>
+                    <option value="crypto">Crypto USDC</option>
+                  </select>
+                </label>
+                <div class="input-row">
+                  <label>
+                    Currency
+                    <select id="paymentCurrencySelect">
+                      <option value="USD">USD</option>
+                      <option value="NGN">NGN</option>
+                      <option value="GBP">GBP</option>
+                      <option value="EUR">EUR</option>
+                    </select>
+                  </label>
+                  <label>
+                    Email
+                    <input id="paymentEmailInput" type="email" autocomplete="email" />
+                  </label>
+                </div>
+              </div>
+              <div class="plan-grid">
+                <article>
+                  <strong>Free</strong>
+                  <span>$0</span>
+                  <ul>
+                    <li>Paper trading and strategy preview</li>
+                    <li>Live market prices</li>
+                    <li>No real order routing</li>
+                  </ul>
+                  <button id="freePlanButton" type="button">Select</button>
+                </article>
+                <article>
+                  <strong>Pro</strong>
+                  <span>$29/mo</span>
+                  <ul>
+                    <li>Single-user mainnet live trading</li>
+                    <li>Risk console and emergency stop</li>
+                    <li>Live order and fill tracking</li>
+                  </ul>
+                  <button id="proPlanButton" class="primary" type="button">Select</button>
+                </article>
+              </div>
+              <p id="paymentStatus" class="payment-status">Stripe, Flutterwave, fiat, or crypto.</p>
+            </section>
+          </div>
+        </section>
+
+        <section id="activity" class="desk-section">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Activity</p>
+              <h2>Review fills, equity, and runtime state before scaling.</h2>
+            </div>
+          </div>
+
+          <div class="section-grid activity-grid">
+            <section class="panel">
+              <div class="panel-head">
+                <h2>Fill Tape</h2>
+                <span id="lastFill">No fills</span>
+              </div>
+              <div id="fillTape" class="fill-tape"></div>
+            </section>
+
+            <section class="panel">
+              <h2>Equity Curve</h2>
+              <canvas id="equityCanvas" width="420" height="220" aria-label="Equity curve"></canvas>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <h2>Runtime Log</h2>
+                <span id="riskStatus">ready</span>
+              </div>
+              <div id="runtimeLog" class="runtime-log"></div>
+            </section>
+          </div>
+        </section>
       </section>
     </main>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="./app.js?v=20260607-candles-hedge"></script>
+    <script src="./app.js?v=20260607-sectioned-desk"></script>
   </body>
 </html>
