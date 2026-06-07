@@ -150,7 +150,7 @@ Resources:
         InstanceRoleArn: !Ref InstanceRoleArn
       HealthCheckConfiguration:
         Protocol: HTTP
-        Path: /api/status
+        Path: /api/health
         Interval: 10
         Timeout: 5
         HealthyThreshold: 1
