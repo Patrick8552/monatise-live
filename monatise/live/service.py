@@ -38,6 +38,8 @@ class RuntimeState:
     last_order_refresh: float = 0.0
     last_mark_price: float = 0.0
     exchange_order_ids: dict[str, str] = field(default_factory=dict)
+    reconciled_fill_ids: set[str] = field(default_factory=set)
+    last_reconciliation: float = 0.0
 
 
 class TradingService:
@@ -159,6 +161,10 @@ class TradingService:
                 "maxMarkMovePct": self.config.max_mark_move_pct,
                 "executionMode": self.config.execution_mode,
                 "exchangeOrderCount": len(self.state.exchange_order_ids),
+                "reconciledFillCount": len(self.state.reconciled_fill_ids),
+                "lastReconciliationSeconds": max(0.0, time.time() - self.state.last_reconciliation)
+                if self.state.last_reconciliation
+                else 0.0,
             },
         }
 
@@ -200,7 +206,9 @@ class TradingService:
         adapter = self._live_adapter()
         mark = adapter.latest_price(self.config.symbol)
         account = self._account_snapshot(adapter, mark)
+        raw_fills = self._fetch_live_fills(adapter)
         with self._lock:
+            self._apply_live_fills(raw_fills)
             market_decision = self._market_guard(mark, account)
             if not market_decision.allowed:
                 self._cancel_live_orders("market guard cancel")
@@ -272,9 +280,10 @@ class TradingService:
         margin = user_state.get("marginSummary", {})
         position_size = 0.0
         position_value = 0.0
+        coin = self.config.symbol.split("-", 1)[0].upper()
         for item in user_state.get("assetPositions", []):
             position = item.get("position", {})
-            if position.get("coin") == self.config.symbol:
+            if position.get("coin") == coin:
                 position_size = float(position.get("szi", 0) or 0)
                 position_value = position_size * mark
                 break
@@ -314,6 +323,78 @@ class TradingService:
         if position_value > self.config.max_position_value:
             return RiskDecision(False, "position exposure exceeds limit")
         return RiskDecision(True)
+
+    def _fetch_live_fills(self, adapter: HyperliquidAdapter) -> list[dict]:
+        if not self.state.exchange_order_ids:
+            return []
+        try:
+            fills = adapter.fills(self.config.symbol)
+        except NotImplementedError:
+            return []
+        except Exception as error:  # noqa: BLE001
+            self._event("warn", f"fill reconciliation skipped: {error}")
+            return []
+        return fills if isinstance(fills, list) else []
+
+    def _apply_live_fills(self, raw_fills: list[dict]) -> None:
+        if not raw_fills or not self.state.exchange_order_ids:
+            return
+
+        orders_by_exchange_id = {
+            exchange_order_id: order
+            for order in self.state.open_orders
+            if (exchange_order_id := self.state.exchange_order_ids.get(order.order_id))
+        }
+        filled_order_ids: set[str] = set()
+        reconciled = 0
+        for raw_fill in raw_fills:
+            fill_id = self._raw_fill_id(raw_fill)
+            if fill_id in self.state.reconciled_fill_ids:
+                continue
+            exchange_order_id = str(raw_fill.get("oid") or raw_fill.get("orderId") or "")
+            order = orders_by_exchange_id.get(exchange_order_id)
+            if order is None:
+                continue
+            fill = self._live_fill_from_raw(raw_fill, order)
+            self.harvester.record_fill(fill, self.portfolio)
+            self.state.fills.append(fill)
+            self.state.reconciled_fill_ids.add(fill_id)
+            self.state.exchange_order_ids.pop(order.order_id, None)
+            filled_order_ids.add(order.order_id)
+            reconciled += 1
+
+        if reconciled:
+            self.state.open_orders = [
+                order for order in self.state.open_orders if order.order_id not in filled_order_ids
+            ]
+            self.state.last_reconciliation = time.time()
+            self._event("info", f"reconciled {reconciled} exchange fills")
+
+    def _raw_fill_id(self, raw_fill: dict) -> str:
+        if raw_fill.get("hash"):
+            return str(raw_fill["hash"])
+        return ":".join(
+            str(raw_fill.get(key, ""))
+            for key in ("oid", "time", "side", "px", "sz")
+        )
+
+    def _live_fill_from_raw(self, raw_fill: dict, order: Order) -> Fill:
+        side = str(raw_fill.get("side") or order.side.value).upper()
+        mapped_side = OrderSide.BUY if side in {"B", "BUY"} else OrderSide.SELL
+        price = float(raw_fill.get("px") or raw_fill.get("price") or order.price)
+        quantity = float(raw_fill.get("sz") or raw_fill.get("quantity") or order.quantity)
+        fee = abs(float(raw_fill.get("fee") or 0))
+        timestamp = str(raw_fill.get("time") or raw_fill.get("timestamp") or time.time())
+        return Fill(
+            order_id=order.order_id,
+            symbol=order.symbol,
+            side=mapped_side,
+            price=price,
+            quantity=quantity,
+            fee=fee,
+            timestamp=timestamp,
+            level_id=order.level_id,
+        )
 
     def _open_orders_stale(self) -> bool:
         if not self.state.last_order_refresh:

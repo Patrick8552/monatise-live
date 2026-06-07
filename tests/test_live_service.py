@@ -12,6 +12,7 @@ class FakeMarketAdapter:
 class FakeExecutionAdapter:
     def __init__(self) -> None:
         self.cancelled: list[str] = []
+        self.raw_fills: list[dict] = []
         self.submitted = 0
 
     def latest_price(self, symbol: str) -> float:
@@ -36,6 +37,10 @@ class FakeExecutionAdapter:
 
     def cancel_orders(self, order_ids: list[str]) -> None:
         self.cancelled.extend(order_ids)
+
+    def fills(self, symbol: str) -> list[dict]:
+        assert symbol == "BTC"
+        return self.raw_fills
 
 
 def test_live_tick_initializes_risk_baseline_from_live_mark() -> None:
@@ -105,6 +110,51 @@ def test_stale_live_grid_cancels_exchange_orders_before_replace() -> None:
     assert first_ids
     assert first_ids.issubset(set(adapter.cancelled))
     assert adapter.submitted == 2
+
+
+def test_live_tick_reconciles_exchange_fills_once() -> None:
+    service = TradingService(
+        RuntimeConfig(
+            mode="live",
+            execution_mode="live",
+            allow_live_orders=True,
+            live_confirmation=LIVE_CONFIRMATION,
+            account_address="0xabc",
+            secret_key="secret",
+            order_quote_size=10,
+            max_order_notional=10,
+            max_total_notional=100,
+            max_position_value=100_000,
+            max_base_inventory=10,
+        )
+    )
+    adapter = FakeExecutionAdapter()
+    service._adapter = adapter
+
+    service._live_tick()
+    order = service.state.open_orders[0]
+    exchange_order_id = service.state.exchange_order_ids[order.order_id]
+    adapter.raw_fills = [
+        {
+            "coin": "BTC",
+            "fee": "0.004",
+            "hash": "fill-hash-1",
+            "oid": exchange_order_id,
+            "px": str(order.price),
+            "side": "B" if order.side.value == "buy" else "A",
+            "sz": str(order.quantity),
+            "time": 1780794000,
+        }
+    ]
+
+    service._live_tick()
+    fill_count = len(service.state.fills)
+    service._live_tick()
+
+    assert fill_count == 1
+    assert len(service.state.fills) == 1
+    assert order.order_id not in service.state.exchange_order_ids
+    assert service.state.last_reconciliation > 0
 
 
 def test_hyperliquid_order_values_are_rounded_for_wire_format() -> None:

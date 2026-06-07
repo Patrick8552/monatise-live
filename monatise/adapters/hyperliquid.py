@@ -102,8 +102,11 @@ class HyperliquidAdapter(MarketDataPort, ExecutionPort):
         for order_id in order_ids:
             self.exchange.cancel(coin, int(order_id))
 
-    def fills(self, symbol: str):  # noqa: ANN201
-        raise NotImplementedError("fill reconciliation is planned through user fills/order status polling")
+    def fills(self, symbol: str) -> list[dict[str, Any]]:
+        if not self.account_address:
+            raise RuntimeError("HYPERLIQUID_ACCOUNT_ADDRESS is required for fills")
+        coin = self._coin(symbol)
+        return [fill for fill in self.info.user_fills(self.account_address) if fill.get("coin") == coin]
 
     def user_state(self) -> dict[str, Any]:
         if not self.account_address:

@@ -64,6 +64,7 @@ const els = {
   proPlanButton: document.querySelector("#proPlanButton"),
   quoteInput: document.querySelector("#quoteInput"),
   riskBudgetMetric: document.querySelector("#riskBudgetMetric"),
+  exchangeOrderMetric: document.querySelector("#exchangeOrderMetric"),
   registerButton: document.querySelector("#registerButton"),
   resetButton: document.querySelector("#resetButton"),
   riskGate: document.querySelector("#riskGate"),
@@ -78,6 +79,7 @@ const els = {
   stepButton: document.querySelector("#stepButton"),
   subscriptionStatus: document.querySelector("#subscriptionStatus"),
   symbolInput: document.querySelector("#symbolInput"),
+  syncMetric: document.querySelector("#syncMetric"),
   usernameInput: document.querySelector("#usernameInput")
 };
 
@@ -801,6 +803,8 @@ function renderBackend(snapshot) {
   if (snapshot.desk) {
     els.executionModeMetric.textContent = snapshot.desk.executionMode || snapshot.executionMode || "dry_run";
     els.orderAgeMetric.textContent = `${Math.round(snapshot.desk.orderAgeSeconds || 0)}s / ${Math.round(snapshot.desk.orderRefreshSeconds || 0)}s`;
+    els.syncMetric.textContent = `${snapshot.desk.reconciledFillCount || 0} fills / ${Math.round(snapshot.desk.lastReconciliationSeconds || 0)}s`;
+    els.exchangeOrderMetric.textContent = String(snapshot.desk.exchangeOrderCount || 0);
   }
   renderOpenOrders(snapshot.openOrders || []);
   if (Array.isArray(snapshot.fills)) {
@@ -887,6 +891,8 @@ function render() {
   els.riskBudgetMetric.textContent = "local";
   els.executionModeMetric.textContent = backendOnline ? els.executionModeMetric.textContent : "local";
   els.orderAgeMetric.textContent = "0s";
+  els.syncMetric.textContent = "local";
+  els.exchangeOrderMetric.textContent = "local";
   renderOpenOrders(state.openOrders);
   const live = markets.find((asset) => asset.symbol === selectedAsset);
   els.markPrice.textContent = live ? money(live.price) : money(mark);
