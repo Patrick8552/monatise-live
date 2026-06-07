@@ -331,6 +331,25 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             except Exception as error:  # noqa: BLE001
                 self._error(502, str(error))
             return
+        if parsed.path == "/api/candles":
+            query = parse_qs(parsed.query)
+            symbol = str(query.get("symbol", [self.config.symbol])[0]).strip().upper()
+            interval = str(query.get("interval", ["1h"])[0]).strip() or "1h"
+            try:
+                limit = max(5, min(240, int(query.get("limit", ["120"])[0])))
+                adapter = HyperliquidAdapter(self.config)
+                candles = adapter.candles(symbol, limit, interval=interval)
+                self._json(
+                    {
+                        "candles": [candle.__dict__ for candle in candles],
+                        "interval": interval,
+                        "source": "Hyperliquid candleSnapshot",
+                        "symbol": symbol,
+                    }
+                )
+            except Exception as error:  # noqa: BLE001
+                self._error(502, str(error))
+            return
         if parsed.path == "/api/analysis/fibonacci":
             query = parse_qs(parsed.query)
             symbol = str(query.get("symbol", [self.config.symbol])[0]).strip().upper()

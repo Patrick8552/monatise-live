@@ -64,6 +64,7 @@ def test_live_tick_initializes_risk_baseline_from_live_mark() -> None:
     assert "max daily loss reached" not in [event["message"] for event in snapshot["events"]]
     assert snapshot["executionMode"] == "dry_run"
     assert "risk" in snapshot
+    assert snapshot["risk"]["max_daily_loss_pct"] > 0
 
 
 def test_live_snapshot_exposes_readiness_checklist() -> None:

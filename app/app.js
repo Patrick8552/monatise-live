@@ -22,6 +22,7 @@ const els = {
   accountMetricLabel: document.querySelector("#accountMetricLabel"),
   authStatus: document.querySelector("#authStatus"),
   candleCount: document.querySelector("#candleCount"),
+  candleStatus: document.querySelector("#candleStatus"),
   cashMetricLabel: document.querySelector("#cashMetricLabel"),
   chartIntervalSelect: document.querySelector("#chartIntervalSelect"),
   credentialStatus: document.querySelector("#credentialStatus"),
@@ -48,6 +49,7 @@ const els = {
   liveDeskStatus: document.querySelector("#liveDeskStatus"),
   liveModeStatus: document.querySelector("#liveModeStatus"),
   liveNetworkBadge: document.querySelector("#liveNetworkBadge"),
+  loadCandlesButton: document.querySelector("#loadCandlesButton"),
   loginGate: document.querySelector("#loginGate"),
   loginButton: document.querySelector("#loginButton"),
   logoutButton: document.querySelector("#logoutButton"),
@@ -116,6 +118,9 @@ let contextRadar = null;
 let contextLoading = false;
 let contextLastLoadedAt = 0;
 let contextLastSymbol = "";
+let candleSource = { interval: "sample", symbol: "BTC", type: "sample" };
+let candleLoading = false;
+let initialLiveCandlesLoaded = false;
 let tradingRules = {
   chartInterval: "1h",
   londonCommodityOnly: true,
@@ -178,6 +183,7 @@ function localReadinessItems(snapshot = null) {
   const accountValue = Number(account.displayValue ?? account.accountValue);
   const openNotional = Number(risk.open_order_notional || 0);
   const maxDailyLoss = Number(risk.max_daily_loss || 0);
+  const maxDailyLossPct = Number(risk.max_daily_loss_pct || 0);
   return [
     {
       detail: loggedIn ? currentUser.username || "account active" : "register or log in first",
@@ -216,7 +222,9 @@ function localReadinessItems(snapshot = null) {
       severity: "block"
     },
     {
-      detail: maxDailyLoss ? `${money(openNotional)} open vs ${money(maxDailyLoss)} daily loss budget` : riskStatus || "risk engine waiting",
+      detail: maxDailyLoss
+        ? `${money(openNotional)} open vs ${money(maxDailyLoss)} (${(maxDailyLossPct * 100).toFixed(2)}%) hard stop`
+        : riskStatus || "risk engine waiting",
       label: "Risk budget",
       ok: !/max daily loss|exceeds|below minimum|shock|guard/i.test(riskStatus),
       severity: "block"
@@ -271,13 +279,18 @@ function strategyHealth(mark, orders, snapshot = null) {
   const markOk = Number.isFinite(mark) && mark > 0;
   const orderOk = orderList.length > 0 && buyOrders.length > 0 && sellOrders.length > 0;
   const riskStatus = String(snapshot?.riskStatus || els.riskStatus?.textContent || "");
+  const structureBreak = markOk && Number.isFinite(invalidation) && mark < invalidation;
+  const outsideGrid = markOk && Number.isFinite(gridFloor) && Number.isFinite(gridCeiling) && (mark < gridFloor || mark > gridCeiling);
   const blocked =
     !markOk ||
     !orderOk ||
+    structureBreak ||
     sessionGuard.active ||
     /max daily loss|exceeds|below minimum|shock|guard/i.test(riskStatus) ||
     indicatorAction === "halt";
   const warnings = [];
+  if (structureBreak) warnings.push("price broke structure; hedge grid watch only");
+  if (outsideGrid) warnings.push("mark is outside the planned grid range");
   if (!fibOk) warnings.push("live Fibonacci candles pending");
   if (indicatorAction === "reduce") warnings.push("context radar says reduce size");
   if (indicatorAction === "widen") warnings.push("context radar says widen spacing");
@@ -294,6 +307,7 @@ function strategyHealth(mark, orders, snapshot = null) {
     orderCount: orderList.length,
     sellCount: sellOrders.length,
     status: blocked ? "WAIT" : warnings.length ? "REVIEW" : "ALIGNED",
+    structureBreak,
     warnings
   };
 }
@@ -305,6 +319,10 @@ function renderStrategyReadout(orders, options = {}) {
   const source = options.source || "preview";
   const sourceLabel = source === "live" ? "Exchange orders" : source === "backend" ? "Backend state" : "Strategy preview only";
   const warningText = health.warnings.length ? health.warnings.join(" · ") : "structure, risk, session, and doctrine are aligned";
+  const hedgeMode = health.structureBreak;
+  const hedgeText = hedgeMode
+    ? "Break structure: stop fresh grid entries, cancel stale resting orders, and use a smaller protective hedge grid only after live gates confirm exposure."
+    : "Standby: hedge grid remains inactive while price trades inside structure.";
   els.strategyReadout.innerHTML = `
     <div class="strategy-status ${health.status.toLowerCase()}">
       <strong>${health.status}</strong>
@@ -319,6 +337,10 @@ function renderStrategyReadout(orders, options = {}) {
       <span>Invalidation <strong>${Number.isFinite(health.invalidation) ? money(health.invalidation) : "pending"}</strong></span>
       <span>Session <strong>${activeSessionGuard(selectedAsset).active ? "blocked" : "clear"}</strong></span>
       <span>Doctrine <strong>no trade remains valid</strong></span>
+    </div>
+    <div class="hedge-protocol ${hedgeMode ? "active" : ""}">
+      <strong>${hedgeMode ? "Hedge grid watch" : "Hedge grid standby"}</strong>
+      <span>${hedgeText}</span>
     </div>
     <p>${warningText}</p>
   `;
@@ -745,6 +767,10 @@ async function loadMarkets() {
         els.marketTitle.textContent = `${selectedAsset}-USD strategy map`;
       }
     }
+    if (!initialLiveCandlesLoaded && markets.length) {
+      initialLiveCandlesLoaded = true;
+      loadLiveCandles({ limit: 120, symbol: selectedAsset }).catch(() => {});
+    }
   } catch {
     if (!els.assetSelect.options.length) {
       ["BTC", "ETH", "SOL", "HYPE", "BNB", "XRP", "DOGE"].forEach((symbol) => {
@@ -1025,8 +1051,10 @@ async function saveSelectedAsset(symbol) {
   selectedAsset = symbol;
   fibAnalysis = null;
   contextRadar = null;
+  candleSource = { interval: "sample", symbol, type: "sample" };
   syncSelectedAsset();
   rebuildFromInputs();
+  loadLiveCandles({ limit: 120, symbol }).catch(() => {});
   loadFibonacciAnalysis({ force: true });
   loadContextRadar({ force: true });
   if (!currentUser.authenticated) {
@@ -1237,7 +1265,67 @@ function parseCsv(text) {
   });
 }
 
+function candlesToCsv(candles) {
+  const rows = ["timestamp,open,high,low,close,volume"];
+  candles.forEach((candle) => {
+    rows.push(
+      [
+        candle.timestamp,
+        Number(candle.open),
+        Number(candle.high),
+        Number(candle.low),
+        Number(candle.close),
+        Number(candle.volume || 0)
+      ].join(",")
+    );
+  });
+  return rows.join("\n");
+}
+
+async function loadLiveCandles(options = {}) {
+  if (candleLoading && !options.force) return;
+  const symbol = options.symbol || selectedAsset;
+  const interval = options.interval || tradingRules.chartInterval;
+  const limit = options.limit || 120;
+  candleLoading = true;
+  if (els.candleStatus) {
+    els.candleStatus.textContent = `Loading ${symbol} ${interval}`;
+  }
+  if (els.loadCandlesButton) {
+    els.loadCandlesButton.disabled = true;
+  }
+  try {
+    const response = await apiFetch(
+      `/api/candles?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${encodeURIComponent(limit)}`,
+      { cache: "no-store" }
+    );
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || "live candles unavailable");
+    const candles = Array.isArray(payload.candles) ? payload.candles : [];
+    if (!candles.length) throw new Error("no candles returned");
+    els.csvInput.value = candlesToCsv(candles);
+    candleSource = { interval: payload.interval || interval, symbol: payload.symbol || symbol, type: "live" };
+    if (els.candleStatus) {
+      els.candleStatus.textContent = `${candleSource.symbol} ${candleSource.interval} live candles`;
+    }
+    rebuildFromInputs();
+  } catch (error) {
+    candleSource = { interval: "sample", symbol: selectedAsset, type: "sample" };
+    if (els.candleStatus) {
+      els.candleStatus.textContent = error.message || "Sample candles";
+    }
+  } finally {
+    candleLoading = false;
+    if (els.loadCandlesButton) {
+      els.loadCandlesButton.disabled = false;
+    }
+  }
+}
+
 function scaleCandlesToSelectedAsset(candles) {
+  if (candleSource.type === "live" && candleSource.symbol === selectedAsset) {
+    return candles;
+  }
   const liveMark = currentMarketPrice();
   const reference = Number(candles[0]?.close || candles[0]?.open || 0);
   if (!liveMark || !reference) return candles;
@@ -1638,7 +1726,7 @@ function renderBackend(snapshot) {
   if (snapshot.risk) {
     els.drawdownMetric.textContent = `${money(snapshot.risk.drawdown)} (${((snapshot.risk.drawdown_pct || 0) * 100).toFixed(2)}%)`;
     els.openNotionalMetric.textContent = money(snapshot.risk.open_order_notional || 0);
-    els.riskBudgetMetric.textContent = `${money(snapshot.risk.max_daily_loss || 0)} loss`;
+    els.riskBudgetMetric.textContent = `${money(snapshot.risk.max_daily_loss || 0)} (${((snapshot.risk.max_daily_loss_pct || 0) * 100).toFixed(2)}%)`;
   }
   if (snapshot.desk) {
     els.executionModeMetric.textContent = snapshot.desk.executionMode || snapshot.executionMode || "dry_run";
@@ -1841,6 +1929,10 @@ function render() {
 
 function reset() {
   els.csvInput.value = sampleCsv;
+  candleSource = { interval: "sample", symbol: selectedAsset, type: "sample" };
+  if (els.candleStatus) {
+    els.candleStatus.textContent = "Sample candles";
+  }
   els.spacingValue.textContent = els.spacingInput.value;
   els.levelsValue.textContent = els.levelsInput.value;
   state = createState(configFromInputs());
@@ -1892,6 +1984,7 @@ els.logoutButton.addEventListener("click", async () => {
 });
 els.saveCredentialsButton.addEventListener("click", saveCredentials);
 els.saveRulesButton.addEventListener("click", saveTradingRules);
+els.loadCandlesButton.addEventListener("click", () => loadLiveCandles({ force: true }));
 [els.chartIntervalSelect, els.sessionGuardSelect, els.staleGridCancelInput, els.londonCommodityInput].forEach((input) => {
   input.addEventListener("change", () => {
     const nextRules = normalizedTradingRules({

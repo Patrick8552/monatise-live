@@ -47,6 +47,7 @@ TESTS = {
         "test_order_size_cannot_exceed_max_order_notional",
         "test_total_notional_defaults_to_trading_capital",
         "test_total_notional_env_override_is_respected",
+        "test_env_daily_loss_defaults_to_five_percent_of_quote",
         "test_global_hyperliquid_credentials_are_ignored_by_default",
     ],
     "tests.test_live_service": [

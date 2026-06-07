@@ -25,7 +25,7 @@ class RuntimeConfig:
     max_order_notional: float = 250.0
     max_total_notional: float | None = None
     max_base_inventory: float = 0.1
-    max_daily_loss: float = 100.0
+    max_daily_loss: float = 500.0
     max_mark_move_pct: float = 0.03
     max_position_value: float = 1_000.0
     min_account_value: float = 0.0
@@ -64,7 +64,7 @@ class RuntimeConfig:
             max_order_notional=float(os.getenv("MONATISE_MAX_ORDER_NOTIONAL", "250")),
             max_total_notional=float(max_total_notional) if max_total_notional else quote,
             max_base_inventory=float(os.getenv("MONATISE_MAX_BASE_INVENTORY", "0.1")),
-            max_daily_loss=float(os.getenv("MONATISE_MAX_DAILY_LOSS", "100")),
+            max_daily_loss=float(os.getenv("MONATISE_MAX_DAILY_LOSS", str(quote * 0.05))),
             max_mark_move_pct=float(os.getenv("MONATISE_MAX_MARK_MOVE_PCT", "0.03")),
             max_position_value=float(os.getenv("MONATISE_MAX_POSITION_VALUE", "1000")),
             min_account_value=float(os.getenv("MONATISE_MIN_ACCOUNT_VALUE", "0")),

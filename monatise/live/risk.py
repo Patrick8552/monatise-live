@@ -22,6 +22,7 @@ class RiskSnapshot:
     open_order_notional: float
     max_total_notional: float
     max_daily_loss: float
+    max_daily_loss_pct: float
 
 
 class RiskManager:
@@ -68,6 +69,7 @@ class RiskManager:
             open_order_notional=sum(order.notional for order in orders),
             max_total_notional=self.config.max_total_notional,
             max_daily_loss=self.config.max_daily_loss,
+            max_daily_loss_pct=0.0 if self.starting_equity <= 0 else self.config.max_daily_loss / self.starting_equity,
         )
 
     def check_order(self, order: Order, portfolio: Portfolio) -> RiskDecision:

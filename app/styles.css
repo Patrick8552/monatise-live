@@ -329,6 +329,43 @@ textarea {
   white-space: pre;
 }
 
+.candle-box {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.candle-head {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.candle-head div {
+  display: grid;
+  gap: 2px;
+}
+
+.candle-head span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.candle-head strong {
+  font-size: 0.86rem;
+  overflow-wrap: anywhere;
+}
+
+.candle-head button {
+  min-height: 34px;
+  padding: 7px 10px;
+}
+
 button {
   background: #e9efeb;
   border: 1px solid var(--line);
@@ -1574,6 +1611,32 @@ canvas {
   font-weight: 750;
   line-height: 1.35;
   margin: 0;
+}
+
+.hedge-protocol {
+  background: rgba(54, 95, 107, 0.08);
+  border: 1px solid rgba(54, 95, 107, 0.2);
+  border-radius: 6px;
+  display: grid;
+  gap: 4px;
+  padding: 9px;
+}
+
+.hedge-protocol.active {
+  background: rgba(230, 57, 70, 0.08);
+  border-color: rgba(230, 57, 70, 0.28);
+}
+
+.hedge-protocol strong {
+  color: var(--ink);
+  font-size: 0.78rem;
+}
+
+.hedge-protocol span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 750;
+  line-height: 1.35;
 }
 
 .live-desk {
