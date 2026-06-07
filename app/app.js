@@ -58,6 +58,7 @@ const els = {
   orderAgeMetric: document.querySelector("#orderAgeMetric"),
   paymentCurrencySelect: document.querySelector("#paymentCurrencySelect"),
   paymentEmailInput: document.querySelector("#paymentEmailInput"),
+  paymentDestination: document.querySelector("#paymentDestination"),
   paymentMethodSelect: document.querySelector("#paymentMethodSelect"),
   paymentStatus: document.querySelector("#paymentStatus"),
   passwordInput: document.querySelector("#passwordInput"),
@@ -86,6 +87,7 @@ const els = {
 let state = null;
 let backendOnline = false;
 let currentUser = { authenticated: false, credentialsConfigured: false };
+let paymentConfig = null;
 let markets = [];
 let marketGroups = {};
 let selectedAsset = "BTC";
@@ -349,7 +351,7 @@ async function checkoutPlan(plan) {
   if (payload.provider === "crypto") {
     els.paymentStatus.textContent = payload.setupRequired
       ? "crypto address not configured"
-      : `${payload.amount} ${payload.currency} on ${payload.network}: ${payload.address} ref ${payload.reference}`;
+      : `${payload.recipient || "Monatise"} receives ${payload.amount} ${payload.currency} on ${payload.network}: ${payload.address} ref ${payload.reference}`;
     return;
   }
   if (payload.status === "setup_required") {
@@ -361,6 +363,35 @@ async function checkoutPlan(plan) {
     els.subscriptionStatus.textContent = `${payload.subscription.plan} ${payload.subscription.status}`;
     els.paymentStatus.textContent = `${payload.subscription.plan} active`;
   }
+}
+
+async function loadPaymentConfig() {
+  try {
+    const response = await fetch("/api/payments/config");
+    if (!response.ok) throw new Error("payment config unavailable");
+    paymentConfig = await response.json();
+    renderPaymentDestination();
+  } catch (error) {
+    els.paymentDestination.textContent = "Payment destination unavailable.";
+  }
+}
+
+function renderPaymentDestination() {
+  if (!paymentConfig || !els.paymentDestination) return;
+  const rails = paymentConfig.rails || {};
+  const ready = [];
+  if (rails.stripe?.configured) ready.push("Stripe merchant account");
+  if (rails.flutterwave?.configured) ready.push("Flutterwave merchant account");
+  if (rails.crypto?.configured) ready.push(`${rails.crypto.network}: ${rails.crypto.destination}`);
+  const missing = [];
+  if (rails.stripe && !rails.stripe.configured) {
+    missing.push(rails.stripe.webhookConfigured ? "Stripe secret" : "Stripe secret/webhook");
+  }
+  if (rails.flutterwave && !rails.flutterwave.configured) missing.push("Flutterwave secret");
+  if (rails.crypto && !rails.crypto.configured) missing.push("crypto wallet");
+  const destination = ready.length ? ready.join(" · ") : "No paid payment rail configured yet";
+  const setup = missing.length ? ` Setup needed: ${missing.join(", ")}.` : "";
+  els.paymentDestination.textContent = `Recipient: ${paymentConfig.recipient || "Monatise"}. Destination: ${destination}.${setup}`;
 }
 
 function initMarketMap() {
@@ -976,6 +1007,7 @@ window.addEventListener("resize", resizeMarketMap);
 reset();
 initMarketMap();
 loadMarkets();
+loadPaymentConfig();
 loadMe();
 refreshBackend();
 setInterval(loadMarkets, 5000);

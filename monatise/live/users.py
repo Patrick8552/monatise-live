@@ -61,6 +61,10 @@ def _fernet_key() -> bytes:
     return base64.urlsafe_b64encode(digest)
 
 
+def encryption_key_configured() -> bool:
+    return bool(secret_value("MONATISE_ENCRYPTION_KEY", ""))
+
+
 class UserStore:
     def __init__(self, path: str | None = None) -> None:
         self.path = path or default_auth_db_path()

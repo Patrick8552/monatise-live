@@ -507,18 +507,30 @@ button.live-running {
 }
 
 .stage-head {
+  align-items: flex-start;
+  flex-wrap: wrap;
   margin-bottom: 12px;
+}
+
+.stage-head > div:first-child {
+  min-width: 0;
+}
+
+#marketTitle {
+  overflow-wrap: anywhere;
 }
 
 .price-pill {
   align-items: center;
   display: flex;
   gap: 8px;
+  max-width: 100%;
 }
 
 .price-pill strong {
   color: #ffffff;
   font-size: 1.05rem;
+  overflow-wrap: anywhere;
 }
 
 canvas {
@@ -538,7 +550,7 @@ canvas {
 .market-strip {
   display: grid;
   gap: 8px;
-  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   margin-bottom: 12px;
 }
 
@@ -549,9 +561,17 @@ canvas {
     rgba(255, 255, 255, 0.08);
   border-color: rgba(255, 255, 255, 0.14);
   color: #f9fffb;
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  gap: 6px;
+  grid-template-columns: auto minmax(0, 1fr);
   min-height: 42px;
+  white-space: normal;
+}
+
+.market-strip button span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: right;
 }
 
 .market-strip button.active {
@@ -970,6 +990,7 @@ button:disabled {
   padding: 12px;
 }
 
+.payment-destination,
 .payment-status {
   color: var(--muted);
   font-size: 0.78rem;
@@ -977,6 +998,15 @@ button:disabled {
   line-height: 1.35;
   margin: 10px 0 0;
   overflow-wrap: anywhere;
+}
+
+.payment-destination {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--ink);
+  margin-top: 0;
+  padding: 9px 10px;
 }
 
 .plan-grid strong {

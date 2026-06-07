@@ -15,6 +15,16 @@ services:
         value: mainnet
       - key: MONATISE_HOST
         value: 0.0.0.0
+      - key: MONATISE_PUBLIC_URL
+        value: https://monatise-live.onrender.com
+      - key: MONATISE_PAYMENT_RECEIVER_NAME
+        value: Monatise
+      - key: MONATISE_ENCRYPTION_KEY
+        sync: false
+      - key: MONATISE_CRYPTO_PAYMENT_ADDRESS
+        sync: false
+      - key: MONATISE_CRYPTO_PAYMENT_NETWORK
+        value: USDC on Arbitrum or HyperEVM
       - key: MONATISE_SYMBOL
         value: BTC
       - key: MONATISE_EXECUTION_MODE

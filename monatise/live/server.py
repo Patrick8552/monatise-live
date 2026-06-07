@@ -17,7 +17,7 @@ from monatise.adapters.hyperliquid import HyperliquidAdapter
 from monatise.live.config import RuntimeConfig
 from monatise.live.secrets import secret_value
 from monatise.live.service import JsonEncoder, TradingService
-from monatise.live.users import User, UserCredentials, UserStore
+from monatise.live.users import User, UserCredentials, UserStore, encryption_key_configured
 
 
 PLAN_PRICES = {
@@ -115,6 +115,32 @@ class MarketFeed:
 
 
 class PaymentGateway:
+    def config(self) -> dict:
+        recipient = self._recipient_name()
+        stripe_ready = bool(secret_value("STRIPE_SECRET_KEY", "")) and bool(secret_value("STRIPE_WEBHOOK_SECRET", ""))
+        flutterwave_ready = bool(secret_value("FLUTTERWAVE_SECRET_KEY", ""))
+        crypto_address = secret_value("MONATISE_CRYPTO_PAYMENT_ADDRESS", "")
+        crypto_network = os.getenv("MONATISE_CRYPTO_PAYMENT_NETWORK", "USDC on Arbitrum or HyperEVM")
+        return {
+            "recipient": recipient,
+            "rails": {
+                "stripe": {
+                    "configured": stripe_ready,
+                    "destination": f"{recipient} Stripe merchant account",
+                    "webhookConfigured": bool(secret_value("STRIPE_WEBHOOK_SECRET", "")),
+                },
+                "flutterwave": {
+                    "configured": flutterwave_ready,
+                    "destination": f"{recipient} Flutterwave merchant account",
+                },
+                "crypto": {
+                    "configured": bool(crypto_address),
+                    "destination": crypto_address,
+                    "network": crypto_network,
+                },
+            },
+        }
+
     def checkout(self, user: User, payload: dict) -> dict:
         plan = str(payload.get("plan", "pro")).lower()
         method = str(payload.get("method", "flutterwave")).lower()
@@ -133,11 +159,20 @@ class PaymentGateway:
 
     def _stripe_checkout(self, user: User, plan: str, price: dict, payload: dict) -> dict:
         secret_key = secret_value("STRIPE_SECRET_KEY", "")
+        destination = self._destination("stripe")
         if not secret_key:
             return {
                 "provider": "stripe",
                 "status": "setup_required",
                 "message": "STRIPE_SECRET_KEY is not configured",
+                "destination": destination,
+            }
+        if not secret_value("STRIPE_WEBHOOK_SECRET", ""):
+            return {
+                "provider": "stripe",
+                "status": "setup_required",
+                "message": "STRIPE_WEBHOOK_SECRET is required before accepting Stripe payments",
+                "destination": destination,
             }
         host = os.getenv("MONATISE_PUBLIC_URL", "https://monatise-live.onrender.com").rstrip("/")
         form = {
@@ -172,17 +207,25 @@ class PaymentGateway:
         url = result.get("url")
         if not url:
             raise ValueError("Stripe did not return a checkout URL")
-        return {"provider": "stripe", "status": "redirect", "checkoutUrl": url, "sessionId": result.get("id")}
+        return {
+            "provider": "stripe",
+            "status": "redirect",
+            "checkoutUrl": url,
+            "sessionId": result.get("id"),
+            "destination": destination,
+        }
 
     def _flutterwave_checkout(self, user: User, plan: str, price: dict, payload: dict) -> dict:
         secret_key = secret_value("FLUTTERWAVE_SECRET_KEY", "")
         public_key = secret_value("FLUTTERWAVE_PUBLIC_KEY", "")
+        destination = self._destination("flutterwave")
         if not secret_key:
             return {
                 "provider": "flutterwave",
                 "status": "setup_required",
                 "message": "FLUTTERWAVE_SECRET_KEY is not configured",
                 "publicKeyConfigured": bool(public_key),
+                "destination": destination,
             }
 
         host = os.getenv("MONATISE_PUBLIC_URL", "https://monatise-live.onrender.com").rstrip("/")
@@ -216,7 +259,13 @@ class PaymentGateway:
         link = result.get("data", {}).get("link")
         if not link:
             raise ValueError("Flutterwave did not return a checkout link")
-        return {"provider": "flutterwave", "status": "redirect", "checkoutUrl": link, "txRef": tx_ref}
+        return {
+            "provider": "flutterwave",
+            "status": "redirect",
+            "checkoutUrl": link,
+            "txRef": tx_ref,
+            "destination": destination,
+        }
 
     def _crypto_checkout(self, user: User, plan: str, price: dict) -> dict:
         address = secret_value("MONATISE_CRYPTO_PAYMENT_ADDRESS", "")
@@ -229,9 +278,17 @@ class PaymentGateway:
             "currency": "USDC",
             "network": network,
             "address": address,
+            "destination": address,
+            "recipient": self._recipient_name(),
             "reference": f"monatise-{user.id}-{plan}",
             "setupRequired": not bool(address),
         }
+
+    def _recipient_name(self) -> str:
+        return os.getenv("MONATISE_PAYMENT_RECEIVER_NAME", "Monatise").strip() or "Monatise"
+
+    def _destination(self, rail: str) -> dict:
+        return {"recipient": self._recipient_name(), "rail": rail}
 
 
 class MonatiseHandler(SimpleHTTPRequestHandler):
@@ -240,6 +297,8 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
     payment_gateway: PaymentGateway
     store: UserStore
     app_dir: Path
+    rate_limits: dict[str, list[float]] = {}
+    rate_lock = threading.Lock()
 
     def __init__(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
         super().__init__(*args, directory=str(self.app_dir), **kwargs)
@@ -254,6 +313,9 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                 self._json(self.market_feed.snapshot())
             except Exception as error:  # noqa: BLE001
                 self._error(502, str(error))
+            return
+        if parsed.path == "/api/payments/config":
+            self._json(self.payment_gateway.config())
             return
         if parsed.path == "/api/me":
             user = self._current_user()
@@ -303,6 +365,12 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
+        if parsed.path != "/api/payments/stripe/webhook" and not self._valid_request_origin():
+            self._error(403, "invalid request origin")
+            return
+        if self._rate_limited(parsed.path):
+            self._error(429, "too many requests")
+            return
         if parsed.path == "/api/register":
             payload = self._read_json()
             try:
@@ -461,11 +529,37 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
 
     def _set_session_cookie(self, token: str) -> None:
         self._pending_cookie = (
-            f"monatise_session={token}; Path=/; Max-Age=1209600; SameSite=Lax; HttpOnly"
+            f"monatise_session={token}; Path=/; Max-Age=1209600; SameSite=Lax; HttpOnly{self._secure_cookie_suffix()}"
         )
 
     def _clear_session_cookie(self) -> None:
-        self._pending_cookie = "monatise_session=; Path=/; Max-Age=0; SameSite=Lax; HttpOnly"
+        self._pending_cookie = f"monatise_session=; Path=/; Max-Age=0; SameSite=Lax; HttpOnly{self._secure_cookie_suffix()}"
+
+    def _secure_cookie_suffix(self) -> str:
+        public_url = os.getenv("MONATISE_PUBLIC_URL", "")
+        if public_url.startswith("https://") or os.getenv("MONATISE_SECURE_COOKIES", "").lower() == "true":
+            return "; Secure"
+        return ""
+
+    def end_headers(self) -> None:
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()")
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'self'; "
+            "script-src 'self' https://cdnjs.cloudflare.com; "
+            "style-src 'self'; "
+            "img-src 'self' data:; "
+            "connect-src 'self'; "
+            "frame-ancestors 'none'; "
+            "base-uri 'self'; "
+            "form-action 'self' https://checkout.stripe.com https://api.flutterwave.com https://*.flutterwave.com",
+        )
+        if os.getenv("MONATISE_PUBLIC_URL", "").startswith("https://"):
+            self.send_header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+        super().end_headers()
 
     def _json(self, payload: dict) -> None:
         body = json.dumps(payload, cls=JsonEncoder).encode("utf-8")
@@ -497,7 +591,10 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
     def _handle_stripe_webhook(self) -> None:
         body = self._read_body()
         secret = secret_value("STRIPE_WEBHOOK_SECRET", "")
-        if secret and not self._valid_stripe_signature(body, secret):
+        if not secret:
+            self._error(503, "Stripe webhook secret is not configured")
+            return
+        if not self._valid_stripe_signature(body, secret):
             self._error(400, "invalid Stripe signature")
             return
         try:
@@ -530,9 +627,48 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
         expected = hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
         return hmac.compare_digest(expected, signature)
 
+    def _valid_request_origin(self) -> bool:
+        origin = self.headers.get("Origin") or self.headers.get("Referer")
+        if not origin:
+            return True
+        origin_host = urlparse(origin).netloc
+        if not origin_host:
+            return False
+        allowed_hosts = {
+            self.headers.get("Host", ""),
+            self.headers.get("X-Forwarded-Host", ""),
+            urlparse(os.getenv("MONATISE_PUBLIC_URL", "")).netloc,
+        }
+        return origin_host in {host for host in allowed_hosts if host}
+
+    def _rate_limited(self, path: str) -> bool:
+        limits = {
+            "/api/login": (10, 60),
+            "/api/register": (6, 60),
+            "/api/credentials": (6, 60),
+            "/api/payments/checkout": (12, 60),
+            "/api/start": (6, 60),
+            "/api/stop": (12, 60),
+        }
+        limit, window = limits.get(path, (60, 60))
+        forwarded = self.headers.get("X-Forwarded-For", "")
+        client = forwarded.split(",", 1)[0].strip() or self.client_address[0]
+        key = f"{client}:{path}"
+        now = time.time()
+        with self.rate_lock:
+            attempts = [stamp for stamp in self.rate_limits.get(key, []) if now - stamp < window]
+            if len(attempts) >= limit:
+                self.rate_limits[key] = attempts
+                return True
+            attempts.append(now)
+            self.rate_limits[key] = attempts
+        return False
+
 
 def main() -> int:
     config = RuntimeConfig.from_env()
+    if config.mode == "live" and config.network == "mainnet" and not encryption_key_configured():
+        raise RuntimeError("MONATISE_ENCRYPTION_KEY is required for live mainnet credential storage")
     store = UserStore()
     tenants = TenantServices(config, store)
     market_feed = MarketFeed(replace(config, account_address="", secret_key=""))
