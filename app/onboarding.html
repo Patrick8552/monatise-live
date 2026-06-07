@@ -120,6 +120,66 @@
           </ol>
         </section>
 
+        <section class="page-panel planner-panel">
+          <div class="panel-head">
+            <h2>Profit Target Planner</h2>
+            <span>Capital to income</span>
+          </div>
+          <div class="planner-layout">
+            <div class="planner-controls">
+              <label>
+                Available trading capital
+                <input id="plannerCapital" type="number" min="0" step="50" value="1000" />
+              </label>
+              <label>
+                Desired monthly income
+                <input id="plannerIncome" type="number" min="0" step="25" value="100" />
+              </label>
+              <label>
+                Risk preset
+                <select id="plannerPreset">
+                  <option value="starter">Starter - 2% monthly</option>
+                  <option value="builder" selected>Builder - 5% monthly</option>
+                  <option value="operator">Operator - 8% monthly</option>
+                  <option value="aggressive">Aggressive - 12% monthly</option>
+                </select>
+              </label>
+              <label>
+                Major inflow amount
+                <input id="plannerInflow" type="number" min="0" step="50" value="0" />
+              </label>
+            </div>
+            <div class="planner-output" aria-live="polite">
+              <article>
+                <span>Monthly target</span>
+                <strong id="plannerMonthlyTarget">$0.00</strong>
+              </article>
+              <article>
+                <span>Daily target</span>
+                <strong id="plannerDailyTarget">$0.00</strong>
+              </article>
+              <article>
+                <span>Required capital</span>
+                <strong id="plannerRequiredCapital">$0.00</strong>
+              </article>
+              <article>
+                <span>Active capital</span>
+                <strong id="plannerActiveCapital">$0.00</strong>
+              </article>
+              <article>
+                <span>Idle reserve</span>
+                <strong id="plannerIdleReserve">$0.00</strong>
+              </article>
+              <article>
+                <span>Max daily loss</span>
+                <strong id="plannerMaxLoss">$0.00</strong>
+              </article>
+            </div>
+          </div>
+          <p id="plannerDerisk" class="planner-derisk">Enter capital to generate a de-risk plan.</p>
+          <p class="planner-disclaimer">Planner outputs are targets and risk limits, not guaranteed returns.</p>
+        </section>
+
         <section class="page-panel">
           <div class="panel-head">
             <h2>Withdrawal Workflow</h2>
@@ -180,5 +240,6 @@
         </section>
       </section>
     </main>
+    <script src="./planner.js?v=20260607-onboarding"></script>
   </body>
 </html>

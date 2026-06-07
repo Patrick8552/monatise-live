@@ -422,6 +422,64 @@ button.live-running {
   margin-top: 14px;
 }
 
+.planner-layout {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(240px, 0.8fr) minmax(0, 1.2fr);
+  margin-top: 14px;
+}
+
+.planner-controls {
+  display: grid;
+  gap: 10px;
+}
+
+.planner-output {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.planner-output article {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(244, 248, 244, 0.92)),
+    var(--panel);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--buy);
+  border-radius: 6px;
+  min-height: 82px;
+  padding: 12px;
+}
+
+.planner-output span {
+  color: var(--muted);
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.planner-output strong {
+  display: block;
+  font-size: 1.12rem;
+  margin-top: 8px;
+  overflow-wrap: anywhere;
+}
+
+.planner-derisk {
+  background: rgba(255, 190, 11, 0.1);
+  border: 1px solid rgba(255, 190, 11, 0.35);
+  border-radius: 6px;
+  color: #3b3020;
+  margin: 12px 0 0;
+  padding: 10px 12px;
+}
+
+.planner-disclaimer {
+  font-size: 0.76rem;
+  margin: 8px 0 0;
+}
+
 .withdrawal-flow {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
@@ -1281,10 +1339,15 @@ button:disabled {
   }
 
   .lesson-grid,
+  .planner-layout,
   .path-grid,
   .withdrawal-flow,
   .resource-grid {
     grid-template-columns: 1fr;
+  }
+
+  .planner-output {
+    grid-template-columns: 1fr 1fr;
   }
 
   .status-strip {
