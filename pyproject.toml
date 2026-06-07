@@ -21,3 +21,8 @@ monatise-live = "monatise.live.server:main"
 
 [tool.setuptools.packages.find]
 include = ["monatise*"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+pythonpath = ["."]
+testpaths = ["tests"]

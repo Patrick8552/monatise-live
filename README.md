@@ -85,6 +85,18 @@ Or through the CLI:
 python3 -m monatise.cli examples/sample_prices.csv
 ```
 
+## Tests
+
+```bash
+python3 -m pytest
+```
+
+The legacy runner delegates to pytest:
+
+```bash
+python3 tests/run_tests.py
+```
+
 ## Architecture
 
 The current framework is deliberately local-first:
