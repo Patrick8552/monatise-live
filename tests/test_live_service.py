@@ -87,7 +87,7 @@ def test_live_start_blocks_forex_session_break_guard() -> None:
     original_guard = service_module.forex_session_break_guard
     service_module.forex_session_break_guard = lambda symbol: {
         "active": True,
-        "message": "forex session-break guard: EURUSD is 20m from London close",
+        "message": "forex session-break guard: EURUSD is 20m before London close",
     }
     try:
         service = TradingService(RuntimeConfig(mode="live", symbol="EURUSD"))
@@ -95,7 +95,7 @@ def test_live_start_blocks_forex_session_break_guard() -> None:
         snapshot = service.start()
 
         assert not snapshot["running"]
-        assert snapshot["riskStatus"] == "forex session-break guard: EURUSD is 20m from London close"
+        assert snapshot["riskStatus"] == "forex session-break guard: EURUSD is 20m before London close"
         assert snapshot["sessionGuard"]["active"]
     finally:
         service_module.forex_session_break_guard = original_guard
@@ -141,7 +141,7 @@ def test_live_tick_cancels_orders_during_forex_session_break_guard() -> None:
             return {"active": False, "symbol": symbol}
         return {
             "active": True,
-            "message": "forex session-break guard: EURUSD is 15m from London close",
+            "message": "forex session-break guard: EURUSD is 15m before London close",
         }
 
     service_module.forex_session_break_guard = guard
@@ -171,7 +171,7 @@ def test_live_tick_cancels_orders_during_forex_session_break_guard() -> None:
         assert first_ids
         assert first_ids.issubset(set(adapter.cancelled))
         assert not service.state.open_orders
-        assert service.state.risk_status == "forex session-break guard: EURUSD is 15m from London close"
+        assert service.state.risk_status == "forex session-break guard: EURUSD is 15m before London close"
     finally:
         service_module.forex_session_break_guard = original_guard
 

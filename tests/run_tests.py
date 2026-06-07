@@ -31,6 +31,7 @@ TESTS = {
     ],
     "tests.test_sessions": [
         "test_forex_session_break_guard_flags_one_hour_before_london_close",
+        "test_forex_session_break_guard_flags_one_hour_after_london_close",
         "test_forex_session_break_guard_ignores_crypto_symbols",
     ],
     "tests.test_hyperliquid_candles": [

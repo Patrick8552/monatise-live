@@ -11,8 +11,19 @@ def test_forex_session_break_guard_flags_one_hour_before_london_close() -> None:
     assert guard["active"]
     assert guard["session"] == "London"
     assert guard["transition"] == "close"
+    assert guard["direction"] == "before"
     assert guard["minutes"] == 60
     assert "EURUSD" in guard["affectedPairs"]
+
+
+def test_forex_session_break_guard_flags_one_hour_after_london_close() -> None:
+    guard = forex_session_break_guard("EURUSD", datetime(2026, 6, 7, 17, 0, tzinfo=UTC))
+
+    assert guard["active"]
+    assert guard["session"] == "London"
+    assert guard["transition"] == "close"
+    assert guard["direction"] == "after"
+    assert guard["minutes"] == 60
 
 
 def test_forex_session_break_guard_ignores_crypto_symbols() -> None:

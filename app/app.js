@@ -273,18 +273,40 @@ function minutesUntilSessionChange(session, date) {
   return (target - now + 1440) % 1440;
 }
 
+function minutesFromUtcMinute(now, target) {
+  const before = (target - now + 1440) % 1440;
+  const after = (now - target + 1440) % 1440;
+  if (before === 0) return { direction: "at", minutes: 0 };
+  if (before <= after) return { direction: "before", minutes: before };
+  return { direction: "after", minutes: after };
+}
+
+function sessionBreakProximity(session, date) {
+  const now = minutesSinceUtcMidnight(date);
+  const open = minutesFromUtcMinute(now, session.openHour * 60);
+  const close = minutesFromUtcMinute(now, session.closeHour * 60);
+  if (open.minutes <= close.minutes) {
+    return { ...open, transition: "open" };
+  }
+  return { ...close, transition: "close" };
+}
+
 function forexSessionBreakGuard(symbol = selectedAsset, date = new Date()) {
   const pair = normalizeForexSymbol(symbol);
   if (!forexPairs.includes(pair)) return { active: false, symbol: pair };
   const guarded = forexSessions
     .filter((session) => session.pairs.includes(pair))
-    .map((session) => ({
-      active: minutesUntilSessionChange(session, date) <= forexBreakGuardMinutes,
-      minutes: minutesUntilSessionChange(session, date),
-      pairs: session.pairs,
-      session: session.name,
-      transition: isSessionOpen(session, date) ? "close" : "open"
-    }))
+    .map((session) => {
+      const proximity = sessionBreakProximity(session, date);
+      return {
+        active: proximity.minutes <= forexBreakGuardMinutes,
+        direction: proximity.direction,
+        minutes: proximity.minutes,
+        pairs: session.pairs,
+        session: session.name,
+        transition: proximity.transition
+      };
+    })
     .filter((guard) => guard.active)
     .sort((left, right) => left.minutes - right.minutes);
   if (!guarded.length) return { active: false, symbol: pair };
@@ -292,8 +314,9 @@ function forexSessionBreakGuard(symbol = selectedAsset, date = new Date()) {
   return {
     active: true,
     affectedPairs: primary.pairs,
+    direction: primary.direction,
     guardMinutes: forexBreakGuardMinutes,
-    message: `forex session-break guard: ${pair} is ${primary.minutes}m from ${primary.session} ${primary.transition}`,
+    message: `forex session-break guard: ${pair} is ${primary.minutes}m ${primary.direction} ${primary.session} ${primary.transition}`,
     minutes: primary.minutes,
     session: primary.session,
     symbol: pair,
@@ -331,7 +354,8 @@ function renderForexSessions(date = new Date()) {
     .map((session) => {
       const open = isSessionOpen(session, date);
       const change = minutesUntilSessionChange(session, date);
-      const guarded = change <= forexBreakGuardMinutes;
+      const proximity = sessionBreakProximity(session, date);
+      const guarded = proximity.minutes <= forexBreakGuardMinutes;
       return `<article class="session-row ${open ? "open" : "closed"} ${guarded ? "guarded" : ""}">
         <div>
           <strong>${session.name}</strong>
@@ -352,7 +376,7 @@ function renderForexSessions(date = new Date()) {
       <strong>${sessionGuard.active ? "Close trading" : "Active pairs"}</strong>
       <span>${
         sessionGuard.active
-          ? `${sessionGuard.symbol}: ${sessionGuard.session} ${sessionGuard.transition} in ${durationLabel(sessionGuard.minutes)}`
+          ? `${sessionGuard.symbol}: ${durationLabel(sessionGuard.minutes)} ${sessionGuard.direction} ${sessionGuard.session} ${sessionGuard.transition}`
           : activePairs.length
             ? activePairs.join(" · ")
             : "No major session active"

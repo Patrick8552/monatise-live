@@ -54,6 +54,25 @@ def minutes_until_session_change(session: ForexSession, moment: datetime | None 
     return (target - now + 1440) % 1440
 
 
+def minutes_from_utc_minute(now: int, target: int) -> tuple[int, str]:
+    before = (target - now + 1440) % 1440
+    after = (now - target + 1440) % 1440
+    if before == 0:
+        return 0, "at"
+    if before <= after:
+        return before, "before"
+    return after, "after"
+
+
+def session_break_proximity(session: ForexSession, moment: datetime | None = None) -> dict:
+    now = minutes_since_utc_midnight(moment)
+    open_minutes, open_direction = minutes_from_utc_minute(now, session.open_hour * 60)
+    close_minutes, close_direction = minutes_from_utc_minute(now, session.close_hour * 60)
+    if open_minutes <= close_minutes:
+        return {"transition": "open", "minutes": open_minutes, "direction": open_direction}
+    return {"transition": "close", "minutes": close_minutes, "direction": close_direction}
+
+
 def forex_session_break_guard(
     symbol: str,
     moment: datetime | None = None,
@@ -67,13 +86,14 @@ def forex_session_break_guard(
     for session in FOREX_SESSIONS:
         if pair not in session.pairs:
             continue
-        minutes = minutes_until_session_change(session, moment)
+        proximity = session_break_proximity(session, moment)
+        minutes = int(proximity["minutes"])
         if minutes <= guard_minutes:
-            opening = not is_session_open(session, moment)
             guarded.append(
                 {
                     "session": session.name,
-                    "transition": "open" if opening else "close",
+                    "transition": proximity["transition"],
+                    "direction": proximity["direction"],
                     "minutes": minutes,
                     "pairs": list(session.pairs),
                 }
@@ -89,10 +109,11 @@ def forex_session_break_guard(
         "guardMinutes": guard_minutes,
         "session": primary["session"],
         "transition": primary["transition"],
+        "direction": primary["direction"],
         "minutes": primary["minutes"],
         "affectedPairs": primary["pairs"],
         "message": (
-            f"forex session-break guard: {pair} is {primary['minutes']}m from "
+            f"forex session-break guard: {pair} is {primary['minutes']}m {primary['direction']} "
             f"{primary['session']} {primary['transition']}"
         ),
     }
