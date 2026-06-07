@@ -32,7 +32,9 @@ TESTS = {
     "tests.test_live_service": [
         "test_live_tick_initializes_risk_baseline_from_live_mark",
         "test_market_shock_guard_blocks_fast_mark_move",
+        "test_stale_live_grid_cancels_exchange_orders_before_replace",
         "test_hyperliquid_order_values_are_rounded_for_wire_format",
+        "test_hyperliquid_extracts_exchange_order_id",
     ],
     "tests.test_live_users": [
         "test_user_store_authenticates_and_loads_session_user",

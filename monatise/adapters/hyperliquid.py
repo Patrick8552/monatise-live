@@ -11,6 +11,7 @@ from monatise.live.config import RuntimeConfig
 @dataclass(frozen=True)
 class SubmittedOrder:
     local_order_id: str
+    exchange_order_id: str
     exchange_response: dict[str, Any]
 
 
@@ -83,11 +84,23 @@ class HyperliquidAdapter(MarketDataPort, ExecutionPort):
                 {"limit": {"tif": "Gtc"}},
                 reduce_only=False,
             )
-            submitted.append(SubmittedOrder(order.order_id, response))
+            submitted.append(
+                SubmittedOrder(
+                    local_order_id=order.order_id,
+                    exchange_order_id=self._exchange_order_id(response),
+                    exchange_response=response,
+                )
+            )
         return submitted
 
     def cancel_orders(self, order_ids: list[str]) -> None:
-        raise NotImplementedError("cancel requires exchange order ids from placement responses")
+        if not order_ids:
+            return
+        if self.exchange is None:
+            raise RuntimeError("Hyperliquid exchange client is not initialized")
+        coin = self._coin(self.config.symbol)
+        for order_id in order_ids:
+            self.exchange.cancel(coin, int(order_id))
 
     def fills(self, symbol: str):  # noqa: ANN201
         raise NotImplementedError("fill reconciliation is planned through user fills/order status polling")
@@ -115,3 +128,14 @@ class HyperliquidAdapter(MarketDataPort, ExecutionPort):
 
     def _order_quantity(self, quantity: float) -> float:
         return round(quantity, 5)
+
+    def _exchange_order_id(self, response: dict[str, Any]) -> str:
+        statuses = response.get("response", {}).get("data", {}).get("statuses", [])
+        for status in statuses:
+            resting = status.get("resting")
+            if resting and "oid" in resting:
+                return str(resting["oid"])
+            filled = status.get("filled")
+            if filled and "oid" in filled:
+                return str(filled["oid"])
+        return ""

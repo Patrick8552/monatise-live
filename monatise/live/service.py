@@ -37,6 +37,7 @@ class RuntimeState:
     account: dict = field(default_factory=dict)
     last_order_refresh: float = 0.0
     last_mark_price: float = 0.0
+    exchange_order_ids: dict[str, str] = field(default_factory=dict)
 
 
 class TradingService:
@@ -79,9 +80,13 @@ class TradingService:
     def stop(self) -> dict:
         self._stop.set()
         self.risk.stop()
+        if self.config.mode == "live":
+            self._cancel_live_orders("kill switch cancel")
         with self._lock:
             self.state.running = False
             self.state.risk_status = "stopped"
+            self.state.open_orders = []
+            self.state.exchange_order_ids = {}
             self._event("warn", "kill switch activated")
             return self._snapshot_unlocked()
 
@@ -153,6 +158,7 @@ class TradingService:
                 "orderRefreshSeconds": self.config.order_refresh_seconds,
                 "maxMarkMovePct": self.config.max_mark_move_pct,
                 "executionMode": self.config.execution_mode,
+                "exchangeOrderCount": len(self.state.exchange_order_ids),
             },
         }
 
@@ -163,10 +169,10 @@ class TradingService:
             account = self._account_snapshot(adapter, mark)
             with self._lock:
                 self.state.mark_price = mark
-            self.state.account = account
-            self.state.risk_status = "live data ready" if self.config.live_enabled else "live dry-run"
-            self.state.last_mark_price = mark
-            if not self._live_baseline_initialized:
+                self.state.account = account
+                self.state.risk_status = "live data ready" if self.config.live_enabled else "live dry-run"
+                self.state.last_mark_price = mark
+                if not self._live_baseline_initialized:
                     self.harvester = self._build_harvester(mark)
                     self.risk = RiskManager(self.config, self.portfolio.equity(mark))
                     self._live_baseline_initialized = True
@@ -197,7 +203,9 @@ class TradingService:
         with self._lock:
             market_decision = self._market_guard(mark, account)
             if not market_decision.allowed:
+                self._cancel_live_orders("market guard cancel")
                 self.state.open_orders = []
+                self.state.exchange_order_ids = {}
                 self.state.mark_price = mark
                 self.state.account = account
                 self.state.last_mark_price = mark
@@ -213,12 +221,16 @@ class TradingService:
             self.state.account = account
             self.state.last_mark_price = mark
             if self.state.open_orders and self._open_orders_stale():
+                self._cancel_live_orders("stale grid cancel")
                 self._event("info", "refreshing stale live grid")
                 self.state.open_orders = []
+                self.state.exchange_order_ids = {}
             orders = self.harvester.plan_orders(self.portfolio, mark)
             decision = self.risk.check_batch(orders, self.portfolio, mark)
             if not decision.allowed:
+                self._cancel_live_orders("risk guard cancel")
                 self.state.open_orders = []
+                self.state.exchange_order_ids = {}
                 self.state.risk_status = decision.reason
                 self._event("warn", decision.reason)
                 return
@@ -232,6 +244,11 @@ class TradingService:
             if self.config.live_enabled:
                 submitted = adapter.place_orders(orders)
                 self.state.open_orders = orders
+                self.state.exchange_order_ids = {
+                    order.local_order_id: order.exchange_order_id
+                    for order in submitted
+                    if order.exchange_order_id
+                }
                 self.state.last_order_refresh = time.time()
                 self.state.risk_status = f"submitted {len(submitted)} live orders"
                 self._event("info", f"submitted {len(submitted)} Hyperliquid orders")
@@ -302,6 +319,14 @@ class TradingService:
         if not self.state.last_order_refresh:
             return False
         return time.time() - self.state.last_order_refresh > self.config.order_refresh_seconds
+
+    def _cancel_live_orders(self, reason: str) -> None:
+        if not self.config.live_enabled or not self.state.exchange_order_ids:
+            return
+        adapter = self._live_adapter()
+        order_ids = list(self.state.exchange_order_ids.values())
+        adapter.cancel_orders(order_ids)
+        self._event("warn", f"{reason}: cancelled {len(order_ids)} exchange orders")
 
     def _match_candle(self, candle: Candle, orders: list[Order]) -> list[Fill]:
         fills: list[Fill] = []
