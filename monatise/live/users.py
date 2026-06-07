@@ -173,7 +173,7 @@ class UserStore:
 
     def save_subscription_plan(self, user_id: int, plan: str) -> UserSettings:
         plan = plan.strip().lower()
-        if plan not in {"free", "pro", "business"}:
+        if plan not in {"free", "pro"}:
             raise ValueError("unknown subscription plan")
         settings = self.settings_for_user(user_id)
         with self._connect() as conn:

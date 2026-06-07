@@ -27,6 +27,8 @@ TESTS = {
         "test_live_mode_enables_only_with_explicit_confirmation",
         "test_live_mode_dry_run_does_not_enable_order_placement",
         "test_order_size_cannot_exceed_max_order_notional",
+        "test_total_notional_defaults_to_trading_capital",
+        "test_total_notional_env_override_is_respected",
         "test_global_hyperliquid_credentials_are_ignored_by_default",
     ],
     "tests.test_live_service": [

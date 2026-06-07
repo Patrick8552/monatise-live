@@ -46,6 +46,26 @@ def test_order_size_cannot_exceed_max_order_notional() -> None:
         raise AssertionError("expected invalid risk sizing to fail")
 
 
+def test_total_notional_defaults_to_trading_capital() -> None:
+    config = RuntimeConfig(quote=25_000)
+
+    assert config.max_total_notional == 25_000
+
+
+def test_total_notional_env_override_is_respected() -> None:
+    old_quote = os.environ.get("MONATISE_QUOTE")
+    old_limit = os.environ.get("MONATISE_MAX_TOTAL_NOTIONAL")
+    os.environ["MONATISE_QUOTE"] = "25000"
+    os.environ["MONATISE_MAX_TOTAL_NOTIONAL"] = "5000"
+    try:
+        config = RuntimeConfig.from_env()
+        assert config.quote == 25_000
+        assert config.max_total_notional == 5_000
+    finally:
+        _restore_env("MONATISE_QUOTE", old_quote)
+        _restore_env("MONATISE_MAX_TOTAL_NOTIONAL", old_limit)
+
+
 def test_global_hyperliquid_credentials_are_ignored_by_default() -> None:
     old_address = os.environ.get("HYPERLIQUID_ACCOUNT_ADDRESS")
     old_secret = os.environ.get("HYPERLIQUID_SECRET_KEY")

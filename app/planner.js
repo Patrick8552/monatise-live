@@ -1,8 +1,8 @@
 const presets = {
-  aggressive: { activePct: 0.7, label: "Aggressive", maxDailyLossPct: 0.02, monthlyPct: 0.12 },
-  builder: { activePct: 0.5, label: "Builder", maxDailyLossPct: 0.01, monthlyPct: 0.05 },
-  operator: { activePct: 0.6, label: "Operator", maxDailyLossPct: 0.015, monthlyPct: 0.08 },
-  starter: { activePct: 0.3, label: "Starter", maxDailyLossPct: 0.005, monthlyPct: 0.02 }
+  aggressive: { activePct: 1, label: "Aggressive", maxDailyLossPct: 0.02, monthlyPct: 0.12 },
+  full: { activePct: 1, label: "Full capital", maxDailyLossPct: 0.01, monthlyPct: 0.05 },
+  operator: { activePct: 1, label: "Operator", maxDailyLossPct: 0.015, monthlyPct: 0.08 },
+  starter: { activePct: 1, label: "Starter", maxDailyLossPct: 0.005, monthlyPct: 0.02 }
 };
 
 const els = {
@@ -36,7 +36,7 @@ function updatePlanner() {
   const capital = numberFrom(els.capital);
   const desiredIncome = numberFrom(els.income);
   const inflow = numberFrom(els.inflow);
-  const preset = presets[els.preset.value] || presets.builder;
+  const preset = presets[els.preset.value] || presets.full;
   const activeCapital = capital * preset.activePct;
   const idleReserve = Math.max(0, capital - activeCapital);
   const monthlyTarget = activeCapital * preset.monthlyPct;
@@ -60,7 +60,7 @@ function updatePlanner() {
     els.derisk.textContent = `Inflow is ${Math.round(inflowPct * 100)}% of current capital. Freeze order size for 7 days and add the new capital gradually after sync and drawdown stay clean.`;
     return;
   }
-  els.derisk.textContent = `${preset.label} plan: target ${Math.round(preset.monthlyPct * 100)}% monthly on active capital, keep ${Math.round((1 - preset.activePct) * 100)}% idle, and stop for the day near ${money(maxDailyLoss)} loss.`;
+  els.derisk.textContent = `${preset.label} plan: target ${Math.round(preset.monthlyPct * 100)}% monthly with full capital available, and stop for the day near ${money(maxDailyLoss)} loss.`;
 }
 
 ["input", "change"].forEach((eventName) => {

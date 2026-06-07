@@ -23,7 +23,6 @@ from monatise.live.users import User, UserCredentials, UserStore, encryption_key
 PLAN_PRICES = {
     "free": {"amount": 0, "currency": "USD"},
     "pro": {"amount": 29, "currency": "USD"},
-    "business": {"amount": 149, "currency": "USD"},
 }
 
 COMMODITY_WATCHLIST = ("GOLD", "CL", "BRENTOIL")
@@ -492,9 +491,9 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             if (
                 self.tenants.base_config.mode == "live"
                 and self.tenants.base_config.network == "mainnet"
-                and settings.subscription_plan not in {"pro", "business"}
+                and settings.subscription_plan != "pro"
             ):
-                self._error(402, "Pro or Business is required before starting mainnet live trading")
+                self._error(402, "Pro is required before starting mainnet live trading")
                 return
             try:
                 self._json(self.tenants.service_for_user(user).start())

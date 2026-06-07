@@ -32,7 +32,6 @@ const els = {
   feesMetric: document.querySelector("#feesMetric"),
   fillCount: document.querySelector("#fillCount"),
   fillTape: document.querySelector("#fillTape"),
-  businessPlanButton: document.querySelector("#businessPlanButton"),
   freePlanButton: document.querySelector("#freePlanButton"),
   harvestMetric: document.querySelector("#harvestMetric"),
   inventoryMetric: document.querySelector("#inventoryMetric"),
@@ -199,7 +198,7 @@ function assetRoute(symbol) {
 }
 
 function hasLivePlan() {
-  return ["pro", "business"].includes(currentPlan());
+  return currentPlan() === "pro";
 }
 
 function renderAuth(me) {
@@ -1159,7 +1158,6 @@ els.logoutButton.addEventListener("click", async () => {
 els.saveCredentialsButton.addEventListener("click", saveCredentials);
 els.freePlanButton.addEventListener("click", () => checkoutPlan("free"));
 els.proPlanButton.addEventListener("click", () => checkoutPlan("pro"));
-els.businessPlanButton.addEventListener("click", () => checkoutPlan("business"));
 els.backendStartButton.addEventListener("click", () => backendCommand("/api/start").catch(refreshBackend));
 els.backendStopButton.addEventListener("click", () => backendCommand("/api/stop").catch(refreshBackend));
 ["input", "change"].forEach((eventName) => {

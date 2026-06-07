@@ -23,7 +23,7 @@ class RuntimeConfig:
     poll_seconds: float = 5.0
     execution_mode: str = "dry_run"
     max_order_notional: float = 250.0
-    max_total_notional: float = 1_500.0
+    max_total_notional: float | None = None
     max_base_inventory: float = 0.1
     max_daily_loss: float = 100.0
     max_mark_move_pct: float = 0.03
@@ -37,13 +37,19 @@ class RuntimeConfig:
     assets: tuple[str, ...] = ("BTC", "ETH", "SOL", "HYPE", "BNB", "XRP", "DOGE", "GOLD", "CL", "BRENTOIL")
     builder_dexes: tuple[str, ...] = ("xyz",)
 
+    def __post_init__(self) -> None:
+        if self.max_total_notional is None:
+            object.__setattr__(self, "max_total_notional", self.quote)
+
     @classmethod
     def from_env(cls) -> "RuntimeConfig":
+        quote = float(os.getenv("MONATISE_QUOTE", "10000"))
+        max_total_notional = os.getenv("MONATISE_MAX_TOTAL_NOTIONAL")
         return cls(
             mode=os.getenv("MONATISE_MODE", "paper").lower(),
             network=os.getenv("MONATISE_NETWORK", "testnet").lower(),
             symbol=os.getenv("MONATISE_SYMBOL", "BTC"),
-            quote=float(os.getenv("MONATISE_QUOTE", "10000")),
+            quote=quote,
             base=float(os.getenv("MONATISE_BASE", "0.05")),
             spacing_pct=float(os.getenv("MONATISE_SPACING_PCT", "0.005")),
             levels_each_side=int(os.getenv("MONATISE_LEVELS_EACH_SIDE", "5")),
@@ -52,7 +58,7 @@ class RuntimeConfig:
             poll_seconds=float(os.getenv("MONATISE_POLL_SECONDS", "5")),
             execution_mode=os.getenv("MONATISE_EXECUTION_MODE", "dry_run").lower(),
             max_order_notional=float(os.getenv("MONATISE_MAX_ORDER_NOTIONAL", "250")),
-            max_total_notional=float(os.getenv("MONATISE_MAX_TOTAL_NOTIONAL", "1500")),
+            max_total_notional=float(max_total_notional) if max_total_notional else quote,
             max_base_inventory=float(os.getenv("MONATISE_MAX_BASE_INVENTORY", "0.1")),
             max_daily_loss=float(os.getenv("MONATISE_MAX_DAILY_LOSS", "100")),
             max_mark_move_pct=float(os.getenv("MONATISE_MAX_MARK_MOVE_PCT", "0.03")),
@@ -107,6 +113,8 @@ class RuntimeConfig:
             raise ValueError("MONATISE_MAX_ORDER_NOTIONAL must be positive")
         if self.order_quote_size > self.max_order_notional:
             raise ValueError("order quote size cannot exceed max order notional")
+        if self.max_total_notional <= 0:
+            raise ValueError("MONATISE_MAX_TOTAL_NOTIONAL must be positive")
         if self.max_mark_move_pct <= 0:
             raise ValueError("MONATISE_MAX_MARK_MOVE_PCT must be positive")
         if self.order_refresh_seconds <= 0:
