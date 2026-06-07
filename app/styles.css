@@ -414,6 +414,16 @@ button.live-running {
   align-items: start;
 }
 
+.gold-grid {
+  align-items: start;
+}
+
+.gold-lede {
+  background:
+    linear-gradient(90deg, rgba(24, 21, 15, 0.98), rgba(38, 33, 23, 0.96)),
+    var(--terminal);
+}
+
 .path-grid,
 .withdrawal-flow {
   display: grid;
@@ -480,6 +490,18 @@ button.live-running {
   margin: 8px 0 0;
 }
 
+.gold-preset-grid,
+.target-table {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 14px;
+}
+
+.target-table {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .withdrawal-flow {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
@@ -487,6 +509,8 @@ button.live-running {
 .feature-grid article,
 .lesson-grid article,
 .path-grid article,
+.gold-preset-grid article,
+.target-table article,
 .withdrawal-flow article,
 .contact-card {
   background:
@@ -501,6 +525,8 @@ button.live-running {
 .feature-grid span,
 .lesson-grid span,
 .path-grid span,
+.gold-preset-grid span,
+.target-table span,
 .contact-card span {
   color: var(--muted);
   display: block;
@@ -512,6 +538,8 @@ button.live-running {
 .feature-grid strong,
 .lesson-grid strong,
 .path-grid strong,
+.gold-preset-grid strong,
+.target-table strong,
 .withdrawal-flow strong,
 .contact-card strong {
   display: block;
@@ -522,6 +550,8 @@ button.live-running {
 .feature-grid p,
 .lesson-grid p,
 .path-grid p,
+.gold-preset-grid p,
+.target-table p,
 .withdrawal-flow p,
 .contact-card p {
   font-size: 0.9rem;
@@ -1339,8 +1369,10 @@ button:disabled {
   }
 
   .lesson-grid,
+  .gold-preset-grid,
   .planner-layout,
   .path-grid,
+  .target-table,
   .withdrawal-flow,
   .resource-grid {
     grid-template-columns: 1fr;

@@ -299,10 +299,16 @@ function renderMarkets() {
 }
 
 function renderAssetGroups() {
+  const forexWatch = marketGroups.forex && marketGroups.forex.length
+    ? [...marketGroups.forex]
+    : ["XAU", "EURUSD", "GBPUSD", "USDJPY", "XAG"].map((symbol) => ({ symbol, tradable: false }));
+  if (!forexWatch.some((asset) => asset.symbol === "XAU")) {
+    forexWatch.unshift({ symbol: "XAU", tradable: false });
+  }
   const groups = [
     ["Crypto perps", marketGroups.crypto || markets],
     ["HIP-3 builder", marketGroups.builder || []],
-    ["Forex watch", marketGroups.forex || []],
+    ["Gold / forex watch", forexWatch],
     ["Stock watch", marketGroups.stocks || []]
   ];
   els.assetGroups.innerHTML = groups
