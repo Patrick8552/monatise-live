@@ -64,22 +64,14 @@ HYPERLIQUID_SECRET_KEY=...
 
 See [deploy/live-runbook.md](deploy/live-runbook.md) for the full runbook.
 
-## AWS Hosting
+## Render Hosting
 
-AWS App Runner deployment artifacts are included:
+Render is the active hosting target for Monatise. The included `render.yaml`
+deploys the Docker web service in `live` + `testnet` mode with small risk caps.
+Users log in and save their own Hyperliquid testnet API wallet credentials in
+the dashboard before starting the trading loop.
 
-- `deploy/Dockerfile`
-- `deploy/apprunner.yaml`
-- `deploy/apprunner-access-role.yaml`
-- `deploy/aws-deploy.sh`
-
-Deploy after installing and configuring the AWS CLI:
-
-```bash
-AWS_REGION=us-east-1 ./deploy/aws-deploy.sh
-```
-
-See [deploy/aws-hosting.md](deploy/aws-hosting.md) for details.
+See [deploy/render-hosting.md](deploy/render-hosting.md) for details.
 
 ## Quick Start
 

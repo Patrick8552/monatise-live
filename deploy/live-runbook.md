@@ -63,21 +63,7 @@ docker build -f deploy/Dockerfile -t monatise-live .
 docker run --env-file .env -p 4174:4174 monatise-live
 ```
 
-For AWS App Runner, store Hyperliquid values as AWS Secrets Manager secrets first:
-
-```bash
-AWS_REGION=us-east-1 ./deploy/set-hyperliquid-secrets.sh
-```
-
-Then export the printed secret ARNs and deploy with live gates:
-
-```bash
-MONATISE_MODE=live \
-MONATISE_NETWORK=testnet \
-MONATISE_ALLOW_LIVE_ORDERS=true \
-MONATISE_LIVE_CONFIRMATION=I_UNDERSTAND_REAL_MONEY \
-AWS_REGION=us-east-1 \
-./deploy/aws-deploy.sh
-```
-
-Do not expose this service publicly without authentication, TLS, firewall rules, and secret management.
+Render is the active cloud target. Deploy with `render.yaml`, then register or
+log in through the dashboard and save the user's Hyperliquid testnet credentials
+there. Do not move to mainnet until testnet order placement, cancellation, and
+fill reconciliation are verified.

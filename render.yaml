@@ -18,7 +18,7 @@ services:
       - key: MONATISE_SYMBOL
         value: BTC
       - key: MONATISE_EXECUTION_MODE
-        value: dry_run
+        value: live
       - key: MONATISE_ORDER_QUOTE_SIZE
         value: 25
       - key: MONATISE_MAX_ORDER_NOTIONAL
@@ -39,9 +39,3 @@ services:
         value: true
       - key: MONATISE_LIVE_CONFIRMATION
         value: I_UNDERSTAND_REAL_MONEY
-      - key: MONATISE_CONTROL_TOKEN
-        sync: false
-      - key: HYPERLIQUID_ACCOUNT_ADDRESS
-        sync: false
-      - key: HYPERLIQUID_SECRET_KEY
-        sync: false
