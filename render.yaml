@@ -12,7 +12,7 @@ services:
       - key: MONATISE_MODE
         value: live
       - key: MONATISE_NETWORK
-        value: testnet
+        value: mainnet
       - key: MONATISE_HOST
         value: 0.0.0.0
       - key: MONATISE_SYMBOL

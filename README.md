@@ -67,9 +67,9 @@ See [deploy/live-runbook.md](deploy/live-runbook.md) for the full runbook.
 ## Render Hosting
 
 Render is the active hosting target for Monatise. The included `render.yaml`
-deploys the Docker web service in `live` + `testnet` mode with small risk caps.
-Users log in and save their own Hyperliquid testnet API wallet credentials in
-the dashboard before starting the trading loop.
+deploys the Docker web service in `live` + `mainnet` mode with small risk caps.
+Users log in and save their own Hyperliquid API wallet credentials in the
+dashboard before starting the trading loop.
 
 See [deploy/render-hosting.md](deploy/render-hosting.md) for details.
 

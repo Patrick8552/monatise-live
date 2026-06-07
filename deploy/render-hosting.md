@@ -1,17 +1,16 @@
 # Hosting Monatise On Render
 
 Render is the active hosting target for Monatise. The included `render.yaml`
-deploys the Docker web service in `live` + `testnet` mode with small risk caps.
-Users log in and save their own Hyperliquid testnet API wallet credentials in
-the dashboard before starting the trading loop.
+deploys the Docker web service in `live` + `mainnet` mode with small risk caps.
+Users log in and save their own Hyperliquid API wallet credentials in the
+dashboard before starting the trading loop.
 
 ## Before Deploying
 
-- Use Hyperliquid testnet first.
 - Create a user in the Monatise dashboard after deploy.
-- Save that user's Hyperliquid testnet account address and API wallet private key
-  in the dashboard.
-- Review the risk values in `render.yaml` before moving beyond testnet.
+- Save that user's Hyperliquid account address and API wallet private key in the
+  dashboard.
+- Review the risk values in `render.yaml` before increasing any limits.
 
 ## Deploy
 
@@ -25,14 +24,14 @@ the dashboard before starting the trading loop.
 curl https://your-service.onrender.com/api/health
 ```
 
-The service starts in live testnet mode with real-order gates enabled and small
+The service starts in live mainnet mode with real-order gates enabled and small
 risk caps. It can place exchange orders only after a logged-in user saves
 Hyperliquid credentials and presses **Start**.
 
 ## Dashboard Access
 
-Open the Render service URL, register or log in, save Hyperliquid testnet
-credentials, and use the Real-money desk controls.
+Open the Render service URL, register or log in, save Hyperliquid credentials,
+and use the Real-money desk controls.
 
 For API calls:
 
