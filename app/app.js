@@ -15,6 +15,8 @@ const els = {
   assetDetail: document.querySelector("#assetDetail"),
   assetGroups: document.querySelector("#assetGroups"),
   assetSelect: document.querySelector("#assetSelect"),
+  armStrategyButton: document.querySelector("#armStrategyButton"),
+  auditCount: document.querySelector("#auditCount"),
   baseInput: document.querySelector("#baseInput"),
   backendStartButton: document.querySelector("#backendStartButton"),
   backendStatus: document.querySelector("#backendStatus"),
@@ -95,6 +97,16 @@ const els = {
   subscriptionStatus: document.querySelector("#subscriptionStatus"),
   symbolInput: document.querySelector("#symbolInput"),
   syncMetric: document.querySelector("#syncMetric"),
+  ticketAsset: document.querySelector("#ticketAsset"),
+  ticketCapital: document.querySelector("#ticketCapital"),
+  ticketChart: document.querySelector("#ticketChart"),
+  ticketDrawdown: document.querySelector("#ticketDrawdown"),
+  ticketExposure: document.querySelector("#ticketExposure"),
+  ticketHedge: document.querySelector("#ticketHedge"),
+  ticketNote: document.querySelector("#ticketNote"),
+  ticketStatus: document.querySelector("#ticketStatus"),
+  ticketSummary: document.querySelector("#ticketSummary"),
+  tradeAuditLog: document.querySelector("#tradeAuditLog"),
   londonCommodityInput: document.querySelector("#londonCommodityInput"),
   usernameInput: document.querySelector("#usernameInput")
 };
@@ -119,6 +131,9 @@ let contextLastSymbol = "";
 let candleSource = { interval: "sample", symbol: "BTC", type: "sample" };
 let candleLoading = false;
 let initialLiveCandlesLoaded = false;
+let localAuditEvents = [];
+let lastTicketHealth = null;
+let pendingArmReview = false;
 let tradingRules = {
   chartInterval: "1h",
   londonCommodityOnly: true,
@@ -163,6 +178,63 @@ function setGate(element, label, status, className = "") {
 function readinessClass(item) {
   if (item.ok) return "pass";
   return item.severity === "block" ? "block" : "warn";
+}
+
+function readinessItems(snapshot = null) {
+  const backendItems = Array.isArray(snapshot?.readiness) ? snapshot.readiness : [];
+  const localItems = localReadinessItems(snapshot);
+  const localLabels = new Set(localItems.map((item) => item.label));
+  return [...localItems, ...backendItems.filter((item) => !localLabels.has(item.label))];
+}
+
+function readinessBlocks(snapshot = null) {
+  return readinessItems(snapshot).filter((item) => !item.ok && item.severity === "block");
+}
+
+function auditLevelFromType(type) {
+  if (/block|failed|error|stop/i.test(type)) return "error";
+  if (/review|watch|payment|rules|credential/i.test(type)) return "warn";
+  return "info";
+}
+
+function addAuditEvent(type, message, details = "") {
+  localAuditEvents = [
+    ...localAuditEvents,
+    {
+      details,
+      level: auditLevelFromType(type),
+      message,
+      time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+      type
+    }
+  ].slice(-80);
+  renderAuditLog();
+}
+
+function renderAuditLog(serverEvents = null) {
+  if (!els.tradeAuditLog) return;
+  const remoteEvents = Array.isArray(serverEvents)
+    ? serverEvents.map((event) => ({
+        details: event.detail || "",
+        level: event.level || "info",
+        message: event.message,
+        time: String(event.timestamp || "").slice(11, 19) || "server",
+        type: "server"
+      }))
+    : [];
+  const events = [...remoteEvents, ...localAuditEvents].slice(-28).reverse();
+  els.auditCount.textContent = `${events.length} event${events.length === 1 ? "" : "s"}`;
+  els.tradeAuditLog.innerHTML = events.length
+    ? events
+        .map(
+          (event) => `<article class="${event.level}">
+            <span>${event.time}</span>
+            <strong>${event.message}</strong>
+            <em>${event.details || event.type}</em>
+          </article>`
+        )
+        .join("")
+    : '<article><span>Standby</span><strong>No operator events yet</strong><em>Build, review, then arm.</em></article>';
 }
 
 function localReadinessItems(snapshot = null) {
@@ -238,10 +310,7 @@ function localReadinessItems(snapshot = null) {
 
 function renderReadinessChecklist(snapshot = null) {
   if (!els.readinessChecklist) return;
-  const backendItems = Array.isArray(snapshot?.readiness) ? snapshot.readiness : [];
-  const localItems = localReadinessItems(snapshot);
-  const localLabels = new Set(localItems.map((item) => item.label));
-  const items = [...localItems, ...backendItems.filter((item) => !localLabels.has(item.label))];
+  const items = readinessItems(snapshot);
   const blocked = items.filter((item) => !item.ok && item.severity === "block").length;
   els.readinessChecklist.innerHTML = `
     <div class="checklist-head">
@@ -314,6 +383,7 @@ function renderStrategyReadout(orders, options = {}) {
   if (!els.strategyReadout) return;
   const mark = Number(options.mark ?? currentMarketPrice() ?? state?.candles?.[0]?.close);
   const health = strategyHealth(mark, orders, options.snapshot);
+  lastTicketHealth = health;
   const source = options.source || "preview";
   const sourceLabel = source === "live" ? "Exchange orders" : source === "backend" ? "Backend state" : "Strategy preview only";
   const warningText = health.warnings.length ? health.warnings.join(" · ") : "structure, risk, session, and doctrine are aligned";
@@ -342,6 +412,47 @@ function renderStrategyReadout(orders, options = {}) {
     </div>
     <p>${warningText}</p>
   `;
+  renderExecutionTicket(orders, { ...options, health, mark });
+}
+
+function renderExecutionTicket(orders = [], options = {}) {
+  if (!els.ticketSummary) return;
+  const snapshot = options.snapshot || lastBackendSnapshot;
+  const orderList = Array.isArray(orders) ? orders : [];
+  const health = options.health || strategyHealth(Number(options.mark ?? currentMarketPrice()), orderList, snapshot);
+  const blocks = readinessBlocks(snapshot);
+  const mark = Number(options.mark ?? currentMarketPrice());
+  const openExposure = orderList.reduce((sum, order) => {
+    const price = Number(order.price);
+    const quantity = Number(order.quantity);
+    return Number.isFinite(price) && Number.isFinite(quantity) ? sum + price * quantity : sum;
+  }, 0);
+  const inputCapital = Number(els.quoteInput?.value || 0) + Number(els.baseInput?.value || 0) * (Number.isFinite(mark) ? mark : 0);
+  const accountValue = Number(snapshot?.account?.displayValue ?? snapshot?.account?.accountValue);
+  const capital = Number.isFinite(accountValue) && accountValue > 0 ? accountValue : inputCapital;
+  const drawdownPct = Number(snapshot?.risk?.max_daily_loss_pct ?? 0.05);
+  const exposurePct = capital > 0 ? openExposure / capital : 0;
+  const canReview = !health.blocked && blocks.length === 0;
+  const mode = String(snapshot?.mode || (backendOnline ? "backend" : "preview")).toUpperCase();
+  els.ticketStatus.textContent = canReview ? "Ready for review" : `${blocks.length || health.warnings.length || 1} block`;
+  els.ticketAsset.textContent = assetLabel(selectedAsset);
+  els.ticketCapital.textContent = money(capital);
+  els.ticketExposure.textContent = `${money(openExposure)} (${(exposurePct * 100).toFixed(2)}%)`;
+  els.ticketDrawdown.textContent = `${(drawdownPct * 100).toFixed(2)}%`;
+  els.ticketChart.textContent = tradingRules.chartInterval;
+  els.ticketHedge.textContent = health.structureBreak ? "Active watch" : "Structure break";
+  els.ticketSummary.innerHTML = `
+    <div class="ticket-call ${canReview ? "ready" : "blocked"}">
+      <strong>${canReview ? "Operator review ready" : "Do not arm yet"}</strong>
+      <span>${mode} · ${assetLabel(selectedAsset)} · ${orderList.length} planned levels</span>
+    </div>
+  `;
+  const primaryBlock = blocks[0]?.detail || health.warnings[0] || "all visible checks clear";
+  els.ticketNote.textContent = canReview
+    ? "Review wallet, venue, exposure, and session one final time before starting live routing."
+    : `Blocked: ${primaryBlock}`;
+  els.armStrategyButton.disabled = false;
+  els.armStrategyButton.textContent = canReview ? "Review Live Gates" : "Show Blocks";
 }
 
 function updateLiveDesk(snapshot = null) {
@@ -707,6 +818,7 @@ async function loginOrRegister(path) {
   }
   els.passwordInput.value = "";
   renderAuth(payload);
+  addAuditEvent(path.includes("register") ? "register" : "login", path.includes("register") ? "User registered" : "User logged in", payload.username || username);
   refreshBackend();
 }
 
@@ -722,6 +834,7 @@ async function saveCredentials() {
   }
   els.secretKeyInput.value = "";
   await loadMe();
+  addAuditEvent("credentials saved", "Hyperliquid credentials saved", "API wallet stored per user");
   refreshBackend();
 }
 
@@ -1046,6 +1159,7 @@ function renderAssetGroups() {
 }
 
 async function saveSelectedAsset(symbol) {
+  const previous = selectedAsset;
   selectedAsset = symbol;
   fibAnalysis = null;
   contextRadar = null;
@@ -1056,6 +1170,7 @@ async function saveSelectedAsset(symbol) {
   loadFibonacciAnalysis({ force: true });
   loadContextRadar({ force: true });
   if (!currentUser.authenticated) {
+    addAuditEvent("asset changed", "Trading asset changed", `${previous} -> ${selectedAsset}`);
     render();
     return;
   }
@@ -1070,14 +1185,17 @@ async function saveSelectedAsset(symbol) {
     selectedSymbol: payload.selectedSymbol,
     subscription: payload.subscription || currentUser.subscription
   };
+  addAuditEvent("asset changed", "Trading asset saved", `${previous} -> ${selectedAsset}`);
   refreshBackend();
 }
 
 async function checkoutPlan(plan) {
   if (!currentUser.authenticated) {
     els.subscriptionStatus.textContent = "login required";
+    addAuditEvent("payment blocked", "Payment blocked", "login required");
     return;
   }
+  addAuditEvent("payment requested", `${plan.toUpperCase()} checkout requested`, els.paymentMethodSelect.value);
   const response = await jsonPost("/api/payments/checkout", {
     currency: els.paymentCurrencySelect.value,
     email: els.paymentEmailInput.value.trim(),
@@ -1087,6 +1205,7 @@ async function checkoutPlan(plan) {
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     els.paymentStatus.textContent = payload.error || "payment error";
+    addAuditEvent("payment error", "Payment request failed", payload.error || plan);
     return;
   }
   if (payload.status === "redirect" && payload.checkoutUrl) {
@@ -1097,16 +1216,19 @@ async function checkoutPlan(plan) {
     els.paymentStatus.textContent = payload.setupRequired
       ? "crypto address not configured"
       : `${payload.recipient || "Monatise"} receives ${payload.amount} ${payload.currency} on ${payload.network}: ${payload.address} ref ${payload.reference}`;
+    addAuditEvent("payment instruction", "Crypto payment instructions returned", payload.setupRequired ? "address not configured" : payload.network);
     return;
   }
   if (payload.status === "setup_required") {
     els.paymentStatus.textContent = payload.message || "payment setup required";
+    addAuditEvent("payment setup", "Payment setup required", payload.message || plan);
     return;
   }
   if (payload.subscription) {
     currentUser = { ...currentUser, subscription: payload.subscription };
     els.subscriptionStatus.textContent = `${payload.subscription.plan} ${payload.subscription.status}`;
     els.paymentStatus.textContent = `${payload.subscription.plan} active`;
+    addAuditEvent("payment active", "Subscription updated", `${payload.subscription.plan} ${payload.subscription.status}`);
   }
 }
 
@@ -1622,7 +1744,7 @@ function drawLiquidity(options = {}) {
   ctx.fillStyle = "#6b746f";
   ctx.font = "750 12px system-ui";
   ctx.textAlign = "center";
-  ctx.fillText(sourceType === "preview" ? `sample candle ${candle.timestamp}` : `live ${selectedAsset} order state`, width / 2, height - 12);
+  ctx.fillText(sourceType === "preview" ? `preview ${selectedAsset} grid state` : `live ${selectedAsset} order state`, width / 2, height - 12);
 }
 
 function drawEquity() {
@@ -1761,6 +1883,7 @@ function renderBackend(snapshot) {
       .reverse()
       .map((event) => `<article class="${event.level}">${event.message}</article>`)
       .join("");
+    renderAuditLog(snapshot.events);
   }
 }
 
@@ -1822,13 +1945,16 @@ async function backendCommand(path) {
   const sessionGuard = activeSessionGuard(selectedAsset);
   if (path === "/api/start" && sessionGuard.active && lastBackendSnapshot?.mode === "live") {
     els.riskStatus.textContent = sessionGuard.message;
+    addAuditEvent("start blocked", "Start blocked by session guard", sessionGuard.message);
     updateLiveDesk(lastBackendSnapshot);
     return;
   }
+  addAuditEvent(path === "/api/start" ? "start requested" : "stop requested", path === "/api/start" ? "Operator requested trading loop start" : "Operator requested trading loop stop", selectedAsset);
   const response = await jsonPost(path);
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
     els.riskStatus.textContent = payload.error || `request failed: ${path}`;
+    addAuditEvent("request failed", payload.error || `request failed: ${path}`, selectedAsset);
     throw new Error(payload.error || `request failed: ${path}`);
   }
   renderBackend(await response.json());
@@ -1844,6 +1970,7 @@ async function saveTradingRules() {
   if (nextRules.chartInterval === "1m" && !hasLivePlan()) {
     els.rulesStatus.textContent = "Pro required for 1m";
     els.chartIntervalSelect.value = tradingRules.chartInterval;
+    addAuditEvent("rules blocked", "1m chart rejected", "Pro plan required");
     return;
   }
   if (!currentUser.authenticated) {
@@ -1852,6 +1979,7 @@ async function saveTradingRules() {
     contextRadar = null;
     loadFibonacciAnalysis({ force: true });
     loadContextRadar({ force: true });
+    addAuditEvent("rules updated", "Trading rules updated locally", `${nextRules.chartInterval} · ${nextRules.sessionGuardMinutes}m guard`);
     return;
   }
   const response = await jsonPost("/api/trading-rules", nextRules);
@@ -1865,6 +1993,7 @@ async function saveTradingRules() {
   contextRadar = null;
   loadFibonacciAnalysis({ force: true });
   loadContextRadar({ force: true });
+  addAuditEvent("rules updated", "Trading rules saved", `${payload.tradingRules.chartInterval} · ${payload.tradingRules.sessionGuardMinutes}m guard`);
   refreshBackend();
 }
 
@@ -1897,6 +2026,7 @@ function render() {
   els.liquiditySource.textContent = "Strategy preview only. No exchange orders.";
   els.runState.textContent = state.activeIndex >= state.candles.length ? "Complete" : "Ready";
   renderTape();
+  renderAuditLog();
   drawLiquidity({
     mark: live ? Number(live.price) : mark,
     orders: state.openOrders,
@@ -1919,6 +2049,7 @@ function reset() {
   state = createState(configFromInputs());
   planOrders(state.candles[0].open);
   render();
+  if (!pendingArmReview) addAuditEvent("preview reset", "Strategy preview reset", selectedAsset);
 }
 
 function rebuildFromInputs() {
@@ -1933,6 +2064,7 @@ els.runButton.addEventListener("click", () => {
   state = createState(configFromInputs());
   runAll();
   render();
+  addAuditEvent("preview run", "Local strategy preview completed", `${state.fills.length} fills`);
 });
 
 els.stepButton.addEventListener("click", () => {
@@ -1941,10 +2073,25 @@ els.stepButton.addEventListener("click", () => {
   }
   stepSimulation();
   render();
+  addAuditEvent("preview step", "Advanced one preview candle", `${state.activeIndex}/${state.candles.length}`);
 });
 
 els.resetButton.addEventListener("click", reset);
 els.assetSelect.addEventListener("change", () => saveSelectedAsset(els.assetSelect.value));
+els.armStrategyButton.addEventListener("click", () => {
+  pendingArmReview = true;
+  const blocks = readinessBlocks(lastBackendSnapshot);
+  const warnings = lastTicketHealth?.warnings || [];
+  if (blocks.length || lastTicketHealth?.blocked) {
+    addAuditEvent("arm blocked", "Live review found blockers", blocks[0]?.detail || warnings[0] || "readiness not clear");
+    document.querySelector("#risk")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    pendingArmReview = false;
+    return;
+  }
+  addAuditEvent("arm review", "Live gates ready for operator review", `${selectedAsset} · ${tradingRules.chartInterval}`);
+  document.querySelector("#risk")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  pendingArmReview = false;
+});
 els.marketStrip.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-symbol]");
   if (button) saveSelectedAsset(button.dataset.symbol);
@@ -1961,6 +2108,7 @@ els.loginButton.addEventListener("click", () => loginOrRegister("/api/login"));
 els.registerButton.addEventListener("click", () => loginOrRegister("/api/register"));
 els.logoutButton.addEventListener("click", async () => {
   await jsonPost("/api/logout");
+  addAuditEvent("logout", "User logged out", "live actions disabled");
   renderAuth({ authenticated: false, credentialsConfigured: false });
 });
 els.saveCredentialsButton.addEventListener("click", saveCredentials);

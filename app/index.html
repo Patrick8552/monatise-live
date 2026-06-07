@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Monatise Trading Console</title>
-    <link rel="stylesheet" href="./styles.css?v=20260607-sectioned-desk" />
+    <link rel="stylesheet" href="./styles.css?v=20260607-execution-ticket" />
   </head>
   <body>
     <main class="shell">
@@ -139,6 +139,42 @@
               <div id="strategyReadout" class="strategy-readout" aria-label="strategy preview readout"></div>
               <div id="openOrderBook" class="open-order-book"></div>
             </div>
+
+            <section class="panel execution-ticket" aria-label="execution ticket">
+              <div class="panel-head">
+                <h2>Execution Ticket</h2>
+                <span id="ticketStatus">Preview only</span>
+              </div>
+              <div id="ticketSummary" class="ticket-summary"></div>
+              <div class="ticket-grid">
+                <article>
+                  <span>Asset</span>
+                  <strong id="ticketAsset">BTC</strong>
+                </article>
+                <article>
+                  <span>Capital</span>
+                  <strong id="ticketCapital">$0.00</strong>
+                </article>
+                <article>
+                  <span>Grid Exposure</span>
+                  <strong id="ticketExposure">$0.00</strong>
+                </article>
+                <article>
+                  <span>Drawdown Cap</span>
+                  <strong id="ticketDrawdown">5.00%</strong>
+                </article>
+                <article>
+                  <span>Chart</span>
+                  <strong id="ticketChart">1h</strong>
+                </article>
+                <article>
+                  <span>Hedge Trigger</span>
+                  <strong id="ticketHedge">Structure break</strong>
+                </article>
+              </div>
+              <button id="armStrategyButton" class="primary" type="button">Review Live Gates</button>
+              <p id="ticketNote" class="ticket-note">Real-money orders stay blocked until every readiness item clears.</p>
+            </section>
           </div>
         </section>
 
@@ -450,12 +486,20 @@
               </div>
               <div id="runtimeLog" class="runtime-log"></div>
             </section>
+
+            <section class="panel audit-panel">
+              <div class="panel-head">
+                <h2>Trade Audit</h2>
+                <span id="auditCount">0 events</span>
+              </div>
+              <div id="tradeAuditLog" class="trade-audit-log"></div>
+            </section>
           </div>
         </section>
       </section>
     </main>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="./app.js?v=20260607-sectioned-desk"></script>
+    <script src="./app.js?v=20260607-execution-ticket"></script>
   </body>
 </html>

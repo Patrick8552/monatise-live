@@ -277,7 +277,7 @@ label .range-readout {
 }
 
 .trade-grid {
-  grid-template-columns: minmax(300px, 0.8fr) minmax(360px, 1.2fr);
+  grid-template-columns: minmax(290px, 0.78fr) minmax(330px, 1fr) minmax(300px, 0.78fr);
 }
 
 .risk-grid {
@@ -289,11 +289,93 @@ label .range-readout {
 }
 
 .activity-grid {
-  grid-template-columns: minmax(260px, 0.85fr) minmax(320px, 1fr) minmax(280px, 0.9fr);
+  grid-template-columns: minmax(250px, 0.8fr) minmax(280px, 0.86fr) minmax(280px, 0.9fr) minmax(300px, 1fr);
 }
 
 .strategy-panel {
   align-self: start;
+}
+
+.panel.execution-ticket {
+  align-self: start;
+  background:
+    linear-gradient(145deg, rgba(17, 24, 23, 0.98), rgba(25, 38, 36, 0.96)),
+    var(--terminal);
+  border-color: rgba(0, 184, 217, 0.24);
+  color: #f9fffb;
+}
+
+.panel.execution-ticket .panel-head h2 {
+  color: #f9fffb;
+}
+
+.ticket-summary {
+  margin-top: 12px;
+}
+
+.ticket-call {
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-left: 4px solid var(--danger);
+  border-radius: 6px;
+  display: grid;
+  gap: 4px;
+  padding: 11px;
+}
+
+.ticket-call.ready {
+  border-left-color: var(--buy);
+}
+
+.ticket-call strong {
+  font-size: 0.96rem;
+}
+
+.ticket-call span,
+.ticket-note {
+  color: rgba(249, 255, 251, 0.68);
+  font-size: 0.76rem;
+  font-weight: 800;
+  line-height: 1.42;
+}
+
+.ticket-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 12px 0;
+}
+
+.ticket-grid article {
+  background: rgba(255, 255, 255, 0.075);
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 6px;
+  min-height: 62px;
+  padding: 10px;
+}
+
+.ticket-grid span {
+  color: rgba(249, 255, 251, 0.55);
+  display: block;
+  font-size: 0.68rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.ticket-grid strong {
+  color: #f9fffb;
+  display: block;
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+  margin-top: 6px;
+  overflow-wrap: anywhere;
+}
+
+.execution-ticket button {
+  width: 100%;
+}
+
+.ticket-note {
+  margin: 10px 0 0;
 }
 
 .compact-backend {
@@ -1560,6 +1642,61 @@ canvas {
   margin-top: 12px;
   max-height: 310px;
   overflow: auto;
+}
+
+.audit-panel {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(241, 246, 242, 0.96)),
+    var(--panel);
+}
+
+.trade-audit-log {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  max-height: 310px;
+  overflow: auto;
+}
+
+.trade-audit-log article {
+  background: rgba(255, 255, 255, 0.74);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--graph);
+  border-radius: 6px;
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+}
+
+.trade-audit-log article.warn {
+  border-left-color: var(--accent);
+}
+
+.trade-audit-log article.error {
+  border-left-color: var(--danger);
+}
+
+.trade-audit-log span {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.trade-audit-log strong {
+  color: var(--ink);
+  font-size: 0.84rem;
+  line-height: 1.25;
+}
+
+.trade-audit-log em {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-style: normal;
+  font-weight: 780;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .open-order-book {
