@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>About Monatise</title>
+    <link rel="stylesheet" href="./styles.css?v=20260607-pages" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar page-topbar">
+        <div>
+          <p class="eyebrow">Liquidity harvesting desk</p>
+          <h1>About Monatise</h1>
+        </div>
+        <nav class="desk-nav" aria-label="primary navigation">
+          <a href="./index.html">Desk</a>
+          <a href="./about.html" aria-current="page">About</a>
+          <a href="./contact.html">Contact</a>
+        </nav>
+        <div class="status-strip" aria-label="platform status">
+          <span>Testnet first</span>
+          <span>Real-order gated</span>
+          <span>Grid engine</span>
+        </div>
+      </header>
+
+      <section class="ops-ribbon" aria-label="platform principles">
+        <article>
+          <span>Mandate</span>
+          <strong>Harvest liquidity</strong>
+        </article>
+        <article>
+          <span>Execution</span>
+          <strong>Grid discipline</strong>
+        </article>
+        <article>
+          <span>Risk</span>
+          <strong>Hard gated</strong>
+        </article>
+        <article>
+          <span>Venue</span>
+          <strong>Hyperliquid</strong>
+        </article>
+      </section>
+
+      <section class="page-grid" aria-label="about Monatise">
+        <section class="page-panel page-lede">
+          <p class="eyebrow">Platform thesis</p>
+          <h2>Monatise is built for disciplined market participation, not prediction theatre.</h2>
+          <p>
+            The desk plans inventory-aware grid orders, places liquidity around live market marks,
+            reconciles exchange fills, and keeps the operator focused on exposure, sync, and risk state.
+          </p>
+        </section>
+
+        <section class="page-panel">
+          <div class="panel-head">
+            <h2>Operating Model</h2>
+            <span>Desk architecture</span>
+          </div>
+          <div class="feature-grid">
+            <article>
+              <span>01</span>
+              <strong>Plan</strong>
+              <p>Generate bid and ask levels around the active mark with inventory skew controls.</p>
+            </article>
+            <article>
+              <span>02</span>
+              <strong>Gate</strong>
+              <p>Check account value, notional limits, mark shocks, exposure, and daily loss caps.</p>
+            </article>
+            <article>
+              <span>03</span>
+              <strong>Execute</strong>
+              <p>Submit small clipped orders only when the live/testnet gates and user credentials are ready.</p>
+            </article>
+            <article>
+              <span>04</span>
+              <strong>Reconcile</strong>
+              <p>Poll exchange fills, map them back to local orders, and refresh the grid from real state.</p>
+            </article>
+          </div>
+        </section>
+
+        <aside class="page-panel dark-callout">
+          <p class="eyebrow">Current posture</p>
+          <h2>Live testnet, capped orders, operator-controlled start.</h2>
+          <ul class="desk-list">
+            <li>Per-user Hyperliquid credentials</li>
+            <li>$25 order clip on Render</li>
+            <li>$150 max total grid notional</li>
+            <li>Fill sync and exchange order id telemetry</li>
+          </ul>
+        </aside>
+
+        <section class="page-panel">
+          <div class="panel-head">
+            <h2>Why It Exists</h2>
+            <span>Liquidity over impulse</span>
+          </div>
+          <p>
+            Most trading interfaces over-celebrate entry calls. Monatise is designed around repeatable
+            liquidity placement, risk ceilings, and the operational truth that the exchange state is the
+            source of record.
+          </p>
+        </section>
+      </section>
+    </main>
+  </body>
+</html>
