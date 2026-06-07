@@ -1495,6 +1495,87 @@ canvas {
   text-align: right;
 }
 
+.strategy-readout {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 10px;
+}
+
+.strategy-status {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.strategy-status strong {
+  background: rgba(255, 190, 11, 0.14);
+  border: 1px solid rgba(255, 190, 11, 0.34);
+  border-radius: 999px;
+  color: #765401;
+  font-size: 0.72rem;
+  padding: 5px 8px;
+}
+
+.strategy-status.aligned strong {
+  background: rgba(0, 168, 120, 0.12);
+  border-color: rgba(0, 168, 120, 0.32);
+  color: #0b755b;
+}
+
+.strategy-status.wait strong {
+  background: rgba(230, 57, 70, 0.1);
+  border-color: rgba(230, 57, 70, 0.28);
+  color: #a32632;
+}
+
+.strategy-status span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 850;
+  text-align: right;
+  text-transform: uppercase;
+}
+
+.strategy-metrics {
+  display: grid;
+  gap: 7px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.strategy-metrics span {
+  background: #f4f6f2;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--muted);
+  display: grid;
+  font-size: 0.69rem;
+  font-weight: 850;
+  gap: 3px;
+  min-height: 48px;
+  padding: 8px;
+  text-transform: uppercase;
+}
+
+.strategy-metrics strong {
+  color: var(--ink);
+  font-size: 0.74rem;
+  overflow-wrap: anywhere;
+  text-transform: none;
+}
+
+.strategy-readout p {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 750;
+  line-height: 1.35;
+  margin: 0;
+}
+
 .live-desk {
   background:
     linear-gradient(145deg, rgba(8, 13, 13, 0.98), rgba(17, 24, 23, 0.96) 56%, rgba(24, 38, 35, 0.96)),
@@ -1575,6 +1656,73 @@ canvas {
   color: #ffffff;
   font-size: 0.8rem;
   overflow-wrap: anywhere;
+}
+
+.readiness-checklist {
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  display: grid;
+  gap: 7px;
+  max-height: 292px;
+  overflow: auto;
+  padding-top: 10px;
+}
+
+.checklist-head,
+.readiness-checklist article {
+  align-items: center;
+  display: grid;
+  gap: 5px;
+  grid-template-columns: 1fr auto;
+}
+
+.checklist-head strong {
+  color: #ffffff;
+  font-size: 0.82rem;
+}
+
+.checklist-head span {
+  color: rgba(246, 255, 249, 0.62);
+  font-size: 0.7rem;
+  font-weight: 850;
+  text-align: right;
+  text-transform: uppercase;
+}
+
+.readiness-checklist article {
+  background: rgba(255, 255, 255, 0.055);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-left: 3px solid rgba(255, 190, 11, 0.72);
+  border-radius: 6px;
+  padding: 8px 9px;
+}
+
+.readiness-checklist article.pass {
+  border-left-color: var(--buy);
+}
+
+.readiness-checklist article.block {
+  border-left-color: var(--danger);
+}
+
+.readiness-checklist article span {
+  color: rgba(246, 255, 249, 0.82);
+  font-size: 0.74rem;
+  font-weight: 850;
+}
+
+.readiness-checklist article strong {
+  color: #ffffff;
+  font-size: 0.68rem;
+  letter-spacing: 0;
+}
+
+.readiness-checklist article em {
+  color: rgba(246, 255, 249, 0.58);
+  font-size: 0.69rem;
+  font-style: normal;
+  font-weight: 750;
+  grid-column: 1 / -1;
+  line-height: 1.25;
 }
 
 .trade-actions button {

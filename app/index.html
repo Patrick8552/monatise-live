@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Monatise Trading Console</title>
-    <link rel="stylesheet" href="./styles.css?v=20260607-rules-console" />
+    <link rel="stylesheet" href="./styles.css?v=20260607-readiness-gate" />
   </head>
   <body>
     <main class="shell">
@@ -78,6 +78,7 @@
                 <strong>Waiting</strong>
               </article>
             </div>
+            <div id="readinessChecklist" class="readiness-checklist" aria-label="live readiness checklist"></div>
             <div class="button-row trade-actions">
               <button id="backendStartButton" class="primary danger-primary" type="button">Start Live</button>
               <button id="backendStopButton" type="button">Stop</button>
@@ -331,6 +332,7 @@
               <h2 id="openGridTitle">Strategy Preview</h2>
               <span id="openOrderCount">0 orders</span>
             </div>
+            <div id="strategyReadout" class="strategy-readout" aria-label="strategy preview readout"></div>
             <div id="openOrderBook" class="open-order-book"></div>
           </section>
 
@@ -416,6 +418,6 @@
     </main>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="./app.js?v=20260607-rules-console"></script>
+    <script src="./app.js?v=20260607-readiness-gate"></script>
   </body>
 </html>

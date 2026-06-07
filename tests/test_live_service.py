@@ -66,6 +66,18 @@ def test_live_tick_initializes_risk_baseline_from_live_mark() -> None:
     assert "risk" in snapshot
 
 
+def test_live_snapshot_exposes_readiness_checklist() -> None:
+    service = TradingService(RuntimeConfig(mode="live", network="mainnet", symbol="BTC"))
+
+    snapshot = service.snapshot()
+    readiness = {item["label"]: item for item in snapshot["readiness"]}
+
+    assert readiness["Execution mode"]["ok"] is False
+    assert readiness["Order placement flag"]["ok"] is False
+    assert readiness["Server session guard"]["ok"] is True
+    assert "MONATISE_EXECUTION_MODE=live" in snapshot["requires"]
+
+
 def test_market_shock_guard_blocks_fast_mark_move() -> None:
     service = TradingService(
         RuntimeConfig(

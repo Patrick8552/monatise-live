@@ -8,7 +8,7 @@ from pathlib import Path
 
 from monatise.adapters.hyperliquid import HyperliquidAdapter
 from monatise.core.models import Candle, Fill, Order, OrderSide, Portfolio
-from monatise.live.config import RuntimeConfig
+from monatise.live.config import LIVE_CONFIRMATION, RuntimeConfig
 from monatise.live.risk import RiskDecision, RiskManager
 from monatise.live.sessions import commodity_london_guard, forex_session_break_guard
 from monatise.sim.csv_data import load_candles
@@ -159,6 +159,7 @@ class TradingService:
             "liveReady": self.state.live_ready,
             "riskStatus": self.state.risk_status,
             "requires": self.requirements(),
+            "readiness": self.readiness_checklist(),
             "sessionGuard": self.state.session_guard,
             "tradingRules": {
                 "chartInterval": self.config.chart_interval,
@@ -202,6 +203,57 @@ class TradingService:
             with self._lock:
                 self.state.risk_status = "live data error"
                 self._event("error", str(error))
+
+    def readiness_checklist(self) -> list[dict]:
+        if self.config.mode != "live":
+            return [
+                {
+                    "detail": "paper mode cannot submit exchange orders",
+                    "label": "Backend mode",
+                    "ok": True,
+                    "severity": "warn",
+                }
+            ]
+        session_guard = self.state.session_guard or self._session_guard()
+        account_value = float(self.state.account.get("displayValue", 0) or 0)
+        return [
+            {
+                "detail": f"{self.config.mode}/{self.config.network}",
+                "label": "Backend mode",
+                "ok": self.config.mode == "live" and self.config.network in {"mainnet", "testnet"},
+                "severity": "block",
+            },
+            {
+                "detail": self.config.execution_mode,
+                "label": "Execution mode",
+                "ok": self.config.execution_mode == "live",
+                "severity": "block",
+            },
+            {
+                "detail": "operator confirmation present" if self.config.live_confirmation else "missing real-money confirmation",
+                "label": "Operator confirmation",
+                "ok": self.config.live_confirmation == LIVE_CONFIRMATION,
+                "severity": "block",
+            },
+            {
+                "detail": "server can place live orders" if self.config.allow_live_orders else "MONATISE_ALLOW_LIVE_ORDERS is off",
+                "label": "Order placement flag",
+                "ok": self.config.allow_live_orders,
+                "severity": "block",
+            },
+            {
+                "detail": session_guard.get("message", "no active session block"),
+                "label": "Server session guard",
+                "ok": not session_guard.get("active"),
+                "severity": "block",
+            },
+            {
+                "detail": f"${account_value:,.2f} detected" if account_value else "account value not refreshed yet",
+                "label": "Account value",
+                "ok": self.config.min_account_value <= 0 or account_value >= self.config.min_account_value,
+                "severity": "block",
+            },
+        ]
 
     def _paper_tick(self) -> None:
         candle = self._paper_candles[self._paper_index % len(self._paper_candles)]

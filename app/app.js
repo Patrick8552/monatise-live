@@ -71,6 +71,7 @@ const els = {
   passwordInput: document.querySelector("#passwordInput"),
   proPlanButton: document.querySelector("#proPlanButton"),
   quoteInput: document.querySelector("#quoteInput"),
+  readinessChecklist: document.querySelector("#readinessChecklist"),
   riskBudgetMetric: document.querySelector("#riskBudgetMetric"),
   exchangeOrderMetric: document.querySelector("#exchangeOrderMetric"),
   registerButton: document.querySelector("#registerButton"),
@@ -90,6 +91,7 @@ const els = {
   spacingValue: document.querySelector("#spacingValue"),
   stepButton: document.querySelector("#stepButton"),
   staleGridCancelInput: document.querySelector("#staleGridCancelInput"),
+  strategyReadout: document.querySelector("#strategyReadout"),
   subscriptionStatus: document.querySelector("#subscriptionStatus"),
   symbolInput: document.querySelector("#symbolInput"),
   syncMetric: document.querySelector("#syncMetric"),
@@ -155,6 +157,173 @@ function setGate(element, label, status, className = "") {
   element.querySelector("strong").textContent = status;
 }
 
+function readinessClass(item) {
+  if (item.ok) return "pass";
+  return item.severity === "block" ? "block" : "warn";
+}
+
+function localReadinessItems(snapshot = null) {
+  const loggedIn = Boolean(currentUser.authenticated);
+  const hasCredentials = Boolean(currentUser.credentialsConfigured);
+  const paidLive = hasLivePlan();
+  const mode = snapshot?.mode || "paper";
+  const network = snapshot?.network || "local";
+  const sessionGuard = (snapshot?.sessionGuard?.active ? snapshot.sessionGuard : activeSessionGuard(selectedAsset)) || {};
+  const requires = Array.isArray(snapshot?.requires) ? snapshot.requires : [];
+  const account = snapshot?.account || {};
+  const mark = Number(snapshot?.markPrice ?? currentMarketPrice());
+  const risk = snapshot?.risk || {};
+  const riskStatus = String(snapshot?.riskStatus || "");
+  const isLiveMainnet = mode === "live" && network === "mainnet";
+  const accountValue = Number(account.displayValue ?? account.accountValue);
+  const openNotional = Number(risk.open_order_notional || 0);
+  const maxDailyLoss = Number(risk.max_daily_loss || 0);
+  return [
+    {
+      detail: loggedIn ? currentUser.username || "account active" : "register or log in first",
+      label: "User session",
+      ok: loggedIn,
+      severity: "block"
+    },
+    {
+      detail: hasCredentials ? "funded account and API wallet saved" : "save Hyperliquid account and API wallet",
+      label: "Hyperliquid credentials",
+      ok: hasCredentials,
+      severity: "block"
+    },
+    {
+      detail: paidLive ? "Pro plan active" : "real order routing requires Pro",
+      label: "Live permission",
+      ok: paidLive || mode !== "live",
+      severity: isLiveMainnet ? "block" : "warn"
+    },
+    {
+      detail: requires.length ? requires.join(", ") : "server order gates satisfied",
+      label: "Server order gates",
+      ok: mode !== "live" || requires.length === 0,
+      severity: "block"
+    },
+    {
+      detail: Number.isFinite(mark) ? `${assetLabel(selectedAsset)} mark ${money(mark)}` : "waiting for live market mark",
+      label: "Market feed",
+      ok: Number.isFinite(mark) && mark > 0,
+      severity: "block"
+    },
+    {
+      detail: sessionGuard.active ? sessionGuard.message : "no active session break block",
+      label: "Session guard",
+      ok: !sessionGuard.active,
+      severity: "block"
+    },
+    {
+      detail: maxDailyLoss ? `${money(openNotional)} open vs ${money(maxDailyLoss)} daily loss budget` : riskStatus || "risk engine waiting",
+      label: "Risk budget",
+      ok: !/max daily loss|exceeds|below minimum|shock|guard/i.test(riskStatus),
+      severity: "block"
+    },
+    {
+      detail: "faith is not a signal; no trade remains valid",
+      label: "Doctrine alignment",
+      ok: true,
+      severity: "warn"
+    }
+  ];
+}
+
+function renderReadinessChecklist(snapshot = null) {
+  if (!els.readinessChecklist) return;
+  const backendItems = Array.isArray(snapshot?.readiness) ? snapshot.readiness : [];
+  const localItems = localReadinessItems(snapshot);
+  const localLabels = new Set(localItems.map((item) => item.label));
+  const items = [...localItems, ...backendItems.filter((item) => !localLabels.has(item.label))];
+  const blocked = items.filter((item) => !item.ok && item.severity === "block").length;
+  els.readinessChecklist.innerHTML = `
+    <div class="checklist-head">
+      <strong>${blocked ? `${blocked} live block${blocked === 1 ? "" : "s"}` : "Live checklist clear"}</strong>
+      <span>${blocked ? "preview only until resolved" : "ready for operator review"}</span>
+    </div>
+    ${items
+      .map(
+        (item) => `<article class="${readinessClass(item)}">
+          <span>${item.label}</span>
+          <strong>${item.ok ? "OK" : item.severity === "block" ? "BLOCK" : "WATCH"}</strong>
+          <em>${item.detail || ""}</em>
+        </article>`
+      )
+      .join("")}
+  `;
+}
+
+function strategyHealth(mark, orders, snapshot = null) {
+  const orderList = Array.isArray(orders) ? orders : [];
+  const buyOrders = orderList.filter((order) => String(order.side || "").toLowerCase().startsWith("b"));
+  const sellOrders = orderList.filter((order) => String(order.side || "").toLowerCase().startsWith("s"));
+  const prices = orderList.map((order) => Number(order.price)).filter((price) => Number.isFinite(price));
+  const notionals = orderList
+    .map((order) => Number(order.price) * Number(order.quantity || 0))
+    .filter((notional) => Number.isFinite(notional));
+  const gridFloor = prices.length ? Math.min(...prices) : Number.NaN;
+  const gridCeiling = prices.length ? Math.max(...prices) : Number.NaN;
+  const invalidation = Number(fibAnalysis?.invalidation);
+  const sessionGuard = (snapshot?.sessionGuard?.active ? snapshot.sessionGuard : activeSessionGuard(selectedAsset)) || {};
+  const indicatorAction = String(contextRadar?.instruction?.action || "normal");
+  const fibOk = Boolean(fibAnalysis && !fibAnalysis.error && fibAnalysis.symbol === selectedAsset);
+  const markOk = Number.isFinite(mark) && mark > 0;
+  const orderOk = orderList.length > 0 && buyOrders.length > 0 && sellOrders.length > 0;
+  const riskStatus = String(snapshot?.riskStatus || els.riskStatus?.textContent || "");
+  const blocked =
+    !markOk ||
+    !orderOk ||
+    sessionGuard.active ||
+    /max daily loss|exceeds|below minimum|shock|guard/i.test(riskStatus) ||
+    indicatorAction === "halt";
+  const warnings = [];
+  if (!fibOk) warnings.push("live Fibonacci candles pending");
+  if (indicatorAction === "reduce") warnings.push("context radar says reduce size");
+  if (indicatorAction === "widen") warnings.push("context radar says widen spacing");
+  if (sessionGuard.active) warnings.push(sessionGuard.message);
+  if (!orderOk) warnings.push("grid lacks balanced buy and sell levels");
+  return {
+    blocked,
+    buyCount: buyOrders.length,
+    gridCeiling,
+    gridFloor,
+    invalidation: Number.isFinite(invalidation) ? invalidation : gridFloor,
+    largestNotional: notionals.length ? Math.max(...notionals) : 0,
+    markOk,
+    orderCount: orderList.length,
+    sellCount: sellOrders.length,
+    status: blocked ? "WAIT" : warnings.length ? "REVIEW" : "ALIGNED",
+    warnings
+  };
+}
+
+function renderStrategyReadout(orders, options = {}) {
+  if (!els.strategyReadout) return;
+  const mark = Number(options.mark ?? currentMarketPrice() ?? state?.candles?.[0]?.close);
+  const health = strategyHealth(mark, orders, options.snapshot);
+  const source = options.source || "preview";
+  const sourceLabel = source === "live" ? "Exchange orders" : source === "backend" ? "Backend state" : "Strategy preview only";
+  const warningText = health.warnings.length ? health.warnings.join(" · ") : "structure, risk, session, and doctrine are aligned";
+  els.strategyReadout.innerHTML = `
+    <div class="strategy-status ${health.status.toLowerCase()}">
+      <strong>${health.status}</strong>
+      <span>${sourceLabel}</span>
+    </div>
+    <div class="strategy-metrics">
+      <span>Setup <strong>${health.buyCount} buy / ${health.sellCount} sell</strong></span>
+      <span>Risk clip <strong>${money(health.largestNotional)}</strong></span>
+      <span>Grid <strong>${Number.isFinite(health.gridFloor) ? money(health.gridFloor) : "pending"} - ${
+        Number.isFinite(health.gridCeiling) ? money(health.gridCeiling) : "pending"
+      }</strong></span>
+      <span>Invalidation <strong>${Number.isFinite(health.invalidation) ? money(health.invalidation) : "pending"}</strong></span>
+      <span>Session <strong>${activeSessionGuard(selectedAsset).active ? "blocked" : "clear"}</strong></span>
+      <span>Doctrine <strong>no trade remains valid</strong></span>
+    </div>
+    <p>${warningText}</p>
+  `;
+}
+
 function updateLiveDesk(snapshot = null) {
   const loggedIn = Boolean(currentUser.authenticated);
   const hasCredentials = Boolean(currentUser.credentialsConfigured);
@@ -212,6 +381,7 @@ function updateLiveDesk(snapshot = null) {
   if (sessionBlocked) {
     els.riskStatus.textContent = sessionGuard.message || "forex session-break guard";
   }
+  renderReadinessChecklist(snapshot);
 }
 
 async function apiFetch(path, options = {}) {
@@ -1478,13 +1648,15 @@ function renderBackend(snapshot) {
   }
   const liveOrders = snapshot.openOrders || [];
   const hasExchangeState = Boolean(snapshot.running || snapshot.liveReady || snapshot.desk?.exchangeOrderCount || liveOrders.length);
+  const liveMark = Number(snapshot.markPrice ?? currentMarketPrice());
   renderOpenOrders(liveOrders, {
     emptyText: hasExchangeState ? "No resting exchange orders" : "Backend connected",
     emptyHint: hasExchangeState ? "Arm the desk to place live grid orders" : "No live orders are being shown",
+    mark: Number.isFinite(liveMark) ? liveMark : undefined,
+    snapshot,
     source: hasExchangeState ? "live" : "backend",
     title: hasExchangeState ? "Live Orders" : "Backend State"
   });
-  const liveMark = Number(snapshot.markPrice ?? currentMarketPrice());
   const sourceLabel = hasExchangeState
     ? `${String(snapshot.mode || "live").toUpperCase()} ${String(snapshot.network || "mainnet").toUpperCase()} exchange/order state`
     : "Backend connected - no resting exchange orders";
@@ -1522,10 +1694,11 @@ function renderBackend(snapshot) {
 
 function renderOpenOrders(orders, options = {}) {
   const source = options.source || "preview";
+  const orderList = Array.isArray(orders) ? orders : [];
   els.openGridTitle.textContent = options.title || (source === "live" ? "Live Orders" : "Strategy Preview");
-  els.openOrderCount.textContent = `${orders.length} orders`;
-  els.openOrderBook.innerHTML = orders.length
-    ? orders
+  els.openOrderCount.textContent = `${orderList.length} orders`;
+  els.openOrderBook.innerHTML = orderList.length
+    ? orderList
         .slice(0, 12)
         .map(
           (order) => `<article class="order-row ${order.side} ${source}">
@@ -1535,6 +1708,15 @@ function renderOpenOrders(orders, options = {}) {
         )
         .join("")
     : `<article class="order-row empty"><strong>${options.emptyText || "No resting grid"}</strong><span>${options.emptyHint || "Waiting for arm"}</span></article>`;
+  try {
+    renderStrategyReadout(orderList, options);
+  } catch (error) {
+    if (els.strategyReadout) {
+      els.strategyReadout.innerHTML = `<div class="strategy-status wait"><strong>WAIT</strong><span>Readout unavailable</span></div><p>${
+        error.message || "strategy analyzer failed"
+      }</p>`;
+    }
+  }
 }
 
 async function refreshBackend() {
@@ -1617,6 +1799,7 @@ async function saveTradingRules() {
 function render() {
   const candle = state.candles[Math.max(0, Math.min(state.activeIndex, state.candles.length - 1))];
   const mark = candle.close;
+  const live = markets.find((asset) => asset.symbol === selectedAsset);
   els.candleCount.textContent = `${state.activeIndex}/${state.candles.length} candles`;
   els.equityMetric.textContent = money(equity(mark));
   els.feesMetric.textContent = money(state.feePaid);
@@ -1633,10 +1816,10 @@ function render() {
   renderOpenOrders(state.openOrders, {
     emptyHint: "Run a sample or connect the backend",
     emptyText: "No preview levels",
+    mark: live ? Number(live.price) : mark,
     source: "preview",
     title: "Strategy Preview"
   });
-  const live = markets.find((asset) => asset.symbol === selectedAsset);
   els.markPrice.textContent = live ? money(live.price) : money(mark);
   els.marketTitle.textContent = `${selectedAsset}-USD strategy map`;
   els.liquiditySource.textContent = "Strategy preview only. No exchange orders.";
