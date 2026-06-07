@@ -7,6 +7,7 @@ from monatise.core.models import Candle
 
 RETRACEMENTS = (0.236, 0.382, 0.5, 0.618, 0.786)
 EXTENSIONS = (1.272, 1.618)
+FAST_TARGET_SPAN_RATIO = 0.236
 
 
 @dataclass(frozen=True)
@@ -29,6 +30,7 @@ class FibonacciAnalysis:
     trend: str
     mark: float
     nearest_level: FibonacciLevel
+    take_profit: FibonacciLevel
     grid_floor: float
     grid_ceiling: float
     invalidation: float
@@ -83,6 +85,8 @@ def analyze_fibonacci(symbol: str, interval: str, candles: list[Candle], mark: f
 
     ordered_levels = sorted(levels, key=lambda level: level.price)
     nearest = min(ordered_levels, key=lambda level: abs(level.price - current_mark))
+    retracements = [level for level in ordered_levels if level.kind == "retracement"]
+    take_profit = _fast_take_profit(trend, current_mark, span, retracements)
     return FibonacciAnalysis(
         symbol=symbol,
         interval=interval,
@@ -94,6 +98,12 @@ def analyze_fibonacci(symbol: str, interval: str, candles: list[Candle], mark: f
         trend=trend,
         mark=round(current_mark, 8),
         nearest_level=FibonacciLevel(nearest.label, nearest.ratio, round(nearest.price, 8), nearest.kind),
+        take_profit=FibonacciLevel(
+            take_profit.label,
+            take_profit.ratio,
+            round(take_profit.price, 8),
+            take_profit.kind,
+        ),
         grid_floor=round(min(grid_floor, grid_ceiling), 8),
         grid_ceiling=round(max(grid_floor, grid_ceiling), 8),
         invalidation=round(invalidation, 8),
@@ -102,3 +112,16 @@ def analyze_fibonacci(symbol: str, interval: str, candles: list[Candle], mark: f
             for level in ordered_levels
         ],
     )
+
+
+def _fast_take_profit(trend: str, mark: float, span: float, retracements: list[FibonacciLevel]) -> FibonacciLevel:
+    if trend == "up":
+        favorable = [level for level in retracements if level.price > mark]
+        if favorable:
+            return min(favorable, key=lambda level: level.price - mark)
+        return FibonacciLevel("fast", FAST_TARGET_SPAN_RATIO, mark + (span * FAST_TARGET_SPAN_RATIO), "take-profit")
+
+    favorable = [level for level in retracements if level.price < mark]
+    if favorable:
+        return min(favorable, key=lambda level: mark - level.price)
+    return FibonacciLevel("fast", FAST_TARGET_SPAN_RATIO, mark - (span * FAST_TARGET_SPAN_RATIO), "take-profit")

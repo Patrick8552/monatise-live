@@ -1135,6 +1135,7 @@ function renderFibonacciAnalysis() {
     <div class="fib-metrics">
       <span>High <strong>${money(fibAnalysis.swing_high)}</strong></span>
       <span>Low <strong>${money(fibAnalysis.swing_low)}</strong></span>
+      <span>Fast Take Profit <strong>${money(fibAnalysis.take_profit.price)}</strong></span>
       <span>Nearest ${fibAnalysis.nearest_level.label} <strong>${money(fibAnalysis.nearest_level.price)}</strong></span>
       <span>Grid ${money(fibAnalysis.grid_floor)} - ${money(fibAnalysis.grid_ceiling)}</span>
       <span>Invalidation <strong>${money(fibAnalysis.invalidation)}</strong></span>
