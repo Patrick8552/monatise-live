@@ -26,6 +26,7 @@ const els = {
   candleCount: document.querySelector("#candleCount"),
   cashMetricLabel: document.querySelector("#cashMetricLabel"),
   chartIntervalSelect: document.querySelector("#chartIntervalSelect"),
+  clientNameInput: document.querySelector("#clientNameInput"),
   credentialStatus: document.querySelector("#credentialStatus"),
   contextRadar: document.querySelector("#contextRadar"),
   csvInput: document.querySelector("#csvInput"),
@@ -115,6 +116,14 @@ const els = {
   ticketSummary: document.querySelector("#ticketSummary"),
   tradeAuditLog: document.querySelector("#tradeAuditLog"),
   londonCommodityInput: document.querySelector("#londonCommodityInput"),
+  finishOnboardingButton: document.querySelector("#finishOnboardingButton"),
+  onboardingAccount: document.querySelector("#onboardingAccount"),
+  onboardingContact: document.querySelector("#onboardingContact"),
+  onboardingDrawdown: document.querySelector("#onboardingDrawdown"),
+  onboardingPlan: document.querySelector("#onboardingPlan"),
+  onboardingStatus: document.querySelector("#onboardingStatus"),
+  registrationDesk: document.querySelector("#registrationDesk"),
+  startOnboardingPaymentButton: document.querySelector("#startOnboardingPaymentButton"),
   usernameInput: document.querySelector("#usernameInput")
 };
 
@@ -177,6 +186,48 @@ function isEmailOrPhoneUsername(value) {
   const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
   const phonePattern = /^\+?[0-9][0-9\s().-]{6,}[0-9]$/;
   return emailPattern.test(normalized) || phonePattern.test(normalized);
+}
+
+function clientProfileKey(username) {
+  return `monatiseClientProfile:${String(username || "").trim().toLowerCase()}`;
+}
+
+function loadClientProfile(username) {
+  if (!username) return {};
+  try {
+    return JSON.parse(localStorage.getItem(clientProfileKey(username)) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function saveClientProfile(username) {
+  if (!username) return {};
+  const profile = {
+    clientName: els.clientNameInput.value.trim(),
+    contact: String(username).trim(),
+    updatedAt: new Date().toISOString()
+  };
+  localStorage.setItem(clientProfileKey(username), JSON.stringify(profile));
+  return profile;
+}
+
+function renderRegistrationDesk(me = currentUser) {
+  const loggedIn = Boolean(me.authenticated);
+  els.registrationDesk.hidden = !loggedIn;
+  if (!loggedIn) return;
+  const profile = loadClientProfile(me.username);
+  if (profile.clientName && !els.clientNameInput.value.trim()) {
+    els.clientNameInput.value = profile.clientName;
+  }
+  const clientName = els.clientNameInput.value.trim() || profile.clientName || "Client";
+  const accountReady = Boolean(me.credentialsConfigured);
+  const planText = me.subscription ? `${me.subscription.plan} ${me.subscription.status}` : "free active";
+  els.onboardingContact.textContent = `${clientName} / ${me.username}`;
+  els.onboardingDrawdown.textContent = `${(tradingRules.maxDailyLossPct * 100).toFixed(1).replace(/\.0$/, "")}% cap`;
+  els.onboardingAccount.textContent = accountReady ? "Filed" : "Needed";
+  els.onboardingPlan.textContent = planText;
+  els.onboardingStatus.textContent = accountReady && hasLivePlan() ? "Desk ready" : "Pending setup";
 }
 
 function normalizeForexSymbol(symbol) {
@@ -855,6 +906,7 @@ function renderTradingRules() {
   els.chartIntervalSelect.querySelector('option[value="1m"]').disabled = !hasLivePlan();
   renderForexSessions();
   updateDecisionSurface(lastBackendSnapshot);
+  renderRegistrationDesk();
 }
 
 function hasLivePlan() {
@@ -879,6 +931,7 @@ function renderAuth(me) {
   els.saveCredentialsButton.disabled = !loggedIn;
   els.backendStartButton.disabled = !loggedIn || !me.credentialsConfigured || !hasLivePlan();
   els.backendStopButton.disabled = !loggedIn;
+  renderRegistrationDesk(me);
   if (loggedIn && me.credentialsConfigured && !hasLivePlan()) {
     els.backendStatus.textContent = "Pro required for mainnet live";
   }
@@ -905,6 +958,11 @@ async function loginOrRegister(path) {
   const password = els.passwordInput.value;
   const isRegister = path.includes("register");
   const actionButton = isRegister ? els.registerButton : els.loginButton;
+  if (isRegister && els.clientNameInput.value.trim().length < 2) {
+    setAuthStatus("Client name required");
+    els.credentialStatus.textContent = "Enter the client name before registration.";
+    return;
+  }
   if (!isEmailOrPhoneUsername(username)) {
     setAuthStatus("Email or phone required");
     els.credentialStatus.textContent = "Use an email address or phone number as your username.";
@@ -927,7 +985,13 @@ async function loginOrRegister(path) {
       return;
     }
     els.passwordInput.value = "";
+    if (isRegister) saveClientProfile(payload.username || username);
     renderAuth(payload);
+    if (isRegister) {
+      renderRegistrationDesk(payload);
+      els.credentialStatus.textContent = "Registration filed. Complete the client intake ticket below.";
+      els.registrationDesk.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
     addAuditEvent(isRegister ? "register" : "login", isRegister ? "User registered" : "User logged in", payload.username || username);
     refreshBackend();
   } catch {
@@ -953,6 +1017,41 @@ async function saveCredentials() {
   await loadMe();
   addAuditEvent("credentials saved", "Hyperliquid credentials saved", "API wallet stored per user");
   refreshBackend();
+}
+
+async function finishOnboarding() {
+  if (!currentUser.authenticated) {
+    els.credentialStatus.textContent = "Register or log in before filing setup.";
+    return;
+  }
+  if (els.clientNameInput.value.trim().length < 2) {
+    els.credentialStatus.textContent = "Enter the client name before filing setup.";
+    els.clientNameInput.focus();
+    return;
+  }
+  saveClientProfile(currentUser.username);
+  if (!currentUser.credentialsConfigured && (!els.accountAddressInput.value.trim() || !els.secretKeyInput.value.trim())) {
+    els.credentialStatus.textContent = "Add the funded account address and API wallet secret key to file setup.";
+    (els.accountAddressInput.value.trim() ? els.secretKeyInput : els.accountAddressInput).focus();
+    renderRegistrationDesk();
+    return;
+  }
+  if (els.accountAddressInput.value.trim() && els.secretKeyInput.value.trim()) {
+    await saveCredentials();
+  }
+  await saveTradingRules();
+  renderRegistrationDesk();
+  els.credentialStatus.textContent = "Client setup filed. Upgrade Pro to enable mainnet live execution.";
+}
+
+function startOnboardingPayment() {
+  if (!currentUser.authenticated) {
+    els.subscriptionStatus.textContent = "login required";
+    return;
+  }
+  if (els.paymentMethodSelect) els.paymentMethodSelect.value = "crypto";
+  document.querySelector(".subscription-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  checkoutPlan("pro");
 }
 
 function syncSelectedAsset() {
@@ -2269,6 +2368,9 @@ els.assetGroups.addEventListener("click", (event) => {
 });
 els.loginButton.addEventListener("click", () => loginOrRegister("/api/login"));
 els.registerButton.addEventListener("click", () => loginOrRegister("/api/register"));
+els.finishOnboardingButton.addEventListener("click", finishOnboarding);
+els.startOnboardingPaymentButton.addEventListener("click", startOnboardingPayment);
+els.clientNameInput.addEventListener("input", () => renderRegistrationDesk());
 els.passwordToggle.addEventListener("click", () => {
   const isHidden = els.passwordInput.type === "password";
   els.passwordInput.type = isHidden ? "text" : "password";

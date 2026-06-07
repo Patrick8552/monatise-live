@@ -2258,6 +2258,75 @@ canvas {
   padding: 7px 10px;
 }
 
+.registration-desk {
+  background:
+    linear-gradient(135deg, rgba(12, 18, 23, 0.96), rgba(28, 38, 42, 0.96)),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.04) 0 1px, transparent 1px 9px);
+  border: 1px solid rgba(209, 168, 91, 0.42);
+  border-radius: 6px;
+  box-shadow: 0 14px 30px rgba(10, 16, 20, 0.18);
+  color: #f8faf5;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.registration-desk[hidden] {
+  display: none;
+}
+
+.registration-desk-head {
+  align-items: end;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  padding-bottom: 9px;
+}
+
+.registration-desk-head span,
+.onboarding-ledger span {
+  color: rgba(248, 250, 245, 0.66);
+  font-size: 0.68rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.registration-desk-head strong {
+  color: #f1c56f;
+  font-size: 0.82rem;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.onboarding-ledger {
+  display: grid;
+  gap: 7px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.onboarding-ledger article {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-left: 3px solid rgba(209, 168, 91, 0.82);
+  border-radius: 6px;
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 8px;
+}
+
+.onboarding-ledger strong {
+  color: #ffffff;
+  font-size: 0.78rem;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.registration-desk .button-row button {
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
 .backend-box div:first-child {
   align-items: center;
   display: flex;
@@ -2619,6 +2688,10 @@ button:disabled {
   .section-head h2 {
     font-size: 1rem;
     line-height: 1.22;
+  }
+
+  .onboarding-ledger {
+    grid-template-columns: 1fr;
   }
 
   .desk-jump-nav {

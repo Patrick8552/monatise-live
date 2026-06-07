@@ -401,8 +401,12 @@
                 <button id="logoutButton" type="button">Logout</button>
               </div>
               <label>
+                Client name
+                <input id="clientNameInput" type="text" autocomplete="name" placeholder="Legal or trading desk name" />
+              </label>
+              <label>
                 Email or phone
-                <input id="usernameInput" type="text" autocomplete="username" inputmode="email" placeholder="client@email.com or +15551234567" />
+                <input id="usernameInput" type="text" autocomplete="username" inputmode="text" placeholder="client@email.com or +15551234567" />
               </label>
               <label>
                 Password
@@ -414,6 +418,34 @@
               <div class="button-row">
                 <button id="loginButton" class="primary" type="button">Login</button>
                 <button id="registerButton" type="button">Register</button>
+              </div>
+              <div id="registrationDesk" class="registration-desk" hidden>
+                <div class="registration-desk-head">
+                  <span>Client intake</span>
+                  <strong id="onboardingStatus">Pending setup</strong>
+                </div>
+                <div class="onboarding-ledger" aria-label="registration checklist">
+                  <article>
+                    <span>Identity</span>
+                    <strong id="onboardingContact">Not filed</strong>
+                  </article>
+                  <article>
+                    <span>Risk mandate</span>
+                    <strong id="onboardingDrawdown">5% cap</strong>
+                  </article>
+                  <article>
+                    <span>Execution account</span>
+                    <strong id="onboardingAccount">Needed</strong>
+                  </article>
+                  <article>
+                    <span>Subscription</span>
+                    <strong id="onboardingPlan">Free active</strong>
+                  </article>
+                </div>
+                <div class="button-row">
+                  <button id="finishOnboardingButton" class="primary" type="button">File setup</button>
+                  <button id="startOnboardingPaymentButton" type="button">Upgrade Pro</button>
+                </div>
               </div>
               <label>
                 Funded account address
