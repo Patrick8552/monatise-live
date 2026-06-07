@@ -9,7 +9,7 @@ from pathlib import Path
 from monatise.adapters.hyperliquid import HyperliquidAdapter
 from monatise.core.models import Candle, Fill, Order, OrderSide, Portfolio
 from monatise.live.config import RuntimeConfig
-from monatise.live.risk import RiskManager
+from monatise.live.risk import RiskDecision, RiskManager
 from monatise.sim.csv_data import load_candles
 from monatise.strategy.harvester import LiquidityHarvester, LiquidityHarvesterConfig
 
@@ -35,6 +35,8 @@ class RuntimeState:
     live_ready: bool = False
     risk_status: str = "ready"
     account: dict = field(default_factory=dict)
+    last_order_refresh: float = 0.0
+    last_mark_price: float = 0.0
 
 
 class TradingService:
@@ -92,6 +94,8 @@ class TradingService:
     def requirements(self) -> list[str]:
         missing = []
         if self.config.mode == "live":
+            if self.config.execution_mode != "live":
+                missing.append("MONATISE_EXECUTION_MODE=live")
             if not self.config.secret_key:
                 missing.append("HYPERLIQUID_SECRET_KEY")
             if not self.config.account_address:
@@ -123,6 +127,7 @@ class TradingService:
             "running": self.state.running,
             "mode": self.state.mode,
             "network": self.state.network,
+            "executionMode": self.config.execution_mode,
             "symbol": self.state.symbol,
             "markPrice": self.state.mark_price,
             "portfolio": {
@@ -140,6 +145,15 @@ class TradingService:
             "riskStatus": self.state.risk_status,
             "requires": self.requirements(),
             "account": self.state.account,
+            "risk": asdict(self.risk.snapshot(self.state.open_orders, self.portfolio, mark)),
+            "desk": {
+                "orderAgeSeconds": max(0.0, time.time() - self.state.last_order_refresh)
+                if self.state.last_order_refresh
+                else 0.0,
+                "orderRefreshSeconds": self.config.order_refresh_seconds,
+                "maxMarkMovePct": self.config.max_mark_move_pct,
+                "executionMode": self.config.execution_mode,
+            },
         }
 
     def _refresh_live_status(self) -> None:
@@ -149,9 +163,10 @@ class TradingService:
             account = self._account_snapshot(adapter, mark)
             with self._lock:
                 self.state.mark_price = mark
-                self.state.account = account
-                self.state.risk_status = "live data ready" if self.config.live_enabled else "live dry-run"
-                if not self._live_baseline_initialized:
+            self.state.account = account
+            self.state.risk_status = "live data ready" if self.config.live_enabled else "live dry-run"
+            self.state.last_mark_price = mark
+            if not self._live_baseline_initialized:
                     self.harvester = self._build_harvester(mark)
                     self.risk = RiskManager(self.config, self.portfolio.equity(mark))
                     self._live_baseline_initialized = True
@@ -180,6 +195,15 @@ class TradingService:
         mark = adapter.latest_price(self.config.symbol)
         account = self._account_snapshot(adapter, mark)
         with self._lock:
+            market_decision = self._market_guard(mark, account)
+            if not market_decision.allowed:
+                self.state.open_orders = []
+                self.state.mark_price = mark
+                self.state.account = account
+                self.state.last_mark_price = mark
+                self.state.risk_status = market_decision.reason
+                self._event("warn", market_decision.reason)
+                return
             if not self._live_baseline_initialized:
                 self.harvester = self._build_harvester(mark)
                 self.risk = RiskManager(self.config, self.portfolio.equity(mark))
@@ -187,6 +211,10 @@ class TradingService:
                 self._event("info", f"live baseline initialized at {mark}")
             self.state.mark_price = mark
             self.state.account = account
+            self.state.last_mark_price = mark
+            if self.state.open_orders and self._open_orders_stale():
+                self._event("info", "refreshing stale live grid")
+                self.state.open_orders = []
             orders = self.harvester.plan_orders(self.portfolio, mark)
             decision = self.risk.check_batch(orders, self.portfolio, mark)
             if not decision.allowed:
@@ -197,13 +225,19 @@ class TradingService:
             if self.state.open_orders:
                 self.state.risk_status = f"{len(self.state.open_orders)} live orders resting"
                 return
+            if self.config.execution_mode == "observe":
+                self.state.open_orders = []
+                self.state.risk_status = "observe mode: market data only"
+                return
             if self.config.live_enabled:
                 submitted = adapter.place_orders(orders)
                 self.state.open_orders = orders
+                self.state.last_order_refresh = time.time()
                 self.state.risk_status = f"submitted {len(submitted)} live orders"
                 self._event("info", f"submitted {len(submitted)} Hyperliquid orders")
             else:
                 self.state.open_orders = orders
+                self.state.last_order_refresh = time.time()
                 self.state.risk_status = "live dry-run: missing confirmation or keys"
 
     def _live_adapter(self) -> HyperliquidAdapter:
@@ -250,6 +284,24 @@ class TradingService:
             "vaultCount": len(vaults),
             "displayValue": perp_value + spot_usdc,
         }
+
+    def _market_guard(self, mark: float, account: dict) -> RiskDecision:
+        previous = self.state.last_mark_price or mark
+        move_pct = abs(mark - previous) / previous if previous > 0 else 0.0
+        if move_pct > self.config.max_mark_move_pct:
+            return RiskDecision(False, f"market shock guard: mark moved {move_pct:.2%}")
+        account_value = float(account.get("displayValue", 0) or 0)
+        if self.config.min_account_value and account_value < self.config.min_account_value:
+            return RiskDecision(False, "account value below minimum")
+        position_value = abs(float(account.get("positionValue", 0) or 0))
+        if position_value > self.config.max_position_value:
+            return RiskDecision(False, "position exposure exceeds limit")
+        return RiskDecision(True)
+
+    def _open_orders_stale(self) -> bool:
+        if not self.state.last_order_refresh:
+            return False
+        return time.time() - self.state.last_order_refresh > self.config.order_refresh_seconds
 
     def _match_candle(self, candle: Candle, orders: list[Order]) -> list[Fill]:
         fills: list[Fill] = []

@@ -27,6 +27,25 @@ def test_live_tick_initializes_risk_baseline_from_live_mark() -> None:
     assert snapshot["markPrice"] == 63_816.5
     assert snapshot["riskStatus"] == "live dry-run"
     assert "max daily loss reached" not in [event["message"] for event in snapshot["events"]]
+    assert snapshot["executionMode"] == "dry_run"
+    assert "risk" in snapshot
+
+
+def test_market_shock_guard_blocks_fast_mark_move() -> None:
+    service = TradingService(
+        RuntimeConfig(
+            mode="live",
+            network="testnet",
+            symbol="BTC",
+            max_mark_move_pct=0.01,
+        )
+    )
+    service.state.last_mark_price = 100.0
+
+    decision = service._market_guard(103.0, {})
+
+    assert not decision.allowed
+    assert "market shock guard" in decision.reason
 
 
 def test_hyperliquid_order_values_are_rounded_for_wire_format() -> None:

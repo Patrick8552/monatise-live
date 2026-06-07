@@ -83,11 +83,16 @@ aws cloudformation deploy \
     RuntimeMode="${MONATISE_MODE:-paper}" \
     RuntimeNetwork="${MONATISE_NETWORK:-testnet}" \
     Symbol="${MONATISE_SYMBOL:-BTC}" \
+    ExecutionMode="${MONATISE_EXECUTION_MODE:-dry_run}" \
     OrderQuoteSize="${MONATISE_ORDER_QUOTE_SIZE:-250}" \
     MaxOrderNotional="${MONATISE_MAX_ORDER_NOTIONAL:-250}" \
     MaxTotalNotional="${MONATISE_MAX_TOTAL_NOTIONAL:-1500}" \
     MaxBaseInventory="${MONATISE_MAX_BASE_INVENTORY:-0.1}" \
     MaxDailyLoss="${MONATISE_MAX_DAILY_LOSS:-100}" \
+    MaxMarkMovePct="${MONATISE_MAX_MARK_MOVE_PCT:-0.03}" \
+    MaxPositionValue="${MONATISE_MAX_POSITION_VALUE:-1000}" \
+    MinAccountValue="${MONATISE_MIN_ACCOUNT_VALUE:-0}" \
+    OrderRefreshSeconds="${MONATISE_ORDER_REFRESH_SECONDS:-30}" \
     AllowLiveOrders="${MONATISE_ALLOW_LIVE_ORDERS:-false}" \
     LiveConfirmation="${MONATISE_LIVE_CONFIRMATION:-}" \
     HyperliquidAccountAddressSecretArn="${HYPERLIQUID_ACCOUNT_ADDRESS_SECRET_ARN:-}" \

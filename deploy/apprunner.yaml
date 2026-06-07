@@ -29,6 +29,13 @@ Parameters:
   Symbol:
     Type: String
     Default: BTC
+  ExecutionMode:
+    Type: String
+    Default: dry_run
+    AllowedValues:
+      - observe
+      - dry_run
+      - live
   OrderQuoteSize:
     Type: Number
     Default: 250
@@ -44,6 +51,18 @@ Parameters:
   MaxDailyLoss:
     Type: Number
     Default: 100
+  MaxMarkMovePct:
+    Type: Number
+    Default: 0.03
+  MaxPositionValue:
+    Type: Number
+    Default: 1000
+  MinAccountValue:
+    Type: Number
+    Default: 0
+  OrderRefreshSeconds:
+    Type: Number
+    Default: 30
   AllowLiveOrders:
     Type: String
     Default: "false"
@@ -92,6 +111,8 @@ Resources:
                 Value: !Ref RuntimeNetwork
               - Name: MONATISE_SYMBOL
                 Value: !Ref Symbol
+              - Name: MONATISE_EXECUTION_MODE
+                Value: !Ref ExecutionMode
               - Name: MONATISE_ORDER_QUOTE_SIZE
                 Value: !Ref OrderQuoteSize
               - Name: MONATISE_MAX_ORDER_NOTIONAL
@@ -102,6 +123,14 @@ Resources:
                 Value: !Ref MaxBaseInventory
               - Name: MONATISE_MAX_DAILY_LOSS
                 Value: !Ref MaxDailyLoss
+              - Name: MONATISE_MAX_MARK_MOVE_PCT
+                Value: !Ref MaxMarkMovePct
+              - Name: MONATISE_MAX_POSITION_VALUE
+                Value: !Ref MaxPositionValue
+              - Name: MONATISE_MIN_ACCOUNT_VALUE
+                Value: !Ref MinAccountValue
+              - Name: MONATISE_ORDER_REFRESH_SECONDS
+                Value: !Ref OrderRefreshSeconds
               - Name: MONATISE_ALLOW_LIVE_ORDERS
                 Value: !Ref AllowLiveOrders
               - Name: MONATISE_LIVE_CONFIRMATION

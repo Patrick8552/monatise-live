@@ -21,10 +21,15 @@ class RuntimeConfig:
     order_quote_size: float = 250.0
     fee_rate: float = 0.0004
     poll_seconds: float = 5.0
+    execution_mode: str = "dry_run"
     max_order_notional: float = 250.0
     max_total_notional: float = 1_500.0
     max_base_inventory: float = 0.1
     max_daily_loss: float = 100.0
+    max_mark_move_pct: float = 0.03
+    max_position_value: float = 1_000.0
+    min_account_value: float = 0.0
+    order_refresh_seconds: float = 30.0
     allow_live_orders: bool = False
     live_confirmation: str = ""
     account_address: str = ""
@@ -44,10 +49,15 @@ class RuntimeConfig:
             order_quote_size=float(os.getenv("MONATISE_ORDER_QUOTE_SIZE", "250")),
             fee_rate=float(os.getenv("MONATISE_FEE_RATE", "0.0004")),
             poll_seconds=float(os.getenv("MONATISE_POLL_SECONDS", "5")),
+            execution_mode=os.getenv("MONATISE_EXECUTION_MODE", "dry_run").lower(),
             max_order_notional=float(os.getenv("MONATISE_MAX_ORDER_NOTIONAL", "250")),
             max_total_notional=float(os.getenv("MONATISE_MAX_TOTAL_NOTIONAL", "1500")),
             max_base_inventory=float(os.getenv("MONATISE_MAX_BASE_INVENTORY", "0.1")),
             max_daily_loss=float(os.getenv("MONATISE_MAX_DAILY_LOSS", "100")),
+            max_mark_move_pct=float(os.getenv("MONATISE_MAX_MARK_MOVE_PCT", "0.03")),
+            max_position_value=float(os.getenv("MONATISE_MAX_POSITION_VALUE", "1000")),
+            min_account_value=float(os.getenv("MONATISE_MIN_ACCOUNT_VALUE", "0")),
+            order_refresh_seconds=float(os.getenv("MONATISE_ORDER_REFRESH_SECONDS", "30")),
             allow_live_orders=os.getenv("MONATISE_ALLOW_LIVE_ORDERS", "false").lower() == "true",
             live_confirmation=secret_value("MONATISE_LIVE_CONFIRMATION", ""),
             account_address=(
@@ -71,6 +81,7 @@ class RuntimeConfig:
     def live_enabled(self) -> bool:
         return (
             self.mode == "live"
+            and self.execution_mode == "live"
             and self.allow_live_orders
             and self.live_confirmation == LIVE_CONFIRMATION
             and bool(self.secret_key)
@@ -82,9 +93,15 @@ class RuntimeConfig:
             raise ValueError("MONATISE_MODE must be paper or live")
         if self.network not in {"testnet", "mainnet"}:
             raise ValueError("MONATISE_NETWORK must be testnet or mainnet")
+        if self.execution_mode not in {"observe", "dry_run", "live"}:
+            raise ValueError("MONATISE_EXECUTION_MODE must be observe, dry_run, or live")
         if self.order_quote_size <= 0:
             raise ValueError("MONATISE_ORDER_QUOTE_SIZE must be positive")
         if self.max_order_notional <= 0:
             raise ValueError("MONATISE_MAX_ORDER_NOTIONAL must be positive")
         if self.order_quote_size > self.max_order_notional:
             raise ValueError("order quote size cannot exceed max order notional")
+        if self.max_mark_move_pct <= 0:
+            raise ValueError("MONATISE_MAX_MARK_MOVE_PCT must be positive")
+        if self.order_refresh_seconds <= 0:
+            raise ValueError("MONATISE_ORDER_REFRESH_SECONDS must be positive")

@@ -26,6 +26,7 @@ const els = {
   csvInput: document.querySelector("#csvInput"),
   equityCanvas: document.querySelector("#equityCanvas"),
   equityMetric: document.querySelector("#equityMetric"),
+  drawdownMetric: document.querySelector("#drawdownMetric"),
   feeInput: document.querySelector("#feeInput"),
   feesMetric: document.querySelector("#feesMetric"),
   fillCount: document.querySelector("#fillCount"),
@@ -50,6 +51,11 @@ const els = {
   marketStrip: document.querySelector("#marketStrip"),
   marketTitle: document.querySelector("#marketTitle"),
   orderSizeInput: document.querySelector("#orderSizeInput"),
+  executionModeMetric: document.querySelector("#executionModeMetric"),
+  openNotionalMetric: document.querySelector("#openNotionalMetric"),
+  openOrderBook: document.querySelector("#openOrderBook"),
+  openOrderCount: document.querySelector("#openOrderCount"),
+  orderAgeMetric: document.querySelector("#orderAgeMetric"),
   paymentCurrencySelect: document.querySelector("#paymentCurrencySelect"),
   paymentEmailInput: document.querySelector("#paymentEmailInput"),
   paymentMethodSelect: document.querySelector("#paymentMethodSelect"),
@@ -57,6 +63,7 @@ const els = {
   passwordInput: document.querySelector("#passwordInput"),
   proPlanButton: document.querySelector("#proPlanButton"),
   quoteInput: document.querySelector("#quoteInput"),
+  riskBudgetMetric: document.querySelector("#riskBudgetMetric"),
   registerButton: document.querySelector("#registerButton"),
   resetButton: document.querySelector("#resetButton"),
   riskGate: document.querySelector("#riskGate"),
@@ -761,7 +768,7 @@ function renderBackend(snapshot) {
   backendOnline = true;
   els.backendStatus.textContent = `${snapshot.mode} ${snapshot.running ? "running" : "stopped"}`;
   els.candleCount.textContent = snapshot.running ? "backend loop" : "backend idle";
-  els.riskStatus.textContent = snapshot.riskStatus || "ready";
+    els.riskStatus.textContent = snapshot.riskStatus || "ready";
   els.runState.textContent = snapshot.running ? "Backend running" : "Backend ready";
   updateLiveDesk(snapshot);
   if (snapshot.markPrice) {
@@ -786,6 +793,16 @@ function renderBackend(snapshot) {
       ? `${Number(snapshot.account.positionSize || 0).toFixed(5)} ${snapshot.symbol}`
       : `${(snapshot.portfolio.inventoryRatio * 100).toFixed(2)}%`;
   }
+  if (snapshot.risk) {
+    els.drawdownMetric.textContent = `${money(snapshot.risk.drawdown)} (${((snapshot.risk.drawdown_pct || 0) * 100).toFixed(2)}%)`;
+    els.openNotionalMetric.textContent = money(snapshot.risk.open_order_notional || 0);
+    els.riskBudgetMetric.textContent = `${money(snapshot.risk.max_daily_loss || 0)} loss`;
+  }
+  if (snapshot.desk) {
+    els.executionModeMetric.textContent = snapshot.desk.executionMode || snapshot.executionMode || "dry_run";
+    els.orderAgeMetric.textContent = `${Math.round(snapshot.desk.orderAgeSeconds || 0)}s / ${Math.round(snapshot.desk.orderRefreshSeconds || 0)}s`;
+  }
+  renderOpenOrders(snapshot.openOrders || []);
   if (Array.isArray(snapshot.fills)) {
     els.fillCount.textContent = `${snapshot.fills.length} fills`;
     const fills = snapshot.fills.slice(-20).reverse();
@@ -809,6 +826,21 @@ function renderBackend(snapshot) {
       .map((event) => `<article class="${event.level}">${event.message}</article>`)
       .join("");
   }
+}
+
+function renderOpenOrders(orders) {
+  els.openOrderCount.textContent = `${orders.length} orders`;
+  els.openOrderBook.innerHTML = orders.length
+    ? orders
+        .slice(0, 12)
+        .map(
+          (order) => `<article class="order-row ${order.side}">
+            <strong>${String(order.side).toUpperCase()} ${money(order.price)}</strong>
+            <span>${Number(order.quantity || 0).toFixed(5)} ${order.symbol || selectedAsset}</span>
+          </article>`
+        )
+        .join("")
+    : "<article class=\"order-row empty\"><strong>No resting grid</strong><span>Waiting for arm</span></article>";
 }
 
 async function refreshBackend() {
@@ -850,6 +882,12 @@ function render() {
   els.fillCount.textContent = `${state.fills.length} fills`;
   els.harvestMetric.textContent = money(state.realizedHarvest);
   els.inventoryMetric.textContent = `${(inventoryRatio(mark) * 100).toFixed(2)}%`;
+  els.drawdownMetric.textContent = "$0.00 (0.00%)";
+  els.openNotionalMetric.textContent = money(state.openOrders.reduce((sum, order) => sum + order.price * order.quantity, 0));
+  els.riskBudgetMetric.textContent = "local";
+  els.executionModeMetric.textContent = backendOnline ? els.executionModeMetric.textContent : "local";
+  els.orderAgeMetric.textContent = "0s";
+  renderOpenOrders(state.openOrders);
   const live = markets.find((asset) => asset.symbol === selectedAsset);
   els.markPrice.textContent = live ? money(live.price) : money(mark);
   els.marketTitle.textContent = `${selectedAsset}-USD liquidity map`;

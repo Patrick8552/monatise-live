@@ -12,6 +12,18 @@ class RiskDecision:
     reason: str = ""
 
 
+@dataclass(frozen=True)
+class RiskSnapshot:
+    starting_equity: float
+    equity: float
+    drawdown: float
+    drawdown_pct: float
+    kill_switch: bool
+    open_order_notional: float
+    max_total_notional: float
+    max_daily_loss: float
+
+
 class RiskManager:
     def __init__(self, config: RuntimeConfig, starting_equity: float) -> None:
         self.config = config
@@ -42,6 +54,21 @@ class RiskManager:
             if not decision.allowed:
                 return decision
         return RiskDecision(True)
+
+    def snapshot(self, orders: list[Order], portfolio: Portfolio, mark_price: float) -> RiskSnapshot:
+        equity = portfolio.equity(mark_price)
+        drawdown = max(0.0, self.starting_equity - equity)
+        drawdown_pct = 0.0 if self.starting_equity <= 0 else drawdown / self.starting_equity
+        return RiskSnapshot(
+            starting_equity=self.starting_equity,
+            equity=equity,
+            drawdown=drawdown,
+            drawdown_pct=drawdown_pct,
+            kill_switch=self.kill_switch,
+            open_order_notional=sum(order.notional for order in orders),
+            max_total_notional=self.config.max_total_notional,
+            max_daily_loss=self.config.max_daily_loss,
+        )
 
     def check_order(self, order: Order, portfolio: Portfolio) -> RiskDecision:
         if order.notional > self.config.max_order_notional + 1e-9:

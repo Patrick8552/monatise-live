@@ -190,6 +190,39 @@
             </div>
           </section>
 
+          <section class="panel metrics">
+            <div class="panel-head">
+              <h2>Risk Console</h2>
+              <span id="executionModeMetric">dry-run</span>
+            </div>
+            <div class="metric-grid compact">
+              <article>
+                <span>Drawdown</span>
+                <strong id="drawdownMetric">$0.00</strong>
+              </article>
+              <article>
+                <span>Open Notional</span>
+                <strong id="openNotionalMetric">$0.00</strong>
+              </article>
+              <article>
+                <span>Order Age</span>
+                <strong id="orderAgeMetric">0s</strong>
+              </article>
+              <article>
+                <span>Budget</span>
+                <strong id="riskBudgetMetric">$0.00</strong>
+              </article>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Open Grid</h2>
+              <span id="openOrderCount">0 orders</span>
+            </div>
+            <div id="openOrderBook" class="open-order-book"></div>
+          </section>
+
           <section class="panel">
             <div class="panel-head">
               <h2>Fill Tape</h2>

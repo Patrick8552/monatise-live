@@ -12,6 +12,7 @@ def test_live_mode_requires_all_order_gates() -> None:
 def test_live_mode_enables_only_with_explicit_confirmation() -> None:
     config = RuntimeConfig(
         mode="live",
+        execution_mode="live",
         allow_live_orders=True,
         live_confirmation=LIVE_CONFIRMATION,
         account_address="0xabc",
@@ -19,6 +20,19 @@ def test_live_mode_enables_only_with_explicit_confirmation() -> None:
     )
 
     assert config.live_enabled
+
+
+def test_live_mode_dry_run_does_not_enable_order_placement() -> None:
+    config = RuntimeConfig(
+        mode="live",
+        execution_mode="dry_run",
+        allow_live_orders=True,
+        live_confirmation=LIVE_CONFIRMATION,
+        account_address="0xabc",
+        secret_key="secret",
+    )
+
+    assert not config.live_enabled
 
 
 def test_order_size_cannot_exceed_max_order_notional() -> None:

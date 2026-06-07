@@ -25,11 +25,13 @@ TESTS = {
     "tests.test_live_config": [
         "test_live_mode_requires_all_order_gates",
         "test_live_mode_enables_only_with_explicit_confirmation",
+        "test_live_mode_dry_run_does_not_enable_order_placement",
         "test_order_size_cannot_exceed_max_order_notional",
         "test_global_hyperliquid_credentials_are_ignored_by_default",
     ],
     "tests.test_live_service": [
         "test_live_tick_initializes_risk_baseline_from_live_mark",
+        "test_market_shock_guard_blocks_fast_mark_move",
         "test_hyperliquid_order_values_are_rounded_for_wire_format",
     ],
     "tests.test_live_users": [

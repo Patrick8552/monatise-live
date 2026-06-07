@@ -17,6 +17,8 @@ services:
         value: 0.0.0.0
       - key: MONATISE_SYMBOL
         value: BTC
+      - key: MONATISE_EXECUTION_MODE
+        value: dry_run
       - key: MONATISE_ORDER_QUOTE_SIZE
         value: 25
       - key: MONATISE_MAX_ORDER_NOTIONAL
@@ -27,6 +29,12 @@ services:
         value: 0.1
       - key: MONATISE_MAX_DAILY_LOSS
         value: 25
+      - key: MONATISE_MAX_MARK_MOVE_PCT
+        value: 0.03
+      - key: MONATISE_MAX_POSITION_VALUE
+        value: 250
+      - key: MONATISE_ORDER_REFRESH_SECONDS
+        value: 30
       - key: MONATISE_ALLOW_LIVE_ORDERS
         value: true
       - key: MONATISE_LIVE_CONFIRMATION
