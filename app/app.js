@@ -140,6 +140,7 @@ let contextLastSymbol = "";
 let candleSource = { interval: "sample", symbol: "BTC", type: "sample" };
 let candleLoading = false;
 let initialLiveCandlesLoaded = false;
+let liveEquityCurve = [];
 let localAuditEvents = [];
 let lastTicketHealth = null;
 let pendingArmReview = false;
@@ -1494,6 +1495,29 @@ function money(value) {
   }).format(value || 0);
 }
 
+function liveAccountValue(snapshot) {
+  const account = snapshot?.account || {};
+  const candidates = [account.displayValue, account.accountValue, account.spotUsdc, account.withdrawable];
+  for (const candidate of candidates) {
+    const value = Number(candidate);
+    if (Number.isFinite(value)) return value;
+  }
+  return null;
+}
+
+function recordLiveEquity(snapshot) {
+  const value = liveAccountValue(snapshot);
+  if (value === null) return;
+  const timestamp = String(Date.now());
+  const previous = liveEquityCurve[liveEquityCurve.length - 1];
+  if (previous && Math.abs(previous.equity - value) < 0.01) {
+    previous.timestamp = timestamp;
+  } else {
+    liveEquityCurve.push({ timestamp, equity: value });
+  }
+  liveEquityCurve = liveEquityCurve.slice(-120);
+}
+
 function formatInputNumber(value) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return "";
@@ -1744,16 +1768,9 @@ function setupCanvas(canvas) {
   return { ctx, height: rect.height, width: rect.width };
 }
 
-function drawEquity() {
+function drawEquity(points = state.equityCurve, emptyText = "Waiting for equity") {
   const { ctx, height, width } = setupCanvas(els.equityCanvas);
-  const points = state.equityCurve;
   const values = points.map((point) => point.equity);
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const span = max - min || 1;
-  const xFor = (index) => 16 + (index / Math.max(1, points.length - 1)) * (width - 32);
-  const yFor = (value) => height - 18 - ((value - min) / span) * (height - 36);
-
   ctx.clearRect(0, 0, width, height);
   ctx.fillStyle = "#fbfcfa";
   ctx.fillRect(0, 0, width, height);
@@ -1763,6 +1780,19 @@ function drawEquity() {
   ctx.moveTo(12, height - 18);
   ctx.lineTo(width - 12, height - 18);
   ctx.stroke();
+
+  if (!values.length) {
+    ctx.fillStyle = "#66706c";
+    ctx.font = "650 12px system-ui";
+    ctx.fillText(emptyText, 16, 18);
+    return;
+  }
+
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = max - min || 1;
+  const xFor = (index) => 16 + (index / Math.max(1, points.length - 1)) * (width - 32);
+  const yFor = (value) => height - 18 - ((value - min) / span) * (height - 36);
 
   ctx.strokeStyle = "#365f6b";
   ctx.lineWidth = 3;
@@ -1799,6 +1829,7 @@ function renderTape() {
 function renderBackend(snapshot) {
   backendOnline = true;
   lastBackendSnapshot = snapshot;
+  recordLiveEquity(snapshot);
   els.backendStatus.textContent = `${snapshot.mode} ${snapshot.running ? "running" : "stopped"}`;
   els.candleCount.textContent = snapshot.running ? "backend loop" : "backend idle";
     els.riskStatus.textContent = snapshot.riskStatus || "ready";
@@ -1810,21 +1841,28 @@ function renderBackend(snapshot) {
     syncSelectedAsset();
   }
   if (snapshot.portfolio) {
-    els.equityMetric.textContent = money(snapshot.account?.displayValue ?? snapshot.account?.accountValue ?? snapshot.portfolio.equity);
-    if (snapshot.account && Number.isFinite(Number(snapshot.account.accountValue))) {
-      els.accountMetricLabel.textContent = "Perp Account";
+    const accountValue = liveAccountValue(snapshot);
+    const hasAccountData = snapshot.mode === "live" && accountValue !== null;
+    if (snapshot.mode === "live") {
+      els.accountMetricLabel.textContent = "Perp Equity";
       els.cashMetricLabel.textContent = "Spot USDC";
-      els.harvestMetric.textContent = money(snapshot.account.accountValue);
-      els.feesMetric.textContent = money(snapshot.account.spotUsdc || 0);
+      els.equityMetric.textContent = hasAccountData ? money(accountValue) : "Not connected";
+      els.harvestMetric.textContent = hasAccountData ? money(snapshot.account?.accountValue || 0) : "Pending";
+      els.feesMetric.textContent = hasAccountData ? money(snapshot.account?.spotUsdc || 0) : "Pending";
+      drawEquity(liveEquityCurve, hasAccountData ? "Waiting for live account samples" : "Waiting for Hyperliquid account");
     } else {
+      els.equityMetric.textContent = money(snapshot.portfolio.equity);
       els.accountMetricLabel.textContent = "Harvest";
       els.cashMetricLabel.textContent = "Fees";
       els.harvestMetric.textContent = money(snapshot.portfolio.realizedHarvest);
       els.feesMetric.textContent = money(snapshot.portfolio.feePaid);
+      drawEquity();
     }
-    els.inventoryMetric.textContent = snapshot.account && Number.isFinite(Number(snapshot.account.positionSize))
+    els.inventoryMetric.textContent = hasAccountData && Number.isFinite(Number(snapshot.account.positionSize))
       ? `${Number(snapshot.account.positionSize || 0).toFixed(5)} ${snapshot.symbol}`
-      : `${(snapshot.portfolio.inventoryRatio * 100).toFixed(2)}%`;
+      : snapshot.mode === "live"
+        ? "Pending"
+        : `${(snapshot.portfolio.inventoryRatio * 100).toFixed(2)}%`;
   }
   if (snapshot.risk) {
     els.drawdownMetric.textContent = `${money(snapshot.risk.drawdown)} (${((snapshot.risk.drawdown_pct || 0) * 100).toFixed(2)}%)`;
@@ -1995,6 +2033,10 @@ async function saveTradingRules() {
 }
 
 function render() {
+  if (backendOnline && lastBackendSnapshot) {
+    renderBackend(lastBackendSnapshot);
+    return;
+  }
   const candle = state.candles[Math.max(0, Math.min(state.activeIndex, state.candles.length - 1))];
   const mark = candle.close;
   const live = markets.find((asset) => asset.symbol === selectedAsset);
