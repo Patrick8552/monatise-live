@@ -2490,6 +2490,14 @@ button:disabled {
   opacity: 0.48;
 }
 
+.utility-hidden {
+  display: none !important;
+}
+
+.compact-single {
+  grid-template-columns: 1fr;
+}
+
 .fill-row {
   align-items: center;
   border: 1px solid var(--line);

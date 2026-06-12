@@ -15,12 +15,6 @@
         </div>
         <nav class="desk-nav" aria-label="primary navigation">
           <a href="./index.html" aria-current="page">Desk</a>
-          <a href="./onboarding.html">Onboarding</a>
-          <a href="./learn.html">Learn</a>
-          <a href="./doctrine.html">Doctrine</a>
-          <a href="./gold.html">Gold/Oil</a>
-          <a href="./about.html">About</a>
-          <a href="./contact.html">Contact</a>
         </nav>
         <div class="status-strip" aria-label="simulation status">
           <span id="runState">Ready</span>
@@ -53,7 +47,6 @@
         <a href="#trade">Signal Builder</a>
         <a href="#risk">Quality Gate</a>
         <a href="#markets">Markets</a>
-        <a href="#account">Account</a>
         <a href="#activity">Activity</a>
       </nav>
 
@@ -108,7 +101,7 @@
                   <strong>BTC</strong>
                   <span>Bitcoin market feed used for signal generation.</span>
                 </div>
-                <label>
+                <label class="utility-hidden">
                   Local signal symbol
                   <input id="symbolInput" type="text" value="BTC-USD" />
                 </label>
@@ -119,7 +112,7 @@
                   <span>Signal model</span>
                   <strong>Momentum + levels</strong>
                 </div>
-                <div class="input-row">
+                <div class="input-row utility-hidden">
                   <label>
                     Quote
                     <input id="quoteInput" type="number" value="10000" min="0" step="100" />
@@ -139,19 +132,19 @@
                   <input id="levelsInput" type="range" min="1" max="12" step="1" value="5" />
                   <span class="range-readout"><span id="levelsValue">5</span> levels</span>
                 </label>
-                <div class="input-row">
+                <div class="input-row compact-single">
                   <label>
                     Alert risk size
                     <input id="orderSizeInput" type="number" value="250" min="10" step="10" />
                   </label>
-                  <label>
+                  <label class="utility-hidden">
                     Fee rate
                     <input id="feeInput" type="number" value="0.04" min="0" step="0.01" />
                   </label>
                 </div>
                 <div class="button-row">
                   <button id="runButton" class="primary" type="button">Generate</button>
-                  <button id="stepButton" type="button">Next candle</button>
+                  <button id="stepButton" class="utility-hidden" type="button">Next candle</button>
                 </div>
               </div>
               <textarea id="csvInput" class="internal-candle-buffer" spellcheck="false" aria-hidden="true" tabindex="-1"></textarea>
@@ -291,7 +284,7 @@
                   <input id="maxPositionValueInput" type="number" min="1" step="1" value="250" />
                 </label>
               </div>
-              <label class="toggle-rule">
+              <label class="toggle-rule utility-hidden">
                 <input id="staleGridCancelInput" type="checkbox" checked />
                 <span>Expire stale signals</span>
               </label>
@@ -302,7 +295,7 @@
               <div id="rulesSummary" class="rules-summary">15m analysis · 5m confirmation · London/New York signal window · CPI/PPI blackout</div>
             </div>
 
-            <section class="panel metrics">
+            <section class="panel metrics utility-hidden">
               <h2>Portfolio</h2>
               <div class="metric-grid">
                 <article>
@@ -324,7 +317,7 @@
               </div>
             </section>
 
-            <section class="panel metrics">
+            <section class="panel metrics utility-hidden">
               <div class="panel-head">
                 <h2>Signal Risk</h2>
                 <span id="executionModeMetric">dry-run</span>
@@ -393,8 +386,8 @@
             </div>
             <div id="marketStrip" class="market-strip" aria-label="live market prices"></div>
             <div id="marketRadar" class="market-radar" aria-label="multi asset market radar"></div>
-            <div id="assetGroups" class="asset-groups" aria-label="asset classes"></div>
-            <div id="market3dMap" class="market-3d-map" aria-label="3D live market map"></div>
+            <div id="assetGroups" class="asset-groups utility-hidden" aria-label="asset classes"></div>
+            <div id="market3dMap" class="market-3d-map utility-hidden" aria-label="3D live market map"></div>
           </section>
         </section>
 
@@ -492,7 +485,7 @@
           </div>
 
           <div class="section-grid activity-grid">
-            <section class="panel">
+            <section class="panel utility-hidden">
               <div class="panel-head">
                 <h2>Signal Tape</h2>
                 <span id="lastFill">No signals</span>
@@ -500,7 +493,7 @@
               <div id="fillTape" class="fill-tape"></div>
             </section>
 
-            <section class="panel">
+            <section class="panel utility-hidden">
               <h2>Equity Curve</h2>
               <canvas id="equityCanvas" width="420" height="220" aria-label="Equity curve"></canvas>
             </section>
