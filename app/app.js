@@ -151,6 +151,7 @@ let localAuditEvents = [];
 let lastTicketHealth = null;
 let lastSignalCandidate = null;
 let pendingArmReview = false;
+const STOP_LOSS_BUFFER_POINTS = 10;
 let tradingRules = {
   chartInterval: "15m",
   leverage: 10,
@@ -641,7 +642,13 @@ function signalFromHealth(health, mark) {
     (Number.isFinite(takeProfit) && takeProfit < mark);
   const direction = health.blocked || action === "halt" || action === "pause" ? "WAIT" : bullish && !bearish ? "LONG" : bearish && !bullish ? "SHORT" : "WATCH";
   const targetOne = Number.isFinite(takeProfit) && takeProfit > 0 ? takeProfit : Number.isFinite(gapMidpoint) ? gapMidpoint : direction === "SHORT" ? health.gridFloor : health.gridCeiling;
-  const stop = Number.isFinite(invalidation) && invalidation > 0 ? invalidation : direction === "SHORT" ? health.gridCeiling : health.gridFloor;
+  const baseStop = Number.isFinite(invalidation) && invalidation > 0 ? invalidation : direction === "SHORT" ? health.gridCeiling : health.gridFloor;
+  const stop =
+    direction === "SHORT"
+      ? baseStop + STOP_LOSS_BUFFER_POINTS
+      : direction === "LONG"
+        ? baseStop - STOP_LOSS_BUFFER_POINTS
+        : baseStop;
   const buffer = Number.isFinite(atr) && atr > 0 ? atr : Math.abs(mark - Number(nearest || mark));
   const confidenceBase = 42 + (health.status === "ALIGNED" ? 28 : health.status === "REVIEW" ? 14 : 0);
   const contextPenalty = action === "reduce" ? 10 : action === "widen" ? 6 : action === "halt" || action === "pause" ? 24 : 0;
@@ -776,7 +783,7 @@ function renderExecutionTicket(orders = [], options = {}) {
     trigger: signal.trigger
   };
   els.ticketNote.textContent = canReview
-    ? `${signal.trigger}. Entry ${money(signal.entry)}, target ${money(signal.targetOne)}, invalidation ${money(signal.stop)}. Signal expires ${formatSignalTime(timing.expiresAt)}.`
+    ? `${signal.trigger}. Entry ${money(signal.entry)}, target ${money(signal.targetOne)}, stop ${money(signal.stop)} with ${STOP_LOSS_BUFFER_POINTS}pt buffer. Signal expires ${formatSignalTime(timing.expiresAt)}.`
     : timing.opensAt
       ? `Blocked: ${primaryBlock}. Next usable time ${formatSignalTime(timing.opensAt)}.`
       : `Blocked: ${primaryBlock}`;
@@ -1409,7 +1416,7 @@ function renderTradingRules() {
   els.rulesStatus.textContent = `${tradingRules.chartInterval} signal profile`;
   els.rulesSummary.textContent = `10x risk lens · ${money(tradingRules.orderQuoteSize)} alert size · ${money(
     tradingRules.maxTotalNotional
-  )} max signal risk · ${money(tradingRules.maxPositionValue)} exposure lens · ${tradingRules.chartInterval} analysis with 15m/5m window · ${signalWindowLabel} · CPI/PPI ${economicBlackoutMinutes}m blackout · ${tradingRules.sessionGuardMinutes}m session guard · ${
+  )} max signal risk · ${money(tradingRules.maxPositionValue)} exposure lens · ${STOP_LOSS_BUFFER_POINTS}pt stop buffer · ${tradingRules.chartInterval} analysis with 15m/5m window · ${signalWindowLabel} · CPI/PPI ${economicBlackoutMinutes}m blackout · ${tradingRules.sessionGuardMinutes}m session guard · ${
     tradingRules.londonCommodityOnly ? "London commodity guard on" : "London commodity guard off"
   } · ${drawdownLabel} · ${tradingRules.staleGridCancel ? "stale signal expiry on" : "stale signal expiry off"} · free access`;
   els.ticketDrawdown.textContent = `${(tradingRules.maxDailyLossPct * 100).toFixed(2)}%`;
