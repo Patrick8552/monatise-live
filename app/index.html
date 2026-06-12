@@ -47,6 +47,7 @@
         <a href="#trade">Signal Builder</a>
         <a href="#risk">Quality Gate</a>
         <a href="#markets">Markets</a>
+        <a href="#account">Signal Profile</a>
         <a href="#activity">Activity</a>
       </nav>
 
@@ -54,12 +55,12 @@
         <div class="command-state">
           <span>Signal</span>
           <strong id="decisionState">Login required</strong>
-          <em id="decisionDetail">Connect account to save signal preferences.</em>
+          <em id="decisionDetail">Create a signal profile to save preferences.</em>
         </div>
         <div class="command-metrics">
           <article>
-            <span>Account</span>
-            <strong id="decisionAccount">Logged out</strong>
+            <span>Profile</span>
+            <strong id="decisionAccount">No profile</strong>
           </article>
           <article>
             <span>Asset</span>
@@ -171,7 +172,7 @@
                   <strong id="ticketAsset">BTC</strong>
                 </article>
                 <article>
-                  <span>Capital</span>
+                  <span>Risk Lens</span>
                   <strong id="ticketCapital">$0.00</strong>
                 </article>
                 <article>
@@ -210,18 +211,18 @@
               <div class="live-desk-head">
                 <div>
                   <span>Signal desk</span>
-                  <strong id="liveDeskStatus">Not publishing</strong>
+                  <strong id="liveDeskStatus">Profile needed</strong>
                 </div>
                 <span id="liveNetworkBadge">signals</span>
               </div>
               <div class="readiness-grid">
                 <article id="loginGate">
-                  <span>Login</span>
+                  <span>Profile</span>
                   <strong>Needed</strong>
                 </article>
                 <article id="credentialGate">
-                  <span>Alert profile</span>
-                  <strong>Needed</strong>
+                  <span>Private sync</span>
+                  <strong>Optional</strong>
                 </article>
                 <article id="riskGate">
                   <span>Signal gate</span>
@@ -230,8 +231,8 @@
               </div>
               <div id="readinessChecklist" class="readiness-checklist" aria-label="signal readiness checklist"></div>
               <div class="button-row trade-actions">
-                <button id="backendStartButton" class="primary danger-primary" type="button">Start Feed</button>
-                <button id="backendStopButton" type="button">Pause</button>
+                <button id="backendStartButton" class="primary danger-primary" type="button">Start Private Sync</button>
+                <button id="backendStopButton" type="button">Pause Sync</button>
               </div>
             </div>
 
@@ -280,7 +281,7 @@
                   <input id="maxTotalNotionalInput" type="number" min="1" step="1" value="150" />
                 </label>
                 <label>
-                  Max account lens
+                  Max exposure lens
                   <input id="maxPositionValueInput" type="number" min="1" step="1" value="250" />
                 </label>
               </div>
@@ -394,23 +395,23 @@
         <section id="account" class="desk-section">
           <div class="section-head">
             <div>
-              <p class="eyebrow">Account</p>
-              <h2>Keep identity and alert preferences separate from trading capital.</h2>
+              <p class="eyebrow">Signal profile</p>
+              <h2>Save personal signal preferences without handling funds.</h2>
             </div>
           </div>
 
           <div class="section-grid account-grid">
-            <div class="auth-box" aria-label="user account controls">
+            <div class="auth-box" aria-label="signal profile controls">
               <div class="auth-head">
                 <div>
-                  <span>Account</span>
-                  <strong id="authStatus">Logged out</strong>
+                  <span>Signal Profile</span>
+                  <strong id="authStatus">No profile</strong>
                 </div>
                 <button id="logoutButton" type="button">Logout</button>
               </div>
               <label>
-                Client name
-                <input id="clientNameInput" type="text" autocomplete="name" placeholder="Legal or signal desk name" />
+                Profile name
+                <input id="clientNameInput" type="text" autocomplete="name" placeholder="Your signal desk name" />
               </label>
               <label>
                 Email or phone
@@ -429,21 +430,21 @@
               </div>
               <div id="registrationDesk" class="registration-desk" hidden>
                 <div class="registration-desk-head">
-                  <span>Client intake</span>
-                  <strong id="onboardingStatus">Pending setup</strong>
+                  <span>Preference profile</span>
+                  <strong id="onboardingStatus">Pending save</strong>
                 </div>
-                <div class="onboarding-ledger" aria-label="registration checklist">
+                <div class="onboarding-ledger" aria-label="signal profile checklist">
                   <article>
-                    <span>Identity</span>
+                    <span>Profile</span>
                     <strong id="onboardingContact">Not filed</strong>
                   </article>
                   <article>
-                    <span>Risk mandate</span>
+                    <span>Risk preference</span>
                     <strong id="onboardingDrawdown">5% cap</strong>
                   </article>
                   <article>
-                    <span>Alert account</span>
-                    <strong id="onboardingAccount">Needed</strong>
+                    <span>Private sync</span>
+                    <strong id="onboardingAccount">Optional</strong>
                   </article>
                   <article>
                     <span>Access</span>
@@ -451,27 +452,27 @@
                   </article>
                 </div>
                 <div class="button-row">
-                  <button id="finishOnboardingButton" class="primary" type="button">File setup</button>
+                  <button id="finishOnboardingButton" class="primary" type="button">Save Profile</button>
                 </div>
               </div>
               <label>
-                Optional account address
+                Optional Hyperliquid address for private sync
                 <input id="accountAddressInput" type="text" autocomplete="off" placeholder="0x..." />
               </label>
               <label>
-                Optional API wallet secret key
+                Optional API key for private sync
                 <input id="secretKeyInput" type="password" autocomplete="off" />
               </label>
-              <button id="saveCredentialsButton" type="button">Save alert profile</button>
-              <p id="credentialStatus">Per-user alert profile only.</p>
+              <button id="saveCredentialsButton" type="button">Save Sync Details</button>
+              <p id="credentialStatus">Signal generation works without private sync. Profiles save preferences per user.</p>
             </div>
 
             <section class="panel access-panel">
               <div class="panel-head">
-                <h2>Access</h2>
+                <h2>Profile Purpose</h2>
                 <span id="subscriptionStatus">Free</span>
               </div>
-              <p>Access is free for now. Use the app to generate, review, and save market signals before deciding what to do elsewhere.</p>
+              <p>Use profiles to keep your asset, risk, timing, and chart preferences. Monatise does not custody funds or place orders from this dashboard.</p>
             </section>
           </div>
         </section>

@@ -251,13 +251,13 @@ function renderRegistrationDesk(me = currentUser) {
     els.clientNameInput.value = profile.clientName;
   }
   const clientName = els.clientNameInput.value.trim() || profile.clientName || "Client";
-  const accountReady = Boolean(me.credentialsConfigured);
+  const syncReady = Boolean(me.credentialsConfigured);
   const planText = me.subscription ? `${me.subscription.plan} ${me.subscription.status}` : "free active";
   els.onboardingContact.textContent = `${clientName} / ${me.username}`;
   els.onboardingDrawdown.textContent = `${(tradingRules.maxDailyLossPct * 100).toFixed(1).replace(/\.0$/, "")}% cap`;
-  els.onboardingAccount.textContent = accountReady ? "Filed" : "Needed";
+  els.onboardingAccount.textContent = syncReady ? "Saved" : "Optional";
   els.onboardingPlan.textContent = planText;
-  els.onboardingStatus.textContent = accountReady && hasLivePlan() ? "Desk ready" : "Pending setup";
+  els.onboardingStatus.textContent = loggedIn && hasLivePlan() ? "Profile ready" : "Pending save";
 }
 
 function normalizeForexSymbol(symbol) {
@@ -351,16 +351,16 @@ function localReadinessItems(snapshot = null) {
   const maxDailyLossPct = Number(risk.max_daily_loss_pct || 0);
   return [
     {
-      detail: loggedIn ? currentUser.username || "account active" : "register or log in to save alert preferences",
+      detail: loggedIn ? currentUser.username || "profile active" : "register or log in to save signal preferences",
       label: "User session",
       ok: loggedIn,
       severity: "block"
     },
     {
-      detail: hasCredentials ? "alert profile saved" : "save optional account details to sync signal preferences",
-      label: "Alert profile",
-      ok: hasCredentials,
-      severity: "block"
+      detail: hasCredentials ? "private sync saved" : "optional private sync is not required for signals",
+      label: "Private sync",
+      ok: true,
+      severity: "warn"
     },
     {
       detail: mode === "live" ? "free access; signal gates still apply" : "free access",
@@ -525,7 +525,7 @@ function signalFromHealth(health, mark) {
         : (Number.isFinite(targetOne) ? targetOne : mark) + Math.max(buffer, 1),
     thesis:
       direction === "WAIT"
-        ? "No publishable signal while quality gates are blocked."
+        ? "No usable signal while quality gates are blocked."
         : direction === "WATCH"
           ? "Market structure is mixed; keep it as a watchlist idea until confirmation improves."
           : `${direction} bias from ${trend || "mixed"} structure with ${gapDirection || "no active"} FVG confluence and ${action} context.`,
@@ -610,7 +610,7 @@ function renderExecutionTicket(orders = [], options = {}) {
   els.decisionDrawdown.textContent = `${(drawdownPct * 100).toFixed(2)}%`;
   els.ticketSummary.innerHTML = `
     <div class="ticket-call ${canReview ? "ready" : "blocked"}">
-      <strong>${canReview ? `${signal.direction} setup ready` : "Do not publish yet"}</strong>
+      <strong>${canReview ? `${signal.direction} setup ready` : "Do not use yet"}</strong>
       <span>${mode} · ${assetLabel(selectedAsset)} · ${signal.confidence}% confidence · ${orderList.length} levels</span>
     </div>
   `;
@@ -638,18 +638,19 @@ function updateDecisionSurface(snapshot = null) {
   const openNotional = Number(risk.open_order_notional);
   const drawdownPct = Number(risk.max_daily_loss_pct ?? tradingRules.maxDailyLossPct ?? 0.05);
 
-  let state = "Login required";
-  let detail = "Connect account to save and sync signal preferences.";
+  let state = "Profile needed";
+  let detail = "Create a signal profile to save and reuse preferences.";
   let className = "blocked";
   if (loggedIn && !hasCredentials) {
-    state = "Alert profile needed";
-    detail = "Save an alert profile before syncing signal preferences.";
+    state = "Profile ready";
+    detail = "Preferences can be saved. Private sync is optional.";
+    className = "ready";
   } else if (loggedIn && hasCredentials && blocks.length) {
     state = "Signal blocked";
     detail = blocks[0]?.detail || riskStatus || "Quality gate has not cleared.";
   } else if (running) {
-    state = "Feed running";
-    detail = `${mode} ${network} signal feed is active for ${assetLabel(selectedAsset)}.`;
+    state = "Private sync running";
+    detail = `${mode} ${network} private sync is active for ${assetLabel(selectedAsset)}.`;
     className = "ready";
   } else if (loggedIn && hasCredentials) {
     state = "Signal ready";
@@ -662,7 +663,7 @@ function updateDecisionSurface(snapshot = null) {
   commandState?.classList.add(className);
   els.decisionState.textContent = state;
   els.decisionDetail.textContent = detail;
-  els.decisionAccount.textContent = loggedIn ? `${currentUser.username || "client"} · ${currentPlan()}` : "Logged out";
+  els.decisionAccount.textContent = loggedIn ? `${currentUser.username || "profile"} · ${currentPlan()}` : "No profile";
   els.decisionAsset.textContent = assetLabel(selectedAsset);
   if (Number.isFinite(openNotional)) {
     els.decisionExposure.textContent = money(openNotional);
@@ -683,8 +684,8 @@ function updateLiveDesk(snapshot = null) {
   const liveReady = Boolean(snapshot?.liveReady && !sessionBlocked);
   const requires = Array.isArray(snapshot?.requires) ? snapshot.requires : [];
 
-  setGate(els.loginGate, "Login", loggedIn ? "Ready" : "Needed", loggedIn ? "ready" : "warn");
-  setGate(els.credentialGate, "Alert profile", hasCredentials ? "Saved" : "Needed", hasCredentials ? "ready" : "warn");
+  setGate(els.loginGate, "Profile", loggedIn ? "Ready" : "Needed", loggedIn ? "ready" : "warn");
+  setGate(els.credentialGate, "Private sync", hasCredentials ? "Saved" : "Optional", hasCredentials ? "ready" : "ready");
   setGate(
     els.riskGate,
     "Signal gate",
@@ -694,20 +695,20 @@ function updateLiveDesk(snapshot = null) {
 
   els.liveNetworkBadge.textContent = `${mode} / ${network}`;
   els.liveDeskStatus.textContent = running
-    ? "Signal feed running"
+    ? "Private sync running"
     : sessionBlocked
       ? "Close signal window"
     : liveReady
-      ? "Publishing ready"
-      : loggedIn && hasCredentials
-        ? "Ready to publish"
-        : "Not publishing";
+      ? "Private sync ready"
+      : loggedIn
+        ? "Profile ready"
+        : "Profile needed";
   els.liveModeStatus.textContent = running
     ? `${mode.toUpperCase()} running`
     : sessionBlocked
       ? `${sessionGuard.session} ${sessionGuard.transition} guard`
     : liveReady
-      ? "Signal feed armed"
+      ? "Private sync armed"
       : `${mode.toUpperCase()} idle`;
   els.liveModeStatus.classList.toggle("live-mode", mode === "live");
   els.backendStartButton.classList.toggle("live-running", running);
@@ -716,8 +717,8 @@ function updateLiveDesk(snapshot = null) {
     : sessionBlocked
       ? "Session Guard"
     : mode === "live"
-        ? "Start Feed"
-        : "Start Feed";
+        ? "Start Private Sync"
+        : "Start Private Sync";
   els.backendStartButton.disabled = !loggedIn || !hasCredentials || sessionBlocked;
   if (sessionBlocked) {
     els.riskStatus.textContent = sessionGuard.message || "forex session-break guard";
@@ -1245,10 +1246,10 @@ function renderTradingRules() {
   const drawdownLabel = `${(tradingRules.maxDailyLossPct * 100).toFixed(1).replace(/\.0$/, "")}% drawdown cap`;
   const signalWindowLabel =
     tradingRules.signalSessionWindow === "always" ? "always-on signal window" : "London/New York signal window";
-  els.rulesStatus.textContent = `${tradingRules.chartInterval} signal feed`;
+  els.rulesStatus.textContent = `${tradingRules.chartInterval} signal profile`;
   els.rulesSummary.textContent = `10x risk lens · ${money(tradingRules.orderQuoteSize)} alert size · ${money(
     tradingRules.maxTotalNotional
-  )} max signal risk · ${money(tradingRules.maxPositionValue)} account lens · ${tradingRules.chartInterval} analysis with 15m/5m window · ${signalWindowLabel} · CPI/PPI ${economicBlackoutMinutes}m blackout · ${tradingRules.sessionGuardMinutes}m session guard · ${
+  )} max signal risk · ${money(tradingRules.maxPositionValue)} exposure lens · ${tradingRules.chartInterval} analysis with 15m/5m window · ${signalWindowLabel} · CPI/PPI ${economicBlackoutMinutes}m blackout · ${tradingRules.sessionGuardMinutes}m session guard · ${
     tradingRules.londonCommodityOnly ? "London commodity guard on" : "London commodity guard off"
   } · ${drawdownLabel} · ${tradingRules.staleGridCancel ? "stale signal expiry on" : "stale signal expiry off"} · free access`;
   els.ticketDrawdown.textContent = `${(tradingRules.maxDailyLossPct * 100).toFixed(2)}%`;
@@ -1267,15 +1268,15 @@ function renderAuth(me) {
   selectedAsset = me.selectedSymbol || selectedAsset;
   applyTradingRules(me.tradingRules || tradingRules);
   const loggedIn = Boolean(me.authenticated);
-  els.authStatus.textContent = loggedIn ? me.username : "Logged out";
+  els.authStatus.textContent = loggedIn ? me.username : "No profile";
   els.subscriptionStatus.textContent = me.subscription
     ? `${me.subscription.plan} ${me.subscription.status}`
     : "free active";
   els.credentialStatus.textContent = loggedIn
     ? me.credentialsConfigured
-      ? "Alert profile saved for this user."
-      : "Save optional account details to sync your signal profile."
-    : "Register or log in to save your signal preferences.";
+      ? "Private sync saved for this signal profile."
+      : "Private sync is optional. Save rules to keep this profile useful."
+    : "Register or log in to save signal preferences.";
   els.logoutButton.disabled = !loggedIn;
   els.saveCredentialsButton.disabled = !loggedIn;
   els.backendStartButton.disabled = !loggedIn || !me.credentialsConfigured;
@@ -1305,8 +1306,8 @@ async function loginOrRegister(path) {
   const isRegister = path.includes("register");
   const actionButton = isRegister ? els.registerButton : els.loginButton;
   if (isRegister && els.clientNameInput.value.trim().length < 2) {
-    setAuthStatus("Client name required");
-    els.credentialStatus.textContent = "Enter the client name before registration.";
+    setAuthStatus("Profile name required");
+    els.credentialStatus.textContent = "Enter a profile name before registration.";
     return;
   }
   if (!isEmailOrPhoneUsername(username)) {
@@ -1335,7 +1336,7 @@ async function loginOrRegister(path) {
     renderAuth(payload);
     if (isRegister) {
       renderRegistrationDesk(payload);
-      els.credentialStatus.textContent = "Registration filed. Complete the client intake ticket below.";
+      els.credentialStatus.textContent = "Profile created. Review and save the preference card below.";
       els.registrationDesk.scrollIntoView({ behavior: "smooth", block: "center" });
     }
     addAuditEvent(isRegister ? "register" : "login", isRegister ? "User registered" : "User logged in", payload.username || username);
@@ -1356,38 +1357,40 @@ async function saveCredentials() {
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    els.credentialStatus.textContent = payload.error || "Could not save credentials";
+    els.credentialStatus.textContent = payload.error || "Could not save private sync details";
     return;
   }
   els.secretKeyInput.value = "";
   await loadMe();
-  addAuditEvent("profile saved", "Alert profile saved", "preferences stored per user");
+  addAuditEvent("profile saved", "Private sync saved", "sync details stored per user");
   refreshBackend();
 }
 
 async function finishOnboarding() {
   if (!currentUser.authenticated) {
-    els.credentialStatus.textContent = "Register or log in before filing setup.";
+    els.credentialStatus.textContent = "Register or log in before saving a signal profile.";
     return;
   }
   if (els.clientNameInput.value.trim().length < 2) {
-    els.credentialStatus.textContent = "Enter the client name before filing setup.";
+    els.credentialStatus.textContent = "Enter the profile name before saving.";
     els.clientNameInput.focus();
     return;
   }
   saveClientProfile(currentUser.username);
-  if (!currentUser.credentialsConfigured && (!els.accountAddressInput.value.trim() || !els.secretKeyInput.value.trim())) {
-    els.credentialStatus.textContent = "Add optional account details to file the alert profile.";
-    (els.accountAddressInput.value.trim() ? els.secretKeyInput : els.accountAddressInput).focus();
+  const syncAddress = els.accountAddressInput.value.trim();
+  const syncKey = els.secretKeyInput.value.trim();
+  if ((syncAddress || syncKey) && (!syncAddress || !syncKey)) {
+    els.credentialStatus.textContent = "Private sync needs both the address and API key. Leave both blank to save preferences only.";
+    (syncAddress ? els.secretKeyInput : els.accountAddressInput).focus();
     renderRegistrationDesk();
     return;
   }
-  if (els.accountAddressInput.value.trim() && els.secretKeyInput.value.trim()) {
+  if (syncAddress && syncKey) {
     await saveCredentials();
   }
   await saveTradingRules();
   renderRegistrationDesk();
-  els.credentialStatus.textContent = "Client setup filed. Access is free for now.";
+  els.credentialStatus.textContent = "Signal profile saved. Access is free for now.";
 }
 
 function syncSelectedAsset() {
@@ -2365,11 +2368,11 @@ async function backendCommand(path) {
   const sessionGuard = activeSessionGuard(selectedAsset);
   if (path === "/api/start" && sessionGuard.active && lastBackendSnapshot?.mode === "live") {
     els.riskStatus.textContent = sessionGuard.message;
-    addAuditEvent("feed blocked", "Signal feed blocked by session guard", sessionGuard.message);
+    addAuditEvent("sync blocked", "Private sync blocked by session guard", sessionGuard.message);
     updateLiveDesk(lastBackendSnapshot);
     return;
   }
-  addAuditEvent(path === "/api/start" ? "feed start requested" : "feed pause requested", path === "/api/start" ? "Operator requested signal feed start" : "Operator requested signal feed pause", selectedAsset);
+  addAuditEvent(path === "/api/start" ? "sync start requested" : "sync pause requested", path === "/api/start" ? "Operator requested private sync start" : "Operator requested private sync pause", selectedAsset);
   const response = await jsonPost(path);
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));

@@ -36,7 +36,7 @@ class TenantServices:
                 return service
             credentials = self.store.credentials_for_user(user.id)
             if credentials is None:
-                raise ValueError("save Hyperliquid credentials before starting live trading")
+                raise ValueError("save private sync details before starting private sync")
             settings = self.store.settings_for_user(user.id)
             config = replace(
                 self.base_config,
@@ -271,7 +271,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                         "network": self.tenants.base_config.network,
                         "symbol": self.store.settings_for_user(user.id).selected_symbol,
                         "riskStatus": str(error),
-                        "requires": ["Hyperliquid credentials"],
+                        "requires": ["Private sync details"],
                         "events": [{"timestamp": 0, "level": "warn", "message": str(error)}],
                     }
                 )

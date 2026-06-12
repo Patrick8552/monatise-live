@@ -147,9 +147,9 @@ class UserStore:
         account_address = credentials.account_address.strip()
         secret_key = credentials.secret_key.strip()
         if not account_address.startswith("0x") or len(account_address) < 12:
-            raise ValueError("enter the funded Hyperliquid account address")
+            raise ValueError("enter the Hyperliquid address for private sync")
         if not secret_key:
-            raise ValueError("enter the API wallet secret key")
+            raise ValueError("enter the API key for private sync")
         encrypted_secret = self._fernet.encrypt(secret_key.encode("utf-8")).decode("utf-8")
         with self._connect() as conn:
             conn.execute(
