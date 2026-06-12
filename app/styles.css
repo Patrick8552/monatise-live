@@ -2038,6 +2038,38 @@ canvas {
   line-height: 1.35;
 }
 
+.signal-timing {
+  background: #fffdf4;
+  border: 1px solid rgba(232, 162, 20, 0.28);
+  border-radius: 6px;
+  display: grid;
+  gap: 4px;
+  padding: 9px 10px;
+}
+
+.signal-timing.valid {
+  background: #f2fbf6;
+  border-color: rgba(0, 168, 120, 0.28);
+}
+
+.signal-timing.paused {
+  background: #fff4f4;
+  border-color: rgba(230, 57, 70, 0.24);
+}
+
+.signal-timing strong {
+  color: var(--ink);
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.signal-timing span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
 .strategy-metrics span {
   background: #f4f6f2;
   border: 1px solid var(--line);

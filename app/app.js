@@ -542,6 +542,12 @@ function renderStrategyReadout(orders, options = {}) {
   const sourceLabel = source === "live" ? "Live feed state" : source === "backend" ? "Backend signal state" : "Signal preview";
   const warningText = health.warnings.length ? health.warnings.join(" · ") : "structure, context, session, and doctrine are aligned";
   const signal = signalFromHealth(health, mark);
+  const timing = signalTiming(selectedAsset);
+  const timingPrimary = timing.active
+    ? `Valid until ${formatSignalTime(timing.expiresAt)}`
+    : timing.blocked
+      ? `Paused until ${formatSignalTime(timing.opensAt)}`
+      : `Opens ${formatSignalTime(timing.opensAt)}`;
   els.strategyReadout.innerHTML = `
     <div class="strategy-status ${health.status.toLowerCase()}">
       <strong>${signal.direction}</strong>
@@ -560,8 +566,13 @@ function renderStrategyReadout(orders, options = {}) {
       <span>Range <strong>${Number.isFinite(health.gridFloor) ? money(health.gridFloor) : "pending"} - ${
         Number.isFinite(health.gridCeiling) ? money(health.gridCeiling) : "pending"
       }</strong></span>
-      <span>Session <strong>${activeSessionGuard(selectedAsset).active ? "blocked" : "clear"}</strong></span>
+      <span>Timing <strong>${timing.status}</strong></span>
+      <span>Signal ${timing.active ? "expires" : "works"} <strong>${timing.active ? formatSignalTime(timing.expiresAt) : formatSignalTime(timing.opensAt)}</strong></span>
       <span>Doctrine <strong>invalidation required</strong></span>
+    </div>
+    <div class="signal-timing ${timing.active ? "valid" : timing.blocked ? "paused" : "pending"}">
+      <strong>${timingPrimary}</strong>
+      <span>${timing.detail} Best window: ${timing.windowLabel}.</span>
     </div>
     <p>${warningText}</p>
   `;
@@ -586,6 +597,7 @@ function renderExecutionTicket(orders = [], options = {}) {
   const drawdownPct = Number(snapshot?.risk?.max_daily_loss_pct ?? tradingRules.maxDailyLossPct ?? 0.05);
   const exposurePct = capital > 0 ? openExposure / capital : 0;
   const signal = options.signal || signalFromHealth(health, mark);
+  const timing = signalTiming(selectedAsset);
   const canReview = !health.blocked && blocks.length === 0 && signal.direction !== "WAIT";
   const mode = String(snapshot?.mode || (backendOnline ? "backend" : "preview")).toUpperCase();
   els.ticketStatus.textContent = canReview ? `${signal.direction} signal` : `${blocks.length || health.warnings.length || 1} block`;
@@ -604,8 +616,10 @@ function renderExecutionTicket(orders = [], options = {}) {
   `;
   const primaryBlock = blocks[0]?.detail || health.warnings[0] || "all visible checks clear";
   els.ticketNote.textContent = canReview
-    ? `${signal.trigger}. Entry ${money(signal.entry)}, target ${money(signal.targetOne)}, invalidation ${money(signal.stop)}.`
-    : `Blocked: ${primaryBlock}`;
+    ? `${signal.trigger}. Entry ${money(signal.entry)}, target ${money(signal.targetOne)}, invalidation ${money(signal.stop)}. Signal expires ${formatSignalTime(timing.expiresAt)}.`
+    : timing.opensAt
+      ? `Blocked: ${primaryBlock}. Next usable time ${formatSignalTime(timing.opensAt)}.`
+      : `Blocked: ${primaryBlock}`;
   els.armStrategyButton.disabled = false;
   els.armStrategyButton.textContent = canReview ? "Review Signal Quality" : "Show Blocks";
   updateDecisionSurface(snapshot);
@@ -952,12 +966,179 @@ function signalWindowGuard(date = new Date()) {
   };
 }
 
+function signalSessionIntervals(date = new Date()) {
+  const sessions = signalWindowSessions();
+  const intervals = [];
+  const base = utcMidnight(date);
+  for (let dayOffset = -1; dayOffset <= 2; dayOffset += 1) {
+    const dayStart = addMinutes(base, dayOffset * 1440);
+    sessions.forEach((session) => {
+      const start = addMinutes(dayStart, session.openHour * 60);
+      const endDayOffset = session.openHour < session.closeHour ? dayOffset : dayOffset + 1;
+      const end = addMinutes(base, endDayOffset * 1440 + session.closeHour * 60);
+      intervals.push({ end, names: [session.name], start });
+    });
+  }
+  return intervals
+    .sort((left, right) => left.start - right.start)
+    .reduce((merged, interval) => {
+      const previous = merged[merged.length - 1];
+      if (previous && interval.start <= previous.end) {
+        previous.end = new Date(Math.max(previous.end.getTime(), interval.end.getTime()));
+        previous.names = Array.from(new Set([...previous.names, ...interval.names]));
+        return merged;
+      }
+      merged.push({ ...interval });
+      return merged;
+    }, []);
+}
+
+function sessionTimingWindow(date = new Date()) {
+  if (tradingRules.signalSessionWindow === "always") {
+    return {
+      active: true,
+      label: "Always-on",
+      names: ["Always-on"],
+      start: date,
+      end: null,
+      next: null
+    };
+  }
+  const intervals = signalSessionIntervals(date);
+  const current = intervals.find((interval) => date >= interval.start && date < interval.end);
+  if (current) {
+    return {
+      active: true,
+      label: current.names.join(" / "),
+      names: current.names,
+      start: current.start,
+      end: current.end,
+      next: null
+    };
+  }
+  const next = intervals.find((interval) => interval.start > date);
+  return {
+    active: false,
+    label: next ? next.names.join(" / ") : "London / New York",
+    names: next?.names || [],
+    start: null,
+    end: null,
+    next
+  };
+}
+
+function nextEconomicBlackoutStart(date = new Date()) {
+  const now = date.getTime();
+  const blackoutMs = economicBlackoutMinutes * 60 * 1000;
+  return economicReleases
+    .map((event) => ({
+      ...event,
+      blackoutStart: new Date(new Date(event.releaseTime).getTime() - blackoutMs),
+      time: new Date(event.releaseTime)
+    }))
+    .filter((event) => event.blackoutStart.getTime() > now)
+    .sort((left, right) => left.blackoutStart - right.blackoutStart)[0] || null;
+}
+
+function guardResumeTime(guard, date = new Date()) {
+  if (!guard?.active) return null;
+  if (guard.releaseTime) {
+    return addMinutes(new Date(guard.releaseTime), economicBlackoutMinutes);
+  }
+  if (guard.direction === "after") {
+    const remaining = Math.max(0, Number(tradingRules.sessionGuardMinutes || 60) - Number(guard.minutes || 0));
+    return addMinutes(date, remaining);
+  }
+  if (guard.direction === "before") {
+    return addMinutes(date, Number(guard.minutes || 0) + Number(tradingRules.sessionGuardMinutes || 60));
+  }
+  return addMinutes(date, Number(guard.minutes || 0));
+}
+
+function signalTiming(symbol = selectedAsset, date = new Date()) {
+  const guard = activeSessionGuard(symbol, date);
+  const window = sessionTimingWindow(date);
+  const resumeAt = guardResumeTime(guard, date);
+  const resumeWindow = resumeAt ? sessionTimingWindow(resumeAt) : null;
+  const macroCutoff = nextEconomicBlackoutStart(date);
+  const hardWindowEnd = window.end;
+  const expiresAt = [hardWindowEnd, macroCutoff?.blackoutStart]
+    .filter(Boolean)
+    .sort((left, right) => left - right)[0] || null;
+  if (guard.active) {
+    const opensAt =
+      resumeAt && resumeWindow?.active
+        ? resumeAt
+        : resumeWindow?.next?.start || window.next?.start || resumeAt;
+    return {
+      active: false,
+      blocked: true,
+      detail: guard.message || "Signals are paused by the timing guard.",
+      expiresAt: null,
+      label: guard.event ? `${guard.event} blackout` : guard.session || "Timing guard",
+      opensAt,
+      status: "Paused",
+      windowLabel: window.label
+    };
+  }
+  if (!window.active) {
+    return {
+      active: false,
+      blocked: false,
+      detail: `${window.label} is the next usable signal window.`,
+      expiresAt: null,
+      label: window.label,
+      opensAt: window.next?.start || null,
+      status: "Opens",
+      windowLabel: window.label
+    };
+  }
+  return {
+    active: true,
+    blocked: false,
+    detail: macroCutoff && expiresAt?.getTime() === macroCutoff.blackoutStart.getTime()
+      ? `Expires before ${macroCutoff.code} blackout.`
+      : `${window.label} window is active.`,
+    expiresAt,
+    label: window.label,
+    opensAt: date,
+    status: "Valid",
+    windowLabel: window.label
+  };
+}
+
 function durationLabel(totalMinutes) {
   const minutes = Math.max(0, Math.round(totalMinutes));
   const hours = Math.floor(minutes / 60);
   const remainder = minutes % 60;
   if (hours <= 0) return `${remainder}m`;
   return `${hours}h ${String(remainder).padStart(2, "0")}m`;
+}
+
+function addMinutes(date, minutes) {
+  return new Date(date.getTime() + minutes * 60 * 1000);
+}
+
+function utcMidnight(date) {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+}
+
+function formatSignalTime(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return "pending";
+  const local = new Intl.DateTimeFormat(undefined, {
+    day: "2-digit",
+    hour: "numeric",
+    minute: "2-digit",
+    month: "short",
+    timeZoneName: "short"
+  }).format(date);
+  const utc = new Intl.DateTimeFormat(undefined, {
+    hour: "2-digit",
+    hour12: false,
+    minute: "2-digit",
+    timeZone: "UTC"
+  }).format(date);
+  return `${local} (${utc} UTC)`;
 }
 
 function utcHourLabel(hour) {
