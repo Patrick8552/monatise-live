@@ -299,7 +299,7 @@ function renderAuditLog(serverEvents = null) {
           </article>`
         )
         .join("")
-    : '<article><span>Standby</span><strong>No operator events yet</strong><em>Build, review, then arm.</em></article>';
+    : '<article><span>Standby</span><strong>No signal events yet</strong><em>Generate, review, then save.</em></article>';
 }
 
 function localReadinessItems(snapshot = null) {
@@ -320,26 +320,26 @@ function localReadinessItems(snapshot = null) {
   const maxDailyLossPct = Number(risk.max_daily_loss_pct || 0);
   return [
     {
-      detail: loggedIn ? currentUser.username || "account active" : "register or log in first",
+      detail: loggedIn ? currentUser.username || "account active" : "register or log in to save alert preferences",
       label: "User session",
       ok: loggedIn,
       severity: "block"
     },
     {
-      detail: hasCredentials ? "funded account and API wallet saved" : "save Hyperliquid account and API wallet",
-      label: "Hyperliquid credentials",
+      detail: hasCredentials ? "alert profile saved" : "save optional account details to sync signal preferences",
+      label: "Alert profile",
       ok: hasCredentials,
       severity: "block"
     },
     {
-      detail: mode === "live" ? "free access; credentials and risk gates still apply" : "free access",
-      label: "Live permission",
+      detail: mode === "live" ? "free access; signal gates still apply" : "free access",
+      label: "Signal access",
       ok: true,
       severity: isLiveMainnet ? "block" : "warn"
     },
     {
-      detail: requires.length ? requires.join(", ") : "server order gates satisfied",
-      label: "Server order gates",
+      detail: requires.length ? requires.join(", ") : "server signal gates satisfied",
+      label: "Server signal gates",
       ok: mode !== "live" || requires.length === 0,
       severity: "block"
     },
@@ -364,7 +364,7 @@ function localReadinessItems(snapshot = null) {
       severity: "block"
     },
     {
-      detail: "faith is not a signal; no trade remains valid",
+      detail: "faith is not a signal; invalidate the thesis when price proves it wrong",
       label: "Doctrine alignment",
       ok: true,
       severity: "warn"
@@ -378,8 +378,8 @@ function renderReadinessChecklist(snapshot = null) {
   const blocked = items.filter((item) => !item.ok && item.severity === "block").length;
   els.readinessChecklist.innerHTML = `
     <div class="checklist-head">
-      <strong>${blocked ? `${blocked} live block${blocked === 1 ? "" : "s"}` : "Live checklist clear"}</strong>
-      <span>${blocked ? "preview only until resolved" : "ready for operator review"}</span>
+      <strong>${blocked ? `${blocked} signal block${blocked === 1 ? "" : "s"}` : "Signal checklist clear"}</strong>
+      <span>${blocked ? "draft only until resolved" : "ready for signal review"}</span>
     </div>
     ${items
       .map(
@@ -420,13 +420,13 @@ function strategyHealth(mark, orders, snapshot = null) {
     /max daily loss|exceeds|below minimum|shock|guard/i.test(riskStatus) ||
     indicatorAction === "halt";
   const warnings = [];
-  if (structureBreak) warnings.push("price broke structure; stop fresh grid entries");
-  if (outsideGrid) warnings.push("mark is outside the planned grid range");
+  if (structureBreak) warnings.push("price broke structure; stop fresh signals");
+  if (outsideGrid) warnings.push("mark is outside the planned signal range");
   if (!fibOk) warnings.push("live Fibonacci candles pending");
   if (indicatorAction === "reduce") warnings.push("context radar says reduce size");
-  if (indicatorAction === "widen") warnings.push("context radar says widen spacing");
+  if (indicatorAction === "widen") warnings.push("context radar says widen buffer");
   if (sessionGuard.active) warnings.push(sessionGuard.message);
-  if (!orderOk) warnings.push("grid lacks balanced buy and sell levels");
+  if (!orderOk) warnings.push("signal lacks balanced support and resistance levels");
   return {
     blocked,
     buyCount: buyOrders.length,
@@ -443,32 +443,83 @@ function strategyHealth(mark, orders, snapshot = null) {
   };
 }
 
+function signalFromHealth(health, mark) {
+  const trend = String(fibAnalysis?.trend || contextRadar?.indicator?.trend || "flat").toLowerCase();
+  const action = String(contextRadar?.instruction?.action || "normal").toLowerCase();
+  const rsi = Number(contextRadar?.indicator?.rsi || 50);
+  const atr = Number(contextRadar?.indicator?.atr || 0);
+  const nearest = Number(fibAnalysis?.nearest_level?.price);
+  const takeProfit = Number(fibAnalysis?.take_profit?.price);
+  const invalidation = Number(health.invalidation);
+  const bullish = trend.includes("up") || rsi >= 55 || (Number.isFinite(takeProfit) && takeProfit > mark);
+  const bearish = trend.includes("down") || rsi <= 45 || (Number.isFinite(takeProfit) && takeProfit < mark);
+  const direction = health.blocked || action === "halt" || action === "pause" ? "WAIT" : bullish && !bearish ? "LONG" : bearish && !bullish ? "SHORT" : "WATCH";
+  const targetOne = Number.isFinite(takeProfit) && takeProfit > 0 ? takeProfit : direction === "SHORT" ? health.gridFloor : health.gridCeiling;
+  const stop = Number.isFinite(invalidation) && invalidation > 0 ? invalidation : direction === "SHORT" ? health.gridCeiling : health.gridFloor;
+  const buffer = Number.isFinite(atr) && atr > 0 ? atr : Math.abs(mark - Number(nearest || mark));
+  const confidenceBase = 42 + (health.status === "ALIGNED" ? 28 : health.status === "REVIEW" ? 14 : 0);
+  const contextPenalty = action === "reduce" ? 10 : action === "widen" ? 6 : action === "halt" || action === "pause" ? 24 : 0;
+  const warningPenalty = Math.min(24, health.warnings.length * 6);
+  const confidence = Math.max(5, Math.min(95, confidenceBase - contextPenalty - warningPenalty));
+  const trigger =
+    direction === "LONG"
+      ? `Break and hold above ${money(Number.isFinite(nearest) ? nearest : mark)}`
+      : direction === "SHORT"
+        ? `Reject below ${money(Number.isFinite(nearest) ? nearest : mark)}`
+        : `Wait for a clean close around ${money(mark)}`;
+  return {
+    confidence,
+    direction,
+    entry: Number.isFinite(mark) ? mark : 0,
+    stop: Number.isFinite(stop) ? stop : mark,
+    targetOne: Number.isFinite(targetOne) ? targetOne : mark,
+    targetTwo:
+      direction === "SHORT"
+        ? (Number.isFinite(targetOne) ? targetOne : mark) - Math.max(buffer, 1)
+        : (Number.isFinite(targetOne) ? targetOne : mark) + Math.max(buffer, 1),
+    thesis:
+      direction === "WAIT"
+        ? "No publishable signal while quality gates are blocked."
+        : direction === "WATCH"
+          ? "Market structure is mixed; keep it as a watchlist idea until confirmation improves."
+          : `${direction} bias from ${trend || "mixed"} structure with ${action} context.`,
+    trigger
+  };
+}
+
 function renderStrategyReadout(orders, options = {}) {
   if (!els.strategyReadout) return;
   const mark = Number(options.mark ?? currentMarketPrice() ?? state?.candles?.[0]?.close);
   const health = strategyHealth(mark, orders, options.snapshot);
   lastTicketHealth = health;
   const source = options.source || "preview";
-  const sourceLabel = source === "live" ? "Exchange orders" : source === "backend" ? "Backend state" : "Strategy preview only";
-  const warningText = health.warnings.length ? health.warnings.join(" · ") : "structure, risk, session, and doctrine are aligned";
+  const sourceLabel = source === "live" ? "Live feed state" : source === "backend" ? "Backend signal state" : "Signal preview";
+  const warningText = health.warnings.length ? health.warnings.join(" · ") : "structure, context, session, and doctrine are aligned";
+  const signal = signalFromHealth(health, mark);
   els.strategyReadout.innerHTML = `
     <div class="strategy-status ${health.status.toLowerCase()}">
-      <strong>${health.status}</strong>
+      <strong>${signal.direction}</strong>
       <span>${sourceLabel}</span>
     </div>
+    <div class="signal-call">
+      <strong>${signal.confidence}% confidence</strong>
+      <span>${signal.thesis}</span>
+    </div>
     <div class="strategy-metrics">
-      <span>Setup <strong>${health.buyCount} buy / ${health.sellCount} sell</strong></span>
-      <span>Risk clip <strong>${money(health.largestNotional)}</strong></span>
-      <span>Grid <strong>${Number.isFinite(health.gridFloor) ? money(health.gridFloor) : "pending"} - ${
+      <span>Entry <strong>${money(signal.entry)}</strong></span>
+      <span>Trigger <strong>${signal.trigger}</strong></span>
+      <span>Target 1 <strong>${money(signal.targetOne)}</strong></span>
+      <span>Target 2 <strong>${money(signal.targetTwo)}</strong></span>
+      <span>Stop <strong>${money(signal.stop)}</strong></span>
+      <span>Range <strong>${Number.isFinite(health.gridFloor) ? money(health.gridFloor) : "pending"} - ${
         Number.isFinite(health.gridCeiling) ? money(health.gridCeiling) : "pending"
       }</strong></span>
-      <span>Invalidation <strong>${Number.isFinite(health.invalidation) ? money(health.invalidation) : "pending"}</strong></span>
       <span>Session <strong>${activeSessionGuard(selectedAsset).active ? "blocked" : "clear"}</strong></span>
-      <span>Doctrine <strong>no trade remains valid</strong></span>
+      <span>Doctrine <strong>invalidation required</strong></span>
     </div>
     <p>${warningText}</p>
   `;
-  renderExecutionTicket(orders, { ...options, health, mark });
+  renderExecutionTicket(orders, { ...options, health, mark, signal });
 }
 
 function renderExecutionTicket(orders = [], options = {}) {
@@ -488,9 +539,10 @@ function renderExecutionTicket(orders = [], options = {}) {
   const capital = Number.isFinite(accountValue) && accountValue > 0 ? accountValue : inputCapital;
   const drawdownPct = Number(snapshot?.risk?.max_daily_loss_pct ?? tradingRules.maxDailyLossPct ?? 0.05);
   const exposurePct = capital > 0 ? openExposure / capital : 0;
-  const canReview = !health.blocked && blocks.length === 0;
+  const signal = options.signal || signalFromHealth(health, mark);
+  const canReview = !health.blocked && blocks.length === 0 && signal.direction !== "WAIT";
   const mode = String(snapshot?.mode || (backendOnline ? "backend" : "preview")).toUpperCase();
-  els.ticketStatus.textContent = canReview ? "Ready for review" : `${blocks.length || health.warnings.length || 1} block`;
+  els.ticketStatus.textContent = canReview ? `${signal.direction} signal` : `${blocks.length || health.warnings.length || 1} block`;
   els.ticketAsset.textContent = assetLabel(selectedAsset);
   els.ticketCapital.textContent = money(capital);
   els.ticketExposure.textContent = `${money(openExposure)} (${(exposurePct * 100).toFixed(2)}%)`;
@@ -500,16 +552,16 @@ function renderExecutionTicket(orders = [], options = {}) {
   els.decisionDrawdown.textContent = `${(drawdownPct * 100).toFixed(2)}%`;
   els.ticketSummary.innerHTML = `
     <div class="ticket-call ${canReview ? "ready" : "blocked"}">
-      <strong>${canReview ? "Operator review ready" : "Do not arm yet"}</strong>
-      <span>${mode} · ${assetLabel(selectedAsset)} · ${orderList.length} planned levels</span>
+      <strong>${canReview ? `${signal.direction} setup ready` : "Do not publish yet"}</strong>
+      <span>${mode} · ${assetLabel(selectedAsset)} · ${signal.confidence}% confidence · ${orderList.length} levels</span>
     </div>
   `;
   const primaryBlock = blocks[0]?.detail || health.warnings[0] || "all visible checks clear";
   els.ticketNote.textContent = canReview
-    ? "Review wallet, venue, exposure, and session one final time before starting live routing."
+    ? `${signal.trigger}. Entry ${money(signal.entry)}, target ${money(signal.targetOne)}, invalidation ${money(signal.stop)}.`
     : `Blocked: ${primaryBlock}`;
   els.armStrategyButton.disabled = false;
-  els.armStrategyButton.textContent = canReview ? "Review Live Gates" : "Show Blocks";
+  els.armStrategyButton.textContent = canReview ? "Review Signal Quality" : "Show Blocks";
   updateDecisionSurface(snapshot);
 }
 
@@ -527,21 +579,21 @@ function updateDecisionSurface(snapshot = null) {
   const drawdownPct = Number(risk.max_daily_loss_pct ?? tradingRules.maxDailyLossPct ?? 0.05);
 
   let state = "Login required";
-  let detail = "Connect account before live routing.";
+  let detail = "Connect account to save and sync signal preferences.";
   let className = "blocked";
   if (loggedIn && !hasCredentials) {
-    state = "API wallet needed";
-    detail = "Save the funded account and API wallet before live routing.";
+    state = "Alert profile needed";
+    detail = "Save an alert profile before syncing signal preferences.";
   } else if (loggedIn && hasCredentials && blocks.length) {
-    state = "Risk blocked";
-    detail = blocks[0]?.detail || riskStatus || "Readiness gate has not cleared.";
+    state = "Signal blocked";
+    detail = blocks[0]?.detail || riskStatus || "Quality gate has not cleared.";
   } else if (running) {
-    state = "Live running";
-    detail = `${mode} ${network} routing is active for ${assetLabel(selectedAsset)}.`;
+    state = "Feed running";
+    detail = `${mode} ${network} signal feed is active for ${assetLabel(selectedAsset)}.`;
     className = "ready";
   } else if (loggedIn && hasCredentials) {
-    state = "Ready for review";
-    detail = riskStatus && !/ready|local/i.test(riskStatus) ? riskStatus : "Review exposure, drawdown, and session before starting.";
+    state = "Signal ready";
+    detail = riskStatus && !/ready|local/i.test(riskStatus) ? riskStatus : "Review thesis, invalidation, and session before saving.";
     className = "ready";
   }
 
@@ -572,30 +624,30 @@ function updateLiveDesk(snapshot = null) {
   const requires = Array.isArray(snapshot?.requires) ? snapshot.requires : [];
 
   setGate(els.loginGate, "Login", loggedIn ? "Ready" : "Needed", loggedIn ? "ready" : "warn");
-  setGate(els.credentialGate, "API wallet", hasCredentials ? "Saved" : "Needed", hasCredentials ? "ready" : "warn");
+  setGate(els.credentialGate, "Alert profile", hasCredentials ? "Saved" : "Needed", hasCredentials ? "ready" : "warn");
   setGate(
     els.riskGate,
-    "Risk gate",
-    sessionBlocked ? "Session break" : liveReady ? "Armed" : requires[0] || "Waiting",
+    "Signal gate",
+    sessionBlocked ? "Session break" : liveReady ? "Ready" : requires[0] || "Waiting",
     liveReady ? "hot" : mode === "live" || sessionBlocked ? "warn" : "ready"
   );
 
   els.liveNetworkBadge.textContent = `${mode} / ${network}`;
   els.liveDeskStatus.textContent = running
-    ? "Trading loop running"
+    ? "Signal feed running"
     : sessionBlocked
-      ? "Close trading window"
+      ? "Close signal window"
     : liveReady
-      ? "Live armed"
+      ? "Publishing ready"
       : loggedIn && hasCredentials
-        ? "Ready to arm"
-        : "Not armed";
+        ? "Ready to publish"
+        : "Not publishing";
   els.liveModeStatus.textContent = running
     ? `${mode.toUpperCase()} running`
     : sessionBlocked
       ? `${sessionGuard.session} ${sessionGuard.transition} guard`
     : liveReady
-      ? "Real orders armed"
+      ? "Signal feed armed"
       : `${mode.toUpperCase()} idle`;
   els.liveModeStatus.classList.toggle("live-mode", mode === "live");
   els.backendStartButton.classList.toggle("live-running", running);
@@ -604,8 +656,8 @@ function updateLiveDesk(snapshot = null) {
     : sessionBlocked
       ? "Session Guard"
     : mode === "live"
-        ? "Start Live"
-        : "Start Paper";
+        ? "Start Feed"
+        : "Start Feed";
   els.backendStartButton.disabled = !loggedIn || !hasCredentials || sessionBlocked;
   if (sessionBlocked) {
     els.riskStatus.textContent = sessionGuard.message || "forex session-break guard";
@@ -776,7 +828,7 @@ function commodityLondonGuard(symbol = selectedAsset, date = new Date()) {
   return {
     active: true,
     direction: proximity.direction,
-    message: `commodity session guard: ${asset} live grid orders are limited to the London session`,
+    message: `commodity session guard: ${asset} signals are limited to the London session`,
     minutes: proximity.minutes,
     session: "London",
     symbol: asset,
@@ -839,7 +891,7 @@ function renderForexSessions(date = new Date()) {
     </div>
     <div class="session-grid">${rows}</div>
     <div class="session-pairs ${sessionGuard.active ? "guarded" : ""}">
-      <strong>${sessionGuard.active ? "Close trading" : "Active pairs"}</strong>
+      <strong>${sessionGuard.active ? "Close signal window" : "Active pairs"}</strong>
       <span>${
         sessionGuard.active
           ? `${sessionGuard.symbol}: ${durationLabel(sessionGuard.minutes)} ${sessionGuard.direction} ${sessionGuard.session} ${sessionGuard.transition}`
@@ -896,12 +948,12 @@ function applyTradingRules(rules = {}) {
 
 function renderTradingRules() {
   const drawdownLabel = `${(tradingRules.maxDailyLossPct * 100).toFixed(1).replace(/\.0$/, "")}% drawdown cap`;
-  els.rulesStatus.textContent = `${tradingRules.chartInterval} grid feed`;
-  els.rulesSummary.textContent = `10x leverage · ${money(tradingRules.orderQuoteSize)} per order · ${money(
+  els.rulesStatus.textContent = `${tradingRules.chartInterval} signal feed`;
+  els.rulesSummary.textContent = `10x risk lens · ${money(tradingRules.orderQuoteSize)} alert size · ${money(
     tradingRules.maxTotalNotional
-  )} open grid · ${money(tradingRules.maxPositionValue)} max position · ${tradingRules.chartInterval} analysis · ${tradingRules.sessionGuardMinutes}m session guard · ${
+  )} max signal risk · ${money(tradingRules.maxPositionValue)} account lens · ${tradingRules.chartInterval} analysis · ${tradingRules.sessionGuardMinutes}m session guard · ${
     tradingRules.londonCommodityOnly ? "London commodity guard on" : "London commodity guard off"
-  } · ${drawdownLabel} · ${tradingRules.staleGridCancel ? "stale cancel on" : "stale cancel off"} · free access`;
+  } · ${drawdownLabel} · ${tradingRules.staleGridCancel ? "stale signal expiry on" : "stale signal expiry off"} · free access`;
   els.ticketDrawdown.textContent = `${(tradingRules.maxDailyLossPct * 100).toFixed(2)}%`;
   els.decisionDrawdown.textContent = `${(tradingRules.maxDailyLossPct * 100).toFixed(2)}%`;
   renderForexSessions();
@@ -924,9 +976,9 @@ function renderAuth(me) {
     : "free active";
   els.credentialStatus.textContent = loggedIn
     ? me.credentialsConfigured
-      ? "Hyperliquid credentials saved for this user."
-      : "Save your funded account address and API wallet secret key."
-    : "Register or log in to connect your own Hyperliquid account.";
+      ? "Alert profile saved for this user."
+      : "Save optional account details to sync your signal profile."
+    : "Register or log in to save your signal preferences.";
   els.logoutButton.disabled = !loggedIn;
   els.saveCredentialsButton.disabled = !loggedIn;
   els.backendStartButton.disabled = !loggedIn || !me.credentialsConfigured;
@@ -1012,7 +1064,7 @@ async function saveCredentials() {
   }
   els.secretKeyInput.value = "";
   await loadMe();
-  addAuditEvent("credentials saved", "Hyperliquid credentials saved", "API wallet stored per user");
+  addAuditEvent("profile saved", "Alert profile saved", "preferences stored per user");
   refreshBackend();
 }
 
@@ -1028,7 +1080,7 @@ async function finishOnboarding() {
   }
   saveClientProfile(currentUser.username);
   if (!currentUser.credentialsConfigured && (!els.accountAddressInput.value.trim() || !els.secretKeyInput.value.trim())) {
-    els.credentialStatus.textContent = "Add the funded account address and API wallet secret key to file setup.";
+    els.credentialStatus.textContent = "Add optional account details to file the alert profile.";
     (els.accountAddressInput.value.trim() ? els.secretKeyInput : els.accountAddressInput).focus();
     renderRegistrationDesk();
     return;
@@ -1078,7 +1130,7 @@ async function loadMarkets() {
       const active = markets.find((asset) => asset.symbol === selectedAsset);
       if (active) {
         els.markPrice.textContent = money(active.price);
-        els.marketTitle.textContent = `${selectedAsset}-USD strategy map`;
+        els.marketTitle.textContent = `${selectedAsset}-USD signal map`;
       }
     }
     if (!initialLiveCandlesLoaded && markets.length) {
@@ -1140,11 +1192,11 @@ async function loadFibonacciAnalysis(options = {}) {
 function renderFibonacciAnalysis() {
   if (!els.fibAnalysis) return;
   if (!fibAnalysis) {
-    els.fibAnalysis.innerHTML = `<div class="fib-head"><strong>Fibonacci Grid Analysis</strong><span>Waiting for live candles</span></div>`;
+    els.fibAnalysis.innerHTML = `<div class="fib-head"><strong>Fibonacci Signal Analysis</strong><span>Waiting for live candles</span></div>`;
     return;
   }
   if (fibAnalysis.error) {
-    els.fibAnalysis.innerHTML = `<div class="fib-head"><strong>Fibonacci Grid Analysis</strong><span>${fibAnalysis.error}</span></div>`;
+    els.fibAnalysis.innerHTML = `<div class="fib-head"><strong>Fibonacci Signal Analysis</strong><span>${fibAnalysis.error}</span></div>`;
     return;
   }
   const levels = (fibAnalysis.levels || [])
@@ -1157,7 +1209,7 @@ function renderFibonacciAnalysis() {
     .join("");
   els.fibAnalysis.innerHTML = `
     <div class="fib-head">
-      <strong>Fibonacci Grid Analysis</strong>
+      <strong>Fibonacci Signal Analysis</strong>
       <span>${fibAnalysis.interval} · ${fibAnalysis.candle_count} live candles · ${fibAnalysis.trend} structure</span>
     </div>
     <div class="fib-metrics">
@@ -1165,7 +1217,7 @@ function renderFibonacciAnalysis() {
       <span>Low <strong>${money(fibAnalysis.swing_low)}</strong></span>
       <span>Fast Take Profit <strong>${money(fibAnalysis.take_profit.price)}</strong></span>
       <span>Nearest ${fibAnalysis.nearest_level.label} <strong>${money(fibAnalysis.nearest_level.price)}</strong></span>
-      <span>Grid ${money(fibAnalysis.grid_floor)} - ${money(fibAnalysis.grid_ceiling)}</span>
+      <span>Range ${money(fibAnalysis.grid_floor)} - ${money(fibAnalysis.grid_ceiling)}</span>
       <span>Invalidation <strong>${money(fibAnalysis.invalidation)}</strong></span>
     </div>
     <div class="fib-levels">${levels}</div>
@@ -1374,7 +1426,7 @@ async function saveSelectedAsset(symbol) {
   loadFibonacciAnalysis({ force: true });
   loadContextRadar({ force: true });
   if (!currentUser.authenticated) {
-    addAuditEvent("asset changed", "Trading asset changed", `${previous} -> ${selectedAsset}`);
+    addAuditEvent("asset changed", "Signal asset changed", `${previous} -> ${selectedAsset}`);
     render();
     return;
   }
@@ -1389,7 +1441,7 @@ async function saveSelectedAsset(symbol) {
     selectedSymbol: payload.selectedSymbol,
     subscription: payload.subscription || currentUser.subscription
   };
-  addAuditEvent("asset changed", "Trading asset saved", `${previous} -> ${selectedAsset}`);
+  addAuditEvent("asset changed", "Signal asset saved", `${previous} -> ${selectedAsset}`);
   refreshBackend();
 }
 
@@ -1823,7 +1875,7 @@ function renderTape() {
       </article>`
     )
     .join("");
-  els.lastFill.textContent = fills[0] ? `${fills[0].side.toUpperCase()} ${money(fills[0].price)}` : "No fills";
+  els.lastFill.textContent = fills[0] ? `${fills[0].side.toUpperCase()} signal ${money(fills[0].price)}` : "No signals";
 }
 
 function renderBackend(snapshot) {
@@ -1852,7 +1904,7 @@ function renderBackend(snapshot) {
       drawEquity(liveEquityCurve, hasAccountData ? "Waiting for live account samples" : "Waiting for Hyperliquid account");
     } else {
       els.equityMetric.textContent = money(snapshot.portfolio.equity);
-      els.accountMetricLabel.textContent = "Harvest";
+      els.accountMetricLabel.textContent = "Signal P/L";
       els.cashMetricLabel.textContent = "Fees";
       els.harvestMetric.textContent = money(snapshot.portfolio.realizedHarvest);
       els.feesMetric.textContent = money(snapshot.portfolio.feePaid);
@@ -1872,26 +1924,26 @@ function renderBackend(snapshot) {
   if (snapshot.desk) {
     els.executionModeMetric.textContent = snapshot.desk.executionMode || snapshot.executionMode || "dry_run";
     els.orderAgeMetric.textContent = `${Math.round(snapshot.desk.orderAgeSeconds || 0)}s / ${Math.round(snapshot.desk.orderRefreshSeconds || 0)}s`;
-    els.syncMetric.textContent = `${snapshot.desk.reconciledFillCount || 0} fills / ${Math.round(snapshot.desk.lastReconciliationSeconds || 0)}s`;
+    els.syncMetric.textContent = `${snapshot.desk.reconciledFillCount || 0} signals / ${Math.round(snapshot.desk.lastReconciliationSeconds || 0)}s`;
     els.exchangeOrderMetric.textContent = String(snapshot.desk.exchangeOrderCount || 0);
   }
   const liveOrders = snapshot.openOrders || [];
   const hasExchangeState = Boolean(snapshot.running || snapshot.liveReady || snapshot.desk?.exchangeOrderCount || liveOrders.length);
   const liveMark = Number(snapshot.markPrice ?? currentMarketPrice());
   renderOpenOrders(liveOrders, {
-    emptyText: hasExchangeState ? "No resting exchange orders" : "Backend connected",
-    emptyHint: hasExchangeState ? "Arm the desk to place live grid orders" : "No live orders are being shown",
+    emptyText: hasExchangeState ? "No live signal levels" : "Backend connected",
+    emptyHint: hasExchangeState ? "Generate a fresh signal from the feed" : "No signal levels are being shown",
     mark: Number.isFinite(liveMark) ? liveMark : undefined,
     snapshot,
     source: hasExchangeState ? "live" : "backend",
-    title: hasExchangeState ? "Live Orders" : "Backend State"
+    title: hasExchangeState ? "Live Signal Levels" : "Backend State"
   });
   const sourceLabel = hasExchangeState
-    ? `${String(snapshot.mode || "live").toUpperCase()} ${String(snapshot.network || "mainnet").toUpperCase()} exchange/order state`
-    : "Backend connected - no resting exchange orders";
+    ? `${String(snapshot.mode || "live").toUpperCase()} ${String(snapshot.network || "mainnet").toUpperCase()} signal state`
+    : "Backend connected - no live signal levels";
   els.liquiditySource.textContent = sourceLabel;
   if (Array.isArray(snapshot.fills)) {
-    els.fillCount.textContent = `${snapshot.fills.length} fills`;
+    els.fillCount.textContent = `${snapshot.fills.length} signals`;
     const fills = snapshot.fills.slice(-20).reverse();
     els.fillTape.innerHTML = fills
       .map(
@@ -1904,7 +1956,7 @@ function renderBackend(snapshot) {
         </article>`
       )
       .join("");
-    els.lastFill.textContent = fills[0] ? `${fills[0].side.toUpperCase()} ${money(fills[0].price)}` : "No fills";
+    els.lastFill.textContent = fills[0] ? `${fills[0].side.toUpperCase()} signal ${money(fills[0].price)}` : "No signals";
   }
   if (Array.isArray(snapshot.events)) {
     els.runtimeLog.innerHTML = snapshot.events
@@ -1919,19 +1971,19 @@ function renderBackend(snapshot) {
 function renderOpenOrders(orders, options = {}) {
   const source = options.source || "preview";
   const orderList = Array.isArray(orders) ? orders : [];
-  els.openGridTitle.textContent = options.title || (source === "live" ? "Live Orders" : "Strategy Preview");
-  els.openOrderCount.textContent = `${orderList.length} orders`;
+  els.openGridTitle.textContent = options.title || (source === "live" ? "Live Signal Levels" : "Signal Preview");
+  els.openOrderCount.textContent = `${orderList.length} level${orderList.length === 1 ? "" : "s"}`;
   els.openOrderBook.innerHTML = orderList.length
     ? orderList
         .slice(0, 12)
         .map(
           (order) => `<article class="order-row ${order.side} ${source}">
-            <strong>${String(order.side).toUpperCase()} ${money(order.price)}</strong>
+            <strong>${String(order.side).toUpperCase() === "BUY" ? "Support" : "Resistance"} ${money(order.price)}</strong>
             <span>${Number(order.quantity || 0).toFixed(5)} ${order.symbol || selectedAsset}</span>
           </article>`
         )
         .join("")
-    : `<article class="order-row empty"><strong>${options.emptyText || "No resting grid"}</strong><span>${options.emptyHint || "Waiting for arm"}</span></article>`;
+    : `<article class="order-row empty"><strong>${options.emptyText || "No signal levels"}</strong><span>${options.emptyHint || "Waiting for generation"}</span></article>`;
   try {
     renderStrategyReadout(orderList, options);
   } catch (error) {
@@ -1974,11 +2026,11 @@ async function backendCommand(path) {
   const sessionGuard = activeSessionGuard(selectedAsset);
   if (path === "/api/start" && sessionGuard.active && lastBackendSnapshot?.mode === "live") {
     els.riskStatus.textContent = sessionGuard.message;
-    addAuditEvent("start blocked", "Start blocked by session guard", sessionGuard.message);
+    addAuditEvent("feed blocked", "Signal feed blocked by session guard", sessionGuard.message);
     updateLiveDesk(lastBackendSnapshot);
     return;
   }
-  addAuditEvent(path === "/api/start" ? "start requested" : "stop requested", path === "/api/start" ? "Operator requested trading loop start" : "Operator requested trading loop stop", selectedAsset);
+  addAuditEvent(path === "/api/start" ? "feed start requested" : "feed pause requested", path === "/api/start" ? "Operator requested signal feed start" : "Operator requested signal feed pause", selectedAsset);
   const response = await jsonPost(path);
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
@@ -2007,7 +2059,7 @@ async function saveTradingRules() {
     contextRadar = null;
     loadFibonacciAnalysis({ force: true });
     loadContextRadar({ force: true });
-    addAuditEvent("rules updated", "Trading rules updated locally", `${nextRules.chartInterval} · ${nextRules.sessionGuardMinutes}m guard`);
+    addAuditEvent("rules updated", "Signal rules updated locally", `${nextRules.chartInterval} · ${nextRules.sessionGuardMinutes}m guard`);
     return;
   }
   const response = await jsonPost("/api/trading-rules", nextRules);
@@ -2024,7 +2076,7 @@ async function saveTradingRules() {
   loadContextRadar({ force: true });
   addAuditEvent(
     "rules updated",
-    "Trading rules saved",
+    "Signal rules saved",
     `${payload.tradingRules.chartInterval} · ${payload.tradingRules.sessionGuardMinutes}m guard · ${(
       payload.tradingRules.maxDailyLossPct * 100
     ).toFixed(1)}% drawdown`
@@ -2043,7 +2095,7 @@ function render() {
   els.candleCount.textContent = `${state.activeIndex}/${state.candles.length} candles`;
   els.equityMetric.textContent = money(equity(mark));
   els.feesMetric.textContent = money(state.feePaid);
-  els.fillCount.textContent = `${state.fills.length} fills`;
+  els.fillCount.textContent = `${Math.max(1, state.openOrders.length ? 1 : 0)} signal`;
   els.harvestMetric.textContent = money(state.realizedHarvest);
   els.inventoryMetric.textContent = `${(inventoryRatio(mark) * 100).toFixed(2)}%`;
   els.drawdownMetric.textContent = "$0.00 (0.00%)";
@@ -2058,17 +2110,17 @@ function render() {
     emptyText: "No preview levels",
     mark: live ? Number(live.price) : mark,
     source: "preview",
-    title: "Strategy Preview"
+    title: "Signal Preview"
   });
   els.markPrice.textContent = live ? money(live.price) : money(mark);
-  els.marketTitle.textContent = `${selectedAsset}-USD strategy map`;
-  els.liquiditySource.textContent = "Strategy preview only. No exchange orders.";
+  els.marketTitle.textContent = `${selectedAsset}-USD signal map`;
+  els.liquiditySource.textContent = "Signals only. No exchange orders.";
   els.runState.textContent = state.activeIndex >= state.candles.length ? "Complete" : "Ready";
   renderTape();
   renderAuditLog();
   drawEquity();
   if (!backendOnline) {
-    els.runtimeLog.innerHTML = "<article>Serve with the live backend to control paper/live loops.</article>";
+    els.runtimeLog.innerHTML = "<article>Serve with the backend to refresh live signal feeds.</article>";
     els.riskStatus.textContent = "local";
     updateLiveDesk();
   }
@@ -2082,7 +2134,7 @@ function reset() {
   state = createState(configFromInputs());
   planOrders(state.candles[0].open);
   render();
-  if (!pendingArmReview) addAuditEvent("preview reset", "Strategy preview reset", selectedAsset);
+  if (!pendingArmReview) addAuditEvent("preview reset", "Signal preview reset", selectedAsset);
 }
 
 function rebuildFromInputs() {
@@ -2097,7 +2149,7 @@ els.runButton.addEventListener("click", () => {
   state = createState(configFromInputs());
   runAll();
   render();
-  addAuditEvent("preview run", "Local strategy preview completed", `${state.fills.length} fills`);
+  addAuditEvent("signal generated", "Local signal generated", `${state.openOrders.length} levels`);
 });
 
 els.stepButton.addEventListener("click", () => {
@@ -2106,7 +2158,7 @@ els.stepButton.addEventListener("click", () => {
   }
   stepSimulation();
   render();
-  addAuditEvent("preview step", "Advanced one preview candle", `${state.activeIndex}/${state.candles.length}`);
+  addAuditEvent("preview step", "Advanced one signal candle", `${state.activeIndex}/${state.candles.length}`);
 });
 
 els.resetButton.addEventListener("click", reset);
@@ -2116,12 +2168,12 @@ els.armStrategyButton.addEventListener("click", () => {
   const blocks = readinessBlocks(lastBackendSnapshot);
   const warnings = lastTicketHealth?.warnings || [];
   if (blocks.length || lastTicketHealth?.blocked) {
-    addAuditEvent("arm blocked", "Live review found blockers", blocks[0]?.detail || warnings[0] || "readiness not clear");
+    addAuditEvent("signal blocked", "Signal review found blockers", blocks[0]?.detail || warnings[0] || "readiness not clear");
     document.querySelector("#risk")?.scrollIntoView({ behavior: "smooth", block: "start" });
     pendingArmReview = false;
     return;
   }
-  addAuditEvent("arm review", "Live gates ready for operator review", `${selectedAsset} · ${tradingRules.chartInterval}`);
+  addAuditEvent("signal review", "Signal quality ready for review", `${selectedAsset} · ${tradingRules.chartInterval}`);
   document.querySelector("#risk")?.scrollIntoView({ behavior: "smooth", block: "start" });
   pendingArmReview = false;
 });

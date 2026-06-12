@@ -1937,6 +1937,29 @@ canvas {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.signal-call {
+  background:
+    linear-gradient(135deg, rgba(0, 184, 217, 0.12), rgba(0, 168, 120, 0.1)),
+    #f4f6f2;
+  border: 1px solid rgba(0, 184, 217, 0.18);
+  border-radius: 6px;
+  display: grid;
+  gap: 5px;
+  padding: 10px;
+}
+
+.signal-call strong {
+  color: var(--ink);
+  font-size: 1rem;
+}
+
+.signal-call span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
 .strategy-metrics span {
   background: #f4f6f2;
   border: 1px solid var(--line);

@@ -3,14 +3,14 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Monatise Trading Console</title>
+    <title>Monatise Signal Console</title>
     <link rel="stylesheet" href="./styles.css?v=20260607-mobile-desk" />
   </head>
   <body>
     <main class="shell">
       <header class="topbar">
         <div>
-          <p class="eyebrow">Multi-asset trading console</p>
+          <p class="eyebrow">Multi-asset signal console</p>
           <h1>Monatise</h1>
         </div>
         <nav class="desk-nav" aria-label="primary navigation">
@@ -24,34 +24,34 @@
         </nav>
         <div class="status-strip" aria-label="simulation status">
           <span id="runState">Ready</span>
-          <span id="liveModeStatus">Live desk idle</span>
+          <span id="liveModeStatus">Signal desk idle</span>
           <span id="candleCount">0 candles</span>
-          <span id="fillCount">0 fills</span>
+          <span id="fillCount">0 signals</span>
         </div>
       </header>
 
       <section class="ops-ribbon" aria-label="desk overview">
         <article>
-          <span>Venue</span>
-          <strong>Hyperliquid</strong>
+          <span>Feed</span>
+          <strong>Market data</strong>
         </article>
         <article>
-          <span>Environment</span>
-          <strong>Mainnet</strong>
+          <span>Mode</span>
+          <strong>Signals only</strong>
         </article>
         <article>
-          <span>Grid Cap</span>
+          <span>Risk Lens</span>
           <strong>$150</strong>
         </article>
         <article>
-          <span>Order Clip</span>
+          <span>Alert Size</span>
           <strong>$25</strong>
         </article>
       </section>
 
       <nav class="desk-jump-nav" aria-label="desk sections">
-        <a href="#trade">Trade Setup</a>
-        <a href="#risk">Risk Gate</a>
+        <a href="#trade">Signal Builder</a>
+        <a href="#risk">Quality Gate</a>
         <a href="#markets">Markets</a>
         <a href="#account">Account</a>
         <a href="#activity">Activity</a>
@@ -59,9 +59,9 @@
 
       <section class="command-strip" aria-label="live decision surface">
         <div class="command-state">
-          <span>Decision</span>
+          <span>Signal</span>
           <strong id="decisionState">Login required</strong>
-          <em id="decisionDetail">Connect account before live routing.</em>
+          <em id="decisionDetail">Connect account to save signal preferences.</em>
         </div>
         <div class="command-metrics">
           <article>
@@ -87,8 +87,8 @@
         <section id="trade" class="desk-section trade-section">
           <div class="section-head">
             <div>
-              <p class="eyebrow">Trade setup</p>
-              <h2>Build the grid before touching live orders.</h2>
+              <p class="eyebrow">Signal builder</p>
+              <h2>Generate an actionable setup before any execution decision.</h2>
             </div>
             <button id="resetButton" type="button" title="Reset to defaults">Reset</button>
           </div>
@@ -98,26 +98,26 @@
               <div class="control-group">
                 <div class="group-title">
                   <span>Market</span>
-                  <strong>Routing</strong>
+                  <strong>Universe</strong>
                 </div>
                 <label>
-                  Trading asset
+                  Signal asset
                   <select id="assetSelect"></select>
                 </label>
                 <div id="assetDetail" class="asset-detail">
                   <strong>BTC</strong>
-                  <span>Bitcoin perpetual routed on Hyperliquid.</span>
+                  <span>Bitcoin market feed used for signal generation.</span>
                 </div>
                 <label>
-                  Local simulation symbol
+                  Local signal symbol
                   <input id="symbolInput" type="text" value="BTC-USD" />
                 </label>
               </div>
 
               <div class="control-group">
                 <div class="group-title">
-                  <span>Strategy</span>
-                  <strong>Grid</strong>
+                  <span>Signal model</span>
+                  <strong>Momentum + levels</strong>
                 </div>
                 <div class="input-row">
                   <label>
@@ -130,18 +130,18 @@
                   </label>
                 </div>
                 <label>
-                  Grid spacing
+                  Price buffer
                   <input id="spacingInput" type="range" min="0.1" max="2" step="0.1" value="0.5" />
                   <span class="range-readout"><span id="spacingValue">0.5</span>%</span>
                 </label>
                 <label>
-                  Levels each side
+                  Target bands
                   <input id="levelsInput" type="range" min="1" max="12" step="1" value="5" />
                   <span class="range-readout"><span id="levelsValue">5</span> levels</span>
                 </label>
                 <div class="input-row">
                   <label>
-                    Order quote size
+                    Alert risk size
                     <input id="orderSizeInput" type="number" value="250" min="10" step="10" />
                   </label>
                   <label>
@@ -150,8 +150,8 @@
                   </label>
                 </div>
                 <div class="button-row">
-                  <button id="runButton" class="primary" type="button">Run</button>
-                  <button id="stepButton" type="button">Step</button>
+                  <button id="runButton" class="primary" type="button">Generate</button>
+                  <button id="stepButton" type="button">Next candle</button>
                 </div>
               </div>
               <textarea id="csvInput" class="internal-candle-buffer" spellcheck="false" aria-hidden="true" tabindex="-1"></textarea>
@@ -159,17 +159,17 @@
 
             <div class="panel strategy-panel">
               <div class="panel-head">
-                <h2 id="openGridTitle">Strategy Preview</h2>
-                <span id="openOrderCount">0 orders</span>
+                <h2 id="openGridTitle">Signal Preview</h2>
+                <span id="openOrderCount">0 levels</span>
               </div>
               <div id="strategyReadout" class="strategy-readout" aria-label="strategy preview readout"></div>
               <div id="openOrderBook" class="open-order-book"></div>
             </div>
 
-            <section class="panel execution-ticket" aria-label="execution ticket">
+            <section class="panel execution-ticket" aria-label="signal ticket">
               <div class="panel-head">
-                <h2>Execution Ticket</h2>
-                <span id="ticketStatus">Preview only</span>
+                <h2>Signal Ticket</h2>
+                <span id="ticketStatus">Generating</span>
               </div>
               <div id="ticketSummary" class="ticket-summary"></div>
               <div class="ticket-grid">
@@ -182,7 +182,7 @@
                   <strong id="ticketCapital">$0.00</strong>
                 </article>
                 <article>
-                  <span>Grid Exposure</span>
+                  <span>Risk Lens</span>
                   <strong id="ticketExposure">$0.00</strong>
                 </article>
                 <article>
@@ -194,8 +194,8 @@
                   <strong id="ticketChart">1h</strong>
                 </article>
               </div>
-              <button id="armStrategyButton" class="primary" type="button">Review Live Gates</button>
-              <p id="ticketNote" class="ticket-note">Real-money orders stay blocked until every readiness item clears.</p>
+              <button id="armStrategyButton" class="primary" type="button">Review Signal Quality</button>
+              <p id="ticketNote" class="ticket-note">Monatise generates signals and watch conditions. It does not place orders from this screen.</p>
             </section>
           </div>
         </section>
@@ -203,23 +203,23 @@
         <section id="risk" class="desk-section">
           <div class="section-head">
             <div>
-              <p class="eyebrow">Risk gate</p>
-              <h2>Arm only when readiness, capital, and session rules agree.</h2>
+              <p class="eyebrow">Quality gate</p>
+              <h2>Publish only when structure, context, and session rules agree.</h2>
             </div>
-            <div class="backend-box compact-backend" aria-label="backend trading status">
+            <div class="backend-box compact-backend" aria-label="backend signal status">
               <span>Backend</span>
               <strong id="backendStatus">Offline</strong>
             </div>
           </div>
 
           <div class="section-grid risk-grid">
-            <div class="live-desk" aria-label="live trading desk">
+            <div class="live-desk" aria-label="signal quality desk">
               <div class="live-desk-head">
                 <div>
-                  <span>Real-money desk</span>
-                  <strong id="liveDeskStatus">Not armed</strong>
+                  <span>Signal desk</span>
+                  <strong id="liveDeskStatus">Not publishing</strong>
                 </div>
-                <span id="liveNetworkBadge">paper</span>
+                <span id="liveNetworkBadge">signals</span>
               </div>
               <div class="readiness-grid">
                 <article id="loginGate">
@@ -227,26 +227,26 @@
                   <strong>Needed</strong>
                 </article>
                 <article id="credentialGate">
-                  <span>API wallet</span>
+                  <span>Alert profile</span>
                   <strong>Needed</strong>
                 </article>
                 <article id="riskGate">
-                  <span>Risk gate</span>
+                  <span>Signal gate</span>
                   <strong>Waiting</strong>
                 </article>
               </div>
-              <div id="readinessChecklist" class="readiness-checklist" aria-label="live readiness checklist"></div>
+              <div id="readinessChecklist" class="readiness-checklist" aria-label="signal readiness checklist"></div>
               <div class="button-row trade-actions">
-                <button id="backendStartButton" class="primary danger-primary" type="button">Start Live</button>
-                <button id="backendStopButton" type="button">Stop</button>
+                <button id="backendStartButton" class="primary danger-primary" type="button">Start Feed</button>
+                <button id="backendStopButton" type="button">Pause</button>
               </div>
             </div>
 
-            <div class="rules-console" aria-label="trading rules console">
+            <div class="rules-console" aria-label="signal rules console">
               <div class="rules-head">
                 <div>
-                  <span>Trading Rules</span>
-                  <strong id="rulesStatus">Desk defaults</strong>
+                  <span>Signal Rules</span>
+                  <strong id="rulesStatus">Signal defaults</strong>
                 </div>
                 <button id="saveRulesButton" type="button">Save</button>
               </div>
@@ -275,25 +275,25 @@
                   <input id="drawdownLimitInput" type="number" min="1" max="20" step="0.5" value="5" />
                 </label>
                 <label>
-                  Per order
+                  Risk size
                   <input id="ruleOrderSizeInput" type="number" min="1" step="1" value="25" />
                 </label>
                 <label>
-                  Total open grid
+                  Max signal risk
                   <input id="maxTotalNotionalInput" type="number" min="1" step="1" value="150" />
                 </label>
                 <label>
-                  Max position value
+                  Max account lens
                   <input id="maxPositionValueInput" type="number" min="1" step="1" value="250" />
                 </label>
               </div>
               <label class="toggle-rule">
                 <input id="staleGridCancelInput" type="checkbox" checked />
-                <span>Auto-cancel stale grids</span>
+                <span>Expire stale signals</span>
               </label>
               <label class="toggle-rule">
                 <input id="londonCommodityInput" type="checkbox" checked />
-                <span>Gold/oil live grids only during London</span>
+                <span>Gold/oil signals only during London</span>
               </label>
               <div id="rulesSummary" class="rules-summary">1h analysis · 60m session guard · London commodity guard on</div>
             </div>
@@ -306,7 +306,7 @@
                   <strong id="equityMetric">$0.00</strong>
                 </article>
                 <article>
-                  <span id="accountMetricLabel">Harvest</span>
+                  <span id="accountMetricLabel">Signal P/L</span>
                   <strong id="harvestMetric">$0.00</strong>
                 </article>
                 <article>
@@ -322,7 +322,7 @@
 
             <section class="panel metrics">
               <div class="panel-head">
-                <h2>Risk Console</h2>
+                <h2>Signal Risk</h2>
                 <span id="executionModeMetric">dry-run</span>
               </div>
               <div class="metric-grid compact">
@@ -331,11 +331,11 @@
                   <strong id="drawdownMetric">$0.00</strong>
                 </article>
                 <article>
-                  <span>Open Notional</span>
+                  <span>Open Risk</span>
                   <strong id="openNotionalMetric">$0.00</strong>
                 </article>
                 <article>
-                  <span>Order Age</span>
+                  <span>Signal Age</span>
                   <strong id="orderAgeMetric">0s</strong>
                 </article>
                 <article>
@@ -344,10 +344,10 @@
                 </article>
                 <article>
                   <span>Sync</span>
-                  <strong id="syncMetric">0 fills</strong>
+                  <strong id="syncMetric">0 signals</strong>
                 </article>
                 <article>
-                  <span>Exchange IDs</span>
+                  <span>Saved IDs</span>
                   <strong id="exchangeOrderMetric">0</strong>
                 </article>
               </div>
@@ -359,7 +359,7 @@
           <div class="section-head">
             <div>
               <p class="eyebrow">Market intelligence</p>
-              <h2 id="marketTitle">BTC-USD strategy map</h2>
+              <h2 id="marketTitle">BTC-USD signal map</h2>
             </div>
             <div class="price-pill">
               <span>Mark</span>
@@ -368,14 +368,14 @@
           </div>
 
           <section class="market-stage" aria-label="market visualization">
-            <p id="liquiditySource" class="liquidity-source">Strategy preview only. No exchange orders.</p>
-            <div id="fibAnalysis" class="fib-analysis" aria-label="Fibonacci grid analysis">
+            <p id="liquiditySource" class="liquidity-source">Signals only. No exchange orders.</p>
+            <div id="fibAnalysis" class="fib-analysis" aria-label="Fibonacci signal analysis">
               <div class="fib-head">
-                <strong>Fibonacci Grid Analysis</strong>
+                <strong>Fibonacci Signal Analysis</strong>
                 <span>Waiting for live candles</span>
               </div>
             </div>
-            <div id="contextRadar" class="context-radar" aria-label="grid context radar">
+            <div id="contextRadar" class="context-radar" aria-label="signal context radar">
               <div class="context-head">
                 <strong>Context Radar</strong>
                 <span>Waiting for indicators</span>
@@ -398,7 +398,7 @@
           <div class="section-head">
             <div>
               <p class="eyebrow">Account</p>
-              <h2>Keep identity and credentials separate from trading capital.</h2>
+              <h2>Keep identity and alert preferences separate from trading capital.</h2>
             </div>
           </div>
 
@@ -413,7 +413,7 @@
               </div>
               <label>
                 Client name
-                <input id="clientNameInput" type="text" autocomplete="name" placeholder="Legal or trading desk name" />
+                <input id="clientNameInput" type="text" autocomplete="name" placeholder="Legal or signal desk name" />
               </label>
               <label>
                 Email or phone
@@ -445,7 +445,7 @@
                     <strong id="onboardingDrawdown">5% cap</strong>
                   </article>
                   <article>
-                    <span>Execution account</span>
+                    <span>Alert account</span>
                     <strong id="onboardingAccount">Needed</strong>
                   </article>
                   <article>
@@ -458,15 +458,15 @@
                 </div>
               </div>
               <label>
-                Funded account address
+                Optional account address
                 <input id="accountAddressInput" type="text" autocomplete="off" placeholder="0x..." />
               </label>
               <label>
-                API wallet secret key
+                Optional API wallet secret key
                 <input id="secretKeyInput" type="password" autocomplete="off" />
               </label>
-              <button id="saveCredentialsButton" type="button">Save credentials</button>
-              <p id="credentialStatus">Per-user Hyperliquid credentials only.</p>
+              <button id="saveCredentialsButton" type="button">Save alert profile</button>
+              <p id="credentialStatus">Per-user alert profile only.</p>
             </div>
 
             <section class="panel access-panel">
@@ -474,7 +474,7 @@
                 <h2>Access</h2>
                 <span id="subscriptionStatus">Free</span>
               </div>
-              <p>Access is free for now. Connect only the exchange account you control when you are ready to run paper or live loops.</p>
+              <p>Access is free for now. Use the app to generate, review, and save market signals before deciding what to do elsewhere.</p>
             </section>
           </div>
         </section>
@@ -483,15 +483,15 @@
           <div class="section-head">
             <div>
               <p class="eyebrow">Activity</p>
-              <h2>Review fills, equity, and runtime state before scaling.</h2>
+              <h2>Review generated signals, equity lens, and runtime state.</h2>
             </div>
           </div>
 
           <div class="section-grid activity-grid">
             <section class="panel">
               <div class="panel-head">
-                <h2>Fill Tape</h2>
-                <span id="lastFill">No fills</span>
+                <h2>Signal Tape</h2>
+                <span id="lastFill">No signals</span>
               </div>
               <div id="fillTape" class="fill-tape"></div>
             </section>
@@ -511,7 +511,7 @@
 
             <section class="panel audit-panel">
               <div class="panel-head">
-                <h2>Trade Audit</h2>
+                <h2>Signal Audit</h2>
                 <span id="auditCount">0 events</span>
               </div>
               <div id="tradeAuditLog" class="trade-audit-log"></div>
