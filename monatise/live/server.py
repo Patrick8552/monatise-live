@@ -11,6 +11,7 @@ from urllib.parse import parse_qs, urlparse
 
 from monatise.analysis.context import context_assets, grid_instruction, indicator_snapshot
 from monatise.analysis.fibonacci import analyze_fibonacci
+from monatise.analysis.fvg import analyze_fvg
 from monatise.adapters.hyperliquid import HyperliquidAdapter
 from monatise.live.config import RuntimeConfig
 from monatise.live.service import JsonEncoder, TradingService
@@ -188,6 +189,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                     {
                         "analysis": analyze_fibonacci(symbol, interval, candles, mark=mark).to_dict(),
                         "candles": [candle.__dict__ for candle in candles],
+                        "fvg": analyze_fvg(symbol, interval, candles, mark=mark).to_dict(),
                     }
                 )
             except Exception as error:  # noqa: BLE001

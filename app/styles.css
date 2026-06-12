@@ -1423,6 +1423,84 @@ canvas {
   font-weight: 850;
 }
 
+.fvg-panel {
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  display: grid;
+  gap: 8px;
+  padding-top: 10px;
+}
+
+.fvg-head {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.fvg-head strong {
+  color: #f9fffb;
+  font-size: 0.78rem;
+}
+
+.fvg-head span {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 850;
+  text-align: right;
+}
+
+.fvg-metrics {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.fvg-metrics span,
+.fvg-gap {
+  background: rgba(4, 9, 11, 0.24);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 0.67rem;
+  font-weight: 850;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  padding: 7px;
+}
+
+.fvg-metrics strong,
+.fvg-gap strong {
+  color: #f9fffb;
+  display: block;
+  font-size: 0.76rem;
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+}
+
+.fvg-list {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.fvg-gap {
+  display: grid;
+  gap: 3px;
+}
+
+.fvg-gap span,
+.fvg-gap em {
+  font-style: normal;
+}
+
+.fvg-gap.bullish {
+  border-color: rgba(0, 168, 120, 0.34);
+}
+
+.fvg-gap.bearish {
+  border-color: rgba(232, 87, 87, 0.34);
+}
+
 .fib-level.retracement strong {
   color: #74f3cf;
 }
@@ -2693,7 +2771,18 @@ button:disabled {
     text-align: left;
   }
 
-  .fib-metrics {
+  .fvg-head {
+    align-items: flex-start;
+    display: grid;
+  }
+
+  .fvg-head span {
+    text-align: left;
+  }
+
+  .fib-metrics,
+  .fvg-metrics,
+  .fvg-list {
     grid-template-columns: 1fr 1fr;
   }
 
@@ -2791,6 +2880,8 @@ button:disabled {
   .ticket-grid,
   .strategy-metrics,
   .fib-metrics,
+  .fvg-metrics,
+  .fvg-list,
   .context-metrics,
   .context-assets,
   .planner-output {

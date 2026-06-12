@@ -131,6 +131,7 @@ let selectedAsset = "BTC";
 let marketScene = null;
 let lastBackendSnapshot = null;
 let fibAnalysis = null;
+let fvgAnalysis = null;
 let fibLoading = false;
 let fibLastLoadedAt = 0;
 let fibLastSymbol = "";
@@ -437,6 +438,7 @@ function strategyHealth(mark, orders, snapshot = null) {
   const sessionGuard = (snapshot?.sessionGuard?.active ? snapshot.sessionGuard : activeSessionGuard(selectedAsset)) || {};
   const indicatorAction = String(contextRadar?.instruction?.action || "normal");
   const fibOk = Boolean(fibAnalysis && !fibAnalysis.error && fibAnalysis.symbol === selectedAsset);
+  const fvgOk = Boolean(fvgAnalysis && !fvgAnalysis.error && fvgAnalysis.symbol === selectedAsset);
   const markOk = Number.isFinite(mark) && mark > 0;
   const orderOk = orderList.length > 0 && buyOrders.length > 0 && sellOrders.length > 0;
   const riskStatus = String(snapshot?.riskStatus || els.riskStatus?.textContent || "");
@@ -453,6 +455,7 @@ function strategyHealth(mark, orders, snapshot = null) {
   if (structureBreak) warnings.push("price broke structure; stop fresh signals");
   if (outsideGrid) warnings.push("mark is outside the planned signal range");
   if (!fibOk) warnings.push("live Fibonacci candles pending");
+  if (!fvgOk) warnings.push("live FVG candles pending");
   if (indicatorAction === "reduce") warnings.push("context radar says reduce size");
   if (indicatorAction === "widen") warnings.push("context radar says widen buffer");
   if (sessionGuard.active) warnings.push(sessionGuard.message);
@@ -480,17 +483,30 @@ function signalFromHealth(health, mark) {
   const atr = Number(contextRadar?.indicator?.atr || 0);
   const nearest = Number(fibAnalysis?.nearest_level?.price);
   const takeProfit = Number(fibAnalysis?.take_profit?.price);
+  const nearestGap = fvgAnalysis?.nearest_gap || null;
+  const gapDirection = String(nearestGap?.direction || "").toLowerCase();
+  const gapMidpoint = Number(nearestGap?.midpoint);
   const invalidation = Number(health.invalidation);
-  const bullish = trend.includes("up") || rsi >= 55 || (Number.isFinite(takeProfit) && takeProfit > mark);
-  const bearish = trend.includes("down") || rsi <= 45 || (Number.isFinite(takeProfit) && takeProfit < mark);
+  const bullish =
+    trend.includes("up") ||
+    rsi >= 55 ||
+    gapDirection === "bullish" ||
+    (Number.isFinite(takeProfit) && takeProfit > mark);
+  const bearish =
+    trend.includes("down") ||
+    rsi <= 45 ||
+    gapDirection === "bearish" ||
+    (Number.isFinite(takeProfit) && takeProfit < mark);
   const direction = health.blocked || action === "halt" || action === "pause" ? "WAIT" : bullish && !bearish ? "LONG" : bearish && !bullish ? "SHORT" : "WATCH";
-  const targetOne = Number.isFinite(takeProfit) && takeProfit > 0 ? takeProfit : direction === "SHORT" ? health.gridFloor : health.gridCeiling;
+  const targetOne = Number.isFinite(takeProfit) && takeProfit > 0 ? takeProfit : Number.isFinite(gapMidpoint) ? gapMidpoint : direction === "SHORT" ? health.gridFloor : health.gridCeiling;
   const stop = Number.isFinite(invalidation) && invalidation > 0 ? invalidation : direction === "SHORT" ? health.gridCeiling : health.gridFloor;
   const buffer = Number.isFinite(atr) && atr > 0 ? atr : Math.abs(mark - Number(nearest || mark));
   const confidenceBase = 42 + (health.status === "ALIGNED" ? 28 : health.status === "REVIEW" ? 14 : 0);
   const contextPenalty = action === "reduce" ? 10 : action === "widen" ? 6 : action === "halt" || action === "pause" ? 24 : 0;
   const warningPenalty = Math.min(24, health.warnings.length * 6);
-  const confidence = Math.max(5, Math.min(95, confidenceBase - contextPenalty - warningPenalty));
+  const fvgBoost =
+    (direction === "LONG" && gapDirection === "bullish") || (direction === "SHORT" && gapDirection === "bearish") ? 6 : 0;
+  const confidence = Math.max(5, Math.min(95, confidenceBase + fvgBoost - contextPenalty - warningPenalty));
   const trigger =
     direction === "LONG"
       ? `Break and hold above ${money(Number.isFinite(nearest) ? nearest : mark)}`
@@ -512,7 +528,7 @@ function signalFromHealth(health, mark) {
         ? "No publishable signal while quality gates are blocked."
         : direction === "WATCH"
           ? "Market structure is mixed; keep it as a watchlist idea until confirmation improves."
-          : `${direction} bias from ${trend || "mixed"} structure with ${action} context.`,
+          : `${direction} bias from ${trend || "mixed"} structure with ${gapDirection || "no active"} FVG confluence and ${action} context.`,
     trigger
   };
 }
@@ -1267,6 +1283,7 @@ async function loadFibonacciAnalysis(options = {}) {
       return;
     }
     fibAnalysis = payload.analysis;
+    fvgAnalysis = payload.fvg || null;
     fibLastLoadedAt = now;
     fibLastSymbol = `${requestSymbol}:${requestInterval}`;
   } catch (error) {
@@ -1275,6 +1292,7 @@ async function loadFibonacciAnalysis(options = {}) {
       return;
     }
     fibAnalysis = { error: error.message || "fibonacci analysis unavailable", symbol: requestSymbol };
+    fvgAnalysis = { error: error.message || "FVG analysis unavailable", symbol: requestSymbol };
     fibLastLoadedAt = now;
     fibLastSymbol = `${requestSymbol}:${requestInterval}`;
   } finally {
@@ -1292,11 +1310,11 @@ async function loadFibonacciAnalysis(options = {}) {
 function renderFibonacciAnalysis() {
   if (!els.fibAnalysis) return;
   if (!fibAnalysis) {
-    els.fibAnalysis.innerHTML = `<div class="fib-head"><strong>Fibonacci Signal Analysis</strong><span>Waiting for live candles</span></div>`;
+    els.fibAnalysis.innerHTML = `<div class="fib-head"><strong>Chart Signal Analysis</strong><span>Waiting for live candles</span></div>`;
     return;
   }
   if (fibAnalysis.error) {
-    els.fibAnalysis.innerHTML = `<div class="fib-head"><strong>Fibonacci Signal Analysis</strong><span>${fibAnalysis.error}</span></div>`;
+    els.fibAnalysis.innerHTML = `<div class="fib-head"><strong>Chart Signal Analysis</strong><span>${fibAnalysis.error}</span></div>`;
     return;
   }
   const levels = (fibAnalysis.levels || [])
@@ -1307,9 +1325,10 @@ function renderFibonacciAnalysis() {
       </span>`
     )
     .join("");
+  const fvgPanel = renderFvgPanel();
   els.fibAnalysis.innerHTML = `
     <div class="fib-head">
-      <strong>Fibonacci Signal Analysis</strong>
+      <strong>Chart Signal Analysis</strong>
       <span>${fibAnalysis.interval} · ${fibAnalysis.candle_count} live candles · ${fibAnalysis.trend} structure</span>
     </div>
     <div class="fib-metrics">
@@ -1321,6 +1340,44 @@ function renderFibonacciAnalysis() {
       <span>Invalidation <strong>${money(fibAnalysis.invalidation)}</strong></span>
     </div>
     <div class="fib-levels">${levels}</div>
+    ${fvgPanel}
+  `;
+}
+
+function renderFvgPanel() {
+  if (!fvgAnalysis) {
+    return `<div class="fvg-panel"><div class="fvg-head"><strong>FVG Analysis</strong><span>Waiting for gaps</span></div></div>`;
+  }
+  if (fvgAnalysis.error) {
+    return `<div class="fvg-panel"><div class="fvg-head"><strong>FVG Analysis</strong><span>${fvgAnalysis.error}</span></div></div>`;
+  }
+  const nearest = fvgAnalysis.nearest_gap;
+  const gaps = (fvgAnalysis.gaps || []).slice(0, 3);
+  const gapList = gaps.length
+    ? gaps
+        .map(
+          (gap) => `<article class="fvg-gap ${gap.direction}">
+            <strong>${gap.direction.toUpperCase()}</strong>
+            <span>${money(gap.low)} - ${money(gap.high)}</span>
+            <em>mid ${money(gap.midpoint)} · ${money(gap.distance_to_mark)} away</em>
+          </article>`
+        )
+        .join("")
+    : `<article class="fvg-gap empty"><strong>No active gaps</strong><span>Wait for a cleaner imbalance</span></article>`;
+  return `
+    <div class="fvg-panel">
+      <div class="fvg-head">
+        <strong>FVG Analysis</strong>
+        <span>${fvgAnalysis.active_count} active · ${String(fvgAnalysis.bias || "balanced")} bias</span>
+      </div>
+      <div class="fvg-metrics">
+        <span>Nearest <strong>${nearest ? nearest.direction.toUpperCase() : "NONE"}</strong></span>
+        <span>Range <strong>${nearest ? `${money(nearest.low)} - ${money(nearest.high)}` : "pending"}</strong></span>
+        <span>Midpoint <strong>${nearest ? money(nearest.midpoint) : "pending"}</strong></span>
+        <span>Gap Size <strong>${nearest ? `${money(nearest.size)} (${nearest.size_pct}%)` : "pending"}</strong></span>
+      </div>
+      <div class="fvg-list">${gapList}</div>
+    </div>
   `;
 }
 
@@ -1518,6 +1575,7 @@ async function saveSelectedAsset(symbol) {
   const previous = selectedAsset;
   selectedAsset = symbol;
   fibAnalysis = null;
+  fvgAnalysis = null;
   contextRadar = null;
   candleSource = { interval: "sample", symbol, type: "sample" };
   syncSelectedAsset();
@@ -2157,6 +2215,7 @@ async function saveTradingRules() {
     applyTradingRules(nextRules);
     rebuildFromInputs();
     fibAnalysis = null;
+    fvgAnalysis = null;
     contextRadar = null;
     loadFibonacciAnalysis({ force: true });
     loadContextRadar({ force: true });
@@ -2172,6 +2231,7 @@ async function saveTradingRules() {
   applyTradingRules(payload.tradingRules);
   rebuildFromInputs();
   fibAnalysis = null;
+  fvgAnalysis = null;
   contextRadar = null;
   loadFibonacciAnalysis({ force: true });
   loadContextRadar({ force: true });
