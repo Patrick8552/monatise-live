@@ -1932,6 +1932,64 @@ canvas {
   overflow-wrap: anywhere;
 }
 
+.signal-journal-panel {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(242, 247, 248, 0.96)),
+    var(--panel);
+}
+
+.signal-journal {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  max-height: 360px;
+  overflow: auto;
+}
+
+.signal-journal article {
+  background: rgba(255, 255, 255, 0.76);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--graph);
+  border-radius: 6px;
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+}
+
+.signal-journal article.pass {
+  border-left-color: var(--buy);
+}
+
+.signal-journal article.warn {
+  border-left-color: var(--accent);
+}
+
+.signal-journal article.error {
+  border-left-color: var(--danger);
+}
+
+.signal-journal span,
+.signal-journal small {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 850;
+  line-height: 1.35;
+}
+
+.signal-journal strong {
+  color: var(--ink);
+  font-size: 0.86rem;
+  font-weight: 900;
+}
+
+.signal-journal em {
+  color: var(--ink);
+  font-size: 0.74rem;
+  font-style: normal;
+  font-weight: 820;
+  overflow-wrap: anywhere;
+}
+
 .open-order-book {
   display: grid;
   gap: 7px;

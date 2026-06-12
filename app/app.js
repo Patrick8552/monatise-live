@@ -85,6 +85,7 @@ const els = {
   resetButton: document.querySelector("#resetButton"),
   riskGate: document.querySelector("#riskGate"),
   riskStatus: document.querySelector("#riskStatus"),
+  journalStats: document.querySelector("#journalStats"),
   rulesStatus: document.querySelector("#rulesStatus"),
   rulesSummary: document.querySelector("#rulesSummary"),
   ruleOrderSizeInput: document.querySelector("#ruleOrderSizeInput"),
@@ -94,6 +95,7 @@ const els = {
   saveCredentialsButton: document.querySelector("#saveCredentialsButton"),
   sessionGuardSelect: document.querySelector("#sessionGuardSelect"),
   secretKeyInput: document.querySelector("#secretKeyInput"),
+  signalJournal: document.querySelector("#signalJournal"),
   signalWindowSelect: document.querySelector("#signalWindowSelect"),
   runtimeLog: document.querySelector("#runtimeLog"),
   spacingInput: document.querySelector("#spacingInput"),
@@ -147,6 +149,7 @@ let initialLiveCandlesLoaded = false;
 let liveEquityCurve = [];
 let localAuditEvents = [];
 let lastTicketHealth = null;
+let lastSignalCandidate = null;
 let pendingArmReview = false;
 let tradingRules = {
   chartInterval: "15m",
@@ -333,6 +336,143 @@ function renderAuditLog(serverEvents = null) {
         )
         .join("")
     : '<article><span>Standby</span><strong>No signal events yet</strong><em>Generate, review, then save.</em></article>';
+}
+
+function signalJournalKey() {
+  return "monatiseSignalJournal:v1";
+}
+
+function loadSignalJournal() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(signalJournalKey()) || "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveSignalJournal(entries) {
+  localStorage.setItem(signalJournalKey(), JSON.stringify(entries.slice(-80)));
+}
+
+function terminalSignalStatus(status) {
+  return ["WIN", "LOSS", "EXPIRED", "INVALID", "WATCH"].includes(String(status || "").toUpperCase());
+}
+
+function outcomeClass(status) {
+  const normalized = String(status || "").toLowerCase();
+  if (["win", "triggered"].includes(normalized)) return "pass";
+  if (["loss", "invalid"].includes(normalized)) return "error";
+  if (["expired", "watch"].includes(normalized)) return "warn";
+  return "pending";
+}
+
+function candleTime(candle) {
+  const time = new Date(candle?.timestamp || 0).getTime();
+  return Number.isFinite(time) ? time : 0;
+}
+
+function gradeSignalEntry(entry, candles = state?.candles || []) {
+  if (terminalSignalStatus(entry.status)) return entry;
+  if (!["LONG", "SHORT"].includes(entry.direction)) {
+    return { ...entry, status: entry.direction === "WATCH" ? "WATCH" : "INVALID", outcomeDetail: "No executable direction was issued." };
+  }
+  const createdAt = new Date(entry.createdAt).getTime();
+  const expiresAt = entry.expiresAt ? new Date(entry.expiresAt).getTime() : Number.POSITIVE_INFINITY;
+  const laterCandles = candles
+    .filter((candle) => {
+      const time = candleTime(candle);
+      return time && time > createdAt && time <= expiresAt;
+    })
+    .sort((left, right) => candleTime(left) - candleTime(right));
+  let triggeredAt = entry.triggeredAt || "";
+  for (const candle of laterCandles) {
+    const high = Number(candle.high);
+    const low = Number(candle.low);
+    const time = candle.timestamp;
+    if (!triggeredAt) {
+      const triggered = entry.direction === "LONG" ? high >= entry.entry : low <= entry.entry;
+      if (triggered) triggeredAt = time;
+    }
+    if (!triggeredAt) continue;
+    if (entry.direction === "LONG") {
+      if (low <= entry.stop) {
+        return { ...entry, triggeredAt, resolvedAt: time, status: "LOSS", outcomeDetail: `Stop hit at ${money(entry.stop)} before target.` };
+      }
+      if (high >= entry.targetOne) {
+        return { ...entry, triggeredAt, resolvedAt: time, status: "WIN", outcomeDetail: `Target 1 hit at ${money(entry.targetOne)}.` };
+      }
+    } else {
+      if (high >= entry.stop) {
+        return { ...entry, triggeredAt, resolvedAt: time, status: "LOSS", outcomeDetail: `Stop hit at ${money(entry.stop)} before target.` };
+      }
+      if (low <= entry.targetOne) {
+        return { ...entry, triggeredAt, resolvedAt: time, status: "WIN", outcomeDetail: `Target 1 hit at ${money(entry.targetOne)}.` };
+      }
+    }
+  }
+  if (expiresAt !== Number.POSITIVE_INFINITY && Date.now() > expiresAt) {
+    return {
+      ...entry,
+      triggeredAt,
+      resolvedAt: entry.expiresAt,
+      status: "EXPIRED",
+      outcomeDetail: triggeredAt ? "Signal triggered but did not reach target or stop before expiry." : "Signal expired before trigger."
+    };
+  }
+  return {
+    ...entry,
+    triggeredAt,
+    status: triggeredAt ? "TRIGGERED" : "PENDING",
+    outcomeDetail: triggeredAt ? "Triggered; waiting for target, stop, or expiry." : "Waiting for trigger or expiry."
+  };
+}
+
+function refreshSignalJournal() {
+  const entries = loadSignalJournal().map((entry) => gradeSignalEntry(entry));
+  saveSignalJournal(entries);
+  renderSignalJournal(entries);
+  return entries;
+}
+
+function renderSignalJournal(entries = loadSignalJournal()) {
+  if (!els.signalJournal) return;
+  const graded = entries.map((entry) => gradeSignalEntry(entry));
+  const tracked = graded.length;
+  const wins = graded.filter((entry) => entry.status === "WIN").length;
+  const losses = graded.filter((entry) => entry.status === "LOSS").length;
+  const pending = graded.filter((entry) => ["PENDING", "TRIGGERED"].includes(entry.status)).length;
+  if (els.journalStats) {
+    els.journalStats.textContent = `${tracked} tracked · ${wins}W/${losses}L · ${pending} open`;
+  }
+  els.signalJournal.innerHTML = graded.length
+    ? graded
+        .slice(-12)
+        .reverse()
+        .map(
+          (entry) => `<article class="${outcomeClass(entry.status)}">
+            <span>${new Date(entry.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · ${entry.symbol} · ${entry.interval}</span>
+            <strong>${entry.direction} · ${entry.status}</strong>
+            <em>Entry ${money(entry.entry)} · Target ${money(entry.targetOne)} · Stop ${money(entry.stop)}</em>
+            <small>${entry.outcomeDetail || "Waiting for later candles."}</small>
+          </article>`
+        )
+        .join("")
+    : '<article class="pending"><span>No saved signals</span><strong>Review a signal to start tracking</strong><em>Outcomes update from later candles.</em></article>';
+}
+
+function saveReviewedSignal() {
+  if (!lastSignalCandidate || !["LONG", "SHORT", "WATCH"].includes(lastSignalCandidate.direction)) return null;
+  const entry = gradeSignalEntry({
+    ...lastSignalCandidate,
+    id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    status: lastSignalCandidate.direction === "WATCH" ? "WATCH" : "PENDING",
+    outcomeDetail: lastSignalCandidate.direction === "WATCH" ? "Watchlist idea saved; no executable trigger." : "Waiting for later candles."
+  });
+  const entries = [...loadSignalJournal(), entry].slice(-80);
+  saveSignalJournal(entries);
+  renderSignalJournal(entries);
+  return entry;
 }
 
 function localReadinessItems(snapshot = null) {
@@ -617,13 +757,31 @@ function renderExecutionTicket(orders = [], options = {}) {
     </div>
   `;
   const primaryBlock = blocks[0]?.detail || health.warnings[0] || "all visible checks clear";
+  lastSignalCandidate = {
+    confidence: signal.confidence,
+    createdAt: new Date().toISOString(),
+    direction: signal.direction,
+    entry: signal.entry,
+    expiresAt: timing.expiresAt ? timing.expiresAt.toISOString() : "",
+    fvgBias: fvgAnalysis?.bias || "balanced",
+    fibTrend: fibAnalysis?.trend || "unknown",
+    interval: tradingRules.chartInterval,
+    source: mode,
+    stop: signal.stop,
+    symbol: selectedAsset,
+    targetOne: signal.targetOne,
+    targetTwo: signal.targetTwo,
+    thesis: signal.thesis,
+    timing: timing.status,
+    trigger: signal.trigger
+  };
   els.ticketNote.textContent = canReview
     ? `${signal.trigger}. Entry ${money(signal.entry)}, target ${money(signal.targetOne)}, invalidation ${money(signal.stop)}. Signal expires ${formatSignalTime(timing.expiresAt)}.`
     : timing.opensAt
       ? `Blocked: ${primaryBlock}. Next usable time ${formatSignalTime(timing.opensAt)}.`
       : `Blocked: ${primaryBlock}`;
   els.armStrategyButton.disabled = false;
-  els.armStrategyButton.textContent = canReview ? "Review Signal Quality" : "Show Blocks";
+  els.armStrategyButton.textContent = canReview ? "Save & Track Signal" : "Show Blocks";
   updateDecisionSurface(snapshot);
 }
 
@@ -2275,7 +2433,7 @@ function renderBackend(snapshot) {
   recordLiveEquity(snapshot);
   els.backendStatus.textContent = `${snapshot.mode} ${snapshot.running ? "running" : "stopped"}`;
   els.candleCount.textContent = snapshot.running ? "backend loop" : "backend idle";
-    els.riskStatus.textContent = snapshot.riskStatus || "ready";
+  els.riskStatus.textContent = snapshot.riskStatus || "ready";
   els.runState.textContent = snapshot.running ? "Backend running" : "Backend ready";
   updateLiveDesk(snapshot);
   if (snapshot.markPrice) {
@@ -2357,6 +2515,7 @@ function renderBackend(snapshot) {
       .join("");
     renderAuditLog(snapshot.events);
   }
+  refreshSignalJournal();
 }
 
 function renderOpenOrders(orders, options = {}) {
@@ -2512,6 +2671,7 @@ function render() {
   els.runState.textContent = state.activeIndex >= state.candles.length ? "Complete" : "Ready";
   renderTape();
   renderAuditLog();
+  refreshSignalJournal();
   drawEquity();
   if (!backendOnline) {
     els.runtimeLog.innerHTML = "<article>Serve with the backend to refresh live signal feeds.</article>";
@@ -2567,8 +2727,13 @@ els.armStrategyButton.addEventListener("click", () => {
     pendingArmReview = false;
     return;
   }
-  addAuditEvent("signal review", "Signal quality ready for review", `${selectedAsset} · ${tradingRules.chartInterval}`);
-  document.querySelector("#risk")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  const saved = saveReviewedSignal();
+  addAuditEvent(
+    "signal review",
+    saved ? "Signal saved to outcome journal" : "Signal quality ready for review",
+    saved ? `${saved.symbol} · ${saved.direction} · expires ${saved.expiresAt ? formatSignalTime(new Date(saved.expiresAt)) : "pending"}` : `${selectedAsset} · ${tradingRules.chartInterval}`
+  );
+  document.querySelector("#activity")?.scrollIntoView({ behavior: "smooth", block: "start" });
   pendingArmReview = false;
 });
 els.marketStrip.addEventListener("click", (event) => {
