@@ -159,7 +159,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/candles":
             query = parse_qs(parsed.query)
             symbol = str(query.get("symbol", [self.config.symbol])[0]).strip().upper()
-            interval = str(query.get("interval", ["1h"])[0]).strip() or "1h"
+            interval = str(query.get("interval", ["15m"])[0]).strip() or "15m"
             try:
                 limit = max(5, min(240, int(query.get("limit", ["120"])[0])))
                 adapter = HyperliquidAdapter(self.config)
@@ -178,7 +178,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/analysis/fibonacci":
             query = parse_qs(parsed.query)
             symbol = str(query.get("symbol", [self.config.symbol])[0]).strip().upper()
-            interval = str(query.get("interval", ["1h"])[0]).strip() or "1h"
+            interval = str(query.get("interval", ["15m"])[0]).strip() or "15m"
             try:
                 limit = max(20, min(240, int(query.get("limit", ["120"])[0])))
                 adapter = HyperliquidAdapter(self.config)
@@ -196,7 +196,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/context/radar":
             query = parse_qs(parsed.query)
             symbol = str(query.get("symbol", [self.config.symbol])[0]).strip().upper()
-            interval = str(query.get("interval", ["1h"])[0]).strip() or "1h"
+            interval = str(query.get("interval", ["15m"])[0]).strip() or "15m"
             try:
                 limit = max(50, min(240, int(query.get("limit", ["120"])[0])))
                 adapter = HyperliquidAdapter(self.config)

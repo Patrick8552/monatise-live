@@ -67,7 +67,7 @@ def test_user_store_saves_asset_and_free_access_settings() -> None:
         _restore_key(old_key)
 
 
-def test_user_store_saves_one_minute_trading_rules_on_free_access() -> None:
+def test_user_store_saves_five_minute_trading_rules_on_free_access() -> None:
     old_key = _with_key()
     try:
         with tempfile.NamedTemporaryFile() as db:
@@ -76,14 +76,14 @@ def test_user_store_saves_one_minute_trading_rules_on_free_access() -> None:
 
             settings = store.save_trading_rules(
                 user.id,
-                chart_interval="1m",
+                chart_interval="5m",
                 london_commodity_only=False,
                 max_daily_loss_pct=0.12,
                 session_guard_minutes=15,
                 stale_grid_cancel=False,
             )
 
-            assert settings.chart_interval == "1m"
+            assert settings.chart_interval == "5m"
             assert settings.leverage == 10
             assert settings.max_daily_loss_pct == 0.12
             assert settings.signal_session_window == "london_new_york"
@@ -134,7 +134,7 @@ def test_user_store_rejects_order_size_above_total_open_grid() -> None:
             try:
                 store.save_trading_rules(
                     user.id,
-                    chart_interval="1h",
+                    chart_interval="15m",
                     london_commodity_only=True,
                     max_daily_loss_pct=0.05,
                     session_guard_minutes=60,
@@ -160,7 +160,7 @@ def test_user_store_rejects_excessive_drawdown_limit() -> None:
             try:
                 store.save_trading_rules(
                     user.id,
-                    chart_interval="1h",
+                    chart_interval="15m",
                     london_commodity_only=True,
                     max_daily_loss_pct=0.25,
                     session_guard_minutes=60,

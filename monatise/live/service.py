@@ -10,7 +10,7 @@ from monatise.adapters.hyperliquid import HyperliquidAdapter
 from monatise.core.models import Candle, Fill, Order, OrderSide, Portfolio
 from monatise.live.config import LIVE_CONFIRMATION, RuntimeConfig
 from monatise.live.risk import RiskDecision, RiskManager
-from monatise.live.sessions import commodity_london_guard, forex_session_break_guard, signal_window_guard
+from monatise.live.sessions import commodity_london_guard, economic_release_guard, forex_session_break_guard, signal_window_guard
 from monatise.sim.csv_data import load_candles
 from monatise.strategy.harvester import LiquidityHarvester, LiquidityHarvesterConfig
 
@@ -403,6 +403,9 @@ class TradingService:
         return RiskDecision(True)
 
     def _session_guard(self) -> dict:
+        economic_guard = economic_release_guard()
+        if economic_guard.get("active"):
+            return economic_guard
         signal_guard = signal_window_guard(window=self.config.signal_session_window)
         if signal_guard.get("active"):
             return signal_guard

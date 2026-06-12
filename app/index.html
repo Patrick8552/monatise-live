@@ -191,7 +191,7 @@
                 </article>
                 <article>
                   <span>Chart</span>
-                  <strong id="ticketChart">1h</strong>
+                  <strong id="ticketChart">15m</strong>
                 </article>
               </div>
               <button id="armStrategyButton" class="primary" type="button">Review Signal Quality</button>
@@ -254,10 +254,8 @@
                 <label>
                   Chart
                   <select id="chartIntervalSelect">
-                    <option value="1h">1h</option>
                     <option value="15m">15m</option>
                     <option value="5m">5m</option>
-                    <option value="1m">1m</option>
                   </select>
                 </label>
                 <label>
@@ -301,7 +299,7 @@
                 <input id="londonCommodityInput" type="checkbox" checked />
                 <span>Gold/oil signals stay London-only inside the London/New York window</span>
               </label>
-              <div id="rulesSummary" class="rules-summary">1h analysis · London/New York signal window · 60m session guard</div>
+              <div id="rulesSummary" class="rules-summary">15m analysis · 5m confirmation · London/New York signal window · CPI/PPI blackout</div>
             </div>
 
             <section class="panel metrics">

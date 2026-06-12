@@ -146,7 +146,7 @@ let localAuditEvents = [];
 let lastTicketHealth = null;
 let pendingArmReview = false;
 let tradingRules = {
-  chartInterval: "1h",
+  chartInterval: "15m",
   leverage: 10,
   signalSessionWindow: "london_new_york",
   londonCommodityOnly: true,
@@ -181,6 +181,34 @@ const forexSessions = [
 ];
 const forexPairs = Array.from(new Set(forexSessions.flatMap((session) => session.pairs)));
 const commoditySymbols = ["GOLD", "CL", "BRENTOIL"];
+const economicBlackoutMinutes = 60;
+const economicReleases = [
+  { code: "CPI", name: "Consumer Price Index", releaseTime: "2026-01-13T13:30:00Z" },
+  { code: "PPI", name: "Producer Price Index", releaseTime: "2026-01-14T13:30:00Z" },
+  { code: "PPI", name: "Producer Price Index", releaseTime: "2026-01-30T13:30:00Z" },
+  { code: "CPI", name: "Consumer Price Index", releaseTime: "2026-02-13T13:30:00Z" },
+  { code: "PPI", name: "Producer Price Index", releaseTime: "2026-02-27T13:30:00Z" },
+  { code: "CPI", name: "Consumer Price Index", releaseTime: "2026-03-11T12:30:00Z" },
+  { code: "PPI", name: "Producer Price Index", releaseTime: "2026-03-18T12:30:00Z" },
+  { code: "CPI", name: "Consumer Price Index", releaseTime: "2026-04-10T12:30:00Z" },
+  { code: "PPI", name: "Producer Price Index", releaseTime: "2026-04-14T12:30:00Z" },
+  { code: "CPI", name: "Consumer Price Index", releaseTime: "2026-05-12T12:30:00Z" },
+  { code: "PPI", name: "Producer Price Index", releaseTime: "2026-05-13T12:30:00Z" },
+  { code: "CPI", name: "Consumer Price Index", releaseTime: "2026-06-10T12:30:00Z" },
+  { code: "PPI", name: "Producer Price Index", releaseTime: "2026-06-11T12:30:00Z" },
+  { code: "CPI", name: "Consumer Price Index", releaseTime: "2026-07-14T12:30:00Z" },
+  { code: "PPI", name: "Producer Price Index", releaseTime: "2026-07-15T12:30:00Z" },
+  { code: "CPI", name: "Consumer Price Index", releaseTime: "2026-08-12T12:30:00Z" },
+  { code: "PPI", name: "Producer Price Index", releaseTime: "2026-08-13T12:30:00Z" },
+  { code: "PPI", name: "Producer Price Index", releaseTime: "2026-09-10T12:30:00Z" },
+  { code: "CPI", name: "Consumer Price Index", releaseTime: "2026-09-11T12:30:00Z" },
+  { code: "CPI", name: "Consumer Price Index", releaseTime: "2026-10-14T12:30:00Z" },
+  { code: "PPI", name: "Producer Price Index", releaseTime: "2026-10-15T12:30:00Z" },
+  { code: "CPI", name: "Consumer Price Index", releaseTime: "2026-11-10T13:30:00Z" },
+  { code: "PPI", name: "Producer Price Index", releaseTime: "2026-11-13T13:30:00Z" },
+  { code: "CPI", name: "Consumer Price Index", releaseTime: "2026-12-10T13:30:00Z" },
+  { code: "PPI", name: "Producer Price Index", releaseTime: "2026-12-15T13:30:00Z" }
+];
 
 function isEmailOrPhoneUsername(value) {
   const normalized = value.trim();
@@ -847,11 +875,42 @@ function commodityLondonGuard(symbol = selectedAsset, date = new Date()) {
 }
 
 function activeSessionGuard(symbol = selectedAsset, date = new Date()) {
+  const economicGuard = economicReleaseGuard(date);
+  if (economicGuard.active) return economicGuard;
   const signalGuard = signalWindowGuard(date);
   if (signalGuard.active) return signalGuard;
   const forexGuard = forexSessionBreakGuard(symbol, date);
   if (forexGuard.active) return forexGuard;
   return commodityLondonGuard(symbol, date);
+}
+
+function economicReleaseGuard(date = new Date()) {
+  const now = date.getTime();
+  const blackoutMs = economicBlackoutMinutes * 60 * 1000;
+  const releases = economicReleases
+    .map((event) => ({ ...event, time: new Date(event.releaseTime).getTime() }))
+    .sort((left, right) => left.time - right.time);
+  for (const event of releases) {
+    const starts = event.time - blackoutMs;
+    const ends = event.time + blackoutMs;
+    if (now >= starts && now <= ends) {
+      const phase = now < event.time ? "before" : "after";
+      const minutes = Math.max(0, Math.floor(((phase === "before" ? event.time : ends) - now) / 60000));
+      return {
+        active: true,
+        direction: phase,
+        event: event.code,
+        message: `${event.code} blackout: no signals from ${economicBlackoutMinutes}m before until ${economicBlackoutMinutes}m after the ${event.name} release`,
+        minutes,
+        releaseTime: event.releaseTime,
+        session: event.code,
+        symbol: event.code,
+        transition: "release"
+      };
+    }
+  }
+  const next = releases.find((event) => event.time > now);
+  return next ? { active: false, event: next.code, releaseTime: next.releaseTime } : { active: false };
 }
 
 function signalWindowGuard(date = new Date()) {
@@ -940,7 +999,7 @@ function renderForexSessions(date = new Date()) {
 }
 
 function normalizedTradingRules(rules = {}) {
-  const interval = String(rules.chartInterval || "1h");
+  const interval = String(rules.chartInterval || "15m");
   const rawLossPct = Number(rules.maxDailyLossPct ?? 0.05);
   const maxDailyLossPct = Number.isFinite(rawLossPct) ? Math.min(0.2, Math.max(0.01, rawLossPct)) : 0.05;
   const rawOrderQuoteSize = Number(rules.orderQuoteSize ?? rules.maxOrderNotional ?? 25);
@@ -952,7 +1011,7 @@ function normalizedTradingRules(rules = {}) {
     : Math.max(orderQuoteSize, 150);
   const maxPositionValue = Number.isFinite(rawMaxPositionValue) ? Math.max(1, rawMaxPositionValue) : 250;
   return {
-    chartInterval: ["1h", "15m", "5m", "1m"].includes(interval) ? interval : "1h",
+    chartInterval: ["15m", "5m"].includes(interval) ? interval : "15m",
     leverage: 10,
     signalSessionWindow: ["london_new_york", "always"].includes(String(rules.signalSessionWindow || ""))
       ? String(rules.signalSessionWindow)
@@ -992,7 +1051,7 @@ function renderTradingRules() {
   els.rulesStatus.textContent = `${tradingRules.chartInterval} signal feed`;
   els.rulesSummary.textContent = `10x risk lens · ${money(tradingRules.orderQuoteSize)} alert size · ${money(
     tradingRules.maxTotalNotional
-  )} max signal risk · ${money(tradingRules.maxPositionValue)} account lens · ${tradingRules.chartInterval} analysis · ${signalWindowLabel} · ${tradingRules.sessionGuardMinutes}m session guard · ${
+  )} max signal risk · ${money(tradingRules.maxPositionValue)} account lens · ${tradingRules.chartInterval} analysis with 15m/5m window · ${signalWindowLabel} · CPI/PPI ${economicBlackoutMinutes}m blackout · ${tradingRules.sessionGuardMinutes}m session guard · ${
     tradingRules.londonCommodityOnly ? "London commodity guard on" : "London commodity guard off"
   } · ${drawdownLabel} · ${tradingRules.staleGridCancel ? "stale signal expiry on" : "stale signal expiry off"} · free access`;
   els.ticketDrawdown.textContent = `${(tradingRules.maxDailyLossPct * 100).toFixed(2)}%`;
