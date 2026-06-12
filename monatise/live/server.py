@@ -42,6 +42,7 @@ class TenantServices:
                 symbol=settings.selected_symbol,
                 account_address=credentials.account_address,
                 chart_interval=settings.chart_interval,
+                signal_session_window=settings.signal_session_window,
                 leverage=settings.leverage,
                 order_quote_size=settings.order_quote_size,
                 max_order_notional=settings.max_order_notional,
@@ -67,6 +68,7 @@ class TenantServices:
 def settings_payload(settings) -> dict:  # noqa: ANN001
     return {
         "chartInterval": settings.chart_interval,
+        "signalSessionWindow": settings.signal_session_window,
         "leverage": settings.leverage,
         "orderQuoteSize": settings.order_quote_size,
         "maxOrderNotional": settings.max_order_notional,
@@ -381,6 +383,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                 settings = self.store.save_trading_rules(
                     user.id,
                     chart_interval=str(payload.get("chartInterval", "")),
+                    signal_session_window=str(payload.get("signalSessionWindow", "london_new_york")),
                     london_commodity_only=bool(payload.get("londonCommodityOnly", True)),
                     max_daily_loss_pct=float(payload.get("maxDailyLossPct", 0.05)),
                     session_guard_minutes=int(payload.get("sessionGuardMinutes", 60)),

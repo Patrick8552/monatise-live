@@ -92,6 +92,7 @@ const els = {
   saveCredentialsButton: document.querySelector("#saveCredentialsButton"),
   sessionGuardSelect: document.querySelector("#sessionGuardSelect"),
   secretKeyInput: document.querySelector("#secretKeyInput"),
+  signalWindowSelect: document.querySelector("#signalWindowSelect"),
   runtimeLog: document.querySelector("#runtimeLog"),
   spacingInput: document.querySelector("#spacingInput"),
   spacingValue: document.querySelector("#spacingValue"),
@@ -147,6 +148,7 @@ let pendingArmReview = false;
 let tradingRules = {
   chartInterval: "1h",
   leverage: 10,
+  signalSessionWindow: "london_new_york",
   londonCommodityOnly: true,
   maxDailyLossPct: 0.05,
   orderQuoteSize: 25,
@@ -765,6 +767,14 @@ function londonSession() {
   return forexSessions.find((session) => session.name === "London");
 }
 
+function newYorkSession() {
+  return forexSessions.find((session) => session.name === "New York");
+}
+
+function signalWindowSessions() {
+  return [londonSession(), newYorkSession()].filter(Boolean);
+}
+
 function minutesFromUtcMinute(now, target) {
   const before = (target - now + 1440) % 1440;
   const after = (now - target + 1440) % 1440;
@@ -837,9 +847,34 @@ function commodityLondonGuard(symbol = selectedAsset, date = new Date()) {
 }
 
 function activeSessionGuard(symbol = selectedAsset, date = new Date()) {
+  const signalGuard = signalWindowGuard(date);
+  if (signalGuard.active) return signalGuard;
   const forexGuard = forexSessionBreakGuard(symbol, date);
   if (forexGuard.active) return forexGuard;
   return commodityLondonGuard(symbol, date);
+}
+
+function signalWindowGuard(date = new Date()) {
+  const window = tradingRules.signalSessionWindow || "london_new_york";
+  if (window === "always") return { active: false, window };
+  const sessions = signalWindowSessions();
+  const openSessions = sessions.filter((session) => isSessionOpen(session, date));
+  if (openSessions.length) {
+    return { active: false, sessions: openSessions.map((session) => session.name), window };
+  }
+  const nextSession = sessions
+    .map((session) => ({ change: minutesUntilSessionChange(session, date), session }))
+    .sort((left, right) => left.change - right.change)[0];
+  return {
+    active: true,
+    direction: "before",
+    message: `signal window guard: signals generate only during London or New York; next window opens in ${durationLabel(nextSession?.change || 0)}`,
+    minutes: nextSession?.change || 0,
+    session: nextSession?.session?.name || "London",
+    symbol: "SIGNAL",
+    transition: "open",
+    window
+  };
 }
 
 function durationLabel(totalMinutes) {
@@ -919,6 +954,9 @@ function normalizedTradingRules(rules = {}) {
   return {
     chartInterval: ["1h", "15m", "5m", "1m"].includes(interval) ? interval : "1h",
     leverage: 10,
+    signalSessionWindow: ["london_new_york", "always"].includes(String(rules.signalSessionWindow || ""))
+      ? String(rules.signalSessionWindow)
+      : "london_new_york",
     londonCommodityOnly: rules.londonCommodityOnly !== false,
     maxDailyLossPct,
     orderQuoteSize,
@@ -935,6 +973,7 @@ function normalizedTradingRules(rules = {}) {
 function applyTradingRules(rules = {}) {
   tradingRules = normalizedTradingRules(rules);
   els.chartIntervalSelect.value = tradingRules.chartInterval;
+  els.signalWindowSelect.value = tradingRules.signalSessionWindow;
   els.sessionGuardSelect.value = String(tradingRules.sessionGuardMinutes);
   els.drawdownLimitInput.value = (tradingRules.maxDailyLossPct * 100).toFixed(1).replace(/\.0$/, "");
   els.ruleOrderSizeInput.value = formatInputNumber(tradingRules.orderQuoteSize);
@@ -948,10 +987,12 @@ function applyTradingRules(rules = {}) {
 
 function renderTradingRules() {
   const drawdownLabel = `${(tradingRules.maxDailyLossPct * 100).toFixed(1).replace(/\.0$/, "")}% drawdown cap`;
+  const signalWindowLabel =
+    tradingRules.signalSessionWindow === "always" ? "always-on signal window" : "London/New York signal window";
   els.rulesStatus.textContent = `${tradingRules.chartInterval} signal feed`;
   els.rulesSummary.textContent = `10x risk lens · ${money(tradingRules.orderQuoteSize)} alert size · ${money(
     tradingRules.maxTotalNotional
-  )} max signal risk · ${money(tradingRules.maxPositionValue)} account lens · ${tradingRules.chartInterval} analysis · ${tradingRules.sessionGuardMinutes}m session guard · ${
+  )} max signal risk · ${money(tradingRules.maxPositionValue)} account lens · ${tradingRules.chartInterval} analysis · ${signalWindowLabel} · ${tradingRules.sessionGuardMinutes}m session guard · ${
     tradingRules.londonCommodityOnly ? "London commodity guard on" : "London commodity guard off"
   } · ${drawdownLabel} · ${tradingRules.staleGridCancel ? "stale signal expiry on" : "stale signal expiry off"} · free access`;
   els.ticketDrawdown.textContent = `${(tradingRules.maxDailyLossPct * 100).toFixed(2)}%`;
@@ -2044,6 +2085,7 @@ async function backendCommand(path) {
 async function saveTradingRules() {
   const nextRules = normalizedTradingRules({
     chartInterval: els.chartIntervalSelect.value,
+    signalSessionWindow: els.signalWindowSelect.value,
     londonCommodityOnly: els.londonCommodityInput.checked,
     maxDailyLossPct: Number(els.drawdownLimitInput.value) / 100,
     orderQuoteSize: Number(els.ruleOrderSizeInput.value),
@@ -2216,6 +2258,7 @@ els.saveRulesButton.addEventListener("click", saveTradingRules);
 function previewTradingRules() {
   const nextRules = normalizedTradingRules({
     chartInterval: els.chartIntervalSelect.value,
+    signalSessionWindow: els.signalWindowSelect.value,
     londonCommodityOnly: els.londonCommodityInput.checked,
     maxDailyLossPct: Number(els.drawdownLimitInput.value) / 100,
     orderQuoteSize: Number(els.ruleOrderSizeInput.value),
@@ -2227,7 +2270,7 @@ function previewTradingRules() {
   applyTradingRules(nextRules);
   rebuildFromInputs();
 }
-[els.chartIntervalSelect, els.sessionGuardSelect, els.staleGridCancelInput, els.londonCommodityInput].forEach((input) => {
+[els.chartIntervalSelect, els.signalWindowSelect, els.sessionGuardSelect, els.staleGridCancelInput, els.londonCommodityInput].forEach((input) => {
   input.addEventListener("change", previewTradingRules);
 });
 [els.drawdownLimitInput, els.ruleOrderSizeInput, els.maxTotalNotionalInput, els.maxPositionValueInput].forEach((input) => {

@@ -34,6 +34,7 @@ class RuntimeConfig:
     order_refresh_seconds: float = 30.0
     session_guard_minutes: int = 60
     chart_interval: str = "1h"
+    signal_session_window: str = "london_new_york"
     london_commodity_only: bool = True
     stale_grid_cancel: bool = True
     allow_live_orders: bool = False
@@ -75,6 +76,7 @@ class RuntimeConfig:
             order_refresh_seconds=float(os.getenv("MONATISE_ORDER_REFRESH_SECONDS", "30")),
             session_guard_minutes=int(os.getenv("MONATISE_SESSION_GUARD_MINUTES", "60")),
             chart_interval=os.getenv("MONATISE_CHART_INTERVAL", "1h"),
+            signal_session_window=os.getenv("MONATISE_SIGNAL_SESSION_WINDOW", "london_new_york"),
             london_commodity_only=os.getenv("MONATISE_LONDON_COMMODITY_ONLY", "true").lower() == "true",
             stale_grid_cancel=os.getenv("MONATISE_STALE_GRID_CANCEL", "true").lower() == "true",
             allow_live_orders=os.getenv("MONATISE_ALLOW_LIVE_ORDERS", "false").lower() == "true",
@@ -141,3 +143,5 @@ class RuntimeConfig:
             raise ValueError("MONATISE_SESSION_GUARD_MINUTES must be 5, 15, 30, 60, or 90")
         if self.chart_interval not in {"1h", "15m", "5m", "1m"}:
             raise ValueError("MONATISE_CHART_INTERVAL must be 1h, 15m, 5m, or 1m")
+        if self.signal_session_window not in {"london_new_york", "always"}:
+            raise ValueError("MONATISE_SIGNAL_SESSION_WINDOW must be london_new_york or always")

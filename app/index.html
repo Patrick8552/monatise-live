@@ -261,6 +261,12 @@
                   </select>
                 </label>
                 <label>
+                  Signal window
+                  <select id="signalWindowSelect">
+                    <option value="london_new_york">London / New York</option>
+                  </select>
+                </label>
+                <label>
                   Break guard
                   <select id="sessionGuardSelect">
                     <option value="60">60m</option>
@@ -293,9 +299,9 @@
               </label>
               <label class="toggle-rule">
                 <input id="londonCommodityInput" type="checkbox" checked />
-                <span>Gold/oil signals only during London</span>
+                <span>Gold/oil signals stay London-only inside the London/New York window</span>
               </label>
-              <div id="rulesSummary" class="rules-summary">1h analysis · 60m session guard · London commodity guard on</div>
+              <div id="rulesSummary" class="rules-summary">1h analysis · London/New York signal window · 60m session guard</div>
             </div>
 
             <section class="panel metrics">

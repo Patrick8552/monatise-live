@@ -50,6 +50,7 @@ def test_live_tick_initializes_risk_baseline_from_live_mark() -> None:
             mode="live",
             network="mainnet",
             symbol="BTC",
+            signal_session_window="always",
             max_daily_loss=100,
             max_base_inventory=1,
         )
@@ -68,7 +69,7 @@ def test_live_tick_initializes_risk_baseline_from_live_mark() -> None:
 
 
 def test_live_snapshot_exposes_readiness_checklist() -> None:
-    service = TradingService(RuntimeConfig(mode="live", network="mainnet", symbol="BTC"))
+    service = TradingService(RuntimeConfig(mode="live", network="mainnet", symbol="BTC", signal_session_window="always"))
 
     snapshot = service.snapshot()
     readiness = {item["label"]: item for item in snapshot["readiness"]}
@@ -99,6 +100,7 @@ def test_market_shock_guard_blocks_fast_mark_move() -> None:
             mode="live",
             network="testnet",
             symbol="BTC",
+            signal_session_window="always",
             max_mark_move_pct=0.01,
         )
     )
@@ -110,6 +112,24 @@ def test_market_shock_guard_blocks_fast_mark_move() -> None:
     assert "market shock guard" in decision.reason
 
 
+def test_live_start_blocks_outside_london_new_york_signal_window() -> None:
+    original_guard = service_module.signal_window_guard
+    service_module.signal_window_guard = lambda window="london_new_york": {
+        "active": True,
+        "message": "signal window guard: signals generate only during London or New York",
+    }
+    try:
+        service = TradingService(RuntimeConfig(mode="live", symbol="BTC"))
+
+        snapshot = service.start()
+
+        assert not snapshot["running"]
+        assert snapshot["riskStatus"] == "signal window guard: signals generate only during London or New York"
+        assert snapshot["sessionGuard"]["active"]
+    finally:
+        service_module.signal_window_guard = original_guard
+
+
 def test_live_start_blocks_forex_session_break_guard() -> None:
     original_guard = service_module.forex_session_break_guard
     service_module.forex_session_break_guard = lambda symbol, guard_minutes=60: {
@@ -117,7 +137,7 @@ def test_live_start_blocks_forex_session_break_guard() -> None:
         "message": "forex session-break guard: EURUSD is 20m before London close",
     }
     try:
-        service = TradingService(RuntimeConfig(mode="live", symbol="EURUSD"))
+        service = TradingService(RuntimeConfig(mode="live", symbol="EURUSD", signal_session_window="always"))
 
         snapshot = service.start()
 
@@ -137,7 +157,7 @@ def test_live_start_blocks_gold_outside_london_when_rule_enabled() -> None:
         "message": "commodity session guard: GOLD live grid orders are limited to the London session",
     }
     try:
-        service = TradingService(RuntimeConfig(mode="live", symbol="GOLD", london_commodity_only=True))
+        service = TradingService(RuntimeConfig(mode="live", symbol="GOLD", london_commodity_only=True, signal_session_window="always"))
 
         snapshot = service.start()
 
@@ -158,6 +178,7 @@ def test_stale_live_grid_cancels_exchange_orders_before_replace() -> None:
             live_confirmation=LIVE_CONFIRMATION,
             account_address="0xabc",
             secret_key="secret",
+            signal_session_window="always",
             order_refresh_seconds=0.01,
             order_quote_size=10,
             max_order_notional=10,
@@ -202,6 +223,7 @@ def test_live_tick_cancels_orders_during_forex_session_break_guard() -> None:
                 live_confirmation=LIVE_CONFIRMATION,
                 account_address="0xabc",
                 secret_key="secret",
+                signal_session_window="always",
                 order_quote_size=10,
                 max_order_notional=10,
                 max_total_notional=100,
@@ -233,6 +255,7 @@ def test_live_tick_reconciles_exchange_fills_once() -> None:
             live_confirmation=LIVE_CONFIRMATION,
             account_address="0xabc",
             secret_key="secret",
+            signal_session_window="always",
             order_quote_size=10,
             max_order_notional=10,
             max_total_notional=100,

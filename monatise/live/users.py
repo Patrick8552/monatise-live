@@ -36,6 +36,7 @@ class UserSettings:
     subscription_plan: str = "free"
     subscription_status: str = "active"
     chart_interval: str = "1h"
+    signal_session_window: str = "london_new_york"
     leverage: float = 10.0
     order_quote_size: float = 25.0
     max_order_notional: float = 25.0
@@ -193,11 +194,15 @@ class UserStore:
         order_quote_size: float | None = None,
         max_total_notional: float | None = None,
         max_position_value: float | None = None,
+        signal_session_window: str | None = None,
     ) -> UserSettings:
         settings = self.settings_for_user(user_id)
         chart_interval = chart_interval.strip()
+        signal_session_window = signal_session_window or "london_new_york"
         if chart_interval not in {"1h", "15m", "5m", "1m"}:
             raise ValueError("chart interval must be 1h, 15m, 5m, or 1m")
+        if signal_session_window not in {"london_new_york", "always"}:
+            raise ValueError("signal session window must be london_new_york or always")
         if session_guard_minutes not in {5, 15, 30, 60, 90}:
             raise ValueError("session guard must be 5, 15, 30, 60, or 90 minutes")
         if not 0 < max_daily_loss_pct <= 0.2:
@@ -218,13 +223,14 @@ class UserStore:
                 """
                 insert into user_settings(
                   user_id, selected_symbol, subscription_plan, subscription_status,
-                  chart_interval, leverage, order_quote_size, max_order_notional, max_total_notional,
+                  chart_interval, signal_session_window, leverage, order_quote_size, max_order_notional, max_total_notional,
                   max_position_value, session_guard_minutes, stale_grid_cancel, london_commodity_only,
                   max_daily_loss_pct, updated_at
                 )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 on conflict(user_id) do update set
                   chart_interval = excluded.chart_interval,
+                  signal_session_window = excluded.signal_session_window,
                   leverage = excluded.leverage,
                   order_quote_size = excluded.order_quote_size,
                   max_order_notional = excluded.max_order_notional,
@@ -242,6 +248,7 @@ class UserStore:
                     settings.subscription_plan,
                     settings.subscription_status,
                     chart_interval,
+                    signal_session_window,
                     10.0,
                     order_quote_size,
                     order_quote_size,
@@ -280,7 +287,7 @@ class UserStore:
             row = conn.execute(
                 """
                 select selected_symbol, subscription_plan, subscription_status,
-                       chart_interval, leverage, order_quote_size, max_order_notional, max_total_notional,
+                       chart_interval, signal_session_window, leverage, order_quote_size, max_order_notional, max_total_notional,
                        max_position_value, session_guard_minutes, stale_grid_cancel, london_commodity_only,
                        max_daily_loss_pct
                 from user_settings
@@ -295,6 +302,7 @@ class UserStore:
             subscription_plan=str(row["subscription_plan"]),
             subscription_status=str(row["subscription_status"]),
             chart_interval=str(row["chart_interval"] or "1h"),
+            signal_session_window=str(row["signal_session_window"] or "london_new_york"),
             leverage=float(row["leverage"] or 10.0),
             order_quote_size=float(row["order_quote_size"] or 25.0),
             max_order_notional=float(row["max_order_notional"] or row["order_quote_size"] or 25.0),
@@ -358,6 +366,7 @@ class UserStore:
                   subscription_plan text not null,
                   subscription_status text not null,
                   chart_interval text not null default '1h',
+                  signal_session_window text not null default 'london_new_york',
                   leverage real not null default 10,
                   order_quote_size real not null default 25,
                   max_order_notional real not null default 25,
@@ -377,6 +386,7 @@ class UserStore:
             }
             migrations = {
                 "chart_interval": "alter table user_settings add column chart_interval text not null default '1h'",
+                "signal_session_window": "alter table user_settings add column signal_session_window text not null default 'london_new_york'",
                 "leverage": "alter table user_settings add column leverage real not null default 10",
                 "order_quote_size": "alter table user_settings add column order_quote_size real not null default 25",
                 "max_order_notional": "alter table user_settings add column max_order_notional real not null default 25",

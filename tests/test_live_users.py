@@ -86,6 +86,7 @@ def test_user_store_saves_one_minute_trading_rules_on_free_access() -> None:
             assert settings.chart_interval == "1m"
             assert settings.leverage == 10
             assert settings.max_daily_loss_pct == 0.12
+            assert settings.signal_session_window == "london_new_york"
             assert settings.session_guard_minutes == 15
             assert not settings.stale_grid_cancel
             assert not settings.london_commodity_only
@@ -103,6 +104,7 @@ def test_user_store_saves_grid_sizing_rules() -> None:
             settings = store.save_trading_rules(
                 user.id,
                 chart_interval="5m",
+                signal_session_window="always",
                 london_commodity_only=True,
                 max_daily_loss_pct=0.05,
                 session_guard_minutes=30,
@@ -113,6 +115,7 @@ def test_user_store_saves_grid_sizing_rules() -> None:
             )
 
             assert settings.leverage == 10
+            assert settings.signal_session_window == "always"
             assert settings.order_quote_size == 40
             assert settings.max_order_notional == 40
             assert settings.max_total_notional == 240

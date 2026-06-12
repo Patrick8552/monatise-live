@@ -25,6 +25,8 @@ FOREX_SESSIONS = (
 FOREX_SYMBOLS = frozenset(pair for session in FOREX_SESSIONS for pair in session.pairs)
 COMMODITY_SYMBOLS = frozenset({"GOLD", "CL", "BRENTOIL"})
 LONDON_SESSION = next(session for session in FOREX_SESSIONS if session.name == "London")
+NEW_YORK_SESSION = next(session for session in FOREX_SESSIONS if session.name == "New York")
+SIGNAL_WINDOW_SESSIONS = (LONDON_SESSION, NEW_YORK_SESSION)
 
 
 def normalize_forex_symbol(symbol: str) -> str:
@@ -140,6 +142,34 @@ def commodity_london_guard(symbol: str, moment: datetime | None = None) -> dict:
         "direction": proximity["direction"],
         "minutes": proximity["minutes"],
         "message": (
-            f"commodity session guard: {asset} live grid orders are limited to the London session"
+            f"commodity session guard: {asset} signals are limited to the London session"
+        ),
+    }
+
+
+def signal_window_guard(moment: datetime | None = None, window: str = "london_new_york") -> dict:
+    if window == "always":
+        return {"active": False, "window": window}
+    if window != "london_new_york":
+        return {
+            "active": True,
+            "window": window,
+            "message": "signal window guard: unknown session window",
+        }
+    open_sessions = [session.name for session in SIGNAL_WINDOW_SESSIONS if is_session_open(session, moment)]
+    if open_sessions:
+        return {"active": False, "window": window, "sessions": open_sessions}
+    next_session = min(SIGNAL_WINDOW_SESSIONS, key=lambda session: minutes_until_session_change(session, moment))
+    minutes = minutes_until_session_change(next_session, moment)
+    return {
+        "active": True,
+        "window": window,
+        "session": next_session.name,
+        "transition": "open",
+        "direction": "before",
+        "minutes": minutes,
+        "message": (
+            f"signal window guard: signals generate only during London or New York; "
+            f"next window opens in {minutes}m"
         ),
     }

@@ -10,7 +10,7 @@ from monatise.adapters.hyperliquid import HyperliquidAdapter
 from monatise.core.models import Candle, Fill, Order, OrderSide, Portfolio
 from monatise.live.config import LIVE_CONFIRMATION, RuntimeConfig
 from monatise.live.risk import RiskDecision, RiskManager
-from monatise.live.sessions import commodity_london_guard, forex_session_break_guard
+from monatise.live.sessions import commodity_london_guard, forex_session_break_guard, signal_window_guard
 from monatise.sim.csv_data import load_candles
 from monatise.strategy.harvester import LiquidityHarvester, LiquidityHarvesterConfig
 
@@ -164,6 +164,7 @@ class TradingService:
             "tradingRules": {
                 "chartInterval": self.config.chart_interval,
                 "leverage": self.config.leverage,
+                "signalSessionWindow": self.config.signal_session_window,
                 "londonCommodityOnly": self.config.london_commodity_only,
                 "maxDailyLossPct": self.config.max_daily_loss_pct,
                 "orderQuoteSize": self.config.order_quote_size,
@@ -402,6 +403,9 @@ class TradingService:
         return RiskDecision(True)
 
     def _session_guard(self) -> dict:
+        signal_guard = signal_window_guard(window=self.config.signal_session_window)
+        if signal_guard.get("active"):
+            return signal_guard
         forex_guard = forex_session_break_guard(self.config.symbol, guard_minutes=self.config.session_guard_minutes)
         if forex_guard.get("active"):
             return forex_guard
