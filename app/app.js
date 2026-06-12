@@ -59,8 +59,10 @@ const els = {
   loginGate: document.querySelector("#loginGate"),
   loginButton: document.querySelector("#loginButton"),
   logoutButton: document.querySelector("#logoutButton"),
+  market3dMeta: document.querySelector("#market3dMeta"),
   markPrice: document.querySelector("#markPrice"),
   market3dMap: document.querySelector("#market3dMap"),
+  market3dTitle: document.querySelector("#market3dTitle"),
   marketRadar: document.querySelector("#marketRadar"),
   marketStrip: document.querySelector("#marketStrip"),
   marketTitle: document.querySelector("#marketTitle"),
@@ -1820,7 +1822,31 @@ function initMarketMap() {
   ring.rotation.x = Math.PI / 2;
   group.add(ring);
 
-  marketScene = { camera, group, renderer, scene, sprites: [] };
+  const coreMaterial = new THREE.MeshStandardMaterial({
+    color: 0x00a878,
+    emissive: 0x00a878,
+    emissiveIntensity: 0.52,
+    metalness: 0.28,
+    roughness: 0.18
+  });
+  const core = new THREE.Mesh(new THREE.IcosahedronGeometry(0.68, 3), coreMaterial);
+  core.position.y = 0.25;
+  group.add(core);
+
+  const haloMaterial = new THREE.MeshBasicMaterial({ color: 0xffbe0b, transparent: true, opacity: 0.34, side: THREE.DoubleSide });
+  const halo = new THREE.Mesh(new THREE.TorusGeometry(1.18, 0.018, 12, 120), haloMaterial);
+  halo.rotation.x = Math.PI / 2.4;
+  group.add(halo);
+
+  const signalArc = new THREE.Mesh(
+    new THREE.TorusGeometry(1.58, 0.012, 12, 120),
+    new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.2, side: THREE.DoubleSide })
+  );
+  signalArc.rotation.x = Math.PI / 1.8;
+  signalArc.rotation.z = Math.PI / 7;
+  group.add(signalArc);
+
+  marketScene = { camera, core, group, halo, renderer, scene, signalArc, sprites: [] };
   resizeMarketMap();
   animateMarketMap();
 }
@@ -1829,22 +1855,41 @@ function updateMarketMap() {
   initMarketMap();
   if (!marketScene || !window.THREE) return;
   const THREE = window.THREE;
+  const timing = signalTiming(selectedAsset);
+  if (els.market3dTitle) {
+    els.market3dTitle.textContent = `${assetLabel(selectedAsset)} signal field`;
+  }
+  if (els.market3dMeta) {
+    els.market3dMeta.textContent = timing.active
+      ? `Valid until ${formatSignalTime(timing.expiresAt)}`
+      : timing.opensAt
+        ? `Next window ${formatSignalTime(timing.opensAt)}`
+        : `${tradingRules.chartInterval} chart · 15m/5m analysis`;
+  }
   marketScene.sprites.forEach((sprite) => marketScene.group.remove(sprite));
   marketScene.sprites = [];
   const values = markets.map((asset) => Number(asset.price || 0)).filter(Boolean);
   const min = Math.min(...values, 1);
   const max = Math.max(...values, 1);
-  markets.slice(0, 10).forEach((asset, index) => {
+  const selectedLive = markets.find((asset) => asset.symbol === selectedAsset);
+  const selectedPrice = Number(selectedLive?.price || currentMarketPrice() || 0);
+  const selectedScale = Number.isFinite(selectedPrice) && selectedPrice > 0 ? 1 + Math.min(0.7, Math.log10(selectedPrice) / 12) : 1;
+  marketScene.core.scale.setScalar(selectedScale);
+  marketScene.core.material.emissiveIntensity = timing.active ? 0.62 : 0.32;
+  marketScene.halo.material.opacity = timing.active ? 0.38 : 0.18;
+  marketScene.signalArc.material.opacity = timing.active ? 0.24 : 0.12;
+  markets.slice(0, 14).forEach((asset, index) => {
     const price = Number(asset.price || 0);
     const t = (price - min) / Math.max(1, max - min);
-    const angle = (index / Math.max(1, markets.length)) * Math.PI * 2;
+    const angle = (index / Math.max(1, Math.min(markets.length, 14))) * Math.PI * 2;
     const radius = 2.6 + t * 2.6;
-    const geometry = new THREE.SphereGeometry(0.16 + t * 0.32, 24, 24);
+    const selected = asset.symbol === selectedAsset;
+    const geometry = new THREE.SphereGeometry((selected ? 0.24 : 0.15) + t * 0.3, 24, 24);
     const palette = [0x00d4ff, 0x00a878, 0xffbe0b, 0xff4d6d, 0x8338ec, 0xfb5607];
     const material = new THREE.MeshStandardMaterial({
-      color: palette[index % palette.length],
-      emissive: palette[index % palette.length],
-      emissiveIntensity: asset.symbol === selectedAsset ? 0.65 : 0.25,
+      color: selected ? 0xffffff : palette[index % palette.length],
+      emissive: selected ? 0xffbe0b : palette[index % palette.length],
+      emissiveIntensity: selected ? 0.78 : 0.25,
       metalness: 0.34,
       roughness: 0.28
     });
@@ -1869,6 +1914,10 @@ function resizeMarketMap() {
 function animateMarketMap() {
   if (!marketScene) return;
   marketScene.group.rotation.y += 0.0035;
+  marketScene.core.rotation.x += 0.006;
+  marketScene.core.rotation.y -= 0.004;
+  marketScene.halo.rotation.z += 0.0045;
+  marketScene.signalArc.rotation.z -= 0.0028;
   marketScene.sprites.forEach((sprite) => {
     const data = sprite.userData;
     data.angle += data.speed;

@@ -1301,12 +1301,13 @@ canvas {
   background:
     linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
     linear-gradient(180deg, rgba(255, 255, 255, 0.045) 1px, transparent 1px),
-    radial-gradient(circle at center, rgba(0, 184, 217, 0.24), transparent 48%),
-    linear-gradient(135deg, rgba(9, 14, 14, 0.96), rgba(26, 29, 47, 0.96));
-  background-size: 28px 28px, 28px 28px, auto, auto;
+    radial-gradient(circle at 50% 44%, rgba(0, 184, 217, 0.32), transparent 42%),
+    radial-gradient(circle at 78% 18%, rgba(232, 162, 20, 0.18), transparent 32%),
+    linear-gradient(135deg, rgba(9, 14, 14, 0.98), rgba(18, 30, 33, 0.98) 46%, rgba(24, 25, 42, 0.98));
+  background-size: 28px 28px, 28px 28px, auto, auto, auto;
   border: 1px solid rgba(0, 184, 217, 0.28);
   border-radius: 8px;
-  height: 230px;
+  height: clamp(260px, 34vw, 420px);
   margin-bottom: 12px;
   overflow: hidden;
   position: relative;
@@ -1317,16 +1318,32 @@ canvas {
   width: 100%;
 }
 
-.market-3d-map::after {
-  bottom: 10px;
-  color: rgba(255, 255, 255, 0.72);
-  content: "Multi-asset market radar";
+.market-3d-overlay {
+  background: rgba(5, 10, 12, 0.56);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  display: grid;
+  gap: 3px;
+  left: 12px;
+  max-width: min(340px, calc(100% - 24px));
+  padding: 9px 10px;
+  position: absolute;
+  top: 12px;
+  z-index: 2;
+}
+
+.market-3d-overlay strong {
+  color: #f9fffb;
+  font-size: 0.86rem;
+  font-weight: 950;
+  overflow-wrap: anywhere;
+}
+
+.market-3d-overlay span {
+  color: rgba(249, 255, 251, 0.72);
   font-size: 0.72rem;
   font-weight: 850;
-  left: 12px;
-  letter-spacing: 0;
-  position: absolute;
-  text-transform: uppercase;
+  line-height: 1.35;
 }
 
 .liquidity-source {
@@ -2987,7 +3004,12 @@ button:disabled {
   }
 
   .market-3d-map {
-    height: 180px;
+    height: 240px;
+  }
+
+  .market-3d-overlay {
+    bottom: 10px;
+    top: auto;
   }
 
   #equityCanvas {
