@@ -678,6 +678,58 @@ function strategyHealth(mark, orders, snapshot = null) {
   };
 }
 
+function setupGridOrders(mark, snapshot = null) {
+  if (!fibAnalysis || fibAnalysis.error || fibAnalysis.symbol !== selectedAsset || !Number.isFinite(Number(mark))) {
+    return [];
+  }
+  const quoteSize = Number(snapshot?.tradingRules?.orderQuoteSize ?? tradingRules.orderQuoteSize ?? els.quoteInput?.value ?? 0);
+  const notional = Number.isFinite(quoteSize) && quoteSize > 0 ? quoteSize : 100;
+  const candidates = [];
+  const addLevel = (side, price, levelId) => {
+    const numericPrice = Number(price);
+    if (!Number.isFinite(numericPrice) || numericPrice <= 0) return;
+    const duplicate = candidates.some((level) => Math.abs(level.price - numericPrice) / numericPrice < 0.0006);
+    if (duplicate) return;
+    candidates.push({
+      level_id: levelId,
+      metadata: { source: "live-analysis" },
+      order_id: `setup-${selectedAsset}-${side}-${candidates.length + 1}`,
+      price: numericPrice,
+      quantity: notional / numericPrice,
+      side,
+      status: "draft",
+      symbol: selectedAsset
+    });
+  };
+  const fibLevels = Array.isArray(fibAnalysis.levels) ? fibAnalysis.levels : [];
+  fibLevels.forEach((level) => {
+    const price = Number(level.price);
+    if (!Number.isFinite(price)) return;
+    addLevel(price <= mark ? "buy" : "sell", price, String(level.label || "fib").toLowerCase().replace(/\s+/g, "-"));
+  });
+  const nearestGap = fvgAnalysis?.nearest_gap;
+  if (nearestGap) {
+    addLevel(String(nearestGap.direction || "").toLowerCase() === "bearish" ? "sell" : "buy", nearestGap.midpoint, "fvg-mid");
+  }
+  addLevel("buy", fibAnalysis.grid_floor, "grid-floor");
+  addLevel("sell", fibAnalysis.grid_ceiling, "grid-ceiling");
+  return candidates
+    .sort((a, b) => Math.abs(a.price - mark) - Math.abs(b.price - mark))
+    .slice(0, 8);
+}
+
+function setupWaitDetail(health, signal, timing) {
+  if (signal.direction !== "WAIT") {
+    return signal.thesis;
+  }
+  if (!health.markOk) return "Waiting for a live Hyperliquid mark before forming entries.";
+  if (!health.orderCount) return "Waiting for live setup-grid levels from Fibonacci/FVG analysis.";
+  if (health.structureBreak) return "Price broke invalidation; wait for a fresh structure reset.";
+  if (timing.blocked) return `${timing.detail} The grid remains visible for planning.`;
+  if (health.warnings.length) return `Waiting for confirmation: ${health.warnings[0]}.`;
+  return "Waiting for a clean trigger close before turning the setup into an entry.";
+}
+
 function signalFromHealth(health, mark) {
   const trend = String(fibAnalysis?.trend || contextRadar?.indicator?.trend || "flat").toLowerCase();
   const action = String(contextRadar?.instruction?.action || "normal").toLowerCase();
@@ -722,7 +774,8 @@ function signalFromHealth(health, mark) {
   const warningPenalty = Math.min(24, health.warnings.length * 6);
   const fvgBoost =
     (direction === "LONG" && gapDirection === "bullish") || (direction === "SHORT" && gapDirection === "bearish") ? 6 : 0;
-  const confidence = Math.max(5, Math.min(95, confidenceBase + fvgBoost - contextPenalty - warningPenalty));
+  const rawConfidence = confidenceBase + fvgBoost - contextPenalty - warningPenalty;
+  const confidence = Math.max(direction === "WAIT" ? 5 : 50, Math.min(95, rawConfidence));
   const trigger =
     direction === "LONG"
       ? `Break and hold above ${money(Number.isFinite(nearest) ? nearest : mark)}`
@@ -761,10 +814,18 @@ function renderStrategyReadout(orders, options = {}) {
   const health = strategyHealth(mark, orders, options.snapshot);
   lastTicketHealth = health;
   const source = options.source || "preview";
-  const sourceLabel = source === "live" ? "Live feed state" : source === "backend" ? "Backend signal state" : "Signal preview";
+  const sourceLabel =
+    source === "live"
+      ? "Live feed state"
+      : source === "setup"
+        ? "Hyperliquid setup grid"
+        : source === "backend"
+          ? "Backend signal state"
+          : "Signal preview";
   const warningText = health.warnings.length ? health.warnings.join(" · ") : "structure, context, session, and doctrine are aligned";
   const signal = signalFromHealth(health, mark);
   const timing = signalTiming(selectedAsset);
+  const thesis = setupWaitDetail(health, signal, timing);
   const timingPrimary = timing.active
     ? `Valid until ${formatSignalTime(timing.expiresAt)}`
     : timing.blocked
@@ -777,7 +838,7 @@ function renderStrategyReadout(orders, options = {}) {
     </div>
     <div class="signal-call">
       <strong>${signal.confidence}% confidence</strong>
-      <span>${signal.thesis}</span>
+      <span>${thesis}</span>
     </div>
     <div class="strategy-metrics">
       <span>Entry <strong>${money(signal.entry)}</strong></span>
@@ -820,6 +881,7 @@ function renderExecutionTicket(orders = [], options = {}) {
   const exposurePct = capital > 0 ? openExposure / capital : 0;
   const signal = options.signal || signalFromHealth(health, mark);
   const timing = signalTiming(selectedAsset);
+  const thesis = setupWaitDetail(health, signal, timing);
   const canReview = !health.blocked && blocks.length === 0 && signal.direction !== "WAIT";
   const canDraft = !health.blocked && signal.direction !== "WAIT";
   const sizing = tradeSizingFromSignal(signal, capital, drawdownPct);
@@ -881,7 +943,7 @@ function renderExecutionTicket(orders = [], options = {}) {
     symbol: selectedAsset,
     targetOne: signal.targetOne,
     targetTwo: signal.targetTwo,
-    thesis: signal.thesis,
+    thesis,
     timing: timing.status,
     trigger: signal.trigger
   };
@@ -890,8 +952,8 @@ function renderExecutionTicket(orders = [], options = {}) {
     : canDraft
       ? `${signal.trigger}. Draft ${signalLabel(signal.direction).toLowerCase()}: entry ${money(signal.entry)}, target ${money(signal.targetOne)}, stop ${money(signal.stop)}. Tracking blocked: ${primaryBlock}.`
     : timing.opensAt
-      ? `Blocked: ${primaryBlock}. Next usable time ${formatSignalTime(timing.opensAt)}.`
-      : `Blocked: ${primaryBlock}`;
+      ? `${thesis} Next usable time ${formatSignalTime(timing.opensAt)}.`
+      : thesis;
   els.armStrategyButton.disabled = false;
   els.armStrategyButton.textContent = canReview ? "Save & Track Signal" : canDraft ? "Login To Track" : "Show Blocks";
   updateDecisionSurface(snapshot);
@@ -2655,15 +2717,17 @@ function renderBackend(snapshot) {
     els.exchangeOrderMetric.textContent = String(snapshot.desk.exchangeOrderCount || 0);
   }
   const liveOrders = snapshot.openOrders || [];
-  const hasExchangeState = Boolean(snapshot.running || snapshot.liveReady || snapshot.desk?.exchangeOrderCount || liveOrders.length);
   const liveMark = Number(snapshot.markPrice ?? currentMarketPrice());
-  renderOpenOrders(liveOrders, {
-    emptyText: hasExchangeState ? "No live signal levels" : "Backend connected",
-    emptyHint: hasExchangeState ? "Generate a fresh signal from the feed" : "No signal levels are being shown",
+  const setupOrders = liveOrders.length ? liveOrders : setupGridOrders(liveMark, snapshot);
+  const usingSetupGrid = !liveOrders.length && setupOrders.length > 0;
+  const hasExchangeState = Boolean(snapshot.running || snapshot.liveReady || snapshot.desk?.exchangeOrderCount || liveOrders.length || usingSetupGrid);
+  renderOpenOrders(setupOrders, {
+    emptyText: hasExchangeState ? "No setup-grid levels" : "Backend connected",
+    emptyHint: hasExchangeState ? "Waiting for live Fibonacci/FVG levels" : "No signal levels are being shown",
     mark: Number.isFinite(liveMark) ? liveMark : undefined,
     snapshot,
-    source: hasExchangeState ? "live" : "backend",
-    title: hasExchangeState ? "Live Signal Levels" : "Backend State"
+    source: liveOrders.length ? "live" : usingSetupGrid ? "setup" : "backend",
+    title: liveOrders.length ? "Live Signal Levels" : usingSetupGrid ? "Hyperliquid Setup Grid" : "Backend State"
   });
   const sourceLabel = hasExchangeState
     ? `${String(snapshot.mode || "live").toUpperCase()} ${String(snapshot.network || "mainnet").toUpperCase()} signal state`
@@ -2707,7 +2771,7 @@ function renderOpenOrders(orders, options = {}) {
         .map(
           (order) => `<article class="order-row ${order.side} ${source}">
             <strong>${String(order.side).toUpperCase() === "BUY" ? "Support" : "Resistance"} ${money(order.price)}</strong>
-            <span>${Number(order.quantity || 0).toFixed(5)} ${order.symbol || selectedAsset}</span>
+            <span>${source === "setup" ? "draft grid" : `${Number(order.quantity || 0).toFixed(5)} ${order.symbol || selectedAsset}`}</span>
           </article>`
         )
         .join("")
@@ -2836,12 +2900,16 @@ function render() {
   els.orderAgeMetric.textContent = "0s";
   els.syncMetric.textContent = "local";
   els.exchangeOrderMetric.textContent = "local";
-  renderOpenOrders(state.openOrders, {
+  const previewMark = live ? Number(live.price) : mark;
+  const liveSetupOrders = setupGridOrders(previewMark);
+  const usingSetupGrid = liveSetupOrders.length > 0;
+  const setupOrders = usingSetupGrid ? liveSetupOrders : state.openOrders;
+  renderOpenOrders(setupOrders, {
     emptyHint: "Run a sample or connect the backend",
     emptyText: "No preview levels",
-    mark: live ? Number(live.price) : mark,
-    source: "preview",
-    title: "Signal Preview"
+    mark: previewMark,
+    source: usingSetupGrid ? "setup" : "preview",
+    title: usingSetupGrid ? "Hyperliquid Setup Grid" : "Signal Preview"
   });
   els.markPrice.textContent = live ? money(live.price) : money(mark);
   els.marketTitle.textContent = `${selectedAsset}-USD signal map`;
