@@ -41,7 +41,7 @@ class RuntimeConfig:
     live_confirmation: str = ""
     account_address: str = ""
     secret_key: str = ""
-    data_feed: str = "hyperliquid"
+    data_feed: str = "coinglass"
     assets: tuple[str, ...] = ("BTC", "ETH", "SOL", "HYPE", "BNB", "XRP", "DOGE", "GOLD", "CL", "BRENTOIL")
     builder_dexes: tuple[str, ...] = ("xyz",)
 
@@ -92,7 +92,7 @@ class RuntimeConfig:
                 if os.getenv("MONATISE_ENABLE_GLOBAL_CREDENTIALS", "false").lower() == "true"
                 else ""
             ),
-            data_feed=os.getenv("MONATISE_DATA_FEED", "hyperliquid").lower(),
+            data_feed=os.getenv("MONATISE_DATA_FEED", "coinglass").lower(),
             assets=tuple(
                 asset.strip().upper()
                 for asset in os.getenv("MONATISE_ASSETS", "BTC,ETH,SOL,HYPE,BNB,XRP,DOGE,GOLD,CL,BRENTOIL").split(",")
@@ -123,8 +123,8 @@ class RuntimeConfig:
             raise ValueError("MONATISE_NETWORK must be testnet or mainnet")
         if self.execution_mode not in {"observe", "dry_run", "live"}:
             raise ValueError("MONATISE_EXECUTION_MODE must be observe, dry_run, or live")
-        if self.data_feed not in {"hyperliquid", "coinglass"}:
-            raise ValueError("MONATISE_DATA_FEED must be hyperliquid or coinglass")
+        if self.data_feed != "coinglass":
+            raise ValueError("MONATISE_DATA_FEED must be coinglass")
         if self.leverage <= 0:
             raise ValueError("MONATISE_LEVERAGE must be positive")
         if self.order_quote_size <= 0:

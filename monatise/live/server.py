@@ -30,13 +30,10 @@ def _is_email(value: str) -> bool:
 
 
 def _market_data_adapter(config: RuntimeConfig, symbol: str):  # noqa: ANN202
-    if config.data_feed == "coinglass":
-        try:
-            return CoinGlassAdapter(config), "CoinGlass futures price history"
-        except Exception:  # noqa: BLE001
-            if symbol.split("-", 1)[0].upper() not in {"GOLD", "XAU", "CL", "BRENTOIL"}:
-                raise
-    return HyperliquidAdapter(config), "Hyperliquid candleSnapshot"
+    coin = symbol.split("-", 1)[0].upper()
+    if coin in {"GOLD", "XAU", "CL", "BRENTOIL"}:
+        return HyperliquidAdapter(config), "Hyperliquid builder market fallback"
+    return CoinGlassAdapter(config), "CoinGlass futures price history"
 
 
 class TenantServices:

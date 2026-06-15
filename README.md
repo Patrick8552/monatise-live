@@ -62,16 +62,17 @@ HYPERLIQUID_ACCOUNT_ADDRESS=0x...
 HYPERLIQUID_SECRET_KEY=...
 ```
 
-Optional CoinGlass read-only data feeds can be enabled for crypto futures candles and context metrics:
+CoinGlass is the required read-only market data feed for crypto futures candles and context metrics:
 
 ```bash
-MONATISE_DATA_FEED=coinglass
 COINGLASS_API_KEY=...
 COINGLASS_EXCHANGE=Binance
 COINGLASS_EXCHANGE_LIST=Binance,OKX,Bybit
 ```
 
-CoinGlass is used only for market data. Hyperliquid remains the execution and private sync adapter.
+CoinGlass is used for market data. Hyperliquid remains the execution and private sync adapter.
+
+Chainlink or another oracle can be added as a signal validation guard: read the BTC/USD or ETH/USD feed from a configured RPC, compare it with the CoinGlass mark, check the feed timestamp, and hold or reduce confidence when the spread or freshness check fails. The oracle should verify signals; it should not replace CoinGlass candles or Hyperliquid execution.
 
 See [deploy/live-runbook.md](deploy/live-runbook.md) for the full runbook.
 

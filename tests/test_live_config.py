@@ -116,7 +116,18 @@ def test_global_hyperliquid_credentials_are_ignored_by_default() -> None:
         _restore_env("MONATISE_ENABLE_GLOBAL_CREDENTIALS", old_enabled)
 
 
-def test_data_feed_can_use_coinglass_from_env() -> None:
+def test_data_feed_defaults_to_coinglass() -> None:
+    old_feed = os.environ.get("MONATISE_DATA_FEED")
+    os.environ.pop("MONATISE_DATA_FEED", None)
+    try:
+        config = RuntimeConfig.from_env()
+        assert config.data_feed == "coinglass"
+        config.validate()
+    finally:
+        _restore_env("MONATISE_DATA_FEED", old_feed)
+
+
+def test_data_feed_keeps_coinglass_from_env() -> None:
     old_feed = os.environ.get("MONATISE_DATA_FEED")
     os.environ["MONATISE_DATA_FEED"] = "coinglass"
     try:
@@ -127,15 +138,15 @@ def test_data_feed_can_use_coinglass_from_env() -> None:
         _restore_env("MONATISE_DATA_FEED", old_feed)
 
 
-def test_invalid_data_feed_fails_validation() -> None:
-    config = RuntimeConfig(data_feed="unknown")
+def test_hyperliquid_data_feed_fails_validation() -> None:
+    config = RuntimeConfig(data_feed="hyperliquid")
 
     try:
         config.validate()
     except ValueError as error:
-        assert "DATA_FEED" in str(error)
+        assert "must be coinglass" in str(error)
     else:
-        raise AssertionError("expected invalid data feed to fail")
+        raise AssertionError("expected non-CoinGlass data feed to fail")
 
 
 def _restore_env(key: str, value: str | None) -> None:
