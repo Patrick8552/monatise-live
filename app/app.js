@@ -654,7 +654,9 @@ function signalFromHealth(health, mark) {
     gapDirection === "bearish" ||
     resistanceOnly ||
     (Number.isFinite(takeProfit) && takeProfit < mark);
-  const direction = health.blocked || action === "halt" || action === "pause" ? "WAIT" : bullish && !bearish ? "LONG" : bearish && !bullish ? "SHORT" : "WATCH";
+  const draftDirection = supportOnly ? "LONG" : resistanceOnly ? "SHORT" : "";
+  const hardBlocked = (health.blocked || action === "halt" || action === "pause") && !draftDirection;
+  const direction = hardBlocked ? "WAIT" : draftDirection || (bullish && !bearish ? "LONG" : bearish && !bullish ? "SHORT" : "WATCH");
   const targetOne = Number.isFinite(takeProfit) && takeProfit > 0 ? takeProfit : Number.isFinite(gapMidpoint) ? gapMidpoint : direction === "SHORT" ? health.gridFloor : health.gridCeiling;
   const baseStop = Number.isFinite(invalidation) && invalidation > 0 ? invalidation : direction === "SHORT" ? health.gridCeiling : health.gridFloor;
   const stop =
