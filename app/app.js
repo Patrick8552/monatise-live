@@ -457,17 +457,27 @@ function gradeSignalEntry(entry, candles = state?.candles || []) {
     }
     if (!triggeredAt) continue;
     if (entry.direction === "LONG") {
-      if (low <= entry.stop) {
+      const stopHit = low <= entry.stop;
+      const targetHit = high >= entry.targetOne;
+      if (stopHit && targetHit) {
+        return { ...entry, triggeredAt, resolvedAt: time, status: "LOSS", outcomeDetail: `Stop and Target 1 were both inside the same candle; marked loss because exact intrabar order is unknown.` };
+      }
+      if (stopHit) {
         return { ...entry, triggeredAt, resolvedAt: time, status: "LOSS", outcomeDetail: `Stop hit at ${money(entry.stop)} before target.` };
       }
-      if (high >= entry.targetOne) {
+      if (targetHit) {
         return { ...entry, triggeredAt, resolvedAt: time, status: "WIN", outcomeDetail: `Target 1 hit at ${money(entry.targetOne)}.` };
       }
     } else {
-      if (high >= entry.stop) {
+      const stopHit = high >= entry.stop;
+      const targetHit = low <= entry.targetOne;
+      if (stopHit && targetHit) {
+        return { ...entry, triggeredAt, resolvedAt: time, status: "LOSS", outcomeDetail: `Stop and Target 1 were both inside the same candle; marked loss because exact intrabar order is unknown.` };
+      }
+      if (stopHit) {
         return { ...entry, triggeredAt, resolvedAt: time, status: "LOSS", outcomeDetail: `Stop hit at ${money(entry.stop)} before target.` };
       }
-      if (low <= entry.targetOne) {
+      if (targetHit) {
         return { ...entry, triggeredAt, resolvedAt: time, status: "WIN", outcomeDetail: `Target 1 hit at ${money(entry.targetOne)}.` };
       }
     }
