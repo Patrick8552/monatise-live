@@ -933,6 +933,7 @@ function renderExecutionTicket(orders = [], options = {}) {
     fibTrend: fibAnalysis?.trend || "unknown",
     interval: tradingRules.chartInterval,
     source: mode,
+    suggestedForexLots: sizing.forexLots,
     suggestedLot: sizing.quantity,
     suggestedMargin: sizing.marginRequired,
     suggestedNotional: sizing.notional,
@@ -2275,9 +2276,18 @@ function money(value) {
 function formatLotSize(value) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric) || numeric <= 0) return "0";
-  if (numeric >= 100) return numeric.toFixed(2);
-  if (numeric >= 1) return numeric.toFixed(4);
-  return numeric.toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
+  if (numeric >= 10) return numeric.toFixed(2);
+  if (numeric >= 1) return numeric.toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
+  return numeric.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+function forexLotLabel(notional) {
+  const numeric = Number(notional);
+  if (!Number.isFinite(numeric) || numeric <= 0) return "0 lot";
+  const lots = numeric / 100_000;
+  const lotText = formatLotSize(lots);
+  const descriptor = lots >= 1 ? "standard" : lots >= 0.1 ? "mini" : lots >= 0.01 ? "micro" : "nano";
+  return `${lotText} ${lotText === "1" ? "lot" : "lots"} ${descriptor}`;
 }
 
 function tradeSizingFromSignal(signal, capital, drawdownPct) {
@@ -2291,6 +2301,7 @@ function tradeSizingFromSignal(signal, capital, drawdownPct) {
       marginRequired: 0,
       notional: 0,
       quantity: 0,
+      forexLots: 0,
       quantityLabel: "Pending setup",
       rewardRiskOneLabel: "pending",
       rewardRiskTwoLabel: "pending",
@@ -2313,6 +2324,7 @@ function tradeSizingFromSignal(signal, capital, drawdownPct) {
   const riskBasedNotional = stopPct > 0 ? perSetupRiskBudget / stopPct : alertRiskBudget;
   const notional = Math.max(0, Math.min(maxNotional, riskBasedNotional));
   const quantity = Number.isFinite(entry) && entry > 0 ? notional / entry : 0;
+  const forexLots = notional / 100_000;
   const pointValue = quantity;
   const targetOneMove = direction === "SHORT" ? entry - targetOne : targetOne - entry;
   const targetTwoMove = direction === "SHORT" ? entry - targetTwo : targetTwo - entry;
@@ -2326,7 +2338,8 @@ function tradeSizingFromSignal(signal, capital, drawdownPct) {
     marginRequired,
     notional,
     quantity,
-    quantityLabel: `${formatLotSize(quantity)} ${selectedAsset}`,
+    forexLots,
+    quantityLabel: forexLotLabel(notional),
     rewardRiskOneLabel: rewardRiskOne > 0 ? `${rewardRiskOne.toFixed(2)}x` : "pending",
     rewardRiskTwoLabel: rewardRiskTwo > 0 ? `${rewardRiskTwo.toFixed(2)}x` : "pending",
     stopLoss,
