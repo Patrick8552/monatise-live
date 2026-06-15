@@ -341,7 +341,6 @@ label .range-readout {
   gap: 14px;
   grid-template-areas:
     "account trade risk"
-    "account markets risk"
     "activity activity activity";
   grid-template-columns: minmax(270px, 320px) minmax(0, 1fr) minmax(310px, 370px);
   margin: 0 auto;
@@ -2880,7 +2879,6 @@ button:disabled {
   .desk-sections {
     grid-template-areas:
       "trade risk"
-      "markets markets"
       "account account"
       "activity activity";
     grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
@@ -2931,7 +2929,6 @@ button:disabled {
     grid-template-areas:
       "trade"
       "risk"
-      "markets"
       "account"
       "activity";
   }
