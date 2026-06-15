@@ -57,6 +57,7 @@
       <nav class="desk-jump-nav" aria-label="desk sections">
         <a href="#trade">Signal Builder</a>
         <a href="#risk">Quality Gate</a>
+        <a href="#hedge">Hedge Layer</a>
         <a href="#chat">AI Chat</a>
         <a href="#account">Signal Profile</a>
         <a href="#activity">Activity</a>
@@ -170,6 +171,15 @@
               <div id="openOrderBook" class="open-order-book"></div>
             </div>
 
+            <section id="hedge" class="panel hedge-layer" aria-label="hedge layer">
+              <div class="panel-head">
+                <h2>Hedge Layer</h2>
+                <span id="hedgeStatus">Standby</span>
+              </div>
+              <div id="hedgeSummary" class="hedge-summary"></div>
+              <p id="hedgeNote" class="hedge-note">Hedge guidance appears when a directional setup exists. It is an offset plan, not an execution command.</p>
+            </section>
+
             <section class="panel execution-ticket utility-hidden" aria-label="signal ticket">
               <div class="panel-head">
                 <h2>Signal Ticket</h2>
@@ -212,6 +222,7 @@
                 <button type="button" data-chat-prompt="Explain the current signal">Explain Signal</button>
                 <button type="button" data-chat-prompt="Which entry should I use?">Entry Plan</button>
                 <button type="button" data-chat-prompt="Explain the risk and lot size">Risk</button>
+                <button type="button" data-chat-prompt="Explain the hedge layer">Hedge</button>
                 <button type="button" data-chat-prompt="Why is the app waiting?">Wait State</button>
               </div>
               <form id="chatForm" class="chat-form">

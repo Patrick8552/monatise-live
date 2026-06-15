@@ -50,6 +50,9 @@ const els = {
   fibAnalysis: document.querySelector("#fibAnalysis"),
   forexSessions: document.querySelector("#forexSessions"),
   harvestMetric: document.querySelector("#harvestMetric"),
+  hedgeNote: document.querySelector("#hedgeNote"),
+  hedgeStatus: document.querySelector("#hedgeStatus"),
+  hedgeSummary: document.querySelector("#hedgeSummary"),
   inventoryMetric: document.querySelector("#inventoryMetric"),
   installAppButton: document.querySelector("#installAppButton"),
   lastFill: document.querySelector("#lastFill"),
@@ -1079,6 +1082,7 @@ function renderExecutionTicket(orders = [], options = {}) {
     ${renderEntryLadder(signal.entryLevels)}
   `;
   const primaryBlock = blocks[0]?.detail || health.warnings[0] || "all visible checks clear";
+  renderHedgeLayer(signal, sizing, { blocks, health });
   lastSignalCandidate = {
     confidence: signal.confidence,
     createdAt: new Date().toISOString(),
@@ -1237,6 +1241,13 @@ function answerSignalChat(prompt) {
     return active
       ? `Risk plan: suggested ${sizing.quantityLabel}, notional ${money(sizing.notional)}, margin ${money(sizing.marginRequired)}, stop loss estimate ${money(sizing.stopLoss)} at stop ${money(signal.stop)}. Keep the stop-loss amount inside your alert risk size.`
       : `Risk stays pending until there is a LONG or SHORT. Current state: ${context.status}. ${context.note}`;
+  }
+
+  if (/hedge|offset|protect|insurance|opposite/.test(lower)) {
+    const plan = hedgePlanFromSignal(signal, sizing, context);
+    return plan.active
+      ? `Hedge layer: ${plan.hedgeSide} ${Math.round(plan.hedgeRatio * 100)}% offset, suggested ${forexLotLabel(plan.hedgeNotional)} (${money(plan.hedgeNotional)} notional). Trigger near ${money(plan.trigger)}, release near ${money(plan.release)}, hard invalidation ${money(plan.hardExit)}. ${plan.note}`
+      : `Hedge layer is on standby. ${plan.note}`;
   }
 
   if (/target|tp|profit|exit|take/.test(lower)) {
@@ -2747,6 +2758,102 @@ function tradeSizingFromSignal(signal, capital, drawdownPct) {
     targetOneProfit,
     targetTwoProfit
   };
+}
+
+function hedgePlanFromSignal(signal, sizing, context = {}) {
+  const direction = String(signal?.direction || "");
+  if (!["LONG", "SHORT"].includes(direction)) {
+    return {
+      active: false,
+      note: "No hedge until the setup becomes LONG or SHORT.",
+      status: "Standby"
+    };
+  }
+  const entry = Number(signal.entry);
+  const stop = Number(signal.stop);
+  const targetOne = Number(signal.targetOne);
+  const confidence = Number(signal.confidence || 0);
+  const riskDistance = Math.abs(entry - stop);
+  const hasBlock = Boolean(context.blocks?.length || context.health?.blocked || context.health?.warnings?.length);
+  const baseRatio = confidence >= 75 ? 0.25 : confidence >= 62 ? 0.35 : 0.5;
+  const hedgeRatio = Math.min(0.65, baseRatio + (hasBlock ? 0.1 : 0));
+  const hedgeNotional = Math.max(0, Number(sizing?.notional || 0) * hedgeRatio);
+  const hedgeRisk = Math.max(0, Number(sizing?.stopLoss || 0) * hedgeRatio);
+  const sign = direction === "SHORT" ? -1 : 1;
+  const trigger = entry - sign * riskDistance * 0.42;
+  const release = direction === "SHORT"
+    ? Math.min(entry - riskDistance * 0.7, Number.isFinite(targetOne) ? targetOne : entry - riskDistance)
+    : Math.max(entry + riskDistance * 0.7, Number.isFinite(targetOne) ? targetOne : entry + riskDistance);
+  const hardExit = stop;
+  return {
+    active: true,
+    hardExit,
+    hedgeNotional,
+    hedgeRatio,
+    hedgeRisk,
+    hedgeSide: direction === "LONG" ? "SHORT" : "LONG",
+    note: hasBlock
+      ? "Use the hedge as protection only while blockers remain. Remove it when the setup clears or invalidates."
+      : "Use the hedge only if price moves against the setup. Remove it when price returns to the entry path.",
+    release,
+    status: `${Math.round(hedgeRatio * 100)}% offset`,
+    trigger
+  };
+}
+
+function renderHedgeLayer(signal, sizing, context = {}) {
+  if (!els.hedgeSummary) return;
+  const plan = hedgePlanFromSignal(signal, sizing, context);
+  els.hedgeStatus.textContent = plan.status;
+  if (!plan.active) {
+    els.hedgeSummary.innerHTML = `
+      <article class="standby">
+        <span>Mode</span>
+        <strong>Standby</strong>
+        <em>No opposite-side hedge until a directional setup exists.</em>
+      </article>
+      <article>
+        <span>Trigger</span>
+        <strong>Pending</strong>
+        <em>Wait for LONG or SHORT first.</em>
+      </article>
+    `;
+    els.hedgeNote.textContent = plan.note;
+    return;
+  }
+  els.hedgeSummary.innerHTML = `
+    <article class="${plan.hedgeSide.toLowerCase()}">
+      <span>Hedge side</span>
+      <strong>${plan.hedgeSide}</strong>
+      <em>${Math.round(plan.hedgeRatio * 100)}% protective offset</em>
+    </article>
+    <article>
+      <span>Suggested hedge</span>
+      <strong>${forexLotLabel(plan.hedgeNotional)}</strong>
+      <em>${money(plan.hedgeNotional)} notional</em>
+    </article>
+    <article>
+      <span>Hedge trigger</span>
+      <strong>${money(plan.trigger)}</strong>
+      <em>activate only if price moves against entry</em>
+    </article>
+    <article>
+      <span>Release hedge</span>
+      <strong>${money(plan.release)}</strong>
+      <em>take off protection when setup recovers</em>
+    </article>
+    <article>
+      <span>Hard invalidation</span>
+      <strong>${money(plan.hardExit)}</strong>
+      <em>close both sides if this fails</em>
+    </article>
+    <article>
+      <span>Hedge risk</span>
+      <strong>${money(plan.hedgeRisk)}</strong>
+      <em>estimated offset risk budget</em>
+    </article>
+  `;
+  els.hedgeNote.textContent = plan.note;
 }
 
 function liveAccountValue(snapshot) {

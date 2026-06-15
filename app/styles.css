@@ -700,6 +700,66 @@ label .range-readout {
   min-width: 0;
 }
 
+.hedge-layer {
+  border-left: 4px solid var(--violet);
+  display: grid;
+  gap: 10px;
+  grid-column: 1 / -1;
+}
+
+.hedge-summary {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.hedge-summary article {
+  background: #f4f7f3;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--violet);
+  border-radius: 7px;
+  display: grid;
+  gap: 5px;
+  min-height: 86px;
+  padding: 10px;
+}
+
+.hedge-summary article.short {
+  border-left-color: var(--sell);
+}
+
+.hedge-summary article.long {
+  border-left-color: var(--buy);
+}
+
+.hedge-summary article.standby {
+  border-left-color: var(--accent);
+}
+
+.hedge-summary span {
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.hedge-summary strong {
+  color: var(--ink);
+  font-size: 0.96rem;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.hedge-summary em,
+.hedge-note {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-style: normal;
+  font-weight: 800;
+  line-height: 1.35;
+  margin: 0;
+}
+
 .compact-backend {
   align-items: center;
   display: flex;
@@ -3055,6 +3115,7 @@ button:disabled {
   .ticket-sizing,
   .ticket-grid,
   .chat-quick-actions,
+  .hedge-summary,
   .strategy-metrics {
     grid-template-columns: 1fr 1fr;
   }
@@ -3188,6 +3249,7 @@ button:disabled {
   .ticket-grid,
   .chat-form,
   .chat-quick-actions,
+  .hedge-summary,
   .entry-ladder,
   .strategy-metrics,
   .fib-metrics,
