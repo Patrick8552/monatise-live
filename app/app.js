@@ -990,12 +990,14 @@ function signalFromHealth(health, mark) {
   return {
     confidence,
     direction,
-    entry: Number.isFinite(entry) ? entry : 0,
+    entry: executable && Number.isFinite(entry) ? entry : null,
     entryLevels,
-    stop: Number.isFinite(stop) ? stop : mark,
-    targetOne: Number.isFinite(targetOne) ? targetOne : mark,
+    stop: executable && Number.isFinite(stop) ? stop : null,
+    targetOne: executable && Number.isFinite(targetOne) ? targetOne : null,
     targetTwo:
-      direction === "SHORT"
+      !executable
+        ? null
+        : direction === "SHORT"
         ? (Number.isFinite(targetOne) ? targetOne : entry) - Math.max(buffer, 1)
         : (Number.isFinite(targetOne) ? targetOne : entry) + Math.max(buffer, 1),
     thesis:
@@ -1012,6 +1014,29 @@ function signalLabel(direction) {
   if (direction === "LONG") return "BUY SETUP";
   if (direction === "SHORT") return "SELL SETUP";
   return direction;
+}
+
+function hasExecutableSignalLevels(signal) {
+  const direction = String(signal?.direction || "");
+  const entry = Number(signal?.entry);
+  const stop = Number(signal?.stop);
+  const targetOne = Number(signal?.targetOne);
+  return (
+    ["LONG", "SHORT"].includes(direction) &&
+    Number.isFinite(entry) &&
+    Number.isFinite(stop) &&
+    Number.isFinite(targetOne) &&
+    entry > 0 &&
+    stop > 0 &&
+    targetOne > 0 &&
+    Math.abs(entry - stop) > 0 &&
+    Math.abs(entry - targetOne) > 0
+  );
+}
+
+function signalLevelText(signal, key) {
+  const value = Number(signal?.[key]);
+  return hasExecutableSignalLevels(signal) && Number.isFinite(value) && value > 0 ? money(value) : "Pending";
 }
 
 function renderTradingViewSignal() {
@@ -1093,11 +1118,11 @@ function renderStrategyReadout(orders, options = {}) {
       <span>${thesis}</span>
     </div>
     <div class="strategy-metrics">
-      <span>Entry <strong>${money(signal.entry)}</strong></span>
+      <span>Entry <strong>${signalLevelText(signal, "entry")}</strong></span>
       <span>Trigger <strong>${signal.trigger}</strong></span>
-      <span>Target 1 <strong>${money(signal.targetOne)}</strong></span>
-      <span>Target 2 <strong>${money(signal.targetTwo)}</strong></span>
-      <span>Stop <strong>${money(signal.stop)}</strong></span>
+      <span>Target 1 <strong>${signalLevelText(signal, "targetOne")}</strong></span>
+      <span>Target 2 <strong>${signalLevelText(signal, "targetTwo")}</strong></span>
+      <span>Stop <strong>${signalLevelText(signal, "stop")}</strong></span>
       <span>Range <strong>${Number.isFinite(health.gridFloor) ? money(health.gridFloor) : "pending"} - ${
         Number.isFinite(health.gridCeiling) ? money(health.gridCeiling) : "pending"
       }</strong></span>

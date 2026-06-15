@@ -1,9 +1,9 @@
-const CACHE_NAME = "monatise-shell-20260615-no-tv-chart";
+const CACHE_NAME = "monatise-shell-20260615-signal-levels";
 const SHELL_ASSETS = [
   "./",
   "./index.html",
-  "./styles.css?v=20260615-no-tv-chart",
-  "./app.js?v=20260615-no-tv-chart",
+  "./styles.css?v=20260615-signal-levels",
+  "./app.js?v=20260615-signal-levels",
   "./manifest.webmanifest?v=20260615-lotus",
   "./icon-lotus.svg"
 ];
