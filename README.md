@@ -83,6 +83,19 @@ deploys the Docker web service in `live` + `mainnet` mode with small risk caps.
 Users log in and save their own Hyperliquid API wallet credentials in the
 dashboard before starting the trading loop.
 
+Password recovery sends a six-digit email code, so Render also needs SMTP
+configured:
+
+```text
+MONATISE_SMTP_HOST=smtp.example.com
+MONATISE_SMTP_PORT=587
+MONATISE_SMTP_FROM=Monatise <no-reply@example.com>
+MONATISE_SMTP_USERNAME=apikey-or-mailbox
+MONATISE_SMTP_PASSWORD=secret
+MONATISE_SMTP_STARTTLS=true
+MONATISE_SMTP_SSL=false
+```
+
 See [deploy/render-hosting.md](deploy/render-hosting.md) for details.
 
 ## Quick Start

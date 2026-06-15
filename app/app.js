@@ -1970,7 +1970,7 @@ function renderAuth(me) {
     ? me.credentialsConfigured
       ? "Private sync saved for this signal profile."
       : "Private sync is optional. Save rules to keep this profile useful."
-    : "Register or log in to save signal preferences.";
+    : "Register with an email to save preferences and receive reset codes.";
   els.logoutButton.disabled = !loggedIn;
   els.saveCredentialsButton.disabled = !loggedIn;
   els.backendStartButton.disabled = !loggedIn || !me.credentialsConfigured;
@@ -2045,9 +2045,14 @@ async function loginOrRegister(path) {
     els.credentialStatus.textContent = "Enter a profile name before registration.";
     return;
   }
-  if (!isEmailOrPhoneUsername(username)) {
-    setAuthStatus("Email or phone required");
-    els.credentialStatus.textContent = "Use an email address or phone number as your username.";
+  if (isRegister && !isEmailUsername(username)) {
+    setAuthStatus("Email required");
+    els.credentialStatus.textContent = "Use an email address so Monatise can send password reset codes.";
+    return;
+  }
+  if (!isRegister && !isEmailOrPhoneUsername(username)) {
+    setAuthStatus("Email required");
+    els.credentialStatus.textContent = "Enter the email used for this profile.";
     return;
   }
   if (password.length < 8) {
@@ -2072,7 +2077,7 @@ async function loginOrRegister(path) {
     renderAuth(payload);
     if (isRegister) {
       renderRegistrationDesk(payload);
-      els.credentialStatus.textContent = "Profile created. If you forget your password, Monatise will email a reset code.";
+      els.credentialStatus.textContent = "Profile created. Password reset codes will go to this email.";
       els.registrationDesk.scrollIntoView({ behavior: "smooth", block: "center" });
     }
     addAuditEvent(isRegister ? "register" : "login", isRegister ? "User registered" : "User logged in", payload.username || username);

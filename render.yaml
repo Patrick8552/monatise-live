@@ -31,6 +31,20 @@ services:
         value: coinglass
       - key: COINGLASS_API_KEY
         sync: false
+      - key: MONATISE_SMTP_HOST
+        sync: false
+      - key: MONATISE_SMTP_FROM
+        sync: false
+      - key: MONATISE_SMTP_PORT
+        value: 587
+      - key: MONATISE_SMTP_USERNAME
+        sync: false
+      - key: MONATISE_SMTP_PASSWORD
+        sync: false
+      - key: MONATISE_SMTP_SSL
+        value: false
+      - key: MONATISE_SMTP_STARTTLS
+        value: true
       - key: COINGLASS_EXCHANGE
         value: Binance
       - key: COINGLASS_EXCHANGE_LIST
