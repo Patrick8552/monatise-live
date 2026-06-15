@@ -1536,52 +1536,9 @@ function openSelectedTradingViewChart() {
 let lastTradingViewSignature = "";
 
 function renderTradingViewChart() {
-  if (!els.tradingViewWidget) return;
-  const tvSymbol = tradingViewSymbolForAsset(selectedAsset);
-  const interval = tradingViewIntervals[tradingRules.chartInterval] || "60";
-  const signature = `${tvSymbol}|${interval}`;
-  if (signature === lastTradingViewSignature) return;
-  lastTradingViewSignature = signature;
-  if (els.tradingViewMeta) {
-    els.tradingViewMeta.textContent = `${tvSymbol} · ${tradingRules.chartInterval}`;
+  if (els.tradingViewWidget) {
+    els.tradingViewWidget.innerHTML = "";
   }
-  if (els.openTradingViewButton) {
-    els.openTradingViewButton.title = `Open ${tvSymbol} in your TradingView account`;
-  }
-  els.tradingViewWidget.innerHTML = "";
-  const config = {
-    allow_symbol_change: true,
-    autosize: true,
-    backgroundColor: "#0F0F0F",
-    calendar: false,
-    compareSymbols: [],
-    details: false,
-    gridColor: "rgba(242, 242, 242, 0.06)",
-    hide_legend: false,
-    hide_side_toolbar: true,
-    hide_top_toolbar: false,
-    hide_volume: false,
-    hotlist: false,
-    interval,
-    locale: "en",
-    save_image: true,
-    studies: [],
-    style: "1",
-    support_host: "https://www.tradingview.com",
-    symbol: tvSymbol,
-    theme: "dark",
-    timezone: "Etc/UTC",
-    watchlist: [],
-    withdateranges: false
-  };
-  const iframe = document.createElement("iframe");
-  iframe.allowFullscreen = true;
-  iframe.loading = "lazy";
-  iframe.title = `${tvSymbol} TradingView chart`;
-  iframe.src = `https://www.tradingview-widget.com/embed-widget/advanced-chart/?locale=en#${encodeURIComponent(
-    JSON.stringify(config)
-  )}`;
-  els.tradingViewWidget.appendChild(iframe);
 }
 
 function mergeSelectableAssets(assets = []) {
@@ -3700,7 +3657,9 @@ els.stepButton.addEventListener("click", () => {
 
 els.resetButton.addEventListener("click", reset);
 els.assetSelect.addEventListener("change", () => saveSelectedAsset(els.assetSelect.value));
-els.openTradingViewButton.addEventListener("click", openSelectedTradingViewChart);
+if (els.openTradingViewButton) {
+  els.openTradingViewButton.addEventListener("click", openSelectedTradingViewChart);
+}
 els.chatForm.addEventListener("submit", (event) => {
   event.preventDefault();
   const question = els.chatInput.value.trim();

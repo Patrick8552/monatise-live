@@ -426,7 +426,7 @@ label .range-readout {
 }
 
 .tradingview-panel {
-  display: grid;
+  display: none;
   gap: 12px;
   grid-column: 1 / -1;
   min-height: 460px;

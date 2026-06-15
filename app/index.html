@@ -11,7 +11,7 @@
     <link rel="manifest" href="./manifest.webmanifest?v=20260615-lotus" />
     <link rel="icon" href="./icon-lotus.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./icon-lotus.svg" />
-    <link rel="stylesheet" href="./styles.css?v=20260615-tv-dark" />
+    <link rel="stylesheet" href="./styles.css?v=20260615-no-tv-chart" />
   </head>
   <body>
     <main class="shell">
@@ -177,17 +177,6 @@
               <div id="strategyReadout" class="strategy-readout" aria-label="strategy preview readout"></div>
               <div id="openOrderBook" class="open-order-book"></div>
             </div>
-
-            <section class="panel tradingview-panel" aria-label="TradingView chart">
-              <div class="panel-head">
-                <h2>TradingView Chart</h2>
-                <div class="tradingview-actions">
-                  <span id="tradingViewMeta">BTC · 1h</span>
-                  <button id="openTradingViewButton" type="button">Open in TradingView</button>
-                </div>
-              </div>
-              <div id="tradingViewWidget" class="tradingview-widget"></div>
-            </section>
 
             <section id="hedge" class="panel hedge-layer" aria-label="hedge layer">
               <div class="panel-head">
@@ -632,6 +621,6 @@
     </main>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="./app.js?v=20260615-tv-dark"></script>
+    <script src="./app.js?v=20260615-no-tv-chart"></script>
   </body>
 </html>
