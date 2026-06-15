@@ -1,11 +1,11 @@
-const CACHE_NAME = "monatise-shell-20260615-lotus";
+const CACHE_NAME = "monatise-shell-20260615-lotus-v2";
 const SHELL_ASSETS = [
   "./",
   "./index.html",
   "./styles.css?v=20260615-draft-setups",
   "./app.js?v=20260615-draft-setups",
-  "./manifest.webmanifest",
-  "./icon.svg"
+  "./manifest.webmanifest?v=20260615-lotus",
+  "./icon-lotus.svg"
 ];
 
 self.addEventListener("install", (event) => {
