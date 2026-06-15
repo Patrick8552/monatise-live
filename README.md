@@ -96,6 +96,32 @@ MONATISE_SMTP_STARTTLS=true
 MONATISE_SMTP_SSL=false
 ```
 
+TradingView indicator alerts can be added as a forex confluence feed. Configure
+Render with:
+
+```text
+MONATISE_TRADINGVIEW_WEBHOOK_TOKEN=use-a-long-random-secret
+```
+
+Then set the TradingView webhook URL to:
+
+```text
+https://monatise-live.onrender.com/api/tradingview/webhook?token=YOUR_SECRET
+```
+
+Use a JSON alert message like:
+
+```json
+{
+  "symbol": "{{ticker}}",
+  "action": "BUY",
+  "confidence": 78,
+  "indicator": "My TradingView setup",
+  "timeframe": "{{interval}}",
+  "price": "{{close}}"
+}
+```
+
 See [deploy/render-hosting.md](deploy/render-hosting.md) for details.
 
 ## Quick Start

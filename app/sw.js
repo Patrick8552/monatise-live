@@ -1,9 +1,9 @@
-const CACHE_NAME = "monatise-shell-20260615-assets";
+const CACHE_NAME = "monatise-shell-20260615-tradingview-webhook";
 const SHELL_ASSETS = [
   "./",
   "./index.html",
-  "./styles.css?v=20260615-assets",
-  "./app.js?v=20260615-assets",
+  "./styles.css?v=20260615-tradingview",
+  "./app.js?v=20260615-tradingview",
   "./manifest.webmanifest?v=20260615-lotus",
   "./icon-lotus.svg"
 ];

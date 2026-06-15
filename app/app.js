@@ -134,6 +134,7 @@ const els = {
   ticketSummary: document.querySelector("#ticketSummary"),
   tradeAuditLog: document.querySelector("#tradeAuditLog"),
   openTradingViewButton: document.querySelector("#openTradingViewButton"),
+  tradingViewSignalPanel: document.querySelector("#tradingViewSignalPanel"),
   tradingViewMeta: document.querySelector("#tradingViewMeta"),
   tradingViewWidget: document.querySelector("#tradingViewWidget"),
   londonCommodityInput: document.querySelector("#londonCommodityInput"),
@@ -175,6 +176,7 @@ let lastSignalCandidate = null;
 let lastTicketSnapshot = null;
 let pendingArmReview = false;
 let deferredInstallPrompt = null;
+let latestTradingViewSignal = null;
 let candleCsvBuffer = sampleCsv;
 let tradingRules = {
   chartInterval: "1h",
@@ -1010,6 +1012,52 @@ function signalLabel(direction) {
   if (direction === "LONG") return "BUY SETUP";
   if (direction === "SHORT") return "SELL SETUP";
   return direction;
+}
+
+function renderTradingViewSignal() {
+  if (!els.tradingViewSignalPanel) return;
+  const signal = latestTradingViewSignal;
+  if (!signal) {
+    els.tradingViewSignalPanel.innerHTML = `
+      <div class="strategy-status wait">
+        <strong>TV WAIT</strong>
+        <span>TradingView indicator bridge</span>
+      </div>
+      <p>No TradingView alert received for ${assetLabel(selectedAsset)} yet.</p>
+    `;
+    return;
+  }
+  const action = String(signal.action || "WAIT").toUpperCase();
+  const statusClass = action === "BUY" || action === "SELL" ? "aligned" : "wait";
+  const receivedAt = Number(signal.receivedAt || 0) * 1000;
+  const receivedLabel = receivedAt ? formatSignalTime(new Date(receivedAt)) : "latest";
+  els.tradingViewSignalPanel.innerHTML = `
+    <div class="strategy-status ${statusClass}">
+      <strong>TV ${action}</strong>
+      <span>${signal.indicator || "TradingView"} · ${signal.timeframe || "live alert"}</span>
+    </div>
+    <div class="strategy-metrics compact-tv-metrics">
+      <span>Pair <strong>${signal.symbol || selectedAsset}</strong></span>
+      <span>Confidence <strong>${Number(signal.confidence || 0).toFixed(0)}%</strong></span>
+      <span>Price <strong>${signal.price || "alert"}</strong></span>
+      <span>Received <strong>${receivedLabel}</strong></span>
+    </div>
+    <p>${signal.message || "TradingView indicator alert received. Use this as confluence, not an execution command."}</p>
+  `;
+}
+
+async function loadTradingViewSignals() {
+  if (!els.tradingViewSignalPanel) return;
+  try {
+    const response = await apiFetch(`/api/tradingview/signals?symbol=${encodeURIComponent(selectedAsset)}`, { cache: "no-store" });
+    if (!response.ok) throw new Error("TradingView bridge unavailable");
+    const payload = await response.json();
+    latestTradingViewSignal = payload.alerts?.[0] || null;
+    renderTradingViewSignal();
+  } catch {
+    latestTradingViewSignal = null;
+    renderTradingViewSignal();
+  }
 }
 
 function renderStrategyReadout(orders, options = {}) {
@@ -2302,6 +2350,7 @@ function syncSelectedAsset() {
     `;
   }
   renderTradingViewChart();
+  loadTradingViewSignals();
   renderMarkets();
 }
 
@@ -3798,7 +3847,9 @@ loadMe();
 refreshBackend();
 renderForexSessions();
 renderChatMessages();
+loadTradingViewSignals();
 applyRememberedLogin();
 setInterval(loadMarkets, 5000);
 setInterval(refreshBackend, 2500);
 setInterval(renderForexSessions, 1000);
+setInterval(loadTradingViewSignals, 10000);

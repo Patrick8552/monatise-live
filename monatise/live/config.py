@@ -45,6 +45,7 @@ class RuntimeConfig:
     data_feed: str = "coinglass"
     assets: tuple[str, ...] = ("BTC", "ETH", "SOL", "HYPE", "BNB", "XRP", "DOGE", "GOLD", "CL", "BRENTOIL")
     builder_dexes: tuple[str, ...] = ("xyz",)
+    tradingview_webhook_token: str = ""
 
     def __post_init__(self) -> None:
         if self.max_total_notional is None:
@@ -104,6 +105,7 @@ class RuntimeConfig:
                 for dex in os.getenv("MONATISE_BUILDER_DEXES", "xyz").split(",")
                 if dex.strip()
             ),
+            tradingview_webhook_token=secret_value("MONATISE_TRADINGVIEW_WEBHOOK_TOKEN", ""),
         )
 
     @property

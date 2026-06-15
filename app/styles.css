@@ -2340,6 +2340,29 @@ canvas {
   padding: 10px;
 }
 
+.tradingview-signal-panel {
+  background: rgba(0, 184, 217, 0.06);
+  border: 1px solid rgba(0, 184, 217, 0.18);
+  border-left: 3px solid var(--info);
+  border-radius: 6px;
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 10px;
+}
+
+.tradingview-signal-panel p {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 750;
+  line-height: 1.35;
+  margin: 0;
+}
+
+.compact-tv-metrics {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 .strategy-status {
   align-items: center;
   display: flex;

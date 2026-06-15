@@ -22,11 +22,70 @@ from monatise.live.users import User, UserCredentials, UserStore, encryption_key
 COMMODITY_WATCHLIST = ("GOLD", "CL", "BRENTOIL")
 FOREX_WATCHLIST = ("EURUSD", "GBPUSD", "USDJPY", "XAG")
 STOCK_WATCHLIST = ("SPX", "NDX", "NASDAQ", "AAPL", "TSLA", "NVDA")
+TRADINGVIEW_ACTIONS = {
+    "BUY": "BUY",
+    "BULL": "BUY",
+    "BULLISH": "BUY",
+    "LONG": "BUY",
+    "SELL": "SELL",
+    "BEAR": "SELL",
+    "BEARISH": "SELL",
+    "SHORT": "SELL",
+    "WAIT": "WAIT",
+    "NEUTRAL": "WAIT",
+    "HOLD": "WAIT",
+}
 
 
 def _is_email(value: str) -> bool:
     value = value.strip()
     return "@" in value and "." in value.rsplit("@", 1)[-1] and " " not in value
+
+
+def _normalize_alert_symbol(value: str) -> str:
+    raw = str(value).upper().strip()
+    if ":" in raw:
+        raw = raw.rsplit(":", 1)[-1]
+    symbol = "".join(character for character in raw if character.isalnum())
+    if len(symbol) == 6 and symbol[:3].isalpha() and symbol[3:].isalpha():
+        return symbol
+    aliases = {"XAUUSD": "GOLD", "GOLD": "GOLD", "XAGUSD": "XAG", "SILVER": "XAG"}
+    return aliases.get(symbol, symbol[:16])
+
+
+def _normalize_alert_action(value: str) -> str:
+    return TRADINGVIEW_ACTIONS.get(str(value).strip().upper(), "WAIT")
+
+
+def normalize_tradingview_alert(payload: dict | str) -> dict:
+    if isinstance(payload, str):
+        raw = payload.strip()
+        payload = {"message": raw}
+        parts = [part.strip() for part in raw.replace("|", ",").split(",") if part.strip()]
+        for part in parts:
+            if "=" in part:
+                key, value = part.split("=", 1)
+                payload[key.strip().lower()] = value.strip()
+        if "symbol" not in payload and parts:
+            payload["symbol"] = parts[0]
+        if "action" not in payload and len(parts) > 1:
+            payload["action"] = parts[1]
+    symbol = _normalize_alert_symbol(str(payload.get("symbol") or payload.get("ticker") or payload.get("pair") or ""))
+    action = _normalize_alert_action(str(payload.get("action") or payload.get("signal") or payload.get("bias") or "WAIT"))
+    try:
+        confidence = max(0.0, min(100.0, float(payload.get("confidence", 0))))
+    except (TypeError, ValueError):
+        confidence = 0.0
+    return {
+        "symbol": symbol or "UNKNOWN",
+        "action": action,
+        "confidence": confidence,
+        "timeframe": str(payload.get("timeframe") or payload.get("interval") or "").strip()[:24],
+        "indicator": str(payload.get("indicator") or payload.get("strategy") or "TradingView").strip()[:64],
+        "price": str(payload.get("price") or payload.get("close") or "").strip()[:32],
+        "message": str(payload.get("message") or payload.get("note") or "").strip()[:240],
+        "receivedAt": time.time(),
+    }
 
 
 def _market_data_adapter(config: RuntimeConfig, symbol: str):  # noqa: ANN202
@@ -167,6 +226,8 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
     app_dir: Path
     rate_limits: dict[str, list[float]] = {}
     rate_lock = threading.Lock()
+    tradingview_alerts: list[dict] = []
+    tradingview_lock = threading.Lock()
 
     def __init__(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
         super().__init__(*args, directory=str(self.app_dir), **kwargs)
@@ -310,6 +371,22 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             except Exception as error:  # noqa: BLE001
                 self._error(502, str(error))
             return
+        if parsed.path == "/api/tradingview/signals":
+            query = parse_qs(parsed.query)
+            symbol = _normalize_alert_symbol(str(query.get("symbol", [""])[0]))
+            with self.tradingview_lock:
+                alerts = list(self.tradingview_alerts)
+            if symbol:
+                alerts = [alert for alert in alerts if alert.get("symbol") == symbol]
+            self._json(
+                {
+                    "configured": bool(self.config.tradingview_webhook_token),
+                    "alerts": alerts[:20],
+                    "count": len(alerts),
+                    "source": "TradingView webhook alerts",
+                }
+            )
+            return
         if parsed.path == "/api/me":
             user = self._current_user()
             if user is None:
@@ -354,11 +431,30 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
-        if not self._valid_request_origin():
+        if parsed.path != "/api/tradingview/webhook" and not self._valid_request_origin():
             self._error(403, "invalid request origin")
             return
         if self._rate_limited(parsed.path):
             self._error(429, "too many requests")
+            return
+        if parsed.path == "/api/tradingview/webhook":
+            query = parse_qs(parsed.query)
+            token = str(query.get("token", [""])[0])
+            if not self.config.tradingview_webhook_token:
+                self._error(503, "TradingView webhook token is not configured")
+                return
+            if token != self.config.tradingview_webhook_token:
+                self._error(401, "invalid TradingView webhook token")
+                return
+            body = self._read_body()
+            try:
+                payload: dict | str = json.loads(body.decode("utf-8")) if body else {}
+            except json.JSONDecodeError:
+                payload = body.decode("utf-8", errors="replace")
+            alert = normalize_tradingview_alert(payload)
+            with self.tradingview_lock:
+                self.tradingview_alerts = [alert, *self.tradingview_alerts[:49]]
+            self._json({"accepted": True, "alert": alert})
             return
         if parsed.path == "/api/register":
             payload = self._read_json()
@@ -655,6 +751,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             "/api/credentials": (6, 60),
             "/api/start": (6, 60),
             "/api/stop": (12, 60),
+            "/api/tradingview/webhook": (120, 60),
         }
         limit, window = limits.get(path, (60, 60))
         forwarded = self.headers.get("X-Forwarded-For", "")
