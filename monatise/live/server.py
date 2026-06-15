@@ -40,9 +40,11 @@ def _market_candles(config: RuntimeConfig, symbol: str, limit: int, interval: st
     adapter, source = _market_data_adapter(config, symbol)
     try:
         return adapter.candles(symbol, limit, interval=interval), source
-    except CoinGlassPlanError:
+    except (CoinGlassPlanError, RuntimeError) as error:
+        if "CoinGlass" not in source:
+            raise
         fallback = HyperliquidAdapter(config)
-        return fallback.candles(symbol, limit, interval=interval), "Hyperliquid candleSnapshot (CoinGlass plan blocked)"
+        return fallback.candles(symbol, limit, interval=interval), f"Hyperliquid candleSnapshot (CoinGlass unavailable: {error})"
 
 
 class TenantServices:
@@ -266,17 +268,21 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             interval = str(query.get("interval", ["1h"])[0]).strip() or "1h"
             try:
                 adapter = CoinGlassAdapter(self.config)
-                subscription = adapter.account_subscription()
+                subscription: dict = {}
                 unavailable: list[dict] = []
                 open_interest: list[dict] = []
                 liquidations: list[dict] = []
                 try:
+                    subscription = adapter.account_subscription()
+                except (CoinGlassPlanError, RuntimeError) as error:
+                    unavailable.append({"feature": "subscription", "reason": str(error)})
+                try:
                     open_interest = adapter.open_interest(symbol)
-                except CoinGlassPlanError as error:
+                except (CoinGlassPlanError, RuntimeError) as error:
                     unavailable.append({"feature": "openInterest", "reason": str(error)})
                 try:
                     liquidations = adapter.liquidation_history(symbol, limit=24, interval=interval)
-                except CoinGlassPlanError as error:
+                except (CoinGlassPlanError, RuntimeError) as error:
                     unavailable.append({"feature": "liquidations", "reason": str(error)})
                 self._json(
                     {
