@@ -916,26 +916,32 @@ function signalFromHealth(health, mark) {
   const draftDirection = supportOnly ? "LONG" : resistanceOnly ? "SHORT" : "";
   const hardBlocked = (health.blocked || action === "halt" || action === "pause") && !draftDirection;
   const direction = hardBlocked ? "WAIT" : draftDirection || (bullish && !bearish ? "LONG" : bearish && !bullish ? "SHORT" : "WATCH");
-  const entry = plannedEntry(direction, mark, nearest, gapMidpoint);
+  const executable = ["LONG", "SHORT"].includes(direction);
+  const entry = executable ? plannedEntry(direction, mark, nearest, gapMidpoint) : mark;
   const rawTargetOne = Number.isFinite(takeProfit) && takeProfit > 0 ? takeProfit : direction === "SHORT" ? health.gridFloor : health.gridCeiling;
   const baseStop = Number.isFinite(invalidation) && invalidation > 0 ? invalidation : direction === "SHORT" ? health.gridCeiling : health.gridFloor;
-  const riskDistance = ["LONG", "SHORT"].includes(direction) ? boundedRiskDistance(entry, baseStop, atr) : 0;
+  const riskDistance = executable ? boundedRiskDistance(entry, baseStop, atr) : 0;
   const stop =
     direction === "SHORT"
       ? entry + riskDistance
       : direction === "LONG"
         ? entry - riskDistance
-        : baseStop;
-  const targetOne = targetWithMinimumReward(direction, entry, rawTargetOne, riskDistance);
+        : mark;
+  const targetOne = executable ? targetWithMinimumReward(direction, entry, rawTargetOne, riskDistance) : mark;
   const buffer = riskDistance > 0 ? riskDistance : Number.isFinite(atr) && atr > 0 ? atr : Math.abs(mark - Number(nearest || mark));
-  const entryLevels = buildEntryLadder(direction, mark, entry, riskDistance, targetOne, selectedAsset);
+  const entryLevels = executable ? buildEntryLadder(direction, mark, entry, riskDistance, targetOne, selectedAsset) : [];
   const confidenceBase = 42 + (health.status === "ALIGNED" ? 28 : health.status === "REVIEW" ? 14 : 0);
   const contextPenalty = action === "reduce" ? 10 : action === "widen" ? 6 : action === "halt" || action === "pause" ? 24 : 0;
   const warningPenalty = Math.min(24, health.warnings.length * 6);
   const fvgBoost =
     (direction === "LONG" && gapDirection === "bullish") || (direction === "SHORT" && gapDirection === "bearish") ? 6 : 0;
   const rawConfidence = confidenceBase + fvgBoost - contextPenalty - warningPenalty;
-  const confidence = Math.max(direction === "WAIT" ? 5 : 50, Math.min(95, rawConfidence));
+  const confidence =
+    direction === "WAIT"
+      ? Math.max(5, Math.min(25, rawConfidence))
+      : direction === "WATCH"
+        ? Math.max(25, Math.min(49, rawConfidence))
+        : Math.max(50, Math.min(95, rawConfidence));
   const trigger =
     direction === "LONG"
       ? `${entry <= mark ? "Pullback hold near" : "Break and hold above"} ${money(entry)}`
@@ -1045,8 +1051,8 @@ function renderExecutionTicket(orders = [], options = {}) {
   const timing = signalTiming(selectedAsset);
   const thesis = setupWaitDetail(health, signal, timing);
   const fastEntry = signal.entryLevels?.find((level) => level.key === "fast");
-  const canReview = !health.blocked && blocks.length === 0 && signal.direction !== "WAIT";
-  const canDraft = !health.blocked && signal.direction !== "WAIT";
+  const canReview = !health.blocked && blocks.length === 0 && ["LONG", "SHORT"].includes(signal.direction);
+  const canDraft = !health.blocked && ["LONG", "SHORT"].includes(signal.direction);
   const sizing = tradeSizingFromSignal(signal, capital, drawdownPct);
   const mode = String(snapshot?.mode || (backendOnline ? "backend" : "preview")).toUpperCase();
   els.ticketStatus.textContent = canDraft ? `${signalLabel(signal.direction)} draft` : `${blocks.length || health.warnings.length || 1} block`;
