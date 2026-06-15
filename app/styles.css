@@ -133,11 +133,13 @@ h2 {
   justify-content: center;
 }
 
-.desk-nav a {
+.desk-nav a,
+.desk-nav button {
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 999px;
   color: rgba(249, 255, 251, 0.76);
+  cursor: pointer;
   font-size: 0.78rem;
   font-weight: 850;
   padding: 8px 11px;
@@ -145,7 +147,8 @@ h2 {
 }
 
 .desk-nav a:hover,
-.desk-nav a[aria-current="page"] {
+.desk-nav a[aria-current="page"],
+.desk-nav button:hover {
   background: rgba(0, 184, 217, 0.18);
   border-color: rgba(0, 184, 217, 0.42);
   color: #ffffff;
@@ -2701,6 +2704,33 @@ button:disabled {
   font-weight: 750;
   line-height: 1.35;
   margin: 12px 0 0;
+}
+
+.access-list {
+  display: grid;
+  gap: 8px;
+}
+
+.access-list article {
+  background: #f4f6f2;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+}
+
+.access-list span {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.access-list strong {
+  color: var(--ink);
+  font-size: 0.82rem;
+  line-height: 1.35;
 }
 
 .plan-grid strong {

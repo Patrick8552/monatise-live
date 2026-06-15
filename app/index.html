@@ -3,7 +3,13 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#101820" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Monatise" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <title>Monatise Signal Console</title>
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="./icon.svg" />
     <link rel="stylesheet" href="./styles.css?v=20260615-draft-setups" />
   </head>
   <body>
@@ -15,6 +21,7 @@
         </div>
         <nav class="desk-nav" aria-label="primary navigation">
           <a href="./index.html" aria-current="page">Desk</a>
+          <button id="installAppButton" type="button" hidden>Install App</button>
         </nav>
         <div class="status-strip" aria-label="simulation status">
           <span id="runState">Ready</span>
@@ -478,10 +485,20 @@
 
             <section class="panel access-panel">
               <div class="panel-head">
-                <h2>Profile Purpose</h2>
+                <h2>Guest vs Profile</h2>
                 <span id="subscriptionStatus">Free</span>
               </div>
-              <p>Use profiles to keep your asset, risk, timing, and chart preferences. Monatise does not custody funds or place orders from this dashboard.</p>
+              <div class="access-list">
+                <article>
+                  <span>Guest</span>
+                  <strong>View live draft setups, targets, stops, and suggested lot sizing.</strong>
+                </article>
+                <article>
+                  <span>Profile</span>
+                  <strong>Save preferences, remember your desk, track signals, and keep private sync settings.</strong>
+                </article>
+              </div>
+              <p>Monatise does not custody funds or store raw passwords. Your browser can save passwords, while Monatise keeps only the secure session and profile settings.</p>
             </section>
           </div>
         </section>

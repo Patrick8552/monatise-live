@@ -49,6 +49,7 @@ const els = {
   forexSessions: document.querySelector("#forexSessions"),
   harvestMetric: document.querySelector("#harvestMetric"),
   inventoryMetric: document.querySelector("#inventoryMetric"),
+  installAppButton: document.querySelector("#installAppButton"),
   lastFill: document.querySelector("#lastFill"),
   levelsInput: document.querySelector("#levelsInput"),
   levelsValue: document.querySelector("#levelsValue"),
@@ -153,6 +154,7 @@ let localAuditEvents = [];
 let lastTicketHealth = null;
 let lastSignalCandidate = null;
 let pendingArmReview = false;
+let deferredInstallPrompt = null;
 const STOP_LOSS_BUFFER_POINTS = 10;
 let tradingRules = {
   chartInterval: "15m",
@@ -280,6 +282,21 @@ function updateRememberedLogin(username) {
 
 function setPasswordAutocomplete(isRegister) {
   els.passwordInput.setAttribute("autocomplete", isRegister ? "new-password" : "current-password");
+}
+
+function setupAppInstall() {
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("./sw.js").catch(() => {});
+  }
+  window.addEventListener("beforeinstallprompt", (event) => {
+    event.preventDefault();
+    deferredInstallPrompt = event;
+    els.installAppButton.hidden = false;
+  });
+  window.addEventListener("appinstalled", () => {
+    deferredInstallPrompt = null;
+    els.installAppButton.hidden = true;
+  });
 }
 
 function renderRegistrationDesk(me = currentUser) {
@@ -2909,6 +2926,13 @@ els.assetGroups.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-symbol]");
   if (button) saveSelectedAsset(button.dataset.symbol);
 });
+els.installAppButton.addEventListener("click", async () => {
+  if (!deferredInstallPrompt) return;
+  deferredInstallPrompt.prompt();
+  await deferredInstallPrompt.userChoice.catch(() => {});
+  deferredInstallPrompt = null;
+  els.installAppButton.hidden = true;
+});
 els.authForm.addEventListener("submit", (event) => {
   event.preventDefault();
   setPasswordAutocomplete(false);
@@ -2986,6 +3010,7 @@ els.backendStopButton.addEventListener("click", () => backendCommand("/api/stop"
 
 window.addEventListener("resize", render);
 window.addEventListener("resize", resizeMarketMap);
+setupAppInstall();
 reset();
 initMarketMap();
 loadMarkets();

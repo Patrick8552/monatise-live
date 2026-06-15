@@ -1,0 +1,19 @@
+{
+  "name": "Monatise Signal Console",
+  "short_name": "Monatise",
+  "description": "Monatise signal desk for setup review, risk sizing, and profile tracking.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f8faf5",
+  "theme_color": "#101820",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
