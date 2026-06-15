@@ -239,9 +239,14 @@ const economicReleases = [
 
 function isEmailOrPhoneUsername(value) {
   const normalized = value.trim();
-  const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
   const phonePattern = /^\+?[0-9][0-9\s().-]{6,}[0-9]$/;
-  return emailPattern.test(normalized) || phonePattern.test(normalized);
+  return isEmailUsername(normalized) || phonePattern.test(normalized);
+}
+
+function isEmailUsername(value) {
+  const normalized = value.trim();
+  const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+  return emailPattern.test(normalized);
 }
 
 function clientProfileKey(username) {
@@ -1933,9 +1938,8 @@ function renderAuth(me) {
   els.saveCredentialsButton.disabled = !loggedIn;
   els.backendStartButton.disabled = !loggedIn || !me.credentialsConfigured;
   els.backendStopButton.disabled = !loggedIn;
-  els.rotateRecoveryCodeButton.disabled = !loggedIn;
-  els.recoveryCodeBox.hidden = !loggedIn && !me.recoveryCode;
-  if (me.recoveryCode) revealRecoveryCode(me.recoveryCode);
+  els.rotateRecoveryCodeButton.disabled = true;
+  els.recoveryCodeBox.hidden = true;
   renderRegistrationDesk(me);
   if (!loggedIn) {
     backendOnline = false;
@@ -1948,17 +1952,34 @@ function renderAuth(me) {
 
 function revealRecoveryCode(code) {
   if (!code) return;
-  els.recoveryCodeBox.hidden = false;
+  els.recoveryCodeBox.hidden = true;
   els.recoveryCodeValue.textContent = code;
-  els.recoveryStatus.textContent = "Save this recovery code somewhere private. It is needed if you forget your password.";
+  els.recoveryStatus.textContent = "A reset code has been sent to the email on this profile.";
 }
 
-function showRecoveryPanel(show = true) {
+async function showRecoveryPanel(show = true) {
   els.recoveryPanel.hidden = !show;
   if (show) {
-    els.recoveryStatus.textContent = "Use the recovery code saved when the profile was created.";
-    if (els.usernameInput.value.trim()) {
-      jsonPost("/api/password-reset/request", { username: els.usernameInput.value.trim() }).catch(() => {});
+    const username = els.usernameInput.value.trim();
+    if (!isEmailUsername(username)) {
+      els.recoveryStatus.textContent = "Enter the email used for this profile, then tap Forgot Password again.";
+      els.usernameInput.focus();
+      return;
+    }
+    els.recoveryStatus.textContent = "Sending reset code...";
+    try {
+      const response = await jsonPost("/api/password-reset/request", { username });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        els.recoveryStatus.textContent = payload.error || "Could not send reset code.";
+        return;
+      }
+      els.recoveryStatus.textContent = payload.devResetCode
+        ? `Development reset code: ${payload.devResetCode}`
+        : payload.message || "If that email exists, a reset code has been sent.";
+    } catch {
+      els.recoveryStatus.textContent = "Network request failed. Try again.";
+      return;
     }
     els.recoveryCodeInput.focus();
   } else {
@@ -2014,8 +2035,7 @@ async function loginOrRegister(path) {
     renderAuth(payload);
     if (isRegister) {
       renderRegistrationDesk(payload);
-      revealRecoveryCode(payload.recoveryCode);
-      els.credentialStatus.textContent = "Profile created. Save the recovery code before closing this page.";
+      els.credentialStatus.textContent = "Profile created. If you forget your password, Monatise will email a reset code.";
       els.registrationDesk.scrollIntoView({ behavior: "smooth", block: "center" });
     }
     addAuditEvent(isRegister ? "register" : "login", isRegister ? "User registered" : "User logged in", payload.username || username);
@@ -2033,13 +2053,13 @@ async function resetForgottenPassword() {
   const username = els.usernameInput.value.trim();
   const resetCode = els.recoveryCodeInput.value.trim();
   const password = els.newPasswordInput.value;
-  if (!isEmailOrPhoneUsername(username)) {
-    els.recoveryStatus.textContent = "Enter the email or phone used for the profile.";
+  if (!isEmailUsername(username)) {
+    els.recoveryStatus.textContent = "Enter the email used for this profile.";
     els.usernameInput.focus();
     return;
   }
   if (!resetCode) {
-    els.recoveryStatus.textContent = "Enter the recovery code saved for this profile.";
+    els.recoveryStatus.textContent = "Enter the reset code sent to your email.";
     els.recoveryCodeInput.focus();
     return;
   }
@@ -2075,27 +2095,7 @@ async function resetForgottenPassword() {
 }
 
 async function rotateRecoveryCode() {
-  if (!currentUser.authenticated) {
-    els.credentialStatus.textContent = "Log in before creating a new recovery code.";
-    return;
-  }
-  els.rotateRecoveryCodeButton.disabled = true;
-  els.rotateRecoveryCodeButton.textContent = "Creating...";
-  try {
-    const response = await jsonPost("/api/password-recovery-code", {});
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      els.credentialStatus.textContent = payload.error || "Could not create recovery code.";
-      return;
-    }
-    revealRecoveryCode(payload.recoveryCode);
-    els.credentialStatus.textContent = "New recovery code created. Save it now; the old code no longer works.";
-  } catch {
-    els.credentialStatus.textContent = "Network request failed. Try again.";
-  } finally {
-    els.rotateRecoveryCodeButton.disabled = false;
-    els.rotateRecoveryCodeButton.textContent = "New Code";
-  }
+  await showRecoveryPanel(true);
 }
 
 async function saveCredentials() {

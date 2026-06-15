@@ -479,8 +479,8 @@
               </div>
               <div id="recoveryPanel" class="recovery-panel" hidden>
                 <label>
-                  Recovery code
-                  <input id="recoveryCodeInput" type="text" autocomplete="one-time-code" placeholder="MT-..." />
+                  Email reset code
+                  <input id="recoveryCodeInput" type="text" autocomplete="one-time-code" inputmode="numeric" placeholder="6-digit code" />
                 </label>
                 <label>
                   New password
@@ -490,12 +490,12 @@
                   <button id="resetPasswordButton" class="primary" type="button">Reset Password</button>
                   <button id="cancelRecoveryButton" type="button">Cancel</button>
                 </div>
-                <p id="recoveryStatus">Use the recovery code saved when the profile was created.</p>
+                <p id="recoveryStatus">Enter your account email, then request a reset code.</p>
               </div>
               <div id="recoveryCodeBox" class="recovery-code-box" hidden>
-                <span>Recovery code</span>
-                <strong id="recoveryCodeValue">Save after registration</strong>
-                <button id="rotateRecoveryCodeButton" type="button">New Code</button>
+                <span>Password reset</span>
+                <strong id="recoveryCodeValue">Email code required</strong>
+                <button id="rotateRecoveryCodeButton" type="button">Send Code</button>
               </div>
               <div id="registrationDesk" class="registration-desk" hidden>
                 <div class="registration-desk-head">

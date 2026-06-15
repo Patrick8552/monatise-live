@@ -16,7 +16,7 @@ from monatise.live.secrets import secret_value
 
 
 SESSION_SECONDS = 60 * 60 * 24 * 14
-RECOVERY_CODE_SECONDS = 60 * 60 * 24 * 365 * 10
+PASSWORD_RESET_CODE_SECONDS = 60 * 10
 
 
 @dataclass(frozen=True)
@@ -29,6 +29,13 @@ class User:
 class UserCredentials:
     account_address: str
     secret_key: str
+
+
+@dataclass(frozen=True)
+class PasswordResetCode:
+    user: User
+    code: str
+    expires_at: float
 
 
 @dataclass(frozen=True)
@@ -112,24 +119,30 @@ class UserStore:
             return None
         return User(id=int(row["id"]), username=str(row["username"]))
 
-    def create_recovery_code(self, user_id: int) -> str:
+    def create_password_reset_code(self, username: str) -> PasswordResetCode | None:
+        username = username.strip().lower()
         with self._connect() as conn:
-            row = conn.execute("select id from users where id = ?", (user_id,)).fetchone()
+            row = conn.execute("select id, username from users where username = ?", (username,)).fetchone()
             if row is None:
-                raise ValueError("user not found")
-            code = f"MT-{secrets.token_urlsafe(20)}"
+                return None
+            code = f"{secrets.randbelow(1_000_000):06d}"
             salt, digest = _hash_password(code)
+            expires_at = time.time() + PASSWORD_RESET_CODE_SECONDS
             conn.execute("delete from password_resets where user_id = ?", (int(row["id"]),))
             conn.execute(
                 """
                 insert into password_resets(user_id, code_salt, code_hash, expires_at, created_at)
                 values (?, ?, ?, ?, ?)
                 """,
-                (int(row["id"]), salt, digest, time.time() + RECOVERY_CODE_SECONDS, time.time()),
+                (int(row["id"]), salt, digest, expires_at, time.time()),
             )
-        return code
+        return PasswordResetCode(
+            user=User(id=int(row["id"]), username=str(row["username"])),
+            code=code,
+            expires_at=expires_at,
+        )
 
-    def reset_password_with_recovery_code(self, username: str, code: str, new_password: str) -> User | None:
+    def reset_password_with_code(self, username: str, code: str, new_password: str) -> User | None:
         username = username.strip().lower()
         self._validate_username_password(username, new_password)
         now = time.time()

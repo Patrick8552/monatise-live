@@ -14,12 +14,18 @@ from monatise.analysis.fibonacci import analyze_fibonacci
 from monatise.analysis.fvg import analyze_fvg
 from monatise.adapters.hyperliquid import HyperliquidAdapter
 from monatise.live.config import RuntimeConfig
+from monatise.live.emailer import EmailDeliveryError, expose_dev_reset_code, send_password_reset_code
 from monatise.live.service import JsonEncoder, TradingService
 from monatise.live.users import User, UserCredentials, UserStore, encryption_key_configured
 
 COMMODITY_WATCHLIST = ("GOLD", "CL", "BRENTOIL")
 FOREX_WATCHLIST = ("EURUSD", "GBPUSD", "USDJPY", "XAG")
 STOCK_WATCHLIST = ("SPX", "NDX", "NASDAQ", "AAPL", "TSLA", "NVDA")
+
+
+def _is_email(value: str) -> bool:
+    value = value.strip()
+    return "@" in value and "." in value.rsplit("@", 1)[-1] and " " not in value
 
 
 class TenantServices:
@@ -290,7 +296,6 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             payload = self._read_json()
             try:
                 user = self.store.create_user(str(payload.get("username", "")), str(payload.get("password", "")))
-                recovery_code = self.store.create_recovery_code(user.id)
                 self._set_session_cookie(self.store.create_session(user.id))
                 settings = self.store.settings_for_user(user.id)
                 self._json(
@@ -303,7 +308,6 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                             "plan": settings.subscription_plan,
                             "status": settings.subscription_status,
                         },
-                        "recoveryCode": recovery_code,
                         "tradingRules": settings_payload(settings),
                     }
                 )
@@ -333,13 +337,28 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             )
             return
         if parsed.path == "/api/password-reset/request":
-            self._read_json()
-            self._json({"message": "Use the recovery code saved when the profile was created."})
+            payload = self._read_json()
+            username = str(payload.get("username", "")).strip().lower()
+            if not _is_email(username):
+                self._error(400, "enter the email used for this profile")
+                return
+            reset = self.store.create_password_reset_code(username)
+            response = {"message": "If that email exists, a reset code has been sent."}
+            if reset is not None:
+                try:
+                    send_password_reset_code(reset.user.username, reset.code)
+                except EmailDeliveryError as error:
+                    if not expose_dev_reset_code():
+                        self._error(503, str(error))
+                        return
+                if expose_dev_reset_code():
+                    response["devResetCode"] = reset.code
+            self._json(response)
             return
         if parsed.path == "/api/password-reset/complete":
             payload = self._read_json()
             try:
-                user = self.store.reset_password_with_recovery_code(
+                user = self.store.reset_password_with_code(
                     str(payload.get("username", "")),
                     str(payload.get("resetCode", "")),
                     str(payload.get("password", "")),
@@ -368,13 +387,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             )
             return
         if parsed.path == "/api/password-recovery-code":
-            user = self._require_user()
-            if user is None:
-                return
-            try:
-                self._json({"recoveryCode": self.store.create_recovery_code(user.id)})
-            except ValueError as error:
-                self._error(400, str(error))
+            self._error(410, "saved recovery codes have been replaced by email reset codes")
             return
         if parsed.path == "/api/logout":
             token = self._session_token()
