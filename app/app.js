@@ -754,18 +754,25 @@ function setupWaitDetail(health, signal, timing) {
 }
 
 function setupRiskPct(symbol = selectedAsset) {
-  if (["GOLD", "CL", "BRENTOIL"].includes(symbol)) return 0.006;
-  if (["EURUSD", "GBPUSD", "USDJPY", "XAG"].includes(symbol)) return 0.0025;
-  if (["SPX", "NDX", "NASDAQ", "AAPL", "TSLA", "NVDA"].includes(symbol)) return 0.006;
-  return 0.008;
+  if (["GOLD", "CL", "BRENTOIL"].includes(symbol)) return 0.0035;
+  if (["EURUSD", "GBPUSD", "USDJPY", "XAG"].includes(symbol)) return 0.0012;
+  if (["SPX", "NDX", "NASDAQ", "AAPL", "TSLA", "NVDA"].includes(symbol)) return 0.0035;
+  return 0.0035;
+}
+
+function setupMinRiskPct(symbol = selectedAsset) {
+  if (["EURUSD", "GBPUSD", "USDJPY", "XAG"].includes(symbol)) return 0.00035;
+  if (["GOLD", "CL", "BRENTOIL"].includes(symbol)) return 0.0008;
+  if (["SPX", "NDX", "NASDAQ", "AAPL", "TSLA", "NVDA"].includes(symbol)) return 0.0008;
+  return 0.0008;
 }
 
 function boundedRiskDistance(entry, baseStop, atr, symbol = selectedAsset) {
   const numericEntry = Number(entry);
   if (!Number.isFinite(numericEntry) || numericEntry <= 0) return 0;
   const maxRisk = numericEntry * setupRiskPct(symbol);
-  const minRisk = numericEntry * 0.002;
-  const atrRisk = Number.isFinite(Number(atr)) && Number(atr) > 0 ? Number(atr) * 1.2 : maxRisk;
+  const minRisk = numericEntry * setupMinRiskPct(symbol);
+  const atrRisk = Number.isFinite(Number(atr)) && Number(atr) > 0 ? Number(atr) * 0.65 : maxRisk;
   const structureRisk = Math.abs(numericEntry - Number(baseStop));
   const rawRisk = Number.isFinite(structureRisk) && structureRisk > 0 ? structureRisk : atrRisk;
   return Math.max(minRisk, Math.min(maxRisk, rawRisk, Math.max(minRisk, atrRisk)));
@@ -800,7 +807,7 @@ function buildEntryLadder(direction, mark, planned, riskDistance, targetOne, sym
   const numericPlanned = Number(planned);
   const directionSign = direction === "SHORT" ? -1 : 1;
   const maxFallbackRisk = numericPlanned * setupRiskPct(symbol);
-  const minFallbackRisk = numericPlanned * (forexPairs.includes(symbol) ? 0.0004 : 0.001);
+  const minFallbackRisk = numericPlanned * setupMinRiskPct(symbol);
   const entryGapRisk = Math.abs(numericMark - numericPlanned);
   const fallbackRisk = Math.max(
     minFallbackRisk,
@@ -814,7 +821,7 @@ function buildEntryLadder(direction, mark, planned, riskDistance, targetOne, sym
       note: "no pullback; take profit early",
       price: numericMark,
       reward: 0.75,
-      stopRisk: 0.7
+      stopRisk: 0.45
     },
     {
       key: "planned",
@@ -822,7 +829,7 @@ function buildEntryLadder(direction, mark, planned, riskDistance, targetOne, sym
       note: "best balance",
       price: numericPlanned,
       reward: 1.35,
-      stopRisk: 1
+      stopRisk: 0.75
     },
     {
       key: "confirm",
@@ -830,16 +837,21 @@ function buildEntryLadder(direction, mark, planned, riskDistance, targetOne, sym
       note: direction === "SHORT" ? "after reject" : "after break",
       price: numericPlanned + directionSign * risk * 0.35,
       reward: 1.05,
-      stopRisk: 0.85
+      stopRisk: 0.65
     }
   ];
   return entries.map((entry) => {
     const stop = entry.price - directionSign * risk * entry.stopRisk;
     const rawEarlyTarget = entry.price + directionSign * risk * entry.reward;
+    const numericTargetOne = Number(targetOne);
     const earlyTarget =
       direction === "SHORT"
-        ? Math.max(rawEarlyTarget, Math.min(Number(targetOne), entry.price))
-        : Math.min(rawEarlyTarget, Math.max(Number(targetOne), entry.price));
+        ? numericTargetOne < entry.price
+          ? Math.max(rawEarlyTarget, numericTargetOne)
+          : rawEarlyTarget
+        : numericTargetOne > entry.price
+          ? Math.min(rawEarlyTarget, numericTargetOne)
+          : rawEarlyTarget;
     return {
       ...entry,
       earlyTarget,

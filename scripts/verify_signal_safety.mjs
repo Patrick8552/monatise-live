@@ -39,6 +39,7 @@ const context = vm.createContext({
   "terminalSignalStatus",
   "candleTime",
   "setupRiskPct",
+  "setupMinRiskPct",
   "boundedRiskDistance",
   "plannedEntry",
   "targetWithMinimumReward",
@@ -64,6 +65,7 @@ function checkSignal(signal) {
 }
 
 const longRisk = context.boundedRiskDistance(100, 96, 1, "BTC");
+assert.ok(longRisk <= 0.350001, "crypto risk must cap near 0.35% of entry");
 const longTarget = context.targetWithMinimumReward("LONG", 100, 101, longRisk);
 const longSignal = { direction: "LONG", entry: 100, stop: 100 - longRisk, targetOne: longTarget, targetTwo: longTarget + longRisk };
 checkSignal(longSignal);
@@ -88,7 +90,7 @@ ladderShort.forEach((level) => {
 });
 
 const forexRisk = context.boundedRiskDistance(1.085, 1.075, 0.001, "EURUSD");
-assert.ok(forexRisk > 0 && forexRisk < 0.01, "forex risk must stay price-scale aware");
+assert.ok(forexRisk > 0 && forexRisk < 0.002, "forex risk must stay price-scale aware");
 
 const sizing = context.tradeSizingFromSignal(longSignal, 10000, 0.05);
 assert.ok(sizing.notional > 0, "sizing should produce notional for executable signal");
