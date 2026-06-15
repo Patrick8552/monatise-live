@@ -588,7 +588,8 @@ function strategyHealth(mark, orders, snapshot = null) {
   const fibOk = Boolean(fibAnalysis && !fibAnalysis.error && fibAnalysis.symbol === selectedAsset);
   const fvgOk = Boolean(fvgAnalysis && !fvgAnalysis.error && fvgAnalysis.symbol === selectedAsset);
   const markOk = Number.isFinite(mark) && mark > 0;
-  const orderOk = orderList.length > 0 && buyOrders.length > 0 && sellOrders.length > 0;
+  const orderOk = orderList.length > 0;
+  const balancedLevels = buyOrders.length > 0 && sellOrders.length > 0;
   const riskStatus = String(snapshot?.riskStatus || els.riskStatus?.textContent || "");
   const structureBreak = markOk && Number.isFinite(invalidation) && mark < invalidation;
   const outsideGrid = markOk && Number.isFinite(gridFloor) && Number.isFinite(gridCeiling) && (mark < gridFloor || mark > gridCeiling);
@@ -607,8 +608,10 @@ function strategyHealth(mark, orders, snapshot = null) {
   if (indicatorAction === "reduce") warnings.push("context radar says reduce size");
   if (indicatorAction === "widen") warnings.push("context radar says widen buffer");
   if (sessionGuard.active) warnings.push(sessionGuard.message);
-  if (!orderOk) warnings.push("signal lacks balanced support and resistance levels");
+  if (!orderOk) warnings.push("no signal levels are available yet");
+  else if (!balancedLevels) warnings.push("one-sided setup; use target and stop discipline");
   return {
+    balancedLevels,
     blocked,
     buyCount: buyOrders.length,
     gridCeiling,
@@ -635,15 +638,21 @@ function signalFromHealth(health, mark) {
   const gapDirection = String(nearestGap?.direction || "").toLowerCase();
   const gapMidpoint = Number(nearestGap?.midpoint);
   const invalidation = Number(health.invalidation);
+  const hasBuySetup = Number(health.buyCount || 0) > 0;
+  const hasSellSetup = Number(health.sellCount || 0) > 0;
+  const supportOnly = hasBuySetup && !hasSellSetup;
+  const resistanceOnly = hasSellSetup && !hasBuySetup;
   const bullish =
     trend.includes("up") ||
     rsi >= 55 ||
     gapDirection === "bullish" ||
+    supportOnly ||
     (Number.isFinite(takeProfit) && takeProfit > mark);
   const bearish =
     trend.includes("down") ||
     rsi <= 45 ||
     gapDirection === "bearish" ||
+    resistanceOnly ||
     (Number.isFinite(takeProfit) && takeProfit < mark);
   const direction = health.blocked || action === "halt" || action === "pause" ? "WAIT" : bullish && !bearish ? "LONG" : bearish && !bullish ? "SHORT" : "WATCH";
   const targetOne = Number.isFinite(takeProfit) && takeProfit > 0 ? takeProfit : Number.isFinite(gapMidpoint) ? gapMidpoint : direction === "SHORT" ? health.gridFloor : health.gridCeiling;
@@ -682,9 +691,15 @@ function signalFromHealth(health, mark) {
         ? "No usable signal while quality gates are blocked."
         : direction === "WATCH"
           ? "Market structure is mixed; keep it as a watchlist idea until confirmation improves."
-          : `${direction} bias from ${trend || "mixed"} structure with ${gapDirection || "no active"} FVG confluence and ${action} context.`,
+          : `${signalLabel(direction)} from ${trend || "mixed"} structure with ${gapDirection || "no active"} FVG confluence and ${action} context.`,
     trigger
   };
+}
+
+function signalLabel(direction) {
+  if (direction === "LONG") return "BUY SETUP";
+  if (direction === "SHORT") return "SELL SETUP";
+  return direction;
 }
 
 function renderStrategyReadout(orders, options = {}) {
@@ -704,7 +719,7 @@ function renderStrategyReadout(orders, options = {}) {
       : `Opens ${formatSignalTime(timing.opensAt)}`;
   els.strategyReadout.innerHTML = `
     <div class="strategy-status ${health.status.toLowerCase()}">
-      <strong>${signal.direction}</strong>
+      <strong>${signalLabel(signal.direction)}</strong>
       <span>${sourceLabel}</span>
     </div>
     <div class="signal-call">
@@ -753,9 +768,10 @@ function renderExecutionTicket(orders = [], options = {}) {
   const signal = options.signal || signalFromHealth(health, mark);
   const timing = signalTiming(selectedAsset);
   const canReview = !health.blocked && blocks.length === 0 && signal.direction !== "WAIT";
+  const canDraft = !health.blocked && signal.direction !== "WAIT";
   const sizing = tradeSizingFromSignal(signal, capital, drawdownPct);
   const mode = String(snapshot?.mode || (backendOnline ? "backend" : "preview")).toUpperCase();
-  els.ticketStatus.textContent = canReview ? `${signal.direction} signal` : `${blocks.length || health.warnings.length || 1} block`;
+  els.ticketStatus.textContent = canDraft ? `${signalLabel(signal.direction)} draft` : `${blocks.length || health.warnings.length || 1} block`;
   els.ticketAsset.textContent = assetLabel(selectedAsset);
   els.ticketCapital.textContent = money(capital);
   els.ticketExposure.textContent = `${money(openExposure)} (${(exposurePct * 100).toFixed(2)}%)`;
@@ -764,11 +780,11 @@ function renderExecutionTicket(orders = [], options = {}) {
   els.decisionExposure.textContent = `${money(openExposure)} (${(exposurePct * 100).toFixed(2)}%)`;
   els.decisionDrawdown.textContent = `${(drawdownPct * 100).toFixed(2)}%`;
   els.ticketSummary.innerHTML = `
-    <div class="ticket-call ${canReview ? "ready" : "blocked"}">
-      <strong>${canReview ? `${signal.direction} setup ready` : "Do not use yet"}</strong>
+    <div class="ticket-call ${canDraft ? "ready" : "blocked"}">
+      <strong>${canDraft ? `${signalLabel(signal.direction)} forming` : "Do not use yet"}</strong>
       <span>${mode} · ${assetLabel(selectedAsset)} · ${signal.confidence}% confidence · ${orderList.length} levels</span>
     </div>
-    <div class="ticket-sizing ${canReview ? "ready" : "blocked"}">
+    <div class="ticket-sizing ${canDraft ? "ready" : "blocked"}">
       <article>
         <span>Suggested lot</span>
         <strong>${sizing.quantityLabel}</strong>
@@ -818,11 +834,13 @@ function renderExecutionTicket(orders = [], options = {}) {
   };
   els.ticketNote.textContent = canReview
     ? `${signal.trigger}. Entry ${money(signal.entry)}, target ${money(signal.targetOne)}, stop ${money(signal.stop)}. Suggested lot ${sizing.quantityLabel}; estimated stop loss ${money(sizing.stopLoss)}, Target 1 profit ${money(sizing.targetOneProfit)}. Signal expires ${formatSignalTime(timing.expiresAt)}.`
+    : canDraft
+      ? `${signal.trigger}. Draft ${signalLabel(signal.direction).toLowerCase()}: entry ${money(signal.entry)}, target ${money(signal.targetOne)}, stop ${money(signal.stop)}. Tracking blocked: ${primaryBlock}.`
     : timing.opensAt
       ? `Blocked: ${primaryBlock}. Next usable time ${formatSignalTime(timing.opensAt)}.`
       : `Blocked: ${primaryBlock}`;
   els.armStrategyButton.disabled = false;
-  els.armStrategyButton.textContent = canReview ? "Save & Track Signal" : "Show Blocks";
+  els.armStrategyButton.textContent = canReview ? "Save & Track Signal" : canDraft ? "Login To Track" : "Show Blocks";
   updateDecisionSurface(snapshot);
 }
 
