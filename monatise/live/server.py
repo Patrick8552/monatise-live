@@ -12,6 +12,7 @@ from urllib.parse import parse_qs, urlparse
 from monatise.analysis.context import context_assets, grid_instruction, indicator_snapshot
 from monatise.analysis.fibonacci import analyze_fibonacci
 from monatise.analysis.fvg import analyze_fvg
+from monatise.adapters.coinglass import CoinGlassAdapter
 from monatise.adapters.hyperliquid import HyperliquidAdapter
 from monatise.live.config import RuntimeConfig
 from monatise.live.emailer import EmailDeliveryError, expose_dev_reset_code, send_password_reset_code
@@ -26,6 +27,16 @@ STOCK_WATCHLIST = ("SPX", "NDX", "NASDAQ", "AAPL", "TSLA", "NVDA")
 def _is_email(value: str) -> bool:
     value = value.strip()
     return "@" in value and "." in value.rsplit("@", 1)[-1] and " " not in value
+
+
+def _market_data_adapter(config: RuntimeConfig, symbol: str):  # noqa: ANN202
+    if config.data_feed == "coinglass":
+        try:
+            return CoinGlassAdapter(config), "CoinGlass futures price history"
+        except Exception:  # noqa: BLE001
+            if symbol.split("-", 1)[0].upper() not in {"GOLD", "XAU", "CL", "BRENTOIL"}:
+                raise
+    return HyperliquidAdapter(config), "Hyperliquid candleSnapshot"
 
 
 class TenantServices:
@@ -169,13 +180,13 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             interval = str(query.get("interval", ["15m"])[0]).strip() or "15m"
             try:
                 limit = max(5, min(240, int(query.get("limit", ["120"])[0])))
-                adapter = HyperliquidAdapter(self.config)
+                adapter, source = _market_data_adapter(self.config, symbol)
                 candles = adapter.candles(symbol, limit, interval=interval)
                 self._json(
                     {
                         "candles": [candle.__dict__ for candle in candles],
                         "interval": interval,
-                        "source": "Hyperliquid candleSnapshot",
+                        "source": source,
                         "symbol": symbol,
                     }
                 )
@@ -188,14 +199,17 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             interval = str(query.get("interval", ["15m"])[0]).strip() or "15m"
             try:
                 limit = max(20, min(240, int(query.get("limit", ["120"])[0])))
-                adapter = HyperliquidAdapter(self.config)
+                adapter, source = _market_data_adapter(self.config, symbol)
                 candles = adapter.candles(symbol, limit, interval=interval)
-                mark = adapter.latest_price(symbol)
+                mark = candles[-1].close
+                if isinstance(adapter, HyperliquidAdapter):
+                    mark = adapter.latest_price(symbol)
                 self._json(
                     {
                         "analysis": analyze_fibonacci(symbol, interval, candles, mark=mark).to_dict(),
                         "candles": [candle.__dict__ for candle in candles],
                         "fvg": analyze_fvg(symbol, interval, candles, mark=mark).to_dict(),
+                        "source": source,
                     }
                 )
             except Exception as error:  # noqa: BLE001
@@ -207,15 +221,16 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             interval = str(query.get("interval", ["15m"])[0]).strip() or "15m"
             try:
                 limit = max(50, min(240, int(query.get("limit", ["120"])[0])))
-                adapter = HyperliquidAdapter(self.config)
+                adapter, source = _market_data_adapter(self.config, symbol)
                 candles = adapter.candles(symbol, limit, interval=interval)
                 indicators = indicator_snapshot(candles)
-                prices = adapter.all_prices()
+                prices = HyperliquidAdapter(self.config).all_prices()
                 instruction = grid_instruction(indicators)
                 self._json(
                     {
                         "symbol": symbol,
                         "interval": interval,
+                        "source": source,
                         "indicator": indicators.__dict__,
                         "instruction": instruction,
                         "contextAssets": context_assets(symbol, prices),
@@ -237,6 +252,23 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                                 "url": "https://www.cmegroup.com/markets/interest-rates/cme-fedwatch-tool.html",
                             },
                         ],
+                    }
+                )
+            except Exception as error:  # noqa: BLE001
+                self._error(502, str(error))
+            return
+        if parsed.path == "/api/coinglass/context":
+            query = parse_qs(parsed.query)
+            symbol = str(query.get("symbol", [self.config.symbol])[0]).strip().upper()
+            interval = str(query.get("interval", ["1h"])[0]).strip() or "1h"
+            try:
+                adapter = CoinGlassAdapter(self.config)
+                self._json(
+                    {
+                        "symbol": symbol,
+                        "source": "CoinGlass",
+                        "openInterest": adapter.open_interest(symbol),
+                        "liquidations": adapter.liquidation_history(symbol, limit=24, interval=interval),
                     }
                 )
             except Exception as error:  # noqa: BLE001

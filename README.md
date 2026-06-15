@@ -62,6 +62,17 @@ HYPERLIQUID_ACCOUNT_ADDRESS=0x...
 HYPERLIQUID_SECRET_KEY=...
 ```
 
+Optional CoinGlass read-only data feeds can be enabled for crypto futures candles and context metrics:
+
+```bash
+MONATISE_DATA_FEED=coinglass
+COINGLASS_API_KEY=...
+COINGLASS_EXCHANGE=Binance
+COINGLASS_EXCHANGE_LIST=Binance,OKX,Bybit
+```
+
+CoinGlass is used only for market data. Hyperliquid remains the execution and private sync adapter.
+
 See [deploy/live-runbook.md](deploy/live-runbook.md) for the full runbook.
 
 ## Render Hosting
