@@ -165,7 +165,6 @@ let lastTicketHealth = null;
 let lastSignalCandidate = null;
 let pendingArmReview = false;
 let deferredInstallPrompt = null;
-const STOP_LOSS_BUFFER_POINTS = 10;
 let tradingRules = {
   chartInterval: "15m",
   leverage: 10,
@@ -174,8 +173,8 @@ let tradingRules = {
   maxDailyLossPct: 0.05,
   orderQuoteSize: 25,
   maxOrderNotional: 25,
-  maxTotalNotional: 150,
-  maxPositionValue: 250,
+  maxTotalNotional: 5000,
+  maxPositionValue: 5000,
   sessionGuardMinutes: 60,
   staleGridCancel: true
 };
@@ -740,6 +739,45 @@ function setupWaitDetail(health, signal, timing) {
   return "Waiting for a clean trigger close before turning the setup into an entry.";
 }
 
+function setupRiskPct(symbol = selectedAsset) {
+  if (["GOLD", "CL", "BRENTOIL"].includes(symbol)) return 0.006;
+  if (["EURUSD", "GBPUSD", "USDJPY", "XAG"].includes(symbol)) return 0.0025;
+  if (["SPX", "NDX", "NASDAQ", "AAPL", "TSLA", "NVDA"].includes(symbol)) return 0.006;
+  return 0.008;
+}
+
+function boundedRiskDistance(entry, baseStop, atr, symbol = selectedAsset) {
+  const numericEntry = Number(entry);
+  if (!Number.isFinite(numericEntry) || numericEntry <= 0) return 0;
+  const maxRisk = numericEntry * setupRiskPct(symbol);
+  const minRisk = numericEntry * 0.002;
+  const atrRisk = Number.isFinite(Number(atr)) && Number(atr) > 0 ? Number(atr) * 1.2 : maxRisk;
+  const structureRisk = Math.abs(numericEntry - Number(baseStop));
+  const rawRisk = Number.isFinite(structureRisk) && structureRisk > 0 ? structureRisk : atrRisk;
+  return Math.max(minRisk, Math.min(maxRisk, rawRisk, Math.max(minRisk, atrRisk)));
+}
+
+function plannedEntry(direction, mark, nearest, gapMidpoint) {
+  const stableGap = Number.isFinite(gapMidpoint) && gapMidpoint > 0 ? gapMidpoint : Number.NaN;
+  const stableNearest = Number.isFinite(nearest) && nearest > 0 ? nearest : Number.NaN;
+  if (direction === "LONG" || direction === "SHORT") {
+    if (Number.isFinite(stableGap)) return stableGap;
+    if (Number.isFinite(stableNearest)) return stableNearest;
+  }
+  return Number.isFinite(mark) ? mark : 0;
+}
+
+function targetWithMinimumReward(direction, entry, rawTarget, riskDistance, rewardMultiple = 1.35) {
+  const numericEntry = Number(entry);
+  const numericRisk = Number(riskDistance);
+  const fallback =
+    direction === "SHORT" ? numericEntry - numericRisk * rewardMultiple : numericEntry + numericRisk * rewardMultiple;
+  if (!Number.isFinite(Number(rawTarget)) || Number(rawTarget) <= 0) return fallback;
+  if (direction === "SHORT") return Math.min(Number(rawTarget), fallback);
+  if (direction === "LONG") return Math.max(Number(rawTarget), fallback);
+  return Number(rawTarget);
+}
+
 function signalFromHealth(health, mark) {
   const trend = String(fibAnalysis?.trend || contextRadar?.indicator?.trend || "flat").toLowerCase();
   const action = String(contextRadar?.instruction?.action || "normal").toLowerCase();
@@ -770,15 +808,18 @@ function signalFromHealth(health, mark) {
   const draftDirection = supportOnly ? "LONG" : resistanceOnly ? "SHORT" : "";
   const hardBlocked = (health.blocked || action === "halt" || action === "pause") && !draftDirection;
   const direction = hardBlocked ? "WAIT" : draftDirection || (bullish && !bearish ? "LONG" : bearish && !bullish ? "SHORT" : "WATCH");
-  const targetOne = Number.isFinite(takeProfit) && takeProfit > 0 ? takeProfit : Number.isFinite(gapMidpoint) ? gapMidpoint : direction === "SHORT" ? health.gridFloor : health.gridCeiling;
+  const entry = plannedEntry(direction, mark, nearest, gapMidpoint);
+  const rawTargetOne = Number.isFinite(takeProfit) && takeProfit > 0 ? takeProfit : direction === "SHORT" ? health.gridFloor : health.gridCeiling;
   const baseStop = Number.isFinite(invalidation) && invalidation > 0 ? invalidation : direction === "SHORT" ? health.gridCeiling : health.gridFloor;
+  const riskDistance = ["LONG", "SHORT"].includes(direction) ? boundedRiskDistance(entry, baseStop, atr) : 0;
   const stop =
     direction === "SHORT"
-      ? baseStop + STOP_LOSS_BUFFER_POINTS
+      ? entry + riskDistance
       : direction === "LONG"
-        ? baseStop - STOP_LOSS_BUFFER_POINTS
+        ? entry - riskDistance
         : baseStop;
-  const buffer = Number.isFinite(atr) && atr > 0 ? atr : Math.abs(mark - Number(nearest || mark));
+  const targetOne = targetWithMinimumReward(direction, entry, rawTargetOne, riskDistance);
+  const buffer = riskDistance > 0 ? riskDistance : Number.isFinite(atr) && atr > 0 ? atr : Math.abs(mark - Number(nearest || mark));
   const confidenceBase = 42 + (health.status === "ALIGNED" ? 28 : health.status === "REVIEW" ? 14 : 0);
   const contextPenalty = action === "reduce" ? 10 : action === "widen" ? 6 : action === "halt" || action === "pause" ? 24 : 0;
   const warningPenalty = Math.min(24, health.warnings.length * 6);
@@ -788,20 +829,20 @@ function signalFromHealth(health, mark) {
   const confidence = Math.max(direction === "WAIT" ? 5 : 50, Math.min(95, rawConfidence));
   const trigger =
     direction === "LONG"
-      ? `Break and hold above ${money(Number.isFinite(nearest) ? nearest : mark)}`
+      ? `${entry <= mark ? "Pullback hold near" : "Break and hold above"} ${money(entry)}`
       : direction === "SHORT"
-        ? `Reject below ${money(Number.isFinite(nearest) ? nearest : mark)}`
+        ? `${entry >= mark ? "Pullback reject near" : "Reject below"} ${money(entry)}`
         : `Wait for a clean close around ${money(mark)}`;
   return {
     confidence,
     direction,
-    entry: Number.isFinite(mark) ? mark : 0,
+    entry: Number.isFinite(entry) ? entry : 0,
     stop: Number.isFinite(stop) ? stop : mark,
     targetOne: Number.isFinite(targetOne) ? targetOne : mark,
     targetTwo:
       direction === "SHORT"
-        ? (Number.isFinite(targetOne) ? targetOne : mark) - Math.max(buffer, 1)
-        : (Number.isFinite(targetOne) ? targetOne : mark) + Math.max(buffer, 1),
+        ? (Number.isFinite(targetOne) ? targetOne : entry) - Math.max(buffer, 1)
+        : (Number.isFinite(targetOne) ? targetOne : entry) + Math.max(buffer, 1),
     thesis:
       direction === "WAIT"
         ? "No usable signal while quality gates are blocked."
@@ -1546,13 +1587,18 @@ function normalizedTradingRules(rules = {}) {
   const rawLossPct = Number(rules.maxDailyLossPct ?? 0.05);
   const maxDailyLossPct = Number.isFinite(rawLossPct) ? Math.min(0.2, Math.max(0.01, rawLossPct)) : 0.05;
   const rawOrderQuoteSize = Number(rules.orderQuoteSize ?? rules.maxOrderNotional ?? 25);
-  const rawMaxTotalNotional = Number(rules.maxTotalNotional ?? 150);
-  const rawMaxPositionValue = Number(rules.maxPositionValue ?? 250);
+  const rawMaxTotalNotional = Number(rules.maxTotalNotional ?? 5000);
+  const rawMaxPositionValue = Number(rules.maxPositionValue ?? 5000);
   const orderQuoteSize = Number.isFinite(rawOrderQuoteSize) ? Math.max(1, rawOrderQuoteSize) : 25;
-  const maxTotalNotional = Number.isFinite(rawMaxTotalNotional)
+  const legacyTinyCap = rawMaxTotalNotional <= 250 && rawMaxPositionValue <= 250 && orderQuoteSize <= 25;
+  const maxTotalNotional = legacyTinyCap
+    ? 5000
+    : Number.isFinite(rawMaxTotalNotional)
     ? Math.max(orderQuoteSize, rawMaxTotalNotional)
-    : Math.max(orderQuoteSize, 150);
-  const maxPositionValue = Number.isFinite(rawMaxPositionValue) ? Math.max(1, rawMaxPositionValue) : 250;
+    : Math.max(orderQuoteSize, 5000);
+  const maxPositionValue = legacyTinyCap
+    ? 5000
+    : Number.isFinite(rawMaxPositionValue) ? Math.max(1, rawMaxPositionValue) : 5000;
   return {
     chartInterval: ["15m", "5m"].includes(interval) ? interval : "15m",
     leverage: 10,
@@ -1594,7 +1640,7 @@ function renderTradingRules() {
   els.rulesStatus.textContent = `${tradingRules.chartInterval} signal profile`;
   els.rulesSummary.textContent = `10x risk lens · ${money(tradingRules.orderQuoteSize)} alert size · ${money(
     tradingRules.maxTotalNotional
-  )} max signal risk · ${money(tradingRules.maxPositionValue)} exposure lens · ${STOP_LOSS_BUFFER_POINTS}pt stop buffer · ${tradingRules.chartInterval} analysis with 15m/5m window · ${signalWindowLabel} · CPI/PPI ${economicBlackoutMinutes}m blackout · ${tradingRules.sessionGuardMinutes}m session guard · ${
+  )} max signal risk · ${money(tradingRules.maxPositionValue)} exposure lens · disciplined stop band · ${tradingRules.chartInterval} analysis with 15m/5m window · ${signalWindowLabel} · CPI/PPI ${economicBlackoutMinutes}m blackout · ${tradingRules.sessionGuardMinutes}m session guard · ${
     tradingRules.londonCommodityOnly ? "London commodity guard on" : "London commodity guard off"
   } · ${drawdownLabel} · ${tradingRules.staleGridCancel ? "stale signal expiry on" : "stale signal expiry off"} · free access`;
   els.ticketDrawdown.textContent = `${(tradingRules.maxDailyLossPct * 100).toFixed(2)}%`;

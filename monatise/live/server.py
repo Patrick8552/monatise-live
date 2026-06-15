@@ -437,8 +437,8 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                     session_guard_minutes=int(payload.get("sessionGuardMinutes", 60)),
                     stale_grid_cancel=bool(payload.get("staleGridCancel", True)),
                     order_quote_size=float(payload.get("orderQuoteSize", 25)),
-                    max_total_notional=float(payload.get("maxTotalNotional", 150)),
-                    max_position_value=float(payload.get("maxPositionValue", 250)),
+                    max_total_notional=float(payload.get("maxTotalNotional", 5000)),
+                    max_position_value=float(payload.get("maxPositionValue", 5000)),
                 )
                 self.tenants.reset_user(user.id)
                 self._json({"tradingRules": settings_payload(settings)})

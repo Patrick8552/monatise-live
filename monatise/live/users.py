@@ -41,8 +41,8 @@ class UserSettings:
     leverage: float = 10.0
     order_quote_size: float = 25.0
     max_order_notional: float = 25.0
-    max_total_notional: float = 150.0
-    max_position_value: float = 250.0
+    max_total_notional: float = 5000.0
+    max_position_value: float = 5000.0
     session_guard_minutes: int = 60
     stale_grid_cancel: bool = True
     london_commodity_only: bool = True
@@ -346,6 +346,12 @@ class UserStore:
             ).fetchone()
         if row is None:
             return UserSettings()
+        order_quote_size = float(row["order_quote_size"] or 25.0)
+        max_total_notional = float(row["max_total_notional"] or 5000.0)
+        max_position_value = float(row["max_position_value"] or 5000.0)
+        if max_total_notional <= 250 and max_position_value <= 250 and order_quote_size <= 25:
+            max_total_notional = 5000.0
+            max_position_value = 5000.0
         return UserSettings(
             selected_symbol=str(row["selected_symbol"]),
             subscription_plan=str(row["subscription_plan"]),
@@ -353,10 +359,10 @@ class UserStore:
             chart_interval=str(row["chart_interval"] if row["chart_interval"] in {"15m", "5m"} else "15m"),
             signal_session_window=str(row["signal_session_window"] or "london_new_york"),
             leverage=float(row["leverage"] or 10.0),
-            order_quote_size=float(row["order_quote_size"] or 25.0),
+            order_quote_size=order_quote_size,
             max_order_notional=float(row["max_order_notional"] or row["order_quote_size"] or 25.0),
-            max_total_notional=float(row["max_total_notional"] or 150.0),
-            max_position_value=float(row["max_position_value"] or 250.0),
+            max_total_notional=max_total_notional,
+            max_position_value=max_position_value,
             session_guard_minutes=int(row["session_guard_minutes"] or 60),
             stale_grid_cancel=bool(row["stale_grid_cancel"]),
             london_commodity_only=bool(row["london_commodity_only"]),
@@ -426,8 +432,8 @@ class UserStore:
                   leverage real not null default 10,
                   order_quote_size real not null default 25,
                   max_order_notional real not null default 25,
-                  max_total_notional real not null default 150,
-                  max_position_value real not null default 250,
+                  max_total_notional real not null default 5000,
+                  max_position_value real not null default 5000,
                   session_guard_minutes integer not null default 60,
                   stale_grid_cancel integer not null default 1,
                   london_commodity_only integer not null default 1,
@@ -446,8 +452,8 @@ class UserStore:
                 "leverage": "alter table user_settings add column leverage real not null default 10",
                 "order_quote_size": "alter table user_settings add column order_quote_size real not null default 25",
                 "max_order_notional": "alter table user_settings add column max_order_notional real not null default 25",
-                "max_total_notional": "alter table user_settings add column max_total_notional real not null default 150",
-                "max_position_value": "alter table user_settings add column max_position_value real not null default 250",
+                "max_total_notional": "alter table user_settings add column max_total_notional real not null default 5000",
+                "max_position_value": "alter table user_settings add column max_position_value real not null default 5000",
                 "session_guard_minutes": "alter table user_settings add column session_guard_minutes integer not null default 60",
                 "stale_grid_cancel": "alter table user_settings add column stale_grid_cancel integer not null default 1",
                 "london_commodity_only": "alter table user_settings add column london_commodity_only integer not null default 1",
