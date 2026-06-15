@@ -85,6 +85,16 @@ const els = {
   exchangeOrderMetric: document.querySelector("#exchangeOrderMetric"),
   registerButton: document.querySelector("#registerButton"),
   rememberLoginInput: document.querySelector("#rememberLoginInput"),
+  forgotPasswordButton: document.querySelector("#forgotPasswordButton"),
+  cancelRecoveryButton: document.querySelector("#cancelRecoveryButton"),
+  newPasswordInput: document.querySelector("#newPasswordInput"),
+  recoveryCodeBox: document.querySelector("#recoveryCodeBox"),
+  recoveryCodeInput: document.querySelector("#recoveryCodeInput"),
+  recoveryCodeValue: document.querySelector("#recoveryCodeValue"),
+  recoveryPanel: document.querySelector("#recoveryPanel"),
+  recoveryStatus: document.querySelector("#recoveryStatus"),
+  resetPasswordButton: document.querySelector("#resetPasswordButton"),
+  rotateRecoveryCodeButton: document.querySelector("#rotateRecoveryCodeButton"),
   resetButton: document.querySelector("#resetButton"),
   riskGate: document.querySelector("#riskGate"),
   riskStatus: document.querySelector("#riskStatus"),
@@ -1616,6 +1626,9 @@ function renderAuth(me) {
   els.saveCredentialsButton.disabled = !loggedIn;
   els.backendStartButton.disabled = !loggedIn || !me.credentialsConfigured;
   els.backendStopButton.disabled = !loggedIn;
+  els.rotateRecoveryCodeButton.disabled = !loggedIn;
+  els.recoveryCodeBox.hidden = !loggedIn && !me.recoveryCode;
+  if (me.recoveryCode) revealRecoveryCode(me.recoveryCode);
   renderRegistrationDesk(me);
   if (!loggedIn) {
     backendOnline = false;
@@ -1624,6 +1637,27 @@ function renderAuth(me) {
   updateLiveDesk();
   syncSelectedAsset();
   updateDecisionSurface(lastBackendSnapshot);
+}
+
+function revealRecoveryCode(code) {
+  if (!code) return;
+  els.recoveryCodeBox.hidden = false;
+  els.recoveryCodeValue.textContent = code;
+  els.recoveryStatus.textContent = "Save this recovery code somewhere private. It is needed if you forget your password.";
+}
+
+function showRecoveryPanel(show = true) {
+  els.recoveryPanel.hidden = !show;
+  if (show) {
+    els.recoveryStatus.textContent = "Use the recovery code saved when the profile was created.";
+    if (els.usernameInput.value.trim()) {
+      jsonPost("/api/password-reset/request", { username: els.usernameInput.value.trim() }).catch(() => {});
+    }
+    els.recoveryCodeInput.focus();
+  } else {
+    els.recoveryCodeInput.value = "";
+    els.newPasswordInput.value = "";
+  }
 }
 
 async function loadMe() {
@@ -1673,7 +1707,8 @@ async function loginOrRegister(path) {
     renderAuth(payload);
     if (isRegister) {
       renderRegistrationDesk(payload);
-      els.credentialStatus.textContent = "Profile created. Review and save the preference card below.";
+      revealRecoveryCode(payload.recoveryCode);
+      els.credentialStatus.textContent = "Profile created. Save the recovery code before closing this page.";
       els.registrationDesk.scrollIntoView({ behavior: "smooth", block: "center" });
     }
     addAuditEvent(isRegister ? "register" : "login", isRegister ? "User registered" : "User logged in", payload.username || username);
@@ -1684,6 +1719,75 @@ async function loginOrRegister(path) {
   } finally {
     actionButton.disabled = false;
     actionButton.textContent = isRegister ? "Register" : "Login";
+  }
+}
+
+async function resetForgottenPassword() {
+  const username = els.usernameInput.value.trim();
+  const resetCode = els.recoveryCodeInput.value.trim();
+  const password = els.newPasswordInput.value;
+  if (!isEmailOrPhoneUsername(username)) {
+    els.recoveryStatus.textContent = "Enter the email or phone used for the profile.";
+    els.usernameInput.focus();
+    return;
+  }
+  if (!resetCode) {
+    els.recoveryStatus.textContent = "Enter the recovery code saved for this profile.";
+    els.recoveryCodeInput.focus();
+    return;
+  }
+  if (password.length < 8) {
+    els.recoveryStatus.textContent = "New password must be at least 8 characters.";
+    els.newPasswordInput.focus();
+    return;
+  }
+  els.resetPasswordButton.disabled = true;
+  els.resetPasswordButton.textContent = "Resetting...";
+  try {
+    const response = await jsonPost("/api/password-reset/complete", { username, resetCode, password });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      els.recoveryStatus.textContent = payload.error || "Reset failed.";
+      return;
+    }
+    els.passwordInput.value = "";
+    els.newPasswordInput.value = "";
+    els.recoveryCodeInput.value = "";
+    showRecoveryPanel(false);
+    renderAuth(payload);
+    updateRememberedLogin(payload.username || username);
+    els.credentialStatus.textContent = "Password reset. You are logged in with the new password.";
+    addAuditEvent("password reset", "Password reset completed", payload.username || username);
+    refreshBackend();
+  } catch {
+    els.recoveryStatus.textContent = "Network request failed. Try again.";
+  } finally {
+    els.resetPasswordButton.disabled = false;
+    els.resetPasswordButton.textContent = "Reset Password";
+  }
+}
+
+async function rotateRecoveryCode() {
+  if (!currentUser.authenticated) {
+    els.credentialStatus.textContent = "Log in before creating a new recovery code.";
+    return;
+  }
+  els.rotateRecoveryCodeButton.disabled = true;
+  els.rotateRecoveryCodeButton.textContent = "Creating...";
+  try {
+    const response = await jsonPost("/api/password-recovery-code", {});
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      els.credentialStatus.textContent = payload.error || "Could not create recovery code.";
+      return;
+    }
+    revealRecoveryCode(payload.recoveryCode);
+    els.credentialStatus.textContent = "New recovery code created. Save it now; the old code no longer works.";
+  } catch {
+    els.credentialStatus.textContent = "Network request failed. Try again.";
+  } finally {
+    els.rotateRecoveryCodeButton.disabled = false;
+    els.rotateRecoveryCodeButton.textContent = "New Code";
   }
 }
 
@@ -3024,6 +3128,10 @@ els.registerButton.addEventListener("click", () => {
   setPasswordAutocomplete(true);
   loginOrRegister("/api/register");
 });
+els.forgotPasswordButton.addEventListener("click", () => showRecoveryPanel(true));
+els.cancelRecoveryButton.addEventListener("click", () => showRecoveryPanel(false));
+els.resetPasswordButton.addEventListener("click", resetForgottenPassword);
+els.rotateRecoveryCodeButton.addEventListener("click", rotateRecoveryCode);
 els.finishOnboardingButton.addEventListener("click", finishOnboarding);
 els.clientNameInput.addEventListener("input", () => renderRegistrationDesk());
 els.rememberLoginInput.addEventListener("change", () => {
@@ -3043,6 +3151,14 @@ els.passwordToggle.addEventListener("click", () => {
     if (event.key === "Enter") {
       event.preventDefault();
       els.authForm.requestSubmit();
+    }
+  });
+});
+[els.recoveryCodeInput, els.newPasswordInput].forEach((input) => {
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      resetForgottenPassword();
     }
   });
 });

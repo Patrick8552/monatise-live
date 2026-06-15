@@ -447,6 +447,27 @@
               <div class="button-row">
                 <button id="loginButton" class="primary" type="submit">Login</button>
                 <button id="registerButton" type="button">Register</button>
+                <button id="forgotPasswordButton" type="button">Forgot Password</button>
+              </div>
+              <div id="recoveryPanel" class="recovery-panel" hidden>
+                <label>
+                  Recovery code
+                  <input id="recoveryCodeInput" type="text" autocomplete="one-time-code" placeholder="MT-..." />
+                </label>
+                <label>
+                  New password
+                  <input id="newPasswordInput" type="password" autocomplete="new-password" />
+                </label>
+                <div class="button-row">
+                  <button id="resetPasswordButton" class="primary" type="button">Reset Password</button>
+                  <button id="cancelRecoveryButton" type="button">Cancel</button>
+                </div>
+                <p id="recoveryStatus">Use the recovery code saved when the profile was created.</p>
+              </div>
+              <div id="recoveryCodeBox" class="recovery-code-box" hidden>
+                <span>Recovery code</span>
+                <strong id="recoveryCodeValue">Save after registration</strong>
+                <button id="rotateRecoveryCodeButton" type="button">New Code</button>
               </div>
               <div id="registrationDesk" class="registration-desk" hidden>
                 <div class="registration-desk-head">

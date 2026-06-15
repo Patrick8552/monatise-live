@@ -290,6 +290,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             payload = self._read_json()
             try:
                 user = self.store.create_user(str(payload.get("username", "")), str(payload.get("password", "")))
+                recovery_code = self.store.create_recovery_code(user.id)
                 self._set_session_cookie(self.store.create_session(user.id))
                 settings = self.store.settings_for_user(user.id)
                 self._json(
@@ -302,6 +303,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                             "plan": settings.subscription_plan,
                             "status": settings.subscription_status,
                         },
+                        "recoveryCode": recovery_code,
                         "tradingRules": settings_payload(settings),
                     }
                 )
@@ -329,6 +331,50 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                     "tradingRules": settings_payload(settings),
                 }
             )
+            return
+        if parsed.path == "/api/password-reset/request":
+            self._read_json()
+            self._json({"message": "Use the recovery code saved when the profile was created."})
+            return
+        if parsed.path == "/api/password-reset/complete":
+            payload = self._read_json()
+            try:
+                user = self.store.reset_password_with_recovery_code(
+                    str(payload.get("username", "")),
+                    str(payload.get("resetCode", "")),
+                    str(payload.get("password", "")),
+                )
+            except ValueError as error:
+                self._error(400, str(error))
+                return
+            if user is None:
+                self._error(400, "reset code is invalid or expired")
+                return
+            self.tenants.reset_user(user.id)
+            self._set_session_cookie(self.store.create_session(user.id))
+            settings = self.store.settings_for_user(user.id)
+            self._json(
+                {
+                    "authenticated": True,
+                    "username": user.username,
+                    "credentialsConfigured": self.store.has_credentials(user.id),
+                    "selectedSymbol": settings.selected_symbol,
+                    "subscription": {
+                        "plan": settings.subscription_plan,
+                        "status": settings.subscription_status,
+                    },
+                    "tradingRules": settings_payload(settings),
+                }
+            )
+            return
+        if parsed.path == "/api/password-recovery-code":
+            user = self._require_user()
+            if user is None:
+                return
+            try:
+                self._json({"recoveryCode": self.store.create_recovery_code(user.id)})
+            except ValueError as error:
+                self._error(400, str(error))
             return
         if parsed.path == "/api/logout":
             token = self._session_token()
@@ -522,6 +568,9 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
         limits = {
             "/api/login": (10, 60),
             "/api/register": (6, 60),
+            "/api/password-reset/request": (4, 60),
+            "/api/password-reset/complete": (8, 60),
+            "/api/password-recovery-code": (3, 60),
             "/api/credentials": (6, 60),
             "/api/start": (6, 60),
             "/api/stop": (12, 60),

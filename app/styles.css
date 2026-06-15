@@ -724,6 +724,45 @@ textarea:focus {
   text-transform: none;
 }
 
+.recovery-panel,
+.recovery-code-box {
+  background: #f4f6f2;
+  border: 1px solid rgba(54, 95, 107, 0.2);
+  border-radius: 6px;
+  display: grid;
+  gap: 9px;
+  padding: 10px;
+}
+
+.recovery-panel[hidden],
+.recovery-code-box[hidden] {
+  display: none;
+}
+
+.recovery-code-box {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.recovery-code-box span {
+  grid-column: 1 / -1;
+}
+
+.recovery-code-box strong {
+  background: #101820;
+  border-radius: 6px;
+  color: #f8faf5;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  padding: 9px;
+}
+
+.recovery-code-box button {
+  min-height: 38px;
+  white-space: nowrap;
+}
+
 input[type="range"] {
   accent-color: var(--buy);
   padding: 0;

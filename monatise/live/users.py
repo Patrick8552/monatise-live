@@ -16,6 +16,7 @@ from monatise.live.secrets import secret_value
 
 
 SESSION_SECONDS = 60 * 60 * 24 * 14
+RECOVERY_CODE_SECONDS = 60 * 60 * 24 * 365 * 10
 
 
 @dataclass(frozen=True)
@@ -110,6 +111,54 @@ class UserStore:
         if not hmac.compare_digest(expected, row["password_hash"]):
             return None
         return User(id=int(row["id"]), username=str(row["username"]))
+
+    def create_recovery_code(self, user_id: int) -> str:
+        with self._connect() as conn:
+            row = conn.execute("select id from users where id = ?", (user_id,)).fetchone()
+            if row is None:
+                raise ValueError("user not found")
+            code = f"MT-{secrets.token_urlsafe(20)}"
+            salt, digest = _hash_password(code)
+            conn.execute("delete from password_resets where user_id = ?", (int(row["id"]),))
+            conn.execute(
+                """
+                insert into password_resets(user_id, code_salt, code_hash, expires_at, created_at)
+                values (?, ?, ?, ?, ?)
+                """,
+                (int(row["id"]), salt, digest, time.time() + RECOVERY_CODE_SECONDS, time.time()),
+            )
+        return code
+
+    def reset_password_with_recovery_code(self, username: str, code: str, new_password: str) -> User | None:
+        username = username.strip().lower()
+        self._validate_username_password(username, new_password)
+        now = time.time()
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                select users.id, users.username, password_resets.code_salt, password_resets.code_hash,
+                       password_resets.expires_at
+                from users
+                join password_resets on password_resets.user_id = users.id
+                where users.username = ?
+                """,
+                (username,),
+            ).fetchone()
+            conn.execute("delete from password_resets where expires_at < ?", (now,))
+            if row is None or float(row["expires_at"]) < now:
+                return None
+            _, expected = _hash_password(code.strip(), row["code_salt"])
+            if not hmac.compare_digest(expected, row["code_hash"]):
+                return None
+            salt, digest = _hash_password(new_password)
+            user_id = int(row["id"])
+            conn.execute(
+                "update users set password_salt = ?, password_hash = ? where id = ?",
+                (salt, digest, user_id),
+            )
+            conn.execute("delete from password_resets where user_id = ?", (user_id,))
+            conn.execute("delete from sessions where user_id = ?", (user_id,))
+        return User(id=user_id, username=str(row["username"]))
 
     def create_session(self, user_id: int) -> str:
         token = secrets.token_urlsafe(32)
@@ -353,6 +402,13 @@ class UserStore:
                   token text primary key,
                   user_id integer not null references users(id) on delete cascade,
                   expires_at real not null
+                );
+                create table if not exists password_resets(
+                  user_id integer primary key references users(id) on delete cascade,
+                  code_salt text not null,
+                  code_hash text not null,
+                  expires_at real not null,
+                  created_at real not null
                 );
                 create table if not exists credentials(
                   user_id integer primary key references users(id) on delete cascade,

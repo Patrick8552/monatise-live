@@ -35,6 +35,40 @@ def test_user_store_authenticates_and_loads_session_user() -> None:
         _restore_key(old_key)
 
 
+def test_user_store_resets_password_with_recovery_code() -> None:
+    old_key = _with_key()
+    try:
+        with tempfile.NamedTemporaryFile() as db:
+            store = UserStore(db.name)
+            user = store.create_user("reset-user", "password123")
+            recovery_code = store.create_recovery_code(user.id)
+            token = store.create_session(user.id)
+
+            reset_user = store.reset_password_with_recovery_code("reset-user", recovery_code, "newpass123")
+
+            assert reset_user == user
+            assert store.authenticate("reset-user", "password123") is None
+            assert store.authenticate("reset-user", "newpass123") == user
+            assert store.user_for_session(token) is None
+            assert store.reset_password_with_recovery_code("reset-user", recovery_code, "againpass123") is None
+    finally:
+        _restore_key(old_key)
+
+
+def test_user_store_rejects_wrong_recovery_code() -> None:
+    old_key = _with_key()
+    try:
+        with tempfile.NamedTemporaryFile() as db:
+            store = UserStore(db.name)
+            user = store.create_user("reset-two", "password123")
+            store.create_recovery_code(user.id)
+
+            assert store.reset_password_with_recovery_code("reset-two", "wrong", "newpass123") is None
+            assert store.authenticate("reset-two", "password123") == user
+    finally:
+        _restore_key(old_key)
+
+
 def test_user_store_encrypts_credentials_per_user() -> None:
     old_key = _with_key()
     try:
