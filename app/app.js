@@ -133,6 +133,8 @@ const els = {
   ticketStatus: document.querySelector("#ticketStatus"),
   ticketSummary: document.querySelector("#ticketSummary"),
   tradeAuditLog: document.querySelector("#tradeAuditLog"),
+  tradingViewMeta: document.querySelector("#tradingViewMeta"),
+  tradingViewWidget: document.querySelector("#tradingViewWidget"),
   londonCommodityInput: document.querySelector("#londonCommodityInput"),
   finishOnboardingButton: document.querySelector("#finishOnboardingButton"),
   onboardingAccount: document.querySelector("#onboardingAccount"),
@@ -199,6 +201,39 @@ const assetMetadata = {
   HYPE: { name: "Hyperliquid", route: "Core Hyperliquid perp" },
   SOL: { name: "Solana", route: "Core Hyperliquid perp" },
   XRP: { name: "XRP", route: "Core Hyperliquid perp" }
+};
+
+const tradingViewSymbols = {
+  AUDJPY: "FX:AUDJPY",
+  AUDUSD: "FX:AUDUSD",
+  BNB: "BINANCE:BNBUSDT",
+  BRENTOIL: "TVC:UKOIL",
+  BTC: "BINANCE:BTCUSDT",
+  CL: "NYMEX:CL1!",
+  DOGE: "BINANCE:DOGEUSDT",
+  ETH: "BINANCE:ETHUSDT",
+  EURGBP: "FX:EURGBP",
+  EURJPY: "FX:EURJPY",
+  EURUSD: "FX:EURUSD",
+  GBPUSD: "FX:GBPUSD",
+  GOLD: "OANDA:XAUUSD",
+  HYPE: "CRYPTO:HYPEUSD",
+  NZDUSD: "FX:NZDUSD",
+  SOL: "BINANCE:SOLUSDT",
+  USDJPY: "FX:USDJPY",
+  XRP: "BINANCE:XRPUSDT"
+};
+
+const tradingViewIntervals = {
+  "30m": "30",
+  "1h": "60",
+  "2h": "120",
+  "4h": "240",
+  "6h": "360",
+  "8h": "480",
+  "12h": "720",
+  "1d": "D",
+  "1w": "W"
 };
 
 const forexSessions = [
@@ -1433,6 +1468,56 @@ function assetRoute(symbol) {
   return assetMetadata[symbol]?.route || "Watchlist or strategy-preview asset";
 }
 
+function tradingViewSymbolForAsset(symbol) {
+  const clean = radarSymbol(symbol);
+  if (tradingViewSymbols[clean]) return tradingViewSymbols[clean];
+  if (/^[A-Z]{6}$/.test(clean)) return `FX:${clean}`;
+  return `BINANCE:${clean}USDT`;
+}
+
+let lastTradingViewSignature = "";
+
+function renderTradingViewChart() {
+  if (!els.tradingViewWidget) return;
+  const tvSymbol = tradingViewSymbolForAsset(selectedAsset);
+  const interval = tradingViewIntervals[tradingRules.chartInterval] || "60";
+  const signature = `${tvSymbol}|${interval}`;
+  if (signature === lastTradingViewSignature) return;
+  lastTradingViewSignature = signature;
+  if (els.tradingViewMeta) {
+    els.tradingViewMeta.textContent = `${tvSymbol} · ${tradingRules.chartInterval}`;
+  }
+  els.tradingViewWidget.innerHTML = "";
+  const config = {
+    allow_symbol_change: true,
+    autosize: true,
+    calendar: false,
+    details: false,
+    hide_side_toolbar: false,
+    hide_top_toolbar: false,
+    hide_volume: false,
+    hotlist: false,
+    interval,
+    locale: "en",
+    save_image: true,
+    studies: ["STD;EMA"],
+    style: "1",
+    support_host: "https://www.tradingview.com",
+    symbol: tvSymbol,
+    theme: "light",
+    timezone: "Etc/UTC",
+    withdateranges: true
+  };
+  const iframe = document.createElement("iframe");
+  iframe.allowFullscreen = true;
+  iframe.loading = "lazy";
+  iframe.title = `${tvSymbol} TradingView chart`;
+  iframe.src = `https://www.tradingview-widget.com/embed-widget/advanced-chart/?locale=en#${encodeURIComponent(
+    JSON.stringify(config)
+  )}`;
+  els.tradingViewWidget.appendChild(iframe);
+}
+
 function mergeSelectableAssets(assets = []) {
   const bySymbol = new Map(selectableAssets.map((asset) => [asset.symbol, asset]));
   assets.forEach((asset) => {
@@ -1949,6 +2034,7 @@ function renderTradingRules() {
   els.ticketDrawdown.textContent = `${(tradingRules.maxDailyLossPct * 100).toFixed(2)}%`;
   els.decisionDrawdown.textContent = `${(tradingRules.maxDailyLossPct * 100).toFixed(2)}%`;
   renderForexSessions();
+  renderTradingViewChart();
   updateDecisionSurface(lastBackendSnapshot);
   renderRegistrationDesk();
 }
@@ -2202,6 +2288,7 @@ function syncSelectedAsset() {
       }</span>
     `;
   }
+  renderTradingViewChart();
   renderMarkets();
 }
 
