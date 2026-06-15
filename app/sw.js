@@ -1,4 +1,4 @@
-const CACHE_NAME = "monatise-shell-20260615";
+const CACHE_NAME = "monatise-shell-20260615-lotus";
 const SHELL_ASSETS = [
   "./",
   "./index.html",

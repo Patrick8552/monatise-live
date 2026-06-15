@@ -81,6 +81,23 @@ textarea {
   right: 0;
 }
 
+.brand-lockup {
+  align-items: center;
+  display: flex;
+  gap: 14px;
+  min-width: 0;
+}
+
+.brand-logo {
+  aspect-ratio: 1;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 18px;
+  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.22);
+  flex: 0 0 auto;
+  height: clamp(58px, 7vw, 82px);
+  width: clamp(58px, 7vw, 82px);
+}
+
 .eyebrow {
   color: rgba(249, 255, 251, 0.62);
   font-size: 0.76rem;
