@@ -30,7 +30,9 @@ const els = {
   clientNameInput: document.querySelector("#clientNameInput"),
   credentialStatus: document.querySelector("#credentialStatus"),
   contextRadar: document.querySelector("#contextRadar"),
-  csvInput: document.querySelector("#csvInput"),
+  chatForm: document.querySelector("#chatForm"),
+  chatInput: document.querySelector("#chatInput"),
+  chatMessages: document.querySelector("#chatMessages"),
   decisionAccount: document.querySelector("#decisionAccount"),
   decisionAsset: document.querySelector("#decisionAsset"),
   decisionDetail: document.querySelector("#decisionDetail"),
@@ -163,8 +165,10 @@ let liveEquityCurve = [];
 let localAuditEvents = [];
 let lastTicketHealth = null;
 let lastSignalCandidate = null;
+let lastTicketSnapshot = null;
 let pendingArmReview = false;
 let deferredInstallPrompt = null;
+let candleCsvBuffer = sampleCsv;
 let tradingRules = {
   chartInterval: "15m",
   leverage: 10,
@@ -1089,6 +1093,21 @@ function renderExecutionTicket(orders = [], options = {}) {
     timing: timing.status,
     trigger: signal.trigger
   };
+  lastTicketSnapshot = {
+    asset: selectedAsset,
+    blocks,
+    canDraft,
+    canReview,
+    health,
+    mark,
+    mode,
+    orderCount: orderList.length,
+    primaryBlock,
+    signal,
+    sizing,
+    thesis,
+    timing
+  };
   els.ticketNote.textContent = canReview
     ? `${signal.trigger}. ${fastEntry ? `Fast entry ${money(fastEntry.price)} aims for early TP ${money(fastEntry.earlyTarget)}. ` : ""}Planned entry ${money(signal.entry)}, target ${money(signal.targetOne)}, stop ${money(signal.stop)}. Suggested lot ${sizing.quantityLabel}; estimated stop loss ${money(sizing.stopLoss)}, Target 1 profit ${money(sizing.targetOneProfit)}. Signal expires ${formatSignalTime(timing.expiresAt)}.`
     : canDraft
@@ -1098,7 +1117,136 @@ function renderExecutionTicket(orders = [], options = {}) {
       : thesis;
   els.armStrategyButton.disabled = false;
   els.armStrategyButton.textContent = canReview ? "Save & Track Signal" : canDraft ? "Login To Track" : "Show Blocks";
+  refreshChatOpening();
   updateDecisionSurface(snapshot);
+}
+
+function escapeHtml(value = "") {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function chatStorageKey() {
+  return `monatise-chat-${currentUser.username || "guest"}`;
+}
+
+function loadChatHistory() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(chatStorageKey()) || "[]");
+    return Array.isArray(parsed) ? parsed.slice(-18) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveChatHistory(messages) {
+  localStorage.setItem(chatStorageKey(), JSON.stringify(messages.slice(-18)));
+}
+
+function renderChatMessages(messages = loadChatHistory()) {
+  if (!els.chatMessages) return;
+  const rows = messages.length
+    ? messages
+    : [
+        {
+          role: "assistant",
+          text: "Ask me about the current entry ladder, stop, target, risk size, or why the setup is waiting."
+        }
+      ];
+  els.chatMessages.innerHTML = rows
+    .map(
+      (message) => `<article class="${message.role === "user" ? "user" : "assistant"}">
+        <span>${message.role === "user" ? "You" : "Monatise AI"}</span>
+        <p>${escapeHtml(message.text)}</p>
+      </article>`
+    )
+    .join("");
+  els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+}
+
+function pushChatMessage(role, text) {
+  const messages = [...loadChatHistory(), { role, text, createdAt: new Date().toISOString() }].slice(-18);
+  saveChatHistory(messages);
+  renderChatMessages(messages);
+}
+
+function entryLadderSummary(levels = []) {
+  if (!levels.length) return "No fast/planned/confirm ladder is active yet.";
+  return levels
+    .map((level) => `${level.label}: entry ${money(level.price)}, TP ${money(level.earlyTarget)}, SL ${money(level.stop)}`)
+    .join(" | ");
+}
+
+function currentChatContext() {
+  const ticket = lastTicketSnapshot || {};
+  const signal = ticket.signal || lastSignalCandidate || {};
+  const sizing = ticket.sizing || tradeSizingFromSignal(signal, Number(els.quoteInput?.value || 0), tradingRules.maxDailyLossPct);
+  const timing = ticket.timing || signalTiming(selectedAsset);
+  return {
+    ...ticket,
+    signal,
+    sizing,
+    timing,
+    note: els.ticketNote?.textContent || "",
+    status: els.ticketStatus?.textContent || "Waiting"
+  };
+}
+
+function answerSignalChat(prompt) {
+  const question = String(prompt || "").trim();
+  const lower = question.toLowerCase();
+  const context = currentChatContext();
+  const signal = context.signal || {};
+  const sizing = context.sizing || {};
+  const direction = signalLabel(signal.direction);
+  const ladder = entryLadderSummary(signal.entryLevels || []);
+  const active = ["LONG", "SHORT"].includes(signal.direction);
+  const blockText = context.primaryBlock || context.blocks?.[0]?.detail || context.health?.warnings?.[0] || "No hard block is visible.";
+
+  if (!question) return "Ask me about entry, TP, stop, lot size, confidence, or why the signal is waiting.";
+
+  if (/wait|waiting|block|why|stuck/.test(lower)) {
+    return active
+      ? `${direction} is forming, but tracking may still be blocked by: ${blockText}. ${context.timing?.detail || ""}`
+      : `${context.note || "The app is waiting for a cleaner setup."} Main reason: ${blockText}`;
+  }
+
+  if (/entry|enter|ladder|fast|planned|confirm|pullback/.test(lower)) {
+    return active
+      ? `${direction} entry plan: ${ladder}. Fast entry is for early partial profit; planned entry is the balanced setup; confirm entry waits for break/reject confirmation.`
+      : `No executable entry yet. ${context.note || "Wait for the setup to turn into LONG or SHORT."}`;
+  }
+
+  if (/stop|loss|risk|lot|size|margin|drawdown/.test(lower)) {
+    return active
+      ? `Risk plan: suggested ${sizing.quantityLabel}, notional ${money(sizing.notional)}, margin ${money(sizing.marginRequired)}, stop loss estimate ${money(sizing.stopLoss)} at stop ${money(signal.stop)}. Keep the stop-loss amount inside your alert risk size.`
+      : `Risk stays pending until there is a LONG or SHORT. Current state: ${context.status}. ${context.note}`;
+  }
+
+  if (/target|tp|profit|exit|take/.test(lower)) {
+    return active
+      ? `Exit plan: Target 1 ${money(signal.targetOne)} estimates ${money(sizing.targetOneProfit)}; Target 2 ${money(signal.targetTwo)} estimates ${money(sizing.targetTwoProfit)}. For fast entries, take early profit from the ladder instead of waiting for the full planned target.`
+      : `No active TP yet. The system should only show exits after a usable directional setup appears.`;
+  }
+
+  if (/confidence|signal|setup|explain|status|now/.test(lower)) {
+    return active
+      ? `${direction} setup on ${assetLabel(context.asset || selectedAsset)} with ${signal.confidence}% confidence. ${signal.thesis || ""} Trigger: ${signal.trigger}. ${ladder}`
+      : `${context.status}: ${context.note || signal.thesis || "No executable setup yet."}`;
+  }
+
+  return active
+    ? `${direction} is the current read. Entry ${money(signal.entry)}, stop ${money(signal.stop)}, TP1 ${money(signal.targetOne)}, suggested ${sizing.quantityLabel}. Ask "entry plan", "risk", or "targets" for details.`
+    : `The desk is waiting. ${context.note || "Ask why it is waiting, or ask about risk settings."}`;
+}
+
+function refreshChatOpening() {
+  if (!els.chatMessages || loadChatHistory().length) return;
+  renderChatMessages();
 }
 
 function updateDecisionSurface(snapshot = null) {
@@ -2672,7 +2820,7 @@ async function loadLiveCandles(options = {}) {
     if (!response.ok) throw new Error(payload.error || "live candles unavailable");
     const candles = Array.isArray(payload.candles) ? payload.candles : [];
     if (!candles.length) throw new Error("no candles returned");
-    els.csvInput.value = candlesToCsv(candles);
+    candleCsvBuffer = candlesToCsv(candles);
     candleSource = { interval: payload.interval || interval, symbol: payload.symbol || symbol, type: "live" };
     rebuildFromInputs();
   } catch (error) {
@@ -2701,7 +2849,7 @@ function scaleCandlesToSelectedAsset(candles) {
 }
 
 function configFromInputs() {
-  const candles = scaleCandlesToSelectedAsset(parseCsv(els.csvInput.value));
+  const candles = scaleCandlesToSelectedAsset(parseCsv(candleCsvBuffer));
   if (!candles.length) {
     throw new Error("No candles found");
   }
@@ -3180,7 +3328,7 @@ function render() {
 }
 
 function reset() {
-  els.csvInput.value = sampleCsv;
+  candleCsvBuffer = sampleCsv;
   candleSource = { interval: "sample", symbol: selectedAsset, type: "sample" };
   els.spacingValue.textContent = els.spacingInput.value;
   els.levelsValue.textContent = els.levelsInput.value;
@@ -3216,6 +3364,21 @@ els.stepButton.addEventListener("click", () => {
 
 els.resetButton.addEventListener("click", reset);
 els.assetSelect.addEventListener("change", () => saveSelectedAsset(els.assetSelect.value));
+els.chatForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const question = els.chatInput.value.trim();
+  if (!question) return;
+  pushChatMessage("user", question);
+  pushChatMessage("assistant", answerSignalChat(question));
+  els.chatInput.value = "";
+});
+document.querySelectorAll("[data-chat-prompt]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const prompt = button.dataset.chatPrompt || "";
+    pushChatMessage("user", prompt);
+    pushChatMessage("assistant", answerSignalChat(prompt));
+  });
+});
 els.armStrategyButton.addEventListener("click", () => {
   pendingArmReview = true;
   const blocks = readinessBlocks(lastBackendSnapshot);
@@ -3335,7 +3498,7 @@ els.backendStopButton.addEventListener("click", () => backendCommand("/api/stop"
   });
 });
 
-[els.symbolInput, els.quoteInput, els.baseInput, els.orderSizeInput, els.feeInput, els.csvInput]
+[els.symbolInput, els.quoteInput, els.baseInput, els.orderSizeInput, els.feeInput]
   .filter(Boolean)
   .forEach((input) => {
     input.addEventListener("change", rebuildFromInputs);
@@ -3350,6 +3513,7 @@ loadMarkets();
 loadMe();
 refreshBackend();
 renderForexSessions();
+renderChatMessages();
 applyRememberedLogin();
 setInterval(loadMarkets, 5000);
 setInterval(refreshBackend, 2500);

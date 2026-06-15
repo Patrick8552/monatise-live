@@ -58,6 +58,7 @@
         <a href="#trade">Signal Builder</a>
         <a href="#risk">Quality Gate</a>
         <a href="#markets">Markets</a>
+        <a href="#chat">AI Chat</a>
         <a href="#account">Signal Profile</a>
         <a href="#activity">Activity</a>
       </nav>
@@ -159,7 +160,6 @@
                   <button id="stepButton" class="utility-hidden" type="button">Next candle</button>
                 </div>
               </div>
-              <textarea id="csvInput" class="internal-candle-buffer" spellcheck="false" aria-hidden="true" tabindex="-1"></textarea>
             </div>
 
             <div class="panel strategy-panel">
@@ -201,6 +201,24 @@
               </div>
               <button id="armStrategyButton" class="primary" type="button">Save & Track Signal</button>
               <p id="ticketNote" class="ticket-note">Monatise generates signals and watch conditions. It does not place orders from this screen.</p>
+            </section>
+
+            <section id="chat" class="panel signal-chat" aria-label="Monatise AI signal chat">
+              <div class="panel-head">
+                <h2>Monatise AI</h2>
+                <span>Signal co-pilot</span>
+              </div>
+              <div id="chatMessages" class="chat-messages" aria-live="polite"></div>
+              <div class="chat-quick-actions" aria-label="chat prompts">
+                <button type="button" data-chat-prompt="Explain the current signal">Explain Signal</button>
+                <button type="button" data-chat-prompt="Which entry should I use?">Entry Plan</button>
+                <button type="button" data-chat-prompt="Explain the risk and lot size">Risk</button>
+                <button type="button" data-chat-prompt="Why is the app waiting?">Wait State</button>
+              </div>
+              <form id="chatForm" class="chat-form">
+                <input id="chatInput" type="text" autocomplete="off" placeholder="Ask about entry, TP, stop, wait state, or lot size" />
+                <button class="primary" type="submit">Ask</button>
+              </form>
             </section>
           </div>
         </section>
