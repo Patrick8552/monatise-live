@@ -16,6 +16,7 @@ const els = {
   assetGroups: document.querySelector("#assetGroups"),
   assetSelect: document.querySelector("#assetSelect"),
   armStrategyButton: document.querySelector("#armStrategyButton"),
+  authForm: document.querySelector("#authForm"),
   auditCount: document.querySelector("#auditCount"),
   baseInput: document.querySelector("#baseInput"),
   backendStartButton: document.querySelector("#backendStartButton"),
@@ -82,6 +83,7 @@ const els = {
   riskBudgetMetric: document.querySelector("#riskBudgetMetric"),
   exchangeOrderMetric: document.querySelector("#exchangeOrderMetric"),
   registerButton: document.querySelector("#registerButton"),
+  rememberLoginInput: document.querySelector("#rememberLoginInput"),
   resetButton: document.querySelector("#resetButton"),
   riskGate: document.querySelector("#riskGate"),
   riskStatus: document.querySelector("#riskStatus"),
@@ -246,6 +248,38 @@ function saveClientProfile(username) {
   };
   localStorage.setItem(clientProfileKey(username), JSON.stringify(profile));
   return profile;
+}
+
+function rememberedLoginKey() {
+  return "monatiseRememberedLogin:v1";
+}
+
+function loadRememberedLogin() {
+  try {
+    return JSON.parse(localStorage.getItem(rememberedLoginKey()) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function applyRememberedLogin() {
+  const remembered = loadRememberedLogin();
+  if (remembered.username && !els.usernameInput.value.trim()) {
+    els.usernameInput.value = remembered.username;
+  }
+  els.rememberLoginInput.checked = Boolean(remembered.username);
+}
+
+function updateRememberedLogin(username) {
+  if (els.rememberLoginInput.checked) {
+    localStorage.setItem(rememberedLoginKey(), JSON.stringify({ username: String(username || "").trim().toLowerCase() }));
+    return;
+  }
+  localStorage.removeItem(rememberedLoginKey());
+}
+
+function setPasswordAutocomplete(isRegister) {
+  els.passwordInput.setAttribute("autocomplete", isRegister ? "new-password" : "current-password");
 }
 
 function renderRegistrationDesk(me = currentUser) {
@@ -1525,6 +1559,7 @@ async function loginOrRegister(path) {
   const username = els.usernameInput.value.trim();
   const password = els.passwordInput.value;
   const isRegister = path.includes("register");
+  setPasswordAutocomplete(isRegister);
   const actionButton = isRegister ? els.registerButton : els.loginButton;
   if (isRegister && els.clientNameInput.value.trim().length < 2) {
     setAuthStatus("Profile name required");
@@ -1553,6 +1588,7 @@ async function loginOrRegister(path) {
       return;
     }
     els.passwordInput.value = "";
+    updateRememberedLogin(payload.username || username);
     if (isRegister) saveClientProfile(payload.username || username);
     renderAuth(payload);
     if (isRegister) {
@@ -2873,10 +2909,22 @@ els.assetGroups.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-symbol]");
   if (button) saveSelectedAsset(button.dataset.symbol);
 });
-els.loginButton.addEventListener("click", () => loginOrRegister("/api/login"));
-els.registerButton.addEventListener("click", () => loginOrRegister("/api/register"));
+els.authForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  setPasswordAutocomplete(false);
+  loginOrRegister("/api/login");
+});
+els.loginButton.addEventListener("click", () => setPasswordAutocomplete(false));
+els.registerButton.addEventListener("click", () => {
+  setPasswordAutocomplete(true);
+  loginOrRegister("/api/register");
+});
 els.finishOnboardingButton.addEventListener("click", finishOnboarding);
 els.clientNameInput.addEventListener("input", () => renderRegistrationDesk());
+els.rememberLoginInput.addEventListener("change", () => {
+  if (!els.rememberLoginInput.checked) localStorage.removeItem(rememberedLoginKey());
+  else if (els.usernameInput.value.trim()) updateRememberedLogin(els.usernameInput.value.trim());
+});
 els.passwordToggle.addEventListener("click", () => {
   const isHidden = els.passwordInput.type === "password";
   els.passwordInput.type = isHidden ? "text" : "password";
@@ -2887,7 +2935,10 @@ els.passwordToggle.addEventListener("click", () => {
 });
 [els.usernameInput, els.passwordInput].forEach((input) => {
   input.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") loginOrRegister("/api/login");
+    if (event.key === "Enter") {
+      event.preventDefault();
+      els.authForm.requestSubmit();
+    }
   });
 });
 els.logoutButton.addEventListener("click", async () => {
@@ -2941,6 +2992,7 @@ loadMarkets();
 loadMe();
 refreshBackend();
 renderForexSessions();
+applyRememberedLogin();
 setInterval(loadMarkets, 5000);
 setInterval(refreshBackend, 2500);
 setInterval(renderForexSessions, 1000);

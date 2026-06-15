@@ -406,7 +406,7 @@
           </div>
 
           <div class="section-grid account-grid">
-            <div class="auth-box" aria-label="signal profile controls">
+            <form id="authForm" class="auth-box" aria-label="signal profile controls" autocomplete="on">
               <div class="auth-head">
                 <div>
                   <span>Signal Profile</span>
@@ -429,8 +429,12 @@
                   <button id="passwordToggle" type="button" aria-label="Show password" aria-pressed="false">Show</button>
                 </span>
               </label>
+              <label class="remember-login">
+                <input id="rememberLoginInput" type="checkbox" />
+                <span>Remember this email or phone</span>
+              </label>
               <div class="button-row">
-                <button id="loginButton" class="primary" type="button">Login</button>
+                <button id="loginButton" class="primary" type="submit">Login</button>
                 <button id="registerButton" type="button">Register</button>
               </div>
               <div id="registrationDesk" class="registration-desk" hidden>
@@ -470,7 +474,7 @@
               </label>
               <button id="saveCredentialsButton" type="button">Save Sync Details</button>
               <p id="credentialStatus">Signal generation works without private sync. Profiles save preferences per user.</p>
-            </div>
+            </form>
 
             <section class="panel access-panel">
               <div class="panel-head">

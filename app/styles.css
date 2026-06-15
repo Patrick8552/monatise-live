@@ -684,6 +684,26 @@ textarea:focus {
   border-color: var(--graph);
 }
 
+.remember-login {
+  align-items: center;
+  display: flex;
+  flex-direction: row;
+  gap: 9px;
+}
+
+.remember-login input {
+  accent-color: var(--buy);
+  height: 16px;
+  width: 16px;
+}
+
+.remember-login span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 850;
+  text-transform: none;
+}
+
 input[type="range"] {
   accent-color: var(--buy);
   padding: 0;
