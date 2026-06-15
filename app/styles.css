@@ -438,6 +438,14 @@ label .range-readout {
   padding: 16px 16px 0;
 }
 
+.tradingview-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 .tradingview-panel .panel-head span {
   background: rgba(0, 168, 120, 0.08);
   border: 1px solid rgba(0, 168, 120, 0.18);
@@ -446,6 +454,11 @@ label .range-readout {
   font-size: 0.72rem;
   font-weight: 850;
   padding: 6px 9px;
+}
+
+.tradingview-actions button {
+  min-height: 34px;
+  padding: 7px 10px;
 }
 
 .tradingview-widget {

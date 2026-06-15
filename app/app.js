@@ -133,6 +133,7 @@ const els = {
   ticketStatus: document.querySelector("#ticketStatus"),
   ticketSummary: document.querySelector("#ticketSummary"),
   tradeAuditLog: document.querySelector("#tradeAuditLog"),
+  openTradingViewButton: document.querySelector("#openTradingViewButton"),
   tradingViewMeta: document.querySelector("#tradingViewMeta"),
   tradingViewWidget: document.querySelector("#tradingViewWidget"),
   londonCommodityInput: document.querySelector("#londonCommodityInput"),
@@ -1475,6 +1476,15 @@ function tradingViewSymbolForAsset(symbol) {
   return `BINANCE:${clean}USDT`;
 }
 
+function tradingViewChartUrl(symbol = selectedAsset) {
+  const tvSymbol = tradingViewSymbolForAsset(symbol).replace(":", "-");
+  return `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(tvSymbol)}`;
+}
+
+function openSelectedTradingViewChart() {
+  window.open(tradingViewChartUrl(selectedAsset), "_blank", "noopener,noreferrer");
+}
+
 let lastTradingViewSignature = "";
 
 function renderTradingViewChart() {
@@ -1486,6 +1496,9 @@ function renderTradingViewChart() {
   lastTradingViewSignature = signature;
   if (els.tradingViewMeta) {
     els.tradingViewMeta.textContent = `${tvSymbol} · ${tradingRules.chartInterval}`;
+  }
+  if (els.openTradingViewButton) {
+    els.openTradingViewButton.title = `Open ${tvSymbol} in your TradingView account`;
   }
   els.tradingViewWidget.innerHTML = "";
   const config = {
@@ -3633,6 +3646,7 @@ els.stepButton.addEventListener("click", () => {
 
 els.resetButton.addEventListener("click", reset);
 els.assetSelect.addEventListener("change", () => saveSelectedAsset(els.assetSelect.value));
+els.openTradingViewButton.addEventListener("click", openSelectedTradingViewChart);
 els.chatForm.addEventListener("submit", (event) => {
   event.preventDefault();
   const question = els.chatInput.value.trim();
