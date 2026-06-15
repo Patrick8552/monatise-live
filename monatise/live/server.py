@@ -12,7 +12,7 @@ from urllib.parse import parse_qs, urlparse
 from monatise.analysis.context import context_assets, grid_instruction, indicator_snapshot
 from monatise.analysis.fibonacci import analyze_fibonacci
 from monatise.analysis.fvg import analyze_fvg
-from monatise.adapters.coinglass import CoinGlassAdapter
+from monatise.adapters.coinglass import CoinGlassAdapter, CoinGlassPlanError
 from monatise.adapters.hyperliquid import HyperliquidAdapter
 from monatise.live.config import RuntimeConfig
 from monatise.live.emailer import EmailDeliveryError, expose_dev_reset_code, send_password_reset_code
@@ -34,6 +34,15 @@ def _market_data_adapter(config: RuntimeConfig, symbol: str):  # noqa: ANN202
     if coin in {"GOLD", "XAU", "CL", "BRENTOIL"}:
         return HyperliquidAdapter(config), "Hyperliquid builder market fallback"
     return CoinGlassAdapter(config), "CoinGlass futures price history"
+
+
+def _market_candles(config: RuntimeConfig, symbol: str, limit: int, interval: str):  # noqa: ANN202
+    adapter, source = _market_data_adapter(config, symbol)
+    try:
+        return adapter.candles(symbol, limit, interval=interval), source
+    except CoinGlassPlanError:
+        fallback = HyperliquidAdapter(config)
+        return fallback.candles(symbol, limit, interval=interval), "Hyperliquid candleSnapshot (CoinGlass plan blocked)"
 
 
 class TenantServices:
@@ -177,8 +186,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             interval = str(query.get("interval", ["15m"])[0]).strip() or "15m"
             try:
                 limit = max(5, min(240, int(query.get("limit", ["120"])[0])))
-                adapter, source = _market_data_adapter(self.config, symbol)
-                candles = adapter.candles(symbol, limit, interval=interval)
+                candles, source = _market_candles(self.config, symbol, limit, interval)
                 self._json(
                     {
                         "candles": [candle.__dict__ for candle in candles],
@@ -196,11 +204,10 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             interval = str(query.get("interval", ["15m"])[0]).strip() or "15m"
             try:
                 limit = max(20, min(240, int(query.get("limit", ["120"])[0])))
-                adapter, source = _market_data_adapter(self.config, symbol)
-                candles = adapter.candles(symbol, limit, interval=interval)
+                candles, source = _market_candles(self.config, symbol, limit, interval)
                 mark = candles[-1].close
-                if isinstance(adapter, HyperliquidAdapter):
-                    mark = adapter.latest_price(symbol)
+                if source.startswith("Hyperliquid"):
+                    mark = HyperliquidAdapter(self.config).latest_price(symbol)
                 self._json(
                     {
                         "analysis": analyze_fibonacci(symbol, interval, candles, mark=mark).to_dict(),
@@ -218,8 +225,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             interval = str(query.get("interval", ["15m"])[0]).strip() or "15m"
             try:
                 limit = max(50, min(240, int(query.get("limit", ["120"])[0])))
-                adapter, source = _market_data_adapter(self.config, symbol)
-                candles = adapter.candles(symbol, limit, interval=interval)
+                candles, source = _market_candles(self.config, symbol, limit, interval)
                 indicators = indicator_snapshot(candles)
                 prices = HyperliquidAdapter(self.config).all_prices()
                 instruction = grid_instruction(indicators)
@@ -260,12 +266,27 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             interval = str(query.get("interval", ["1h"])[0]).strip() or "1h"
             try:
                 adapter = CoinGlassAdapter(self.config)
+                subscription = adapter.account_subscription()
+                unavailable: list[dict] = []
+                open_interest: list[dict] = []
+                liquidations: list[dict] = []
+                try:
+                    open_interest = adapter.open_interest(symbol)
+                except CoinGlassPlanError as error:
+                    unavailable.append({"feature": "openInterest", "reason": str(error)})
+                try:
+                    liquidations = adapter.liquidation_history(symbol, limit=24, interval=interval)
+                except CoinGlassPlanError as error:
+                    unavailable.append({"feature": "liquidations", "reason": str(error)})
                 self._json(
                     {
                         "symbol": symbol,
                         "source": "CoinGlass",
-                        "openInterest": adapter.open_interest(symbol),
-                        "liquidations": adapter.liquidation_history(symbol, limit=24, interval=interval),
+                        "subscription": subscription,
+                        "available": not unavailable,
+                        "unavailable": unavailable,
+                        "openInterest": open_interest,
+                        "liquidations": liquidations,
                     }
                 )
             except Exception as error:  # noqa: BLE001

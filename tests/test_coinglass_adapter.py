@@ -1,7 +1,7 @@
 import os
 
 import monatise.adapters.coinglass as coinglass_module
-from monatise.adapters.coinglass import CoinGlassAdapter
+from monatise.adapters.coinglass import CoinGlassAdapter, CoinGlassPlanError
 from monatise.live.config import RuntimeConfig
 
 
@@ -64,6 +64,26 @@ def test_coinglass_rejects_non_crypto_coin(monkeypatch) -> None:  # noqa: ANN001
             assert "not a CoinGlass crypto futures coin" in str(error)
         else:
             raise AssertionError("expected non-crypto CoinGlass symbol to fail")
+    finally:
+        _restore_env("COINGLASS_API_KEY", old_key)
+
+
+def test_coinglass_upgrade_plan_response_has_specific_error(monkeypatch) -> None:  # noqa: ANN001
+    old_key = os.environ.get("COINGLASS_API_KEY")
+    os.environ["COINGLASS_API_KEY"] = "test-key"
+
+    def fake_urlopen(request, timeout=0):  # noqa: ANN001, ANN202
+        return FakeResponse('{"code":"401","msg":"Upgrade plan"}')
+
+    monkeypatch.setattr(coinglass_module, "urlopen", fake_urlopen)
+    try:
+        adapter = CoinGlassAdapter(RuntimeConfig())
+        try:
+            adapter.candles("BTC", 2, "4h")
+        except CoinGlassPlanError as error:
+            assert "Upgrade plan" in str(error)
+        else:
+            raise AssertionError("expected plan-blocked response to raise CoinGlassPlanError")
     finally:
         _restore_env("COINGLASS_API_KEY", old_key)
 

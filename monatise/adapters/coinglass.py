@@ -51,6 +51,10 @@ class CoinGlassAdapter:
     def open_interest(self, symbol: str) -> list[dict[str, Any]]:
         return self._get("/api/futures/open-interest/exchange-list", {"symbol": self._coin(symbol)})
 
+    def account_subscription(self) -> dict[str, Any]:
+        data = self._get("/api/user/account/subscription", {})
+        return dict(data) if isinstance(data, dict) else {}
+
     def liquidation_history(self, symbol: str, limit: int = 24, interval: str = "1h") -> list[dict[str, Any]]:
         return self._get(
             "/api/futures/liquidation/aggregated-history",
@@ -75,7 +79,10 @@ class CoinGlassAdapter:
         except (HTTPError, URLError, TimeoutError) as error:
             raise RuntimeError(f"CoinGlass request failed for {path}") from error
         if str(payload.get("code")) not in {"0", "200"}:
-            raise RuntimeError(str(payload.get("msg") or payload.get("message") or "CoinGlass request failed"))
+            message = str(payload.get("msg") or payload.get("message") or "CoinGlass request failed")
+            if "upgrade plan" in message.lower():
+                raise CoinGlassPlanError(message)
+            raise RuntimeError(message)
         return payload.get("data", [])
 
     def _coin(self, symbol: str) -> str:
@@ -98,3 +105,7 @@ def _parse_price_candle(raw: dict[str, Any]) -> Candle:
         close=float(raw["close"]),
         volume=float(raw.get("volume_usd", 0.0)),
     )
+
+
+class CoinGlassPlanError(RuntimeError):
+    pass
