@@ -455,6 +455,11 @@ function renderSignalJournal(entries = loadSignalJournal()) {
             <span>${new Date(entry.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · ${entry.symbol} · ${entry.interval}</span>
             <strong>${entry.direction} · ${entry.status}</strong>
             <em>Entry ${money(entry.entry)} · Target ${money(entry.targetOne)} · Stop ${money(entry.stop)}</em>
+            ${
+              Number(entry.suggestedLot) > 0
+                ? `<em>Lot ${formatLotSize(entry.suggestedLot)} · Stop risk ${money(entry.stopLossAmount)} · T1 ${money(entry.targetOneProfit)}</em>`
+                : ""
+            }
             <small>${entry.outcomeDetail || "Waiting for later candles."}</small>
           </article>`
         )
@@ -748,6 +753,7 @@ function renderExecutionTicket(orders = [], options = {}) {
   const signal = options.signal || signalFromHealth(health, mark);
   const timing = signalTiming(selectedAsset);
   const canReview = !health.blocked && blocks.length === 0 && signal.direction !== "WAIT";
+  const sizing = tradeSizingFromSignal(signal, capital, drawdownPct);
   const mode = String(snapshot?.mode || (backendOnline ? "backend" : "preview")).toUpperCase();
   els.ticketStatus.textContent = canReview ? `${signal.direction} signal` : `${blocks.length || health.warnings.length || 1} block`;
   els.ticketAsset.textContent = assetLabel(selectedAsset);
@@ -762,6 +768,28 @@ function renderExecutionTicket(orders = [], options = {}) {
       <strong>${canReview ? `${signal.direction} setup ready` : "Do not use yet"}</strong>
       <span>${mode} · ${assetLabel(selectedAsset)} · ${signal.confidence}% confidence · ${orderList.length} levels</span>
     </div>
+    <div class="ticket-sizing ${canReview ? "ready" : "blocked"}">
+      <article>
+        <span>Suggested lot</span>
+        <strong>${sizing.quantityLabel}</strong>
+        <em>${money(sizing.notional)} notional · ${money(sizing.marginRequired)} margin</em>
+      </article>
+      <article>
+        <span>If stop hits</span>
+        <strong>${money(sizing.stopLoss)}</strong>
+        <em>${sizing.stopPctLabel} move from entry</em>
+      </article>
+      <article>
+        <span>Target 1 result</span>
+        <strong>${money(sizing.targetOneProfit)}</strong>
+        <em>${sizing.rewardRiskOneLabel} R/R</em>
+      </article>
+      <article>
+        <span>Target 2 result</span>
+        <strong>${money(sizing.targetTwoProfit)}</strong>
+        <em>${sizing.rewardRiskTwoLabel} R/R</em>
+      </article>
+    </div>
   `;
   const primaryBlock = blocks[0]?.detail || health.warnings[0] || "all visible checks clear";
   lastSignalCandidate = {
@@ -774,6 +802,12 @@ function renderExecutionTicket(orders = [], options = {}) {
     fibTrend: fibAnalysis?.trend || "unknown",
     interval: tradingRules.chartInterval,
     source: mode,
+    suggestedLot: sizing.quantity,
+    suggestedMargin: sizing.marginRequired,
+    suggestedNotional: sizing.notional,
+    targetOneProfit: sizing.targetOneProfit,
+    targetTwoProfit: sizing.targetTwoProfit,
+    stopLossAmount: sizing.stopLoss,
     stop: signal.stop,
     symbol: selectedAsset,
     targetOne: signal.targetOne,
@@ -783,7 +817,7 @@ function renderExecutionTicket(orders = [], options = {}) {
     trigger: signal.trigger
   };
   els.ticketNote.textContent = canReview
-    ? `${signal.trigger}. Entry ${money(signal.entry)}, target ${money(signal.targetOne)}, stop ${money(signal.stop)} with ${STOP_LOSS_BUFFER_POINTS}pt buffer. Signal expires ${formatSignalTime(timing.expiresAt)}.`
+    ? `${signal.trigger}. Entry ${money(signal.entry)}, target ${money(signal.targetOne)}, stop ${money(signal.stop)}. Suggested lot ${sizing.quantityLabel}; estimated stop loss ${money(sizing.stopLoss)}, Target 1 profit ${money(sizing.targetOneProfit)}. Signal expires ${formatSignalTime(timing.expiresAt)}.`
     : timing.opensAt
       ? `Blocked: ${primaryBlock}. Next usable time ${formatSignalTime(timing.opensAt)}.`
       : `Blocked: ${primaryBlock}`;
@@ -2101,6 +2135,70 @@ function money(value) {
     minimumFractionDigits: 2,
     style: "currency"
   }).format(value || 0);
+}
+
+function formatLotSize(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return "0";
+  if (numeric >= 100) return numeric.toFixed(2);
+  if (numeric >= 1) return numeric.toFixed(4);
+  return numeric.toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+function tradeSizingFromSignal(signal, capital, drawdownPct) {
+  const entry = Number(signal?.entry);
+  const stop = Number(signal?.stop);
+  const targetOne = Number(signal?.targetOne);
+  const targetTwo = Number(signal?.targetTwo);
+  const direction = String(signal?.direction || "");
+  if (!["LONG", "SHORT"].includes(direction)) {
+    return {
+      marginRequired: 0,
+      notional: 0,
+      quantity: 0,
+      quantityLabel: "Pending setup",
+      rewardRiskOneLabel: "pending",
+      rewardRiskTwoLabel: "pending",
+      stopLoss: 0,
+      stopPctLabel: "pending",
+      targetOneProfit: 0,
+      targetTwoProfit: 0
+    };
+  }
+  const leverage = Number(tradingRules.leverage || 10);
+  const alertRiskBudget = Math.max(1, Number(tradingRules.orderQuoteSize || 25));
+  const dailyLossBudget = Math.max(0, Number(capital || 0) * Number(drawdownPct || 0.05));
+  const perSetupRiskBudget = dailyLossBudget > 0 ? Math.min(alertRiskBudget, dailyLossBudget * 0.25) : alertRiskBudget;
+  const notionalCaps = [tradingRules.maxTotalNotional, tradingRules.maxPositionValue]
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  const maxNotional = notionalCaps.length ? Math.min(...notionalCaps) : alertRiskBudget;
+  const priceRisk = Math.abs(entry - stop);
+  const stopPct = Number.isFinite(entry) && entry > 0 && Number.isFinite(priceRisk) ? priceRisk / entry : 0;
+  const riskBasedNotional = stopPct > 0 ? perSetupRiskBudget / stopPct : alertRiskBudget;
+  const notional = Math.max(0, Math.min(maxNotional, riskBasedNotional));
+  const quantity = Number.isFinite(entry) && entry > 0 ? notional / entry : 0;
+  const pointValue = quantity;
+  const targetOneMove = direction === "SHORT" ? entry - targetOne : targetOne - entry;
+  const targetTwoMove = direction === "SHORT" ? entry - targetTwo : targetTwo - entry;
+  const targetOneProfit = Number.isFinite(targetOneMove) ? Math.max(0, targetOneMove * pointValue) : 0;
+  const targetTwoProfit = Number.isFinite(targetTwoMove) ? Math.max(0, targetTwoMove * pointValue) : 0;
+  const stopLoss = Math.max(0, priceRisk * pointValue);
+  const marginRequired = leverage > 0 ? notional / leverage : notional;
+  const rewardRiskOne = stopLoss > 0 ? targetOneProfit / stopLoss : 0;
+  const rewardRiskTwo = stopLoss > 0 ? targetTwoProfit / stopLoss : 0;
+  return {
+    marginRequired,
+    notional,
+    quantity,
+    quantityLabel: `${formatLotSize(quantity)} ${selectedAsset}`,
+    rewardRiskOneLabel: rewardRiskOne > 0 ? `${rewardRiskOne.toFixed(2)}x` : "pending",
+    rewardRiskTwoLabel: rewardRiskTwo > 0 ? `${rewardRiskTwo.toFixed(2)}x` : "pending",
+    stopLoss,
+    stopPctLabel: stopPct > 0 ? `${(stopPct * 100).toFixed(2)}%` : "pending",
+    targetOneProfit,
+    targetTwoProfit
+  };
 }
 
 function liveAccountValue(snapshot) {
