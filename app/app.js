@@ -778,6 +778,80 @@ function targetWithMinimumReward(direction, entry, rawTarget, riskDistance, rewa
   return Number(rawTarget);
 }
 
+function buildEntryLadder(direction, mark, planned, riskDistance, targetOne, symbol = selectedAsset) {
+  if (!["LONG", "SHORT"].includes(direction) || !Number.isFinite(Number(mark)) || !Number.isFinite(Number(planned))) {
+    return [];
+  }
+  const numericMark = Number(mark);
+  const numericPlanned = Number(planned);
+  const directionSign = direction === "SHORT" ? -1 : 1;
+  const maxFallbackRisk = numericPlanned * setupRiskPct(symbol);
+  const minFallbackRisk = numericPlanned * (forexPairs.includes(symbol) ? 0.0004 : 0.001);
+  const entryGapRisk = Math.abs(numericMark - numericPlanned);
+  const fallbackRisk = Math.max(
+    minFallbackRisk,
+    Math.min(maxFallbackRisk, entryGapRisk > 0 ? entryGapRisk : maxFallbackRisk * 0.65)
+  );
+  const risk = Number.isFinite(Number(riskDistance)) && Number(riskDistance) > 0 ? Number(riskDistance) : fallbackRisk;
+  const entries = [
+    {
+      key: "fast",
+      label: "Fast Entry",
+      note: "no pullback; take profit early",
+      price: numericMark,
+      reward: 0.75,
+      stopRisk: 0.7
+    },
+    {
+      key: "planned",
+      label: "Planned Entry",
+      note: "best balance",
+      price: numericPlanned,
+      reward: 1.35,
+      stopRisk: 1
+    },
+    {
+      key: "confirm",
+      label: "Confirm Entry",
+      note: direction === "SHORT" ? "after reject" : "after break",
+      price: numericPlanned + directionSign * risk * 0.35,
+      reward: 1.05,
+      stopRisk: 0.85
+    }
+  ];
+  return entries.map((entry) => {
+    const stop = entry.price - directionSign * risk * entry.stopRisk;
+    const rawEarlyTarget = entry.price + directionSign * risk * entry.reward;
+    const earlyTarget =
+      direction === "SHORT"
+        ? Math.max(rawEarlyTarget, Math.min(Number(targetOne), entry.price))
+        : Math.min(rawEarlyTarget, Math.max(Number(targetOne), entry.price));
+    return {
+      ...entry,
+      earlyTarget,
+      stop,
+      riskDistance: Math.abs(entry.price - stop)
+    };
+  });
+}
+
+function renderEntryLadder(levels = []) {
+  if (!levels.length) return "";
+  return `
+    <div class="entry-ladder">
+      ${levels
+        .map(
+          (level) => `<article class="${level.key}">
+            <span>${level.label}</span>
+            <strong>${money(level.price)}</strong>
+            <em>TP ${money(level.earlyTarget)} · SL ${money(level.stop)} · ${level.note}</em>
+          </article>`
+        )
+        .join("")}
+    </div>
+  `;
+}
+
 function signalFromHealth(health, mark) {
   const trend = String(fibAnalysis?.trend || contextRadar?.indicator?.trend || "flat").toLowerCase();
   const action = String(contextRadar?.instruction?.action || "normal").toLowerCase();
@@ -820,6 +894,7 @@ function signalFromHealth(health, mark) {
         : baseStop;
   const targetOne = targetWithMinimumReward(direction, entry, rawTargetOne, riskDistance);
   const buffer = riskDistance > 0 ? riskDistance : Number.isFinite(atr) && atr > 0 ? atr : Math.abs(mark - Number(nearest || mark));
+  const entryLevels = buildEntryLadder(direction, mark, entry, riskDistance, targetOne, selectedAsset);
   const confidenceBase = 42 + (health.status === "ALIGNED" ? 28 : health.status === "REVIEW" ? 14 : 0);
   const contextPenalty = action === "reduce" ? 10 : action === "widen" ? 6 : action === "halt" || action === "pause" ? 24 : 0;
   const warningPenalty = Math.min(24, health.warnings.length * 6);
@@ -837,6 +912,7 @@ function signalFromHealth(health, mark) {
     confidence,
     direction,
     entry: Number.isFinite(entry) ? entry : 0,
+    entryLevels,
     stop: Number.isFinite(stop) ? stop : mark,
     targetOne: Number.isFinite(targetOne) ? targetOne : mark,
     targetTwo:
@@ -904,6 +980,7 @@ function renderStrategyReadout(orders, options = {}) {
       <span>Signal ${timing.active ? "expires" : "works"} <strong>${timing.active ? formatSignalTime(timing.expiresAt) : formatSignalTime(timing.opensAt)}</strong></span>
       <span>Doctrine <strong>invalidation required</strong></span>
     </div>
+    ${renderEntryLadder(signal.entryLevels)}
     <div class="signal-timing ${timing.active ? "valid" : timing.blocked ? "paused" : "pending"}">
       <strong>${timingPrimary}</strong>
       <span>${timing.detail} Best window: ${timing.windowLabel}.</span>
@@ -933,6 +1010,7 @@ function renderExecutionTicket(orders = [], options = {}) {
   const signal = options.signal || signalFromHealth(health, mark);
   const timing = signalTiming(selectedAsset);
   const thesis = setupWaitDetail(health, signal, timing);
+  const fastEntry = signal.entryLevels?.find((level) => level.key === "fast");
   const canReview = !health.blocked && blocks.length === 0 && signal.direction !== "WAIT";
   const canDraft = !health.blocked && signal.direction !== "WAIT";
   const sizing = tradeSizingFromSignal(signal, capital, drawdownPct);
@@ -972,6 +1050,7 @@ function renderExecutionTicket(orders = [], options = {}) {
         <em>${sizing.rewardRiskTwoLabel} R/R</em>
       </article>
     </div>
+    ${renderEntryLadder(signal.entryLevels)}
   `;
   const primaryBlock = blocks[0]?.detail || health.warnings[0] || "all visible checks clear";
   lastSignalCandidate = {
@@ -979,6 +1058,7 @@ function renderExecutionTicket(orders = [], options = {}) {
     createdAt: new Date().toISOString(),
     direction: signal.direction,
     entry: signal.entry,
+    entryLevels: signal.entryLevels || [],
     expiresAt: timing.expiresAt ? timing.expiresAt.toISOString() : "",
     fvgBias: fvgAnalysis?.bias || "balanced",
     fibTrend: fibAnalysis?.trend || "unknown",
@@ -1000,9 +1080,9 @@ function renderExecutionTicket(orders = [], options = {}) {
     trigger: signal.trigger
   };
   els.ticketNote.textContent = canReview
-    ? `${signal.trigger}. Entry ${money(signal.entry)}, target ${money(signal.targetOne)}, stop ${money(signal.stop)}. Suggested lot ${sizing.quantityLabel}; estimated stop loss ${money(sizing.stopLoss)}, Target 1 profit ${money(sizing.targetOneProfit)}. Signal expires ${formatSignalTime(timing.expiresAt)}.`
+    ? `${signal.trigger}. ${fastEntry ? `Fast entry ${money(fastEntry.price)} aims for early TP ${money(fastEntry.earlyTarget)}. ` : ""}Planned entry ${money(signal.entry)}, target ${money(signal.targetOne)}, stop ${money(signal.stop)}. Suggested lot ${sizing.quantityLabel}; estimated stop loss ${money(sizing.stopLoss)}, Target 1 profit ${money(sizing.targetOneProfit)}. Signal expires ${formatSignalTime(timing.expiresAt)}.`
     : canDraft
-      ? `${signal.trigger}. Draft ${signalLabel(signal.direction).toLowerCase()}: entry ${money(signal.entry)}, target ${money(signal.targetOne)}, stop ${money(signal.stop)}. Tracking blocked: ${primaryBlock}.`
+      ? `${signal.trigger}. Draft ${signalLabel(signal.direction).toLowerCase()}: ${fastEntry ? `fast entry ${money(fastEntry.price)} to TP ${money(fastEntry.earlyTarget)}; ` : ""}planned entry ${money(signal.entry)}, target ${money(signal.targetOne)}, stop ${money(signal.stop)}. Tracking blocked: ${primaryBlock}.`
     : timing.opensAt
       ? `${thesis} Next usable time ${formatSignalTime(timing.opensAt)}.`
       : thesis;
