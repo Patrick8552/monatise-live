@@ -11,7 +11,7 @@
     <link rel="manifest" href="./manifest.webmanifest?v=20260615-lotus" />
     <link rel="icon" href="./icon-lotus.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./icon-lotus.svg" />
-    <link rel="stylesheet" href="./styles.css?v=20260615-signal-audit" />
+    <link rel="stylesheet" href="./styles.css?v=20260615-assets" />
   </head>
   <body>
     <main class="shell">
@@ -205,7 +205,7 @@
                 </article>
                 <article>
                   <span>Chart</span>
-                  <strong id="ticketChart">15m</strong>
+                  <strong id="ticketChart">1h</strong>
                 </article>
               </div>
               <button id="armStrategyButton" class="primary" type="button">Save & Track Signal</button>
@@ -287,8 +287,15 @@
                 <label>
                   Chart
                   <select id="chartIntervalSelect">
-                    <option value="15m">15m</option>
-                    <option value="5m">5m</option>
+                    <option value="1h">1h</option>
+                    <option value="30m">30m</option>
+                    <option value="2h">2h</option>
+                    <option value="4h">4h</option>
+                    <option value="6h">6h</option>
+                    <option value="8h">8h</option>
+                    <option value="12h">12h</option>
+                    <option value="1d">1d</option>
+                    <option value="1w">1w</option>
                   </select>
                 </label>
                 <label>
@@ -332,7 +339,7 @@
                 <input id="londonCommodityInput" type="checkbox" checked />
                 <span>Gold/oil signals stay London-only inside the London/New York window</span>
               </label>
-              <div id="rulesSummary" class="rules-summary">15m analysis · 5m confirmation · London/New York signal window · CPI/PPI blackout</div>
+              <div id="rulesSummary" class="rules-summary">CoinGlass 1h analysis · London/New York signal window · CPI/PPI blackout</div>
             </div>
 
             <section class="panel metrics utility-hidden">
@@ -409,7 +416,7 @@
             <div id="market3dMap" class="market-3d-map" aria-label="3D live market signal field">
               <div class="market-3d-overlay">
                 <strong id="market3dTitle">BTC signal field</strong>
-                <span id="market3dMeta">London/New York window · 15m/5m analysis</span>
+                <span id="market3dMeta">London/New York window · CoinGlass analysis</span>
               </div>
             </div>
             <div id="fibAnalysis" class="fib-analysis" aria-label="Chart signal analysis">
@@ -607,6 +614,6 @@
     </main>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="./app.js?v=20260615-signal-audit"></script>
+    <script src="./app.js?v=20260615-assets"></script>
   </body>
 </html>

@@ -1,9 +1,9 @@
-const CACHE_NAME = "monatise-shell-20260615-signal-audit";
+const CACHE_NAME = "monatise-shell-20260615-assets";
 const SHELL_ASSETS = [
   "./",
   "./index.html",
-  "./styles.css?v=20260615-signal-audit",
-  "./app.js?v=20260615-signal-audit",
+  "./styles.css?v=20260615-assets",
+  "./app.js?v=20260615-assets",
   "./manifest.webmanifest?v=20260615-lotus",
   "./icon-lotus.svg"
 ];

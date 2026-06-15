@@ -149,6 +149,7 @@ let backendOnline = false;
 let currentUser = { authenticated: false, credentialsConfigured: false };
 let markets = [];
 let marketGroups = {};
+let selectableAssets = [];
 let selectedAsset = "BTC";
 let marketScene = null;
 let lastBackendSnapshot = null;
@@ -173,7 +174,7 @@ let pendingArmReview = false;
 let deferredInstallPrompt = null;
 let candleCsvBuffer = sampleCsv;
 let tradingRules = {
-  chartInterval: "15m",
+  chartInterval: "1h",
   leverage: 10,
   signalSessionWindow: "london_new_york",
   londonCommodityOnly: true,
@@ -1432,6 +1433,36 @@ function assetRoute(symbol) {
   return assetMetadata[symbol]?.route || "Watchlist or strategy-preview asset";
 }
 
+function mergeSelectableAssets(assets = []) {
+  const bySymbol = new Map(selectableAssets.map((asset) => [asset.symbol, asset]));
+  assets.forEach((asset) => {
+    const symbol = String(asset.symbol || "").toUpperCase();
+    if (!symbol) return;
+    bySymbol.set(symbol, { ...bySymbol.get(symbol), ...asset, symbol });
+  });
+  markets.forEach((asset) => {
+    const symbol = String(asset.symbol || "").toUpperCase();
+    if (!symbol) return;
+    bySymbol.set(symbol, { ...bySymbol.get(symbol), ...asset, symbol });
+  });
+  selectableAssets = Array.from(bySymbol.values()).sort((left, right) => left.symbol.localeCompare(right.symbol));
+}
+
+function renderAssetOptions() {
+  if (!els.assetSelect || !selectableAssets.length) return;
+  const current = selectedAsset;
+  els.assetSelect.innerHTML = selectableAssets
+    .map((asset) => {
+      const symbol = String(asset.symbol || "").toUpperCase();
+      const exchange = asset.exchange ? ` · ${asset.exchange}` : "";
+      return `<option value="${symbol}">${assetLabel(symbol)}${exchange}</option>`;
+    })
+    .join("");
+  if (Array.from(els.assetSelect.options).some((option) => option.value === current)) {
+    els.assetSelect.value = current;
+  }
+}
+
 async function copyText(value, label = "Value") {
   const text = String(value || "");
   if (!text) return;
@@ -1855,7 +1886,7 @@ function renderForexSessions(date = new Date()) {
 }
 
 function normalizedTradingRules(rules = {}) {
-  const interval = String(rules.chartInterval || "15m");
+  const interval = String(rules.chartInterval || "1h");
   const rawLossPct = Number(rules.maxDailyLossPct ?? 0.05);
   const maxDailyLossPct = Number.isFinite(rawLossPct) ? Math.min(0.2, Math.max(0.01, rawLossPct)) : 0.05;
   const rawOrderQuoteSize = Number(rules.orderQuoteSize ?? rules.maxOrderNotional ?? 25);
@@ -1872,7 +1903,7 @@ function normalizedTradingRules(rules = {}) {
     ? 5000
     : Number.isFinite(rawMaxPositionValue) ? Math.max(1, rawMaxPositionValue) : 5000;
   return {
-    chartInterval: ["15m", "5m"].includes(interval) ? interval : "15m",
+    chartInterval: ["30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "1w"].includes(interval) ? interval : "1h",
     leverage: 10,
     signalSessionWindow: ["london_new_york", "always"].includes(String(rules.signalSessionWindow || ""))
       ? String(rules.signalSessionWindow)
@@ -1912,7 +1943,7 @@ function renderTradingRules() {
   els.rulesStatus.textContent = `${tradingRules.chartInterval} signal profile`;
   els.rulesSummary.textContent = `10x risk lens · ${money(tradingRules.orderQuoteSize)} alert size · ${money(
     tradingRules.maxTotalNotional
-  )} max signal risk · ${money(tradingRules.maxPositionValue)} exposure lens · disciplined stop band · ${tradingRules.chartInterval} analysis with 15m/5m window · ${signalWindowLabel} · CPI/PPI ${economicBlackoutMinutes}m blackout · ${tradingRules.sessionGuardMinutes}m session guard · ${
+  )} max signal risk · ${money(tradingRules.maxPositionValue)} exposure lens · disciplined stop band · ${tradingRules.chartInterval} CoinGlass analysis · ${signalWindowLabel} · CPI/PPI ${economicBlackoutMinutes}m blackout · ${tradingRules.sessionGuardMinutes}m session guard · ${
     tradingRules.londonCommodityOnly ? "London commodity guard on" : "London commodity guard off"
   } · ${drawdownLabel} · ${tradingRules.staleGridCancel ? "stale signal expiry on" : "stale signal expiry off"} · free access`;
   els.ticketDrawdown.textContent = `${(tradingRules.maxDailyLossPct * 100).toFixed(2)}%`;
@@ -2153,13 +2184,36 @@ function syncSelectedAsset() {
   }
   els.symbolInput.value = `${selectedAsset}-USD`;
   const live = markets.find((asset) => asset.symbol === selectedAsset);
+  const selectable = selectableAssets.find((asset) => asset.symbol === selectedAsset);
   if (els.assetDetail) {
     els.assetDetail.innerHTML = `
       <strong>${assetLabel(selectedAsset)}</strong>
-      <span>${assetRoute(selectedAsset)}${live ? ` · live mark ${money(live.price)}` : " · not returned by current venue feed"}</span>
+      <span>${assetRoute(selectedAsset)}${
+        live
+          ? ` · live mark ${money(live.price)}`
+          : selectable?.exchange
+            ? ` · CoinGlass ${selectable.exchange} ${selectable.instrument || ""}`
+            : " · not returned by current venue feed"
+      }</span>
     `;
   }
   renderMarkets();
+}
+
+async function loadSelectableAssets() {
+  try {
+    const response = await apiFetch("/api/assets", { cache: "no-store" });
+    if (!response.ok) throw new Error("asset list unavailable");
+    const payload = await response.json();
+    mergeSelectableAssets(payload.assets || []);
+    renderAssetOptions();
+    syncSelectedAsset();
+  } catch {
+    if (!selectableAssets.length) {
+      mergeSelectableAssets(["BTC", "ETH", "SOL", "HYPE", "BNB", "XRP", "DOGE", "EURUSD", "GBPUSD"].map((symbol) => ({ symbol })));
+      renderAssetOptions();
+    }
+  }
 }
 
 async function loadMarkets() {
@@ -2168,13 +2222,12 @@ async function loadMarkets() {
     if (!response.ok) throw new Error("market fetch failed");
     const payload = await response.json();
     markets = (payload.assets || []).filter((asset) => Number.isFinite(Number(asset.price)));
+    mergeSelectableAssets(payload.assets || []);
     marketGroups = payload.groups || {};
-    if (!els.assetSelect.options.length && markets.length) {
-      els.assetSelect.innerHTML = markets
-        .map((asset) => `<option value="${asset.symbol}">${assetLabel(asset.symbol)}</option>`)
-        .join("");
-    }
-    if (!markets.some((asset) => asset.symbol === selectedAsset) && markets[0]) {
+    renderAssetOptions();
+    if (!selectableAssets.some((asset) => asset.symbol === selectedAsset) && selectableAssets[0]) {
+      selectedAsset = selectableAssets[0].symbol;
+    } else if (!markets.some((asset) => asset.symbol === selectedAsset) && markets[0] && !selectableAssets.length) {
       selectedAsset = markets[0].symbol;
     }
     syncSelectedAsset();
@@ -2193,9 +2246,8 @@ async function loadMarkets() {
     }
   } catch {
     if (!els.assetSelect.options.length) {
-      ["BTC", "ETH", "SOL", "HYPE", "BNB", "XRP", "DOGE"].forEach((symbol) => {
-        els.assetSelect.add(new Option(assetLabel(symbol), symbol));
-      });
+      mergeSelectableAssets(["BTC", "ETH", "SOL", "HYPE", "BNB", "XRP", "DOGE"].map((symbol) => ({ symbol })));
+      renderAssetOptions();
     }
   }
 }
@@ -2616,7 +2668,7 @@ function updateMarketMap() {
       ? `Valid until ${formatSignalTime(timing.expiresAt)}`
       : timing.opensAt
         ? `Next window ${formatSignalTime(timing.opensAt)}`
-        : `${tradingRules.chartInterval} chart · 15m/5m analysis`;
+        : `${tradingRules.chartInterval} chart · CoinGlass analysis`;
   }
   marketScene.sprites.forEach((sprite) => marketScene.group.remove(sprite));
   marketScene.sprites = [];
@@ -3634,6 +3686,7 @@ window.addEventListener("resize", resizeMarketMap);
 setupAppInstall();
 reset();
 initMarketMap();
+loadSelectableAssets();
 loadMarkets();
 loadMe();
 refreshBackend();

@@ -17,6 +17,7 @@ from monatise.live.secrets import secret_value
 
 SESSION_SECONDS = 60 * 60 * 24 * 14
 PASSWORD_RESET_CODE_SECONDS = 60 * 10
+COINGLASS_STARTUP_INTERVALS = {"30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "1w"}
 
 
 @dataclass(frozen=True)
@@ -43,7 +44,7 @@ class UserSettings:
     selected_symbol: str = "BTC"
     subscription_plan: str = "free"
     subscription_status: str = "active"
-    chart_interval: str = "15m"
+    chart_interval: str = "1h"
     signal_session_window: str = "london_new_york"
     leverage: float = 10.0
     order_quote_size: float = 25.0
@@ -261,8 +262,8 @@ class UserStore:
         settings = self.settings_for_user(user_id)
         chart_interval = chart_interval.strip()
         signal_session_window = signal_session_window or "london_new_york"
-        if chart_interval not in {"15m", "5m"}:
-            raise ValueError("chart interval must be 15m or 5m")
+        if chart_interval not in COINGLASS_STARTUP_INTERVALS:
+            raise ValueError("chart interval must be 30m, 1h, 2h, 4h, 6h, 8h, 12h, 1d, or 1w")
         if signal_session_window not in {"london_new_york", "always"}:
             raise ValueError("signal session window must be london_new_york or always")
         if session_guard_minutes not in {5, 15, 30, 60, 90}:
@@ -369,7 +370,7 @@ class UserStore:
             selected_symbol=str(row["selected_symbol"]),
             subscription_plan=str(row["subscription_plan"]),
             subscription_status=str(row["subscription_status"]),
-            chart_interval=str(row["chart_interval"] if row["chart_interval"] in {"15m", "5m"} else "15m"),
+            chart_interval=str(row["chart_interval"] if row["chart_interval"] in COINGLASS_STARTUP_INTERVALS else "1h"),
             signal_session_window=str(row["signal_session_window"] or "london_new_york"),
             leverage=float(row["leverage"] or 10.0),
             order_quote_size=order_quote_size,
@@ -440,7 +441,7 @@ class UserStore:
                   selected_symbol text not null,
                   subscription_plan text not null,
                   subscription_status text not null,
-                  chart_interval text not null default '15m',
+                  chart_interval text not null default '1h',
                   signal_session_window text not null default 'london_new_york',
                   leverage real not null default 10,
                   order_quote_size real not null default 25,
@@ -460,7 +461,7 @@ class UserStore:
                 for row in conn.execute("pragma table_info(user_settings)").fetchall()
             }
             migrations = {
-                "chart_interval": "alter table user_settings add column chart_interval text not null default '15m'",
+                "chart_interval": "alter table user_settings add column chart_interval text not null default '1h'",
                 "signal_session_window": "alter table user_settings add column signal_session_window text not null default 'london_new_york'",
                 "leverage": "alter table user_settings add column leverage real not null default 10",
                 "order_quote_size": "alter table user_settings add column order_quote_size real not null default 25",
