@@ -1552,22 +1552,27 @@ function renderTradingViewChart() {
   const config = {
     allow_symbol_change: true,
     autosize: true,
+    backgroundColor: "#0F0F0F",
     calendar: false,
+    compareSymbols: [],
     details: false,
-    hide_side_toolbar: false,
+    gridColor: "rgba(242, 242, 242, 0.06)",
+    hide_legend: false,
+    hide_side_toolbar: true,
     hide_top_toolbar: false,
     hide_volume: false,
     hotlist: false,
     interval,
     locale: "en",
     save_image: true,
-    studies: ["STD;EMA"],
+    studies: [],
     style: "1",
     support_host: "https://www.tradingview.com",
     symbol: tvSymbol,
-    theme: "light",
+    theme: "dark",
     timezone: "Etc/UTC",
-    withdateranges: true
+    watchlist: [],
+    withdateranges: false
   };
   const iframe = document.createElement("iframe");
   iframe.allowFullscreen = true;
