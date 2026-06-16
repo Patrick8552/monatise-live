@@ -4,6 +4,8 @@ const HYPER_BASE = "https://api.hyperliquid.xyz/info";
 const ALT_FG = "https://api.alternative.me/fng/?limit=30&format=json";
 const SESSION_KEY = "btc-coinglass-dashboard-session";
 const API_KEY_STORAGE = "btc-coinglass-api-key";
+const ABLY_KEY_STORAGE = "monatise-ably-api-key";
+const ABLY_CHANNEL_STORAGE = "monatise-ably-channel";
 const ASSETS = {
   BTC: { coin: "BTC", pair: "BTCUSDT", hyper: "BTC" },
   ETH: { coin: "ETH", pair: "ETHUSDT", hyper: "ETH" },
@@ -19,6 +21,8 @@ const els = {
   exchangeSelect: document.querySelector("#exchangeSelect"),
   intervalSelect: document.querySelector("#intervalSelect"),
   liqRangeSelect: document.querySelector("#liqRangeSelect"),
+  ablyKeyInput: document.querySelector("#ablyKeyInput"),
+  ablyChannelInput: document.querySelector("#ablyChannelInput"),
   refreshButton: document.querySelector("#refreshButton"),
   clearSessionButton: document.querySelector("#clearSessionButton"),
   sessionStatusDot: document.querySelector("#sessionStatusDot"),
@@ -70,6 +74,8 @@ const els = {
   oiList: document.querySelector("#oiList"),
   hyperList: document.querySelector("#hyperList"),
   newsList: document.querySelector("#newsList"),
+  liveAlertStatus: document.querySelector("#liveAlertStatus"),
+  liveAlertList: document.querySelector("#liveAlertList"),
   telemetryList: document.querySelector("#telemetryList"),
   fgGauge: document.querySelector("#fgGauge"),
   fgLabel: document.querySelector("#fgLabel")
@@ -80,6 +86,16 @@ const state = {
   apiKey: localStorage.getItem(API_KEY_STORAGE) || "",
   priceSeries: [],
   lastPrice: null,
+  realtime: {
+    client: null,
+    channel: null,
+    key: localStorage.getItem(ABLY_KEY_STORAGE) || "",
+    channelName: localStorage.getItem(ABLY_CHANNEL_STORAGE) || "monatise-live-alerts",
+    events: [],
+    lastSetup: null,
+    lastEntrySignal: null,
+    lastGridCompletion: null
+  },
   market: {
     priceChange: 0,
     fundingAverage: null,
@@ -101,6 +117,8 @@ const state = {
 };
 
 els.apiKeyInput.value = state.apiKey;
+els.ablyKeyInput.value = state.realtime.key;
+els.ablyChannelInput.value = state.realtime.channelName;
 
 function readSession() {
   try {
@@ -166,6 +184,144 @@ function renderTelemetry() {
       </div>
     `;
   }).join("");
+}
+
+function renderLiveAlerts() {
+  if (!state.realtime.events.length) {
+    els.liveAlertList.innerHTML = `
+      <div class="news-item">
+        <strong>No live events yet</strong>
+        <small>State changes, entries, and grid completions will appear here.</small>
+      </div>
+    `;
+    return;
+  }
+  els.liveAlertList.innerHTML = state.realtime.events.slice(0, 8).map((event) => `
+    <div class="news-item">
+      <strong>${event.title}</strong>
+      <small>${event.asset} · ${event.kind} · ${event.time}</small>
+      <p>${event.detail}</p>
+    </div>
+  `).join("");
+}
+
+function setLiveAlertStatus(text) {
+  els.liveAlertStatus.textContent = text;
+}
+
+async function connectRealtime() {
+  const key = state.realtime.key.trim();
+  const channelName = state.realtime.channelName.trim() || "monatise-live-alerts";
+  if (state.realtime.client) {
+    state.realtime.client.close();
+    state.realtime.client = null;
+    state.realtime.channel = null;
+  }
+  if (!key) {
+    setLiveAlertStatus("Local event stream ready");
+    return;
+  }
+  if (!window.Ably?.Realtime) {
+    setLiveAlertStatus("Ably SDK unavailable");
+    recordTelemetry("Live alerts", "Ably", false, 0, "SDK unavailable");
+    return;
+  }
+  const started = performance.now();
+  const clientId = `monatise-${Math.random().toString(16).slice(2)}`;
+  const client = new window.Ably.Realtime({ key, clientId });
+  const channel = client.channels.get(channelName);
+  state.realtime.client = client;
+  state.realtime.channel = channel;
+
+  client.connection.on("connected", () => {
+    recordTelemetry("Live alerts", "Ably", true, Math.round(performance.now() - started), channelName);
+    setLiveAlertStatus(`Ably live · ${channelName}`);
+  });
+  client.connection.on("failed", (error) => {
+    const reason = error?.reason?.message || "connection failed";
+    recordTelemetry("Live alerts", "Ably", false, Math.round(performance.now() - started), reason);
+    setLiveAlertStatus(`Ably failed · ${reason}`);
+  });
+  client.connection.on("disconnected", () => setLiveAlertStatus("Ably reconnecting"));
+  channel.subscribe("monatise-alert", (message) => {
+    if (message.clientId === clientId) return;
+    pushLiveAlert({
+      kind: message.data?.kind || "external",
+      asset: message.data?.asset || selectedCoin(),
+      title: message.data?.title || "External live alert",
+      detail: message.data?.detail || "Realtime message received.",
+      payload: message.data?.payload || {}
+    }, false);
+  });
+}
+
+function pushLiveAlert(event, shouldPublish = true) {
+  const item = {
+    kind: event.kind,
+    asset: event.asset,
+    title: event.title,
+    detail: event.detail,
+    payload: event.payload || {},
+    time: new Date().toLocaleTimeString()
+  };
+  state.realtime.events.unshift(item);
+  state.realtime.events = state.realtime.events.slice(0, 40);
+  renderLiveAlerts();
+  if (shouldPublish && state.realtime.channel) {
+    state.realtime.channel.publish("monatise-alert", item).catch((error) => {
+      recordTelemetry("Publish alert", "Ably", false, 0, error.message);
+      setLiveAlertStatus(`Ably publish failed · ${error.message}`);
+    });
+  }
+}
+
+function evaluateLiveAlerts(setup) {
+  if (!setup) return;
+  const asset = setup.asset;
+  const setupSignature = `${asset}:${setup.direction}:${setup.gridDirection}:${setup.hedgeDirection}`;
+  if (state.realtime.lastSetup && state.realtime.lastSetup !== setupSignature) {
+    pushLiveAlert({
+      kind: "state change",
+      asset,
+      title: `${asset} setup changed to ${setup.direction}`,
+      detail: `${setup.gridDirection}; ${setup.hedgeDirection}. Confidence ${setup.confidence}%.`,
+      payload: setup
+    });
+  }
+  state.realtime.lastSetup = setupSignature;
+
+  const entryReady = setup.direction !== "WAIT" && setup.confidence >= 55 && setup.liveChecks >= 5;
+  const entrySignature = `${asset}:${setup.direction}:${Math.floor(Date.now() / 300000)}`;
+  if (entryReady && state.realtime.lastEntrySignal !== entrySignature) {
+    state.realtime.lastEntrySignal = entrySignature;
+    pushLiveAlert({
+      kind: "entry notification",
+      asset,
+      title: `${asset} ${setup.direction} entry window`,
+      detail: `${setup.gridDirection}. ${setup.gridPlan}`,
+      payload: setup
+    });
+  }
+
+  const vwap = Number(setup.vwap);
+  const price = Number(setup.price);
+  const completed =
+    setup.direction === "BUY SETUP"
+      ? Number.isFinite(price) && Number.isFinite(vwap) && price >= vwap
+      : setup.direction === "SELL SETUP"
+        ? Number.isFinite(price) && Number.isFinite(vwap) && price <= vwap
+        : false;
+  const gridSignature = `${asset}:${setup.direction}:${Math.round(vwap || 0)}:${Math.floor(Date.now() / 900000)}`;
+  if (completed && state.realtime.lastGridCompletion !== gridSignature) {
+    state.realtime.lastGridCompletion = gridSignature;
+    pushLiveAlert({
+      kind: "grid completion",
+      asset,
+      title: `${asset} grid reached VWAP target`,
+      detail: `Price ${formatUsd(price)} reached VWAP ${formatUsd(vwap)}. Review partials, hedge, and next grid.`,
+      payload: setup
+    });
+  }
 }
 
 async function timedFetch(name, source, url, options = {}) {
@@ -785,22 +941,44 @@ function applyMonatiseFramework() {
   els.frameworkBias.textContent = `Score ${score >= 0 ? "+" : ""}${score} from ${checks.length} checks`;
   els.setupReason.textContent = checks.map((check) => `${check.name}: ${check.detail}`).join(" · ");
 
+  let gridDirection = `Neutral grid ${asset.coin}`;
+  let gridPlan = "Use small two-sided grid or wait until funding/OI/liquidation checks align.";
+  let hedgeDirection = "Flat hedge";
+  let hedgePlan = "Stay capital-light until the setup confirms.";
+
   if (direction === "BUY SETUP") {
-    els.gridDirection.textContent = `Buy grid ${asset.coin}`;
-    els.gridPlan.textContent = gridPlanForResearch("buy", m.scaleAction, m.vwapSignal);
-    els.hedgeDirection.textContent = hedgePct ? `Short hedge ${hedgePct}%` : "No hedge";
-    els.hedgePlan.textContent = hedgePct ? "Keep a partial short while funding/liquidation risk is elevated." : "Long setup is clean enough to run unhedged.";
+    gridDirection = `Buy grid ${asset.coin}`;
+    gridPlan = gridPlanForResearch("buy", m.scaleAction, m.vwapSignal);
+    hedgeDirection = hedgePct ? `Short hedge ${hedgePct}%` : "No hedge";
+    hedgePlan = hedgePct ? "Keep a partial short while funding/liquidation risk is elevated." : "Long setup is clean enough to run unhedged.";
   } else if (direction === "SELL SETUP") {
-    els.gridDirection.textContent = `Sell grid ${asset.coin}`;
-    els.gridPlan.textContent = gridPlanForResearch("sell", m.scaleAction, m.vwapSignal);
-    els.hedgeDirection.textContent = hedgePct ? `Long hedge ${hedgePct}%` : "No hedge";
-    els.hedgePlan.textContent = hedgePct ? "Keep a partial long while squeeze or crowded-short risk is elevated." : "Short setup is clean enough to run unhedged.";
-  } else {
-    els.gridDirection.textContent = `Neutral grid ${asset.coin}`;
-    els.gridPlan.textContent = "Use small two-sided grid or wait until funding/OI/liquidation checks align.";
-    els.hedgeDirection.textContent = "Flat hedge";
-    els.hedgePlan.textContent = "Stay capital-light until the setup confirms.";
+    gridDirection = `Sell grid ${asset.coin}`;
+    gridPlan = gridPlanForResearch("sell", m.scaleAction, m.vwapSignal);
+    hedgeDirection = hedgePct ? `Long hedge ${hedgePct}%` : "No hedge";
+    hedgePlan = hedgePct ? "Keep a partial long while squeeze or crowded-short risk is elevated." : "Short setup is clean enough to run unhedged.";
   }
+
+  els.gridDirection.textContent = gridDirection;
+  els.gridPlan.textContent = gridPlan;
+  els.hedgeDirection.textContent = hedgeDirection;
+  els.hedgePlan.textContent = hedgePlan;
+
+  return {
+    asset: asset.coin,
+    direction,
+    confidence,
+    liveChecks,
+    score,
+    gridDirection,
+    gridPlan,
+    hedgeDirection,
+    hedgePlan,
+    price: state.lastPrice,
+    vwap: m.vwap,
+    vwapSignal: m.vwapSignal,
+    scaleAction: m.scaleAction,
+    checks
+  };
 }
 
 function gridPlanForResearch(side, action, vwapSignal) {
@@ -1005,7 +1183,8 @@ async function refreshDashboard() {
   ];
 
   await Promise.allSettled(jobs);
-  applyMonatiseFramework();
+  const setup = applyMonatiseFramework();
+  evaluateLiveAlerts(setup);
   const failures = state.telemetry.slice(0, 8).filter((item) => !item.ok).length;
   setSessionStatus(failures ? "bad" : "good", failures ? "Session degraded" : "Session live");
   els.refreshButton.disabled = false;
@@ -1018,9 +1197,25 @@ els.apiKeyInput.addEventListener("change", () => {
   refreshDashboard();
 });
 
+els.ablyKeyInput.addEventListener("change", () => {
+  state.realtime.key = els.ablyKeyInput.value.trim();
+  localStorage.setItem(ABLY_KEY_STORAGE, state.realtime.key);
+  connectRealtime();
+});
+
+els.ablyChannelInput.addEventListener("change", () => {
+  state.realtime.channelName = els.ablyChannelInput.value.trim() || "monatise-live-alerts";
+  els.ablyChannelInput.value = state.realtime.channelName;
+  localStorage.setItem(ABLY_CHANNEL_STORAGE, state.realtime.channelName);
+  connectRealtime();
+});
+
 els.refreshButton.addEventListener("click", refreshDashboard);
 els.assetSelect.addEventListener("change", () => {
   resetMarketContext();
+  state.realtime.lastSetup = null;
+  state.realtime.lastEntrySignal = null;
+  state.realtime.lastGridCompletion = null;
   refreshDashboard();
 });
 els.exchangeSelect.addEventListener("change", refreshDashboard);
@@ -1039,5 +1234,7 @@ window.addEventListener("resize", () => {
 });
 
 renderTelemetry();
+renderLiveAlerts();
+connectRealtime();
 refreshDashboard();
 setInterval(refreshDashboard, 60_000);

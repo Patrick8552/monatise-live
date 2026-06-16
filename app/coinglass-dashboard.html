@@ -66,6 +66,14 @@
               <option value="365d">365d</option>
             </select>
           </label>
+          <label>
+            <span>Ably API key</span>
+            <input id="ablyKeyInput" type="password" autocomplete="off" placeholder="optional live alerts key" />
+          </label>
+          <label>
+            <span>Live channel</span>
+            <input id="ablyChannelInput" type="text" autocomplete="off" value="monatise-live-alerts" />
+          </label>
           <button id="refreshButton" type="button">Refresh</button>
         </section>
 
@@ -239,6 +247,16 @@
             <div id="newsList" class="news-list"></div>
           </article>
 
+          <article class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Live Alerts</h2>
+                <p id="liveAlertStatus">Local event stream ready</p>
+              </div>
+            </div>
+            <div id="liveAlertList" class="news-list"></div>
+          </article>
+
           <article class="panel telemetry-panel wide">
             <div class="panel-head">
               <div>
@@ -252,6 +270,7 @@
         </section>
       </main>
     </div>
+    <script src="https://cdn.ably.com/lib/ably.min-2.js"></script>
     <script src="./coinglass-dashboard.js"></script>
   </body>
 </html>
