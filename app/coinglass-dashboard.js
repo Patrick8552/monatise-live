@@ -1344,6 +1344,12 @@ async function getLiquidations() {
       const payload = await timedFetch("Liquidation map", "CoinGlass", url, { headers: cgHeaders() });
       const shapeSummary = summarizeLiquidationPayload(payload);
       document.body.dataset.liqShape = shapeSummary.label;
+      const payloadError = coinGlassPayloadError(payload);
+      if (payloadError) {
+        const symbol = new URL(url, window.location.origin).searchParams.get("symbol") || asset.pair;
+        mapErrors.push(`${symbol}: ${payloadError}`);
+        continue;
+      }
       levels = parseLiquidationMap(payload);
       mapSymbol = new URL(url, window.location.origin).searchParams.get("symbol") || mapSymbol;
       if (levels.length) break;
@@ -1595,6 +1601,12 @@ function firstArray(row, keys) {
     if (Array.isArray(row[key])) return row[key];
   }
   return [];
+}
+
+function coinGlassPayloadError(payload) {
+  const code = payload?.code;
+  if (code == null || ["0", "200"].includes(String(code))) return "";
+  return `CoinGlass code ${code}: ${payload?.msg || payload?.message || "request returned no data"}`;
 }
 
 function summarizeLiquidationPayload(payload) {
