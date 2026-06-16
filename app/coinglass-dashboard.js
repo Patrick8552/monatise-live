@@ -1326,24 +1326,41 @@ async function getLiquidations() {
   const asset = selectedAsset();
   requireCoinGlass(`${asset.coin} liquidation map`);
   const range = els.liqRangeSelect.value;
-  const mapPromise = timedFetch(
-    "Liquidation map",
-    "CoinGlass",
-    `${CG_BASE}/api/futures/liquidation/aggregated-map?symbol=${asset.coin}&range=${range}`,
-    { headers: cgHeaders() }
-  );
+  const mapUrls = [
+    `${CG_BASE}/api/futures/liquidation/aggregated-map?symbol=${asset.pair}&range=${range}`,
+    `${CG_BASE}/api/futures/liquidation/aggregated-map?symbol=${asset.coin}&range=${range}`
+  ];
   const painPromise = timedFetch(
     "Liquidation max pain",
     "CoinGlass",
     `${CG_BASE}/api/futures/liquidation/max-pain?range=24h`,
     { headers: cgHeaders() }
   );
-  const [mapPayload, painPayload] = await Promise.allSettled([mapPromise, painPromise]);
-  const levels = mapPayload.status === "fulfilled" ? parseLiquidationMap(mapPayload.value) : [];
+  const mapErrors = [];
+  let levels = [];
+  let mapSymbol = asset.pair;
+  for (const url of mapUrls) {
+    try {
+      const payload = await timedFetch("Liquidation map", "CoinGlass", url, { headers: cgHeaders() });
+      levels = parseLiquidationMap(payload);
+      mapSymbol = new URL(url, window.location.origin).searchParams.get("symbol") || mapSymbol;
+      if (levels.length) break;
+      mapErrors.push(`${mapSymbol}: no price levels`);
+    } catch (error) {
+      mapErrors.push(error.message);
+    }
+  }
+  const painPayload = await Promise.resolve(painPromise).then(
+    (value) => ({ status: "fulfilled", value }),
+    (reason) => ({ status: "rejected", reason })
+  );
   const assetPain = painPayload.status === "fulfilled"
     ? (painPayload.value.data || []).find((item) => item.symbol === asset.coin)
     : null;
-  return { levels, assetPain };
+  if (!levels.length && mapErrors.length) {
+    throw new Error(`CoinGlass liquidation map returned no price levels (${mapErrors.join("; ")})`);
+  }
+  return { levels, assetPain, mapSymbol };
 }
 
 async function getFearGreed() {
@@ -1412,17 +1429,83 @@ async function getHyperliquidContext() {
 function parseLiquidationMap(payload) {
   const raw = payload?.data?.data || payload?.data || {};
   const entries = [];
-  Object.values(raw).forEach((bucket) => {
-    if (!Array.isArray(bucket)) return;
-    bucket.forEach((row) => {
-      const price = Number(row?.[0]);
-      const level = Number(row?.[1]);
-      if (Number.isFinite(price) && Number.isFinite(level)) {
-        entries.push({ price, level });
+  const addLevel = (row) => {
+    if (Array.isArray(row)) {
+      const price = Number(row[0]);
+      const level = Number(row[1]);
+      if (Number.isFinite(price) && Number.isFinite(level)) entries.push({ price, level });
+      return;
+    }
+    if (!row || typeof row !== "object") return;
+    const price = firstFinite(row, [
+      "price",
+      "liq_price",
+      "liquidation_price",
+      "price_level",
+      "bin",
+      "x"
+    ]);
+    const level = firstFinite(row, [
+      "liquidation_usd",
+      "liquidationUsd",
+      "liq_usd",
+      "liqUsd",
+      "amount_usd",
+      "amountUsd",
+      "value",
+      "vol_usd",
+      "volume_usd",
+      "total",
+      "y",
+      "long_liquidation_usd",
+      "short_liquidation_usd"
+    ]);
+    const longLevel = firstFinite(row, ["long_liquidation_usd", "longLiquidationUsd", "long_liq_usd", "longLiqUsd"]);
+    const shortLevel = firstFinite(row, ["short_liquidation_usd", "shortLiquidationUsd", "short_liq_usd", "shortLiqUsd"]);
+    const combined = Number.isFinite(longLevel) || Number.isFinite(shortLevel)
+      ? (Number.isFinite(longLevel) ? longLevel : 0) + (Number.isFinite(shortLevel) ? shortLevel : 0)
+      : level;
+    if (Number.isFinite(price) && Number.isFinite(combined)) entries.push({ price, level: combined });
+  };
+  const visit = (value) => {
+    if (!value) return;
+    if (Array.isArray(value)) {
+      if (value.length >= 2 && value.every((item) => typeof item !== "object" || item === null)) {
+        addLevel(value);
+        return;
       }
-    });
+      value.forEach(visit);
+      return;
+    }
+    if (typeof value === "object") {
+      addLevel(value);
+      Object.entries(value).forEach(([key, child]) => {
+        const numericKey = Number(key);
+        if (Number.isFinite(numericKey) && Array.isArray(child)) {
+          child.forEach((level) => addLevel([numericKey, Array.isArray(level) ? level[1] ?? level[0] : level]));
+        } else {
+          visit(child);
+        }
+      });
+    }
+  };
+  visit(raw);
+  const byPrice = new Map();
+  entries.forEach((row) => {
+    const rounded = Math.round(row.price * 100) / 100;
+    byPrice.set(rounded, (byPrice.get(rounded) || 0) + Math.max(0, row.level));
   });
-  return entries.sort((a, b) => a.price - b.price);
+  return Array.from(byPrice, ([price, level]) => ({ price, level }))
+    .filter((row) => row.level > 0)
+    .sort((a, b) => a.price - b.price);
+}
+
+function firstFinite(row, keys) {
+  for (const key of keys) {
+    const value = Number(row[key]);
+    if (Number.isFinite(value)) return value;
+  }
+  return NaN;
 }
 
 function renderPrice(series) {
@@ -1729,7 +1812,7 @@ function renderLiquidations(result) {
   state.market.liquidationLevels = levels;
   els.liqBias.textContent = bias;
   els.liqBias.className = above > below ? "positive" : "negative";
-  els.liqSource.textContent = `CoinGlass aggregated liquidation map · ${asset.coin}`;
+  els.liqSource.textContent = `CoinGlass aggregated liquidation map · ${result.mapSymbol || asset.pair}`;
   if (result.assetPain) {
     els.maxPain.textContent = `max pain ${formatUsd(result.assetPain.short_max_pain_liq_price)} / ${formatUsd(result.assetPain.long_max_pain_liq_price)}`;
   } else {

@@ -42,6 +42,7 @@ COINGLASS_PROXY_PATHS = {
     "/api/article/list",
     "/api/futures/funding-rate/exchange-list",
     "/api/futures/liquidation/aggregated-map",
+    "/api/futures/liquidation/aggregated-history",
     "/api/futures/liquidation/max-pain",
     "/api/futures/open-interest/exchange-list",
     "/api/futures/price/history",
