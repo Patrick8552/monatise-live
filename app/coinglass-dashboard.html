@@ -11,13 +11,13 @@
     <link rel="manifest" href="./manifest.webmanifest?v=20260616-dashboard-install" />
     <link rel="icon" href="./icon-lotus.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./icon-lotus.svg" />
-    <link rel="stylesheet" href="./coinglass-dashboard.css?v=20260616-top-price" />
+    <link rel="stylesheet" href="./coinglass-dashboard.css?v=20260616-coinglass-only" />
   </head>
   <body>
     <div class="app-shell">
       <header class="topbar">
         <div>
-          <p class="eyebrow">Coinglass + Hyperliquid telemetry</p>
+          <p class="eyebrow">CoinGlass market telemetry</p>
           <h1 id="dashboardTitle">BTC Trading Dashboard</h1>
           <div class="mobile-price-chip" aria-label="Selected asset live price">
             <span id="headerMarketSymbol">BTCUSDT</span>
@@ -286,7 +286,7 @@
             <div class="panel-head">
               <div>
                 <h2>Funding Rate Check</h2>
-                <p id="fundingSource">Coinglass futures funding rate</p>
+                <p id="fundingSource">CoinGlass futures funding rate</p>
               </div>
             </div>
             <div id="fundingList" class="metric-list"></div>
@@ -296,7 +296,7 @@
             <div class="panel-head">
               <div>
                 <h2>Open Interest Check</h2>
-                <p id="oiSource">Coinglass futures open interest</p>
+                <p id="oiSource">CoinGlass futures open interest</p>
               </div>
             </div>
             <div id="oiList" class="metric-list"></div>
@@ -306,7 +306,7 @@
             <div class="panel-head">
               <div>
                 <h2>Liquidation Map</h2>
-                <p id="liqSource">Coinglass aggregated liquidation map</p>
+                <p id="liqSource">CoinGlass aggregated liquidation map</p>
               </div>
               <span id="maxPain" class="pill">max pain --</span>
             </div>
@@ -327,7 +327,7 @@
             <div class="panel-head">
               <div>
                 <h2>Fear & Greed</h2>
-                <p id="fgSource">Coinglass crypto index</p>
+                <p id="fgSource">CoinGlass crypto index</p>
               </div>
             </div>
             <div class="gauge-wrap">
@@ -340,7 +340,7 @@
             <div class="panel-head">
               <div>
                 <h2>News Alerts</h2>
-                <p id="newsSource">Coinglass instant news</p>
+                <p id="newsSource">CoinGlass instant news</p>
               </div>
             </div>
             <div id="newsList" class="news-list"></div>
@@ -419,7 +419,7 @@
             <div class="panel-head">
               <div>
                 <h2>Session Telemetry</h2>
-              <p>Monatise routes market telemetry through Coinglass first, then Hyperliquid confirmation.</p>
+              <p>Monatise routes price, indicators, research, and alerts through CoinGlass market telemetry.</p>
               </div>
               <button id="clearSessionButton" type="button" class="ghost-button">Clear</button>
             </div>
@@ -430,6 +430,6 @@
     </div>
     <script src="https://cdn.ably.com/lib/ably.min-2.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="./coinglass-dashboard.js?v=20260616-top-price"></script>
+    <script src="./coinglass-dashboard.js?v=20260616-coinglass-only"></script>
   </body>
 </html>

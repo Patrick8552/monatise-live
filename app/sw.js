@@ -1,14 +1,14 @@
-const CACHE_NAME = "monatise-shell-20260616-top-price";
+const CACHE_NAME = "monatise-shell-20260616-coinglass-only";
 const SHELL_ASSETS = [
   "./",
   "./index.html",
   "./cg.html",
   "./dashboard/",
-  "./coinglass-dashboard.html?v=20260616-top-price",
+  "./coinglass-dashboard.html?v=20260616-coinglass-only",
   "./styles.css?v=20260615-signal-levels",
   "./app.js?v=20260615-signal-levels",
-  "./coinglass-dashboard.css?v=20260616-top-price",
-  "./coinglass-dashboard.js?v=20260616-top-price",
+  "./coinglass-dashboard.css?v=20260616-coinglass-only",
+  "./coinglass-dashboard.js?v=20260616-coinglass-only",
   "./manifest.webmanifest?v=20260616-dashboard-install",
   "./icon-lotus.svg"
 ];

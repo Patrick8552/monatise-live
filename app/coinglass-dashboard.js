@@ -1,10 +1,8 @@
 const CG_BASE = "https://open-api-v4.coinglass.com";
-const BINANCE_BASE = "https://api.binance.com";
 const HYPER_BASE = "https://api.hyperliquid.xyz/info";
-const ALT_FG = "https://api.alternative.me/fng/?limit=30&format=json";
 const ELEVEN_BASE = "https://api.elevenlabs.io";
 const OPENAI_BASE = "https://api.openai.com";
-const SESSION_KEY = "btc-coinglass-dashboard-session";
+const SESSION_KEY = "btc-coinglass-dashboard-session-coinglass-only";
 const API_KEY_STORAGE = "btc-coinglass-api-key";
 const ABLY_KEY_STORAGE = "monatise-ably-api-key";
 const ABLY_CHANNEL_STORAGE = "monatise-ably-channel";
@@ -185,6 +183,7 @@ const state = {
     fundingAverage: null,
     oiChange: null,
     liquidationBias: null,
+    liquidationLevels: [],
     fearGreed: null,
     hyperFunding: null,
     hyperOpenInterest: null,
@@ -1173,6 +1172,10 @@ function hasKey() {
   return state.apiKey.trim().length > 0;
 }
 
+function requireCoinGlass(label) {
+  if (!hasKey()) throw new Error(`CoinGlass API key required for ${label}`);
+}
+
 function selectedAsset() {
   return ASSETS[els.assetSelect.value] || ASSETS.BTC;
 }
@@ -1214,6 +1217,7 @@ function resetMarketContext() {
     fundingAverage: null,
     oiChange: null,
     liquidationBias: null,
+    liquidationLevels: [],
     fearGreed: null,
     hyperFunding: null,
     hyperOpenInterest: null,
@@ -1233,55 +1237,38 @@ async function getPrice() {
   const asset = selectedAsset();
   const exchange = els.exchangeSelect.value;
   const interval = els.intervalSelect.value;
-  if (hasKey()) {
-    const params = new URLSearchParams({
-      exchange,
-      symbol: asset.pair,
-      interval,
-      limit: "96"
-    });
-    const payload = await timedFetch(
-      `${asset.coin} price`,
-      "Coinglass",
-      `${CG_BASE}/api/futures/price/history?${params}`,
-      { headers: cgHeaders() }
-    );
-    const rows = Array.isArray(payload.data) ? payload.data : [];
-    if (rows.length) {
-      els.priceSource.textContent = `Coinglass futures price history · ${asset.pair} · ${exchange} · ${interval}`;
-      return rows.map((row) => ({
-        time: Number(row.time),
-        open: Number(row.open ?? row.close),
-        close: Number(row.close),
-        high: Number(row.high),
-        low: Number(row.low),
-        volume: Number(row.volume_usd)
-      })).filter((row) => Number.isFinite(row.close) && Number.isFinite(row.high) && Number.isFinite(row.low));
-    }
-  }
-  const binanceInterval = interval === "30m" ? "30m" : interval === "4h" ? "4h" : interval === "1d" ? "1d" : interval === "15m" ? "15m" : "1h";
+  requireCoinGlass(`${asset.coin} price history`);
+  const params = new URLSearchParams({
+    exchange,
+    symbol: asset.pair,
+    interval,
+    limit: "96"
+  });
   const payload = await timedFetch(
-    `${asset.coin} price fallback`,
-    "Binance public",
-    `${BINANCE_BASE}/api/v3/klines?symbol=${asset.pair}&interval=${binanceInterval}&limit=96`
+    `${asset.coin} price`,
+    "CoinGlass",
+    `${CG_BASE}/api/futures/price/history?${params}`,
+    { headers: cgHeaders() }
   );
-  els.priceSource.textContent = "Binance public live candles · CoinGlass optional";
-  return payload.map((row) => ({
-    time: Number(row[0]),
-    open: Number(row[1]),
-    close: Number(row[4]),
-    high: Number(row[2]),
-    low: Number(row[3]),
-    volume: Number(row[7])
+  const rows = (Array.isArray(payload.data) ? payload.data : []).map((row) => ({
+    time: Number(row.time),
+    open: Number(row.open ?? row.close),
+    close: Number(row.close),
+    high: Number(row.high),
+    low: Number(row.low),
+    volume: Number(row.volume_usd)
   })).filter((row) => Number.isFinite(row.close) && Number.isFinite(row.high) && Number.isFinite(row.low));
+  if (!rows.length) throw new Error(`CoinGlass returned no ${asset.coin} price rows`);
+  els.priceSource.textContent = `CoinGlass futures price history · ${asset.pair} · ${exchange} · ${interval}`;
+  return rows;
 }
 
 async function getFunding() {
   const asset = selectedAsset();
-  if (!hasKey()) throw new Error("CoinGlass optional integration inactive");
+  requireCoinGlass(`${asset.coin} funding`);
   const payload = await timedFetch(
     "Funding rate",
-    "Coinglass",
+    "CoinGlass",
     `${CG_BASE}/api/futures/funding-rate/exchange-list`,
     { headers: cgHeaders() }
   );
@@ -1292,10 +1279,10 @@ async function getFunding() {
 
 async function getOpenInterest() {
   const asset = selectedAsset();
-  if (!hasKey()) throw new Error("CoinGlass optional integration inactive");
+  requireCoinGlass(`${asset.coin} open interest`);
   const payload = await timedFetch(
     "Open interest",
-    "Coinglass",
+    "CoinGlass",
     `${CG_BASE}/api/futures/open-interest/exchange-list?symbol=${asset.coin}`,
     { headers: cgHeaders() }
   );
@@ -1304,17 +1291,17 @@ async function getOpenInterest() {
 
 async function getLiquidations() {
   const asset = selectedAsset();
-  if (!hasKey()) throw new Error("CoinGlass optional integration inactive");
+  requireCoinGlass(`${asset.coin} liquidation map`);
   const range = els.liqRangeSelect.value;
   const mapPromise = timedFetch(
     "Liquidation map",
-    "Coinglass",
+    "CoinGlass",
     `${CG_BASE}/api/futures/liquidation/aggregated-map?symbol=${asset.coin}&range=${range}`,
     { headers: cgHeaders() }
   );
   const painPromise = timedFetch(
     "Liquidation max pain",
-    "Coinglass",
+    "CoinGlass",
     `${CG_BASE}/api/futures/liquidation/max-pain?range=24h`,
     { headers: cgHeaders() }
   );
@@ -1327,32 +1314,24 @@ async function getLiquidations() {
 }
 
 async function getFearGreed() {
-  if (hasKey()) {
-    const payload = await timedFetch(
-      "Fear and greed",
-      "Coinglass",
-      `${CG_BASE}/api/index/fear-greed-history`,
-      { headers: cgHeaders() }
-    );
-    const first = Array.isArray(payload.data) ? payload.data[0] : null;
-    const values = first?.data_list || [];
-    const times = first?.time_list || [];
-    if (values.length) {
-      els.fgSource.textContent = "Coinglass crypto fear and greed history";
-      return values.map((value, index) => ({ value: Number(value), time: Number(times[index]) * 1000 })).filter((row) => Number.isFinite(row.value));
-    }
-  }
-  const fallback = await timedFetch("Fear and greed fallback", "Alternative.me public", ALT_FG);
-  els.fgSource.textContent = "Alternative.me public index · CoinGlass optional";
-  return (fallback.data || []).reverse().map((row) => ({
-    value: Number(row.value),
-    time: Number(row.timestamp) * 1000,
-    label: row.value_classification
-  }));
+  requireCoinGlass("fear and greed history");
+  const payload = await timedFetch(
+    "Fear and greed",
+    "CoinGlass",
+    `${CG_BASE}/api/index/fear-greed-history`,
+    { headers: cgHeaders() }
+  );
+  const first = Array.isArray(payload.data) ? payload.data[0] : null;
+  const values = first?.data_list || [];
+  const times = first?.time_list || [];
+  const rows = values.map((value, index) => ({ value: Number(value), time: Number(times[index]) * 1000 })).filter((row) => Number.isFinite(row.value));
+  if (!rows.length) throw new Error("CoinGlass returned no fear and greed rows");
+  els.fgSource.textContent = "CoinGlass crypto fear and greed history";
+  return rows;
 }
 
 async function getNews() {
-  if (!hasKey()) throw new Error("CoinGlass optional integration inactive");
+  requireCoinGlass("news alerts");
   const end = Date.now();
   const start = end - 1000 * 60 * 60 * 24 * 3;
   const params = new URLSearchParams({
@@ -1362,7 +1341,7 @@ async function getNews() {
     page: "1",
     per_page: "8"
   });
-  const payload = await timedFetch("News alerts", "Coinglass", `${CG_BASE}/api/article/list?${params}`, { headers: cgHeaders() });
+  const payload = await timedFetch("News alerts", "CoinGlass", `${CG_BASE}/api/article/list?${params}`, { headers: cgHeaders() });
   return (payload.data || []).slice(0, 8);
 }
 
@@ -1411,14 +1390,6 @@ function parseLiquidationMap(payload) {
     });
   });
   return entries.sort((a, b) => a.price - b.price);
-}
-
-function syntheticLiquidations(price) {
-  const anchors = [-0.085, -0.055, -0.032, -0.018, 0.016, 0.029, 0.052, 0.081];
-  return anchors.map((offset, index) => ({
-    price: price * (1 + offset),
-    level: (index % 2 ? 54 : 36) * 1_000_000 * (1 + Math.abs(offset) * 8)
-  }));
 }
 
 function renderPrice(series) {
@@ -1655,7 +1626,7 @@ function renderFunding(rows) {
   state.market.fundingAverage = average;
   els.fundingAverage.textContent = formatPercent(average, 4);
   els.fundingAverage.className = average >= 0 ? "positive" : "negative";
-  els.fundingSource.textContent = `Coinglass ${asset.coin} futures funding rate · stablecoin margin`;
+  els.fundingSource.textContent = `CoinGlass ${asset.coin} futures funding rate · stablecoin margin`;
   els.fundingList.innerHTML = rows.map((row) => {
     const rate = Number(row.funding_rate);
     return `
@@ -1672,12 +1643,12 @@ function renderFunding(rows) {
 
 function renderFundingLocked(error) {
   state.market.fundingAverage = null;
-  els.fundingAverage.textContent = "public mode";
+  els.fundingAverage.textContent = "CoinGlass key";
   els.fundingAverage.className = "";
-  els.fundingSource.textContent = "CoinGlass funding optional · Hyperliquid still confirms funding";
+  els.fundingSource.textContent = "CoinGlass funding required";
   els.fundingList.innerHTML = lockedRows("Funding rate", error.message, [
     "Primary endpoint: /api/futures/funding-rate/exchange-list",
-    "Public mode uses Hyperliquid funding confirmation"
+    "Monatise will not score funding without CoinGlass data"
   ]);
 }
 
@@ -1687,7 +1658,7 @@ function renderOpenInterest(rows) {
   const all = rows.find((row) => row.exchange === "All") || rows[0];
   state.market.oiChange = Number(all.open_interest_change_percent_24h);
   els.openInterest.textContent = formatUsd(all.open_interest_usd, true);
-  els.oiSource.textContent = `Coinglass futures open interest · ${asset.coin}`;
+  els.oiSource.textContent = `CoinGlass futures open interest · ${asset.coin}`;
   els.oiList.innerHTML = rows.map((row) => {
     const change = Number(row.open_interest_change_percent_24h);
     return `
@@ -1704,27 +1675,27 @@ function renderOpenInterest(rows) {
 
 function renderOpenInterestLocked(error) {
   state.market.oiChange = null;
-  els.openInterest.textContent = "public mode";
-  els.oiSource.textContent = "CoinGlass OI optional · Hyperliquid still confirms open interest";
+  els.openInterest.textContent = "CoinGlass key";
+  els.oiSource.textContent = "CoinGlass open interest required";
   els.oiList.innerHTML = lockedRows("Open interest", error.message, [
     `Primary endpoint: /api/futures/open-interest/exchange-list?symbol=${selectedCoin()}`,
-    "Public mode uses Hyperliquid perp open interest"
+    "Monatise will not score open interest without CoinGlass data"
   ]);
 }
 
 function renderLiquidations(result) {
   const asset = selectedAsset();
   const current = state.lastPrice || 100000;
-  const levels = result.levels.length ? result.levels : syntheticLiquidations(current);
+  const levels = result.levels || [];
+  if (!levels.length) throw new Error("CoinGlass returned no liquidation map levels");
   const below = levels.filter((row) => row.price < current).reduce((sum, row) => sum + row.level, 0);
   const above = levels.filter((row) => row.price >= current).reduce((sum, row) => sum + row.level, 0);
   const bias = above > below ? "short squeeze" : "long flush";
   state.market.liquidationBias = bias;
+  state.market.liquidationLevels = levels;
   els.liqBias.textContent = bias;
   els.liqBias.className = above > below ? "positive" : "negative";
-  els.liqSource.textContent = result.levels.length
-    ? "Coinglass aggregated liquidation map"
-    : "Modeled liquidity map · CoinGlass optional";
+  els.liqSource.textContent = `CoinGlass aggregated liquidation map · ${asset.coin}`;
   if (result.assetPain) {
     els.maxPain.textContent = `max pain ${formatUsd(result.assetPain.short_max_pain_liq_price)} / ${formatUsd(result.assetPain.long_max_pain_liq_price)}`;
   } else {
@@ -1734,15 +1705,13 @@ function renderLiquidations(result) {
 }
 
 function renderLiquidationsLocked(error) {
-  const asset = selectedAsset();
-  const current = state.lastPrice || 100000;
-  els.liqSource.textContent = "Modeled liquidity map · CoinGlass optional";
+  els.liqSource.textContent = "CoinGlass liquidation map required";
   els.maxPain.textContent = "max pain gated";
-  els.liqBias.textContent = "simulated";
+  els.liqBias.textContent = "CoinGlass key";
   els.liqBias.className = "";
-  state.market.liquidationBias = "simulated";
-  drawLiquidationMap(els.liqCanvas, syntheticLiquidations(current), current);
-  recordTelemetry("Liquidation fallback", "Local model", true, 0, error.message);
+  state.market.liquidationBias = null;
+  state.market.liquidationLevels = [];
+  drawCanvasNotice(els.liqCanvas, "CoinGlass liquidation map required", error.message);
 }
 
 function renderFearGreed(rows) {
@@ -1762,21 +1731,21 @@ function renderFearGreed(rows) {
 
 function renderNews(rows) {
   if (!rows.length) throw new Error("No news rows");
-  els.newsSource.textContent = "Coinglass instant news alerts";
+  els.newsSource.textContent = "CoinGlass instant news alerts";
   els.newsList.innerHTML = rows.map((row) => `
     <div class="news-item">
       <strong>${stripHtml(row.article_title || "Market alert")}</strong>
-      <small>${row.source_name || "Coinglass"} · ${formatTime(row.article_release_time)}</small>
+      <small>${row.source_name || "CoinGlass"} · ${formatTime(row.article_release_time)}</small>
       <p>${stripHtml(row.article_description || "").slice(0, 160)}</p>
     </div>
   `).join("");
 }
 
 function renderNewsLocked(error) {
-  els.newsSource.textContent = "CoinGlass news optional";
+  els.newsSource.textContent = "CoinGlass news required";
   els.newsList.innerHTML = lockedRows("News alerts", error.message, [
     "Primary endpoint: /api/article/list",
-    "Live alerts still emit setup, state, entry, and grid events"
+    "Monatise will only publish news alerts from CoinGlass"
   ]);
 }
 
@@ -1784,10 +1753,6 @@ function renderHyperliquid(ctx) {
   state.market.hyperFunding = ctx.funding;
   state.market.hyperOpenInterest = ctx.openInterest;
   state.market.hyperPrice = ctx.markPrice;
-  if (!state.lastPrice) {
-    state.lastPrice = ctx.markPrice;
-    updateTopPrice(ctx.markPrice, "Hyperliquid mark");
-  }
   els.hyperSource.textContent = `Hyperliquid public context · ${ctx.coin}-PERP`;
   els.hyperList.innerHTML = [
     ["Mark price", formatUsd(ctx.markPrice), "Oracle " + formatUsd(ctx.oraclePrice)],
@@ -1825,7 +1790,6 @@ function applyMonatiseFramework() {
   addCheck(checks, "Funding", m.fundingAverage, m.fundingAverage > 0.015 ? -1 : m.fundingAverage < -0.015 ? 1 : 0, m.fundingAverage == null ? "waiting" : `${formatPercent(m.fundingAverage, 4)} average`);
   addCheck(checks, "Open interest", m.oiChange, m.oiChange > 0.5 ? 1 : m.oiChange < -0.5 ? -1 : 0, m.oiChange == null ? "waiting" : `${formatPercent(m.oiChange, 2)} 24h`);
   addCheck(checks, "Liquidations", m.liquidationBias, m.liquidationBias === "short squeeze" ? 1 : m.liquidationBias === "long flush" ? -1 : 0, m.liquidationBias || "waiting");
-  addCheck(checks, "Hyperliquid funding", m.hyperFunding, m.hyperFunding > 0.015 ? -1 : m.hyperFunding < -0.015 ? 1 : 0, m.hyperFunding == null ? "waiting" : `${formatPercent(m.hyperFunding, 4)}`);
   addCheck(checks, "Fear/greed", m.fearGreed, m.fearGreed > 72 ? -1 : m.fearGreed < 28 ? 1 : 0, m.fearGreed == null ? "waiting" : `${Math.round(m.fearGreed)}`);
   addCheck(checks, "VWAP", m.vwapSignal, m.vwapScore, m.vwapSignal ? `${m.vwapSignal} · ${formatPercent(m.vwapDistance, 2)} from VWAP` : "waiting");
   addCheck(checks, "History research", m.researchSignal, m.researchScore > 0 ? 1 : m.researchScore < 0 ? -1 : 0, m.researchSignal ? `${m.researchSignal} · ${m.scaleAction}` : "waiting");
@@ -1834,10 +1798,10 @@ function applyMonatiseFramework() {
   const score = checks.reduce((sum, check) => sum + check.score, 0);
   const direction = score >= 2 ? "BUY SETUP" : score <= -2 ? "SELL SETUP" : "WAIT";
   const confidence = Math.min(100, Math.round((Math.abs(score) / 6) * 100 + liveChecks * 5));
-  const risk = Math.abs(Number(m.fundingAverage || 0)) > 0.04 || Math.abs(Number(m.hyperFunding || 0)) > 0.04 || m.liquidationBias === "simulated";
+  const risk = Math.abs(Number(m.fundingAverage || 0)) > 0.04;
   const hedgePct = risk ? 50 : Math.abs(score) >= 3 ? 25 : 0;
 
-  els.frameworkSource.textContent = `${asset.coin} selected · Coinglass research + VWAP + derivatives checks + Hyperliquid confirmation`;
+  els.frameworkSource.textContent = `${asset.coin} selected · CoinGlass research + VWAP + CoinGlass derivatives checks`;
   els.setupDirection.textContent = direction;
   els.setupDirection.className = direction.includes("BUY") ? "positive" : direction.includes("SELL") ? "negative" : "";
   els.setupConfidence.textContent = `confidence ${confidence}%`;
@@ -2061,6 +2025,21 @@ function drawLiquidationMap(canvas, levels, current) {
   ctx.fillText(formatUsd(maxPrice), width - 104, height - 12);
 }
 
+function drawCanvasNotice(canvas, title, detail) {
+  const ctx = prepareCanvas(canvas);
+  const { width, height } = canvas.getBoundingClientRect();
+  ctx.clearRect(0, 0, width, height);
+  drawGrid(ctx, width, height);
+  ctx.fillStyle = "#eef4fb";
+  ctx.font = "600 14px system-ui";
+  ctx.textAlign = "center";
+  ctx.fillText(title, width / 2, height / 2 - 8);
+  ctx.fillStyle = "#90a3b8";
+  ctx.font = "12px system-ui";
+  ctx.fillText(detail, width / 2, height / 2 + 14, Math.max(120, width - 40));
+  ctx.textAlign = "start";
+}
+
 function prepareCanvas(canvas) {
   const ratio = window.devicePixelRatio || 1;
   const rect = canvas.getBoundingClientRect();
@@ -2127,8 +2106,18 @@ async function refreshDashboard() {
     const price = await getPrice();
     renderPrice(price);
   } catch (error) {
-    els.priceSource.textContent = `Price unavailable · ${error.message}`;
+    state.lastPrice = null;
+    state.priceSeries = [];
+    state.market.priceChange = null;
+    els.assetPrice.textContent = "$--";
+    els.headerAssetPrice.textContent = "$--";
+    els.priceChange.textContent = "CoinGlass required";
+    els.priceChange.className = "";
+    els.headerPriceChange.textContent = "CoinGlass required";
+    els.headerPriceChange.className = "";
+    els.priceSource.textContent = `CoinGlass price unavailable · ${error.message}`;
     els.pricePulse.textContent = "offline";
+    drawCanvasNotice(els.priceCanvas, "CoinGlass price history required", error.message);
   }
 
   const jobs = [
@@ -2137,7 +2126,11 @@ async function refreshDashboard() {
     getLiquidations().then(renderLiquidations).catch(renderLiquidationsLocked),
     getFearGreed().then(renderFearGreed).catch((error) => {
       state.market.fearGreed = null;
-      els.fgSource.textContent = `Fear and greed unavailable · ${error.message}`;
+      els.fearGreed.textContent = "CoinGlass key";
+      els.fgLabel.textContent = error.message;
+      els.fgGauge.querySelector("span").textContent = "--";
+      els.fgGauge.style.background = "";
+      els.fgSource.textContent = `CoinGlass fear and greed unavailable · ${error.message}`;
     }),
     getHyperliquidContext().then(renderHyperliquid).catch(renderHyperliquidLocked),
     getNews().then(renderNews).catch(renderNewsLocked)
@@ -2264,7 +2257,11 @@ els.clearSessionButton.addEventListener("click", () => {
 
 window.addEventListener("resize", () => {
   if (state.priceSeries.length) renderPrice(state.priceSeries);
-  if (state.lastPrice) drawLiquidationMap(els.liqCanvas, syntheticLiquidations(state.lastPrice), state.lastPrice);
+  if (state.market.liquidationLevels.length && state.lastPrice) {
+    drawLiquidationMap(els.liqCanvas, state.market.liquidationLevels, state.lastPrice);
+  } else {
+    drawCanvasNotice(els.liqCanvas, "CoinGlass liquidation map required", "Waiting for CoinGlass liquidation levels");
+  }
   resizeAtlas();
 });
 
