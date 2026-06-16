@@ -3,6 +3,7 @@ const SHELL_ASSETS = [
   "./",
   "./index.html",
   "./cg.html",
+  "./dashboard/",
   "./coinglass-dashboard.html?v=20260616-grid-signals",
   "./styles.css?v=20260615-signal-levels",
   "./app.js?v=20260615-signal-levels",
