@@ -2,10 +2,13 @@ const CG_BASE = "https://open-api-v4.coinglass.com";
 const BINANCE_BASE = "https://api.binance.com";
 const HYPER_BASE = "https://api.hyperliquid.xyz/info";
 const ALT_FG = "https://api.alternative.me/fng/?limit=30&format=json";
+const ELEVEN_BASE = "https://api.elevenlabs.io";
 const SESSION_KEY = "btc-coinglass-dashboard-session";
 const API_KEY_STORAGE = "btc-coinglass-api-key";
 const ABLY_KEY_STORAGE = "monatise-ably-api-key";
 const ABLY_CHANNEL_STORAGE = "monatise-ably-channel";
+const ELEVEN_KEY_STORAGE = "monatise-elevenlabs-api-key";
+const ELEVEN_VOICE_STORAGE = "monatise-elevenlabs-voice-id";
 const ASSETS = {
   BTC: { coin: "BTC", pair: "BTCUSDT", hyper: "BTC" },
   ETH: { coin: "ETH", pair: "ETHUSDT", hyper: "ETH" },
@@ -23,6 +26,12 @@ const els = {
   liqRangeSelect: document.querySelector("#liqRangeSelect"),
   ablyKeyInput: document.querySelector("#ablyKeyInput"),
   ablyChannelInput: document.querySelector("#ablyChannelInput"),
+  elevenKeyInput: document.querySelector("#elevenKeyInput"),
+  elevenVoiceInput: document.querySelector("#elevenVoiceInput"),
+  voiceQuestionInput: document.querySelector("#voiceQuestionInput"),
+  voiceRecordButton: document.querySelector("#voiceRecordButton"),
+  voiceAskButton: document.querySelector("#voiceAskButton"),
+  voiceStopButton: document.querySelector("#voiceStopButton"),
   refreshButton: document.querySelector("#refreshButton"),
   clearSessionButton: document.querySelector("#clearSessionButton"),
   sessionStatusDot: document.querySelector("#sessionStatusDot"),
@@ -76,6 +85,10 @@ const els = {
   newsList: document.querySelector("#newsList"),
   liveAlertStatus: document.querySelector("#liveAlertStatus"),
   liveAlertList: document.querySelector("#liveAlertList"),
+  voiceStatus: document.querySelector("#voiceStatus"),
+  voiceTranscript: document.querySelector("#voiceTranscript"),
+  voiceAnswer: document.querySelector("#voiceAnswer"),
+  voiceAudio: document.querySelector("#voiceAudio"),
   telemetryList: document.querySelector("#telemetryList"),
   fgGauge: document.querySelector("#fgGauge"),
   fgLabel: document.querySelector("#fgLabel")
@@ -95,6 +108,14 @@ const state = {
     lastSetup: null,
     lastEntrySignal: null,
     lastGridCompletion: null
+  },
+  voice: {
+    apiKey: localStorage.getItem(ELEVEN_KEY_STORAGE) || "",
+    voiceId: localStorage.getItem(ELEVEN_VOICE_STORAGE) || "JBFqnCBsd6RMkjVDRZzb",
+    recorder: null,
+    chunks: [],
+    recording: false,
+    audioUrl: null
   },
   market: {
     priceChange: 0,
@@ -119,6 +140,8 @@ const state = {
 els.apiKeyInput.value = state.apiKey;
 els.ablyKeyInput.value = state.realtime.key;
 els.ablyChannelInput.value = state.realtime.channelName;
+els.elevenKeyInput.value = state.voice.apiKey;
+els.elevenVoiceInput.value = state.voice.voiceId;
 
 function readSession() {
   try {
@@ -322,6 +345,164 @@ function evaluateLiveAlerts(setup) {
       payload: setup
     });
   }
+}
+
+function setVoiceStatus(text) {
+  els.voiceStatus.textContent = text;
+}
+
+function elevenHeaders(contentType = "application/json") {
+  const headers = { "xi-api-key": state.voice.apiKey };
+  if (contentType) headers["Content-Type"] = contentType;
+  return headers;
+}
+
+function currentSetupSnapshot() {
+  return {
+    asset: selectedCoin(),
+    symbol: selectedPair(),
+    price: els.assetPrice.textContent,
+    direction: els.setupDirection.textContent,
+    confidence: els.setupConfidence.textContent,
+    grid: els.gridDirection.textContent,
+    gridPlan: els.gridPlan.textContent,
+    hedge: els.hedgeDirection.textContent,
+    hedgePlan: els.hedgePlan.textContent,
+    vwap: els.vwapMetric.textContent,
+    vwapSignal: els.vwapSignal.textContent,
+    funding: els.fundingAverage.textContent,
+    oi: els.openInterest.textContent,
+    liquidation: els.liqBias.textContent,
+    fearGreed: els.fearGreed.textContent,
+    research: els.historySignal.textContent,
+    scale: els.scaleAction.textContent,
+    checks: els.frameworkChecks.textContent,
+    reason: els.setupReason.textContent
+  };
+}
+
+function answerVoiceQuestion(question) {
+  const q = question.toLowerCase();
+  const s = currentSetupSnapshot();
+  if (!question.trim()) return "Ask me about the current setup, grid, hedge, VWAP, funding, open interest, or liquidation map.";
+  if (q.includes("hedge")) {
+    return `${s.asset} hedge is ${s.hedge}. ${s.hedgePlan} The current setup is ${s.direction} with ${s.confidence}.`;
+  }
+  if (q.includes("grid") || q.includes("entry") || q.includes("buy") || q.includes("sell")) {
+    return `${s.asset} is showing ${s.direction}. Grid instruction: ${s.grid}. ${s.gridPlan} VWAP is ${s.vwap}, and the framework has ${s.checks} live checks.`;
+  }
+  if (q.includes("vwap")) {
+    return `${s.asset} VWAP read is ${s.vwap}. VWAP position is ${s.vwapSignal}. That is being combined with research, funding, open interest, and liquidations before Monatise labels the setup.`;
+  }
+  if (q.includes("funding") || q.includes("interest") || q.includes("oi") || q.includes("liquidation")) {
+    return `${s.asset} derivatives context: funding average is ${s.funding}, open interest is ${s.oi}, liquidation bias is ${s.liquidation}, and fear and greed is ${s.fearGreed}.`;
+  }
+  if (q.includes("average") || q.includes("scale") || q.includes("research") || q.includes("history")) {
+    return `${s.asset} research signal is ${s.research}. Scale plan says ${s.scale}. The framework reason is: ${s.reason}`;
+  }
+  return `${s.asset} is currently ${s.direction} with ${s.confidence}. The grid is ${s.grid}, hedge is ${s.hedge}, VWAP is ${s.vwap}, and the active thesis is: ${s.reason}`;
+}
+
+async function transcribeWithElevenLabs(blob) {
+  const started = performance.now();
+  const form = new FormData();
+  form.append("model_id", "scribe_v2");
+  form.append("file", blob, "monatise-question.webm");
+  const response = await fetch(`${ELEVEN_BASE}/v1/speech-to-text`, {
+    method: "POST",
+    headers: { "xi-api-key": state.voice.apiKey },
+    body: form
+  });
+  const ms = Math.round(performance.now() - started);
+  if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+  const data = await response.json();
+  recordTelemetry("Voice transcript", "ElevenLabs", true, ms);
+  return data.text || "";
+}
+
+async function speakWithElevenLabs(text) {
+  const voiceId = state.voice.voiceId.trim();
+  if (!voiceId) throw new Error("Voice ID required");
+  const started = performance.now();
+  const response = await fetch(`${ELEVEN_BASE}/v1/text-to-speech/${encodeURIComponent(voiceId)}?output_format=mp3_44100_128`, {
+    method: "POST",
+    headers: elevenHeaders(),
+    body: JSON.stringify({
+      text,
+      model_id: "eleven_multilingual_v2"
+    })
+  });
+  const ms = Math.round(performance.now() - started);
+  if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+  const audioBlob = await response.blob();
+  if (state.voice.audioUrl) URL.revokeObjectURL(state.voice.audioUrl);
+  state.voice.audioUrl = URL.createObjectURL(audioBlob);
+  els.voiceAudio.src = state.voice.audioUrl;
+  recordTelemetry("Voice response", "ElevenLabs", true, ms);
+  await els.voiceAudio.play().catch(() => undefined);
+}
+
+async function handleVoiceQuestion(question) {
+  const clean = question.trim();
+  els.voiceTranscript.textContent = clean || "No question detected.";
+  const answer = answerVoiceQuestion(clean);
+  els.voiceAnswer.textContent = answer;
+  pushLiveAlert({
+    kind: "voice query",
+    asset: selectedCoin(),
+    title: `${selectedCoin()} voice response`,
+    detail: answer,
+    payload: { question: clean, answer }
+  });
+  if (!state.voice.apiKey.trim()) {
+    setVoiceStatus("ElevenLabs key required for spoken playback");
+    return;
+  }
+  setVoiceStatus("Speaking with ElevenLabs");
+  try {
+    await speakWithElevenLabs(answer);
+    setVoiceStatus("Voice response complete");
+  } catch (error) {
+    recordTelemetry("Voice response", "ElevenLabs", false, 0, error.message);
+    setVoiceStatus(`ElevenLabs speech failed · ${error.message}`);
+  }
+}
+
+async function startVoiceRecording() {
+  if (!state.voice.apiKey.trim()) {
+    setVoiceStatus("ElevenLabs key required for transcription");
+    return;
+  }
+  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+    setVoiceStatus("Browser recording is unavailable");
+    return;
+  }
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  state.voice.chunks = [];
+  const recorder = new MediaRecorder(stream);
+  state.voice.recorder = recorder;
+  state.voice.recording = true;
+  els.voiceRecordButton.textContent = "Recording";
+  setVoiceStatus("Listening");
+  recorder.ondataavailable = (event) => {
+    if (event.data.size) state.voice.chunks.push(event.data);
+  };
+  recorder.onstop = async () => {
+    stream.getTracks().forEach((track) => track.stop());
+    state.voice.recording = false;
+    els.voiceRecordButton.textContent = "Record";
+    const blob = new Blob(state.voice.chunks, { type: recorder.mimeType || "audio/webm" });
+    setVoiceStatus("Transcribing with ElevenLabs");
+    try {
+      const transcript = await transcribeWithElevenLabs(blob);
+      els.voiceQuestionInput.value = transcript;
+      await handleVoiceQuestion(transcript);
+    } catch (error) {
+      recordTelemetry("Voice transcript", "ElevenLabs", false, 0, error.message);
+      setVoiceStatus(`ElevenLabs transcript failed · ${error.message}`);
+    }
+  };
+  recorder.start();
 }
 
 async function timedFetch(name, source, url, options = {}) {
@@ -1208,6 +1389,45 @@ els.ablyChannelInput.addEventListener("change", () => {
   els.ablyChannelInput.value = state.realtime.channelName;
   localStorage.setItem(ABLY_CHANNEL_STORAGE, state.realtime.channelName);
   connectRealtime();
+});
+
+els.elevenKeyInput.addEventListener("change", () => {
+  state.voice.apiKey = els.elevenKeyInput.value.trim();
+  localStorage.setItem(ELEVEN_KEY_STORAGE, state.voice.apiKey);
+  setVoiceStatus(state.voice.apiKey ? "ElevenLabs key saved locally" : "ElevenLabs key required for voice");
+});
+
+els.elevenVoiceInput.addEventListener("change", () => {
+  state.voice.voiceId = els.elevenVoiceInput.value.trim() || "JBFqnCBsd6RMkjVDRZzb";
+  els.elevenVoiceInput.value = state.voice.voiceId;
+  localStorage.setItem(ELEVEN_VOICE_STORAGE, state.voice.voiceId);
+  setVoiceStatus("ElevenLabs voice saved locally");
+});
+
+els.voiceAskButton.addEventListener("click", () => {
+  handleVoiceQuestion(els.voiceQuestionInput.value);
+});
+
+els.voiceQuestionInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") handleVoiceQuestion(els.voiceQuestionInput.value);
+});
+
+els.voiceRecordButton.addEventListener("click", () => {
+  if (state.voice.recording && state.voice.recorder) {
+    state.voice.recorder.stop();
+    return;
+  }
+  startVoiceRecording().catch((error) => {
+    setVoiceStatus(`Mic unavailable · ${error.message}`);
+  });
+});
+
+els.voiceStopButton.addEventListener("click", () => {
+  if (state.voice.recording && state.voice.recorder) {
+    state.voice.recorder.stop();
+  }
+  els.voiceAudio.pause();
+  setVoiceStatus("Voice stopped");
 });
 
 els.refreshButton.addEventListener("click", refreshDashboard);

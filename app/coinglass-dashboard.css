@@ -319,6 +319,53 @@ canvas {
   gap: 10px;
 }
 
+.voice-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.8fr) minmax(160px, 0.65fr) minmax(260px, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.voice-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.voice-output {
+  display: grid;
+  grid-template-columns: 0.75fr 1fr;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.voice-output div {
+  min-height: 96px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #0f1620;
+}
+
+.voice-output span {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+}
+
+.voice-output p {
+  margin: 0;
+  color: var(--text);
+  line-height: 1.5;
+}
+
+#voiceAudio {
+  width: 100%;
+  margin-top: 14px;
+}
+
 .metric-row,
 .news-item,
 .telemetry-row {
@@ -424,7 +471,12 @@ canvas {
   }
 
   .setup-grid,
-  .research-grid {
+  .research-grid,
+  .voice-output {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .voice-grid {
     grid-template-columns: 1fr 1fr;
   }
 
@@ -445,6 +497,8 @@ canvas {
   .workspace-grid,
   .setup-grid,
   .research-grid,
+  .voice-grid,
+  .voice-output,
   .mini-metrics {
     grid-template-columns: 1fr;
   }

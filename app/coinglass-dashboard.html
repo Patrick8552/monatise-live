@@ -257,6 +257,45 @@
             <div id="liveAlertList" class="news-list"></div>
           </article>
 
+          <article class="panel wide">
+            <div class="panel-head">
+              <div>
+                <h2>Voice Assistant</h2>
+                <p id="voiceStatus">ElevenLabs voice layer ready</p>
+              </div>
+            </div>
+            <div class="voice-grid">
+              <label>
+                <span>ElevenLabs API key</span>
+                <input id="elevenKeyInput" type="password" autocomplete="off" placeholder="xi-api-key" />
+              </label>
+              <label>
+                <span>Voice ID</span>
+                <input id="elevenVoiceInput" type="text" autocomplete="off" value="JBFqnCBsd6RMkjVDRZzb" />
+              </label>
+              <label class="voice-question">
+                <span>Ask Monatise</span>
+                <input id="voiceQuestionInput" type="text" autocomplete="off" placeholder="Ask about setup, grid, hedge, VWAP, funding..." />
+              </label>
+              <div class="voice-actions">
+                <button id="voiceRecordButton" type="button">Record</button>
+                <button id="voiceAskButton" type="button">Ask</button>
+                <button id="voiceStopButton" type="button" class="ghost-button">Stop</button>
+              </div>
+            </div>
+            <div class="voice-output">
+              <div>
+                <span>Heard</span>
+                <p id="voiceTranscript">No question yet.</p>
+              </div>
+              <div>
+                <span>Response</span>
+                <p id="voiceAnswer">Ask a market question and Monatise will answer from the current dashboard state.</p>
+              </div>
+            </div>
+            <audio id="voiceAudio" controls></audio>
+          </article>
+
           <article class="panel telemetry-panel wide">
             <div class="panel-head">
               <div>
