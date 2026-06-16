@@ -475,7 +475,7 @@ function updateLiquidityAtlas() {
   const asset = selectedCoin();
   const viewLabel = state.atlas.view === "gold" ? "Gold macro" : state.atlas.view === "dual" ? `${asset} + Gold` : `${asset} crypto`;
   const vwap = state.market.vwapSignal || "VWAP pending";
-  const funding = state.market.hyperFunding == null ? "funding pending" : `funding ${formatPercent(state.market.hyperFunding, 4)}`;
+  const funding = state.market.fundingAverage == null ? "CoinGlass funding pending" : `CoinGlass funding ${formatPercent(state.market.fundingAverage, 4)}`;
   const liq = state.market.liquidationBias || "liquidity forming";
   state.atlas.mode = direction;
   els.atlasMode.textContent = `Monatise Liquidity Atlas · ${viewLabel}`;
@@ -1778,7 +1778,7 @@ function renderHyperliquidLocked(error) {
   els.hyperList.innerHTML = lockedRows("Hyperliquid", error.message, [
     "Primary route: POST /info type=metaAndAssetCtxs",
     "Confirms mark price, funding, premium, OI, and volume"
-  ]);
+  ], "confirm");
 }
 
 function applyMonatiseFramework() {
@@ -1883,14 +1883,14 @@ function addCheck(checks, name, raw, score, detail) {
   });
 }
 
-function lockedRows(title, detail, lines) {
+function lockedRows(title, detail, lines, status = "required") {
   return lines.map((line, index) => `
     <div class="metric-row">
       <div>
         <strong>${index === 0 ? title : "Route"}</strong><br />
         <small>${line}</small>
       </div>
-      <span class="metric-value">${index === 0 ? "optional" : detail}</span>
+      <span class="metric-value">${index === 0 ? status : detail}</span>
     </div>
   `).join("");
 }
