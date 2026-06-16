@@ -13,12 +13,12 @@ const ELEVEN_VOICE_STORAGE = "monatise-elevenlabs-voice-id";
 const OPENAI_KEY_STORAGE = "monatise-openai-api-key";
 const OPENAI_MODEL_STORAGE = "monatise-openai-model";
 const ASSETS = {
-  BTC: { coin: "BTC", pair: "BTCUSDT", hyper: "BTC" },
-  ETH: { coin: "ETH", pair: "ETHUSDT", hyper: "ETH" },
-  SOL: { coin: "SOL", pair: "SOLUSDT", hyper: "SOL" },
-  XRP: { coin: "XRP", pair: "XRPUSDT", hyper: "XRP" },
-  DOGE: { coin: "DOGE", pair: "DOGEUSDT", hyper: "DOGE" },
-  BNB: { coin: "BNB", pair: "BNBUSDT", hyper: "BNB" }
+  BTC: { coin: "BTC", pair: "BTCUSDT", hyper: "BTC", tv: "BINANCE:BTCUSDT" },
+  ETH: { coin: "ETH", pair: "ETHUSDT", hyper: "ETH", tv: "BINANCE:ETHUSDT" },
+  SOL: { coin: "SOL", pair: "SOLUSDT", hyper: "SOL", tv: "BINANCE:SOLUSDT" },
+  XRP: { coin: "XRP", pair: "XRPUSDT", hyper: "XRP", tv: "BINANCE:XRPUSDT" },
+  DOGE: { coin: "DOGE", pair: "DOGEUSDT", hyper: "DOGE", tv: "BINANCE:DOGEUSDT" },
+  BNB: { coin: "BNB", pair: "BNBUSDT", hyper: "BNB", tv: "BINANCE:BNBUSDT" }
 };
 
 const els = {
@@ -85,6 +85,10 @@ const els = {
   patternDetail: document.querySelector("#patternDetail"),
   pricePanelTitle: document.querySelector("#pricePanelTitle"),
   priceCanvas: document.querySelector("#priceCanvas"),
+  structureSummary: document.querySelector("#structureSummary"),
+  tradingViewFrame: document.querySelector("#tradingViewFrame"),
+  tradingViewLink: document.querySelector("#tradingViewLink"),
+  tradingViewSource: document.querySelector("#tradingViewSource"),
   liqCanvas: document.querySelector("#liqCanvas"),
   fundingList: document.querySelector("#fundingList"),
   oiList: document.querySelector("#oiList"),
@@ -157,6 +161,8 @@ els.elevenKeyInput.value = state.voice.apiKey;
 els.elevenVoiceInput.value = state.voice.voiceId;
 els.openaiKeyInput.value = state.copilot.apiKey;
 els.openaiModelInput.value = state.copilot.model;
+if (!state.voice.apiKey) els.voiceStatus.textContent = "Text response mode";
+if (!state.copilot.apiKey) els.copilotStatus.textContent = "Local copilot fallback";
 
 function readSession() {
   try {
@@ -440,7 +446,7 @@ function localCopilotAnswer(question) {
     `Grid: ${s.grid}. ${s.gridPlan}`,
     `Hedge: ${s.hedge}. ${s.hedgePlan}`,
     `VWAP: ${s.vwap}; ${s.vwapSignal}. Funding ${s.funding}, OI ${s.oi}, liquidation bias ${s.liquidation}.`,
-    question.trim() ? `Question handled locally: ${question.trim()}` : "Add an OpenAI API key to unlock deeper copilot reasoning."
+    question.trim() ? `Question handled locally: ${question.trim()}` : "Connect OpenAI in Integrations to unlock deeper copilot reasoning."
   ].join("\n");
 }
 
@@ -564,7 +570,7 @@ async function handleVoiceQuestion(question) {
     payload: { question: clean, answer }
   });
   if (!state.voice.apiKey.trim()) {
-    setVoiceStatus("ElevenLabs key required for spoken playback");
+    setVoiceStatus("Text response mode");
     return;
   }
   setVoiceStatus("Speaking with ElevenLabs");
@@ -579,7 +585,7 @@ async function handleVoiceQuestion(question) {
 
 async function startVoiceRecording() {
   if (!state.voice.apiKey.trim()) {
-    setVoiceStatus("ElevenLabs key required for transcription");
+    setVoiceStatus("Use typed questions or connect ElevenLabs");
     return;
   }
   if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
@@ -659,8 +665,22 @@ function syncAssetLabels() {
   const asset = selectedAsset();
   els.dashboardTitle.textContent = `${asset.coin} Trading Dashboard`;
   els.marketSymbol.textContent = asset.pair;
-  els.pricePanelTitle.textContent = `${asset.coin} Price Reflection`;
+  els.pricePanelTitle.textContent = `${asset.coin} Live Candles`;
   els.setupAsset.textContent = `${asset.coin} setup`;
+  syncTradingView(asset);
+}
+
+function syncTradingView(asset = selectedAsset()) {
+  const intervalMap = { "15m": "15", "30m": "30", "1h": "60", "4h": "240", "1d": "D" };
+  const interval = intervalMap[els.intervalSelect.value] || "60";
+  const symbol = asset.tv;
+  const chartUrl = `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(symbol)}`;
+  const embedUrl = `https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent(symbol)}&interval=${interval}&theme=dark&style=1&hide_side_toolbar=0&allow_symbol_change=0&save_image=0&studies=VWAP%40tv-basicstudies`;
+  els.tradingViewSource.textContent = `${symbol} · ${els.intervalSelect.value}`;
+  els.tradingViewLink.href = chartUrl;
+  if (els.tradingViewFrame.src !== embedUrl) {
+    els.tradingViewFrame.src = embedUrl;
+  }
 }
 
 function resetMarketContext() {
@@ -706,11 +726,12 @@ async function getPrice() {
       els.priceSource.textContent = `Coinglass futures price history · ${asset.pair} · ${exchange} · ${interval}`;
       return rows.map((row) => ({
         time: Number(row.time),
+        open: Number(row.open ?? row.close),
         close: Number(row.close),
         high: Number(row.high),
         low: Number(row.low),
         volume: Number(row.volume_usd)
-      })).filter((row) => Number.isFinite(row.close));
+      })).filter((row) => Number.isFinite(row.close) && Number.isFinite(row.high) && Number.isFinite(row.low));
     }
   }
   const binanceInterval = interval === "30m" ? "30m" : interval === "4h" ? "4h" : interval === "1d" ? "1d" : interval === "15m" ? "15m" : "1h";
@@ -719,19 +740,20 @@ async function getPrice() {
     "Binance public",
     `${BINANCE_BASE}/api/v3/klines?symbol=${asset.pair}&interval=${binanceInterval}&limit=96`
   );
-  els.priceSource.textContent = "Binance public fallback · add CoinGlass key for primary route";
+  els.priceSource.textContent = "Binance public live candles · CoinGlass optional";
   return payload.map((row) => ({
     time: Number(row[0]),
+    open: Number(row[1]),
     close: Number(row[4]),
     high: Number(row[2]),
     low: Number(row[3]),
     volume: Number(row[7])
-  }));
+  })).filter((row) => Number.isFinite(row.close) && Number.isFinite(row.high) && Number.isFinite(row.low));
 }
 
 async function getFunding() {
   const asset = selectedAsset();
-  if (!hasKey()) throw new Error("CoinGlass API key required");
+  if (!hasKey()) throw new Error("CoinGlass optional integration inactive");
   const payload = await timedFetch(
     "Funding rate",
     "Coinglass",
@@ -745,7 +767,7 @@ async function getFunding() {
 
 async function getOpenInterest() {
   const asset = selectedAsset();
-  if (!hasKey()) throw new Error("CoinGlass API key required");
+  if (!hasKey()) throw new Error("CoinGlass optional integration inactive");
   const payload = await timedFetch(
     "Open interest",
     "Coinglass",
@@ -757,7 +779,7 @@ async function getOpenInterest() {
 
 async function getLiquidations() {
   const asset = selectedAsset();
-  if (!hasKey()) throw new Error("CoinGlass API key required");
+  if (!hasKey()) throw new Error("CoinGlass optional integration inactive");
   const range = els.liqRangeSelect.value;
   const mapPromise = timedFetch(
     "Liquidation map",
@@ -796,7 +818,7 @@ async function getFearGreed() {
     }
   }
   const fallback = await timedFetch("Fear and greed fallback", "Alternative.me public", ALT_FG);
-  els.fgSource.textContent = "Alternative.me fallback · add CoinGlass key for primary route";
+  els.fgSource.textContent = "Alternative.me public index · CoinGlass optional";
   return (fallback.data || []).reverse().map((row) => ({
     value: Number(row.value),
     time: Number(row.timestamp) * 1000,
@@ -805,7 +827,7 @@ async function getFearGreed() {
 }
 
 async function getNews() {
-  if (!hasKey()) throw new Error("CoinGlass API key required");
+  if (!hasKey()) throw new Error("CoinGlass optional integration inactive");
   const end = Date.now();
   const start = end - 1000 * 60 * 60 * 24 * 3;
   const params = new URLSearchParams({
@@ -887,12 +909,11 @@ function renderPrice(series) {
   els.priceChange.textContent = `${change >= 0 ? "Up" : "Down"} ${formatPercent(change, 2)} last candle`;
   els.priceChange.className = change >= 0 ? "positive" : "negative";
   els.pricePulse.textContent = "live";
-  drawLineChart(els.priceCanvas, series.map((row) => row.close), {
-    color: change >= 0 ? "#5ae68f" : "#ff6b7f",
-    fill: "rgba(82, 214, 255, 0.10)",
-    labels: series.map((row) => new Date(row.time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }))
-  });
-  renderResearch(studyHistoricalPattern(series));
+  const research = studyHistoricalPattern(series);
+  renderResearch(research);
+  const structure = analyzeMarketStructure(series, research);
+  renderStructureSummary(structure);
+  drawStructureChart(els.priceCanvas, series, structure, research);
 }
 
 function studyHistoricalPattern(series) {
@@ -1038,6 +1059,69 @@ function averageTrueRangePercent(rows) {
   return average(ranges);
 }
 
+function analyzeMarketStructure(series, research) {
+  const rows = series.slice(-80);
+  const swings = [];
+  for (let i = 2; i < rows.length - 2; i += 1) {
+    const row = rows[i];
+    const isHigh = row.high > rows[i - 1].high && row.high > rows[i - 2].high && row.high >= rows[i + 1].high && row.high >= rows[i + 2].high;
+    const isLow = row.low < rows[i - 1].low && row.low < rows[i - 2].low && row.low <= rows[i + 1].low && row.low <= rows[i + 2].low;
+    if (isHigh) swings.push({ index: i, price: row.high, type: "high" });
+    if (isLow) swings.push({ index: i, price: row.low, type: "low" });
+  }
+
+  const fvgs = [];
+  for (let i = 2; i < rows.length; i += 1) {
+    const left = rows[i - 2];
+    const current = rows[i];
+    if (current.low > left.high) {
+      fvgs.push({ index: i, low: left.high, high: current.low, side: "bullish" });
+    } else if (current.high < left.low) {
+      fvgs.push({ index: i, low: current.high, high: left.low, side: "bearish" });
+    }
+  }
+
+  const last = rows.at(-1);
+  const recentHigh = swings.filter((swing) => swing.type === "high").at(-1);
+  const recentLow = swings.filter((swing) => swing.type === "low").at(-1);
+  const previousHigh = swings.filter((swing) => swing.type === "high").at(-2);
+  const previousLow = swings.filter((swing) => swing.type === "low").at(-2);
+  const brokeHigh = recentHigh && last.close > recentHigh.price;
+  const brokeLow = recentLow && last.close < recentLow.price;
+  const priorTrend = previousHigh && recentHigh && recentHigh.price > previousHigh.price ? "up" : previousLow && recentLow && recentLow.price < previousLow.price ? "down" : "range";
+  const marker = brokeHigh
+    ? { type: priorTrend === "down" ? "CHOCH" : "BOS", side: "bullish", price: recentHigh.price, index: rows.length - 1 }
+    : brokeLow
+      ? { type: priorTrend === "up" ? "CHOCH" : "BOS", side: "bearish", price: recentLow.price, index: rows.length - 1 }
+      : null;
+
+  const signal = research.score >= 2
+    ? { side: "BUY", price: last.close, reason: `${research.signal} · ${research.action}` }
+    : research.score <= -2
+      ? { side: "SELL", price: last.close, reason: `${research.signal} · ${research.action}` }
+      : { side: "WAIT", price: last.close, reason: `${research.signal} · neutral grid` };
+
+  return {
+    rows,
+    swings: swings.slice(-10),
+    fvgZones: fvgs.slice(-8),
+    liquidityZones: swings.slice(-8).map((swing) => ({
+      price: swing.price,
+      side: swing.type === "high" ? "buy-side liquidity" : "sell-side liquidity",
+      index: swing.index
+    })),
+    marker,
+    signal
+  };
+}
+
+function renderStructureSummary(structure) {
+  const markerText = structure.marker ? `${structure.marker.type} ${structure.marker.side}` : "No fresh CHOCH/BOS";
+  const fvgText = `${structure.fvgZones.length} FVG`;
+  const liqText = `${structure.liquidityZones.length} liquidity zones`;
+  els.structureSummary.textContent = `${markerText} · ${fvgText} · ${liqText} · Monatise ${structure.signal.side}: ${structure.signal.reason}`;
+}
+
 function renderFunding(rows) {
   const asset = selectedAsset();
   if (!rows.length) throw new Error("No funding rows");
@@ -1062,12 +1146,12 @@ function renderFunding(rows) {
 
 function renderFundingLocked(error) {
   state.market.fundingAverage = null;
-  els.fundingAverage.textContent = "key needed";
+  els.fundingAverage.textContent = "public mode";
   els.fundingAverage.className = "";
-  els.fundingSource.textContent = "CoinGlass API key required for live funding";
+  els.fundingSource.textContent = "CoinGlass funding optional · Hyperliquid still confirms funding";
   els.fundingList.innerHTML = lockedRows("Funding rate", error.message, [
     "Primary endpoint: /api/futures/funding-rate/exchange-list",
-    "Updates every 20 seconds on CoinGlass plans"
+    "Public mode uses Hyperliquid funding confirmation"
   ]);
 }
 
@@ -1094,11 +1178,11 @@ function renderOpenInterest(rows) {
 
 function renderOpenInterestLocked(error) {
   state.market.oiChange = null;
-  els.openInterest.textContent = "key needed";
-  els.oiSource.textContent = "CoinGlass API key required for live open interest";
+  els.openInterest.textContent = "public mode";
+  els.oiSource.textContent = "CoinGlass OI optional · Hyperliquid still confirms open interest";
   els.oiList.innerHTML = lockedRows("Open interest", error.message, [
     `Primary endpoint: /api/futures/open-interest/exchange-list?symbol=${selectedCoin()}`,
-    "Includes all-exchange aggregation and exchange rows"
+    "Public mode uses Hyperliquid perp open interest"
   ]);
 }
 
@@ -1114,7 +1198,7 @@ function renderLiquidations(result) {
   els.liqBias.className = above > below ? "positive" : "negative";
   els.liqSource.textContent = result.levels.length
     ? "Coinglass aggregated liquidation map"
-    : "Synthetic map fallback · CoinGlass plan/key needed";
+    : "Modeled liquidity map · CoinGlass optional";
   if (result.assetPain) {
     els.maxPain.textContent = `max pain ${formatUsd(result.assetPain.short_max_pain_liq_price)} / ${formatUsd(result.assetPain.long_max_pain_liq_price)}`;
   } else {
@@ -1126,7 +1210,7 @@ function renderLiquidations(result) {
 function renderLiquidationsLocked(error) {
   const asset = selectedAsset();
   const current = state.lastPrice || 100000;
-  els.liqSource.textContent = "CoinGlass Professional or Enterprise may be required";
+  els.liqSource.textContent = "Modeled liquidity map · CoinGlass optional";
   els.maxPain.textContent = "max pain gated";
   els.liqBias.textContent = "simulated";
   els.liqBias.className = "";
@@ -1163,10 +1247,10 @@ function renderNews(rows) {
 }
 
 function renderNewsLocked(error) {
-  els.newsSource.textContent = "CoinGlass Startup or higher key required for news";
+  els.newsSource.textContent = "CoinGlass news optional";
   els.newsList.innerHTML = lockedRows("News alerts", error.message, [
     "Primary endpoint: /api/article/list",
-    "Use the API key field to unlock live alerts"
+    "Live alerts still emit setup, state, entry, and grid events"
   ]);
 }
 
@@ -1311,46 +1395,102 @@ function lockedRows(title, detail, lines) {
         <strong>${index === 0 ? title : "Route"}</strong><br />
         <small>${line}</small>
       </div>
-      <span class="metric-value">${index === 0 ? "locked" : detail}</span>
+      <span class="metric-value">${index === 0 ? "optional" : detail}</span>
     </div>
   `).join("");
 }
 
-function drawLineChart(canvas, values, options) {
+function drawStructureChart(canvas, series, structure, research) {
   const ctx = prepareCanvas(canvas);
   const { width, height } = canvas.getBoundingClientRect();
   ctx.clearRect(0, 0, width, height);
   drawGrid(ctx, width, height);
-  if (values.length < 2) return;
-  const min = Math.min(...values);
-  const max = Math.max(...values);
+  const rows = structure.rows.length ? structure.rows : series.slice(-80);
+  if (rows.length < 2) return;
+  const prices = rows.flatMap((row) => [row.high, row.low, row.close, row.open || row.close]).concat(
+    structure.fvgZones.flatMap((zone) => [zone.low, zone.high]),
+    structure.liquidityZones.map((zone) => zone.price),
+    research.vwap || []
+  ).filter(Number.isFinite);
+  const min = Math.min(...prices);
+  const max = Math.max(...prices);
   const pad = (max - min || 1) * 0.12;
-  const xFor = (index) => 42 + (index / (values.length - 1)) * (width - 64);
+  const xFor = (index) => 44 + (index / Math.max(1, rows.length - 1)) * (width - 76);
   const yFor = (value) => height - 34 - ((value - min + pad) / (max - min + pad * 2)) * (height - 64);
+  const candleStep = (width - 76) / Math.max(1, rows.length - 1);
+  const candleWidth = Math.max(3, Math.min(11, candleStep * 0.58));
 
-  ctx.beginPath();
-  values.forEach((value, index) => {
-    const x = xFor(index);
-    const y = yFor(value);
-    if (index === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
+  structure.fvgZones.forEach((zone) => {
+    const startX = xFor(Math.max(0, zone.index - 2));
+    const yTop = yFor(zone.high);
+    const yBottom = yFor(zone.low);
+    ctx.fillStyle = zone.side === "bullish" ? "rgba(90, 230, 143, 0.12)" : "rgba(255, 107, 127, 0.12)";
+    ctx.strokeStyle = zone.side === "bullish" ? "rgba(90, 230, 143, 0.45)" : "rgba(255, 107, 127, 0.45)";
+    ctx.fillRect(startX, Math.min(yTop, yBottom), width - startX - 24, Math.max(4, Math.abs(yBottom - yTop)));
+    ctx.strokeRect(startX, Math.min(yTop, yBottom), width - startX - 24, Math.max(4, Math.abs(yBottom - yTop)));
   });
-  ctx.lineTo(xFor(values.length - 1), height - 30);
-  ctx.lineTo(xFor(0), height - 30);
-  ctx.closePath();
-  ctx.fillStyle = options.fill;
-  ctx.fill();
 
-  ctx.beginPath();
-  values.forEach((value, index) => {
-    const x = xFor(index);
-    const y = yFor(value);
-    if (index === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
+  structure.liquidityZones.forEach((zone) => {
+    const y = yFor(zone.price);
+    ctx.strokeStyle = zone.side.startsWith("buy") ? "rgba(82, 214, 255, 0.7)" : "rgba(255, 191, 71, 0.7)";
+    ctx.setLineDash([5, 5]);
+    ctx.beginPath();
+    ctx.moveTo(42, y);
+    ctx.lineTo(width - 24, y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = "#90a3b8";
+    ctx.font = "11px system-ui";
+    ctx.fillText(zone.side, 48, y - 4);
   });
-  ctx.strokeStyle = options.color;
-  ctx.lineWidth = 3;
-  ctx.stroke();
+
+  if (Number.isFinite(research.vwap)) {
+    const y = yFor(research.vwap);
+    ctx.strokeStyle = "rgba(181, 146, 255, 0.9)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(42, y);
+    ctx.lineTo(width - 24, y);
+    ctx.stroke();
+    ctx.fillStyle = "#b592ff";
+    ctx.font = "12px system-ui";
+    ctx.fillText("VWAP", width - 66, y - 6);
+  }
+
+  rows.forEach((row, index) => {
+    const x = xFor(index);
+    const open = Number.isFinite(row.open) ? row.open : row.close;
+    const up = row.close >= open;
+    const yOpen = yFor(open);
+    const yClose = yFor(row.close);
+    const yHigh = yFor(row.high);
+    const yLow = yFor(row.low);
+    ctx.strokeStyle = up ? "#5ae68f" : "#ff6b7f";
+    ctx.fillStyle = up ? "rgba(90, 230, 143, 0.88)" : "rgba(255, 107, 127, 0.88)";
+    ctx.lineWidth = 1.3;
+    ctx.beginPath();
+    ctx.moveTo(x, yHigh);
+    ctx.lineTo(x, yLow);
+    ctx.stroke();
+    ctx.fillRect(x - candleWidth / 2, Math.min(yOpen, yClose), candleWidth, Math.max(2, Math.abs(yClose - yOpen)));
+  });
+
+  if (structure.marker) {
+    const x = xFor(structure.marker.index);
+    const y = yFor(structure.marker.price);
+    ctx.fillStyle = structure.marker.side === "bullish" ? "#5ae68f" : "#ff6b7f";
+    ctx.beginPath();
+    ctx.arc(x, y, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#eef4fb";
+    ctx.font = "bold 12px system-ui";
+    ctx.fillText(structure.marker.type, Math.max(48, x - 44), y - 10);
+  }
+
+  const signalY = yFor(structure.signal.price);
+  ctx.fillStyle = structure.signal.side === "BUY" ? "#5ae68f" : structure.signal.side === "SELL" ? "#ff6b7f" : "#ffbf47";
+  ctx.font = "bold 12px system-ui";
+  ctx.fillText(`Monatise ${structure.signal.side}`, width - 142, signalY - 10);
 
   ctx.fillStyle = "#90a3b8";
   ctx.font = "12px system-ui";
@@ -1503,7 +1643,7 @@ els.ablyChannelInput.addEventListener("change", () => {
 els.elevenKeyInput.addEventListener("change", () => {
   state.voice.apiKey = els.elevenKeyInput.value.trim();
   localStorage.setItem(ELEVEN_KEY_STORAGE, state.voice.apiKey);
-  setVoiceStatus(state.voice.apiKey ? "ElevenLabs key saved locally" : "ElevenLabs key required for voice");
+  setVoiceStatus(state.voice.apiKey ? "ElevenLabs saved locally" : "Text response mode");
 });
 
 els.elevenVoiceInput.addEventListener("change", () => {
@@ -1542,7 +1682,7 @@ els.voiceStopButton.addEventListener("click", () => {
 els.openaiKeyInput.addEventListener("change", () => {
   state.copilot.apiKey = els.openaiKeyInput.value.trim();
   localStorage.setItem(OPENAI_KEY_STORAGE, state.copilot.apiKey);
-  setCopilotStatus(state.copilot.apiKey ? "OpenAI key saved locally" : "OpenAI key required for platform copilot");
+  setCopilotStatus(state.copilot.apiKey ? "OpenAI saved locally" : "Local copilot fallback");
 });
 
 els.openaiModelInput.addEventListener("change", () => {

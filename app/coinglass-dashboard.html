@@ -22,10 +22,6 @@
 
       <main>
         <section class="control-band" aria-label="Dashboard controls">
-          <label class="key-field">
-            <span>CoinGlass API key</span>
-            <input id="apiKeyInput" type="password" autocomplete="off" placeholder="CG-API-KEY" />
-          </label>
           <label>
             <span>Asset</span>
             <select id="assetSelect">
@@ -66,16 +62,34 @@
               <option value="365d">365d</option>
             </select>
           </label>
-          <label>
-            <span>Ably API key</span>
-            <input id="ablyKeyInput" type="password" autocomplete="off" placeholder="optional live alerts key" />
-          </label>
-          <label>
-            <span>Live channel</span>
-            <input id="ablyChannelInput" type="text" autocomplete="off" value="monatise-live-alerts" />
-          </label>
           <button id="refreshButton" type="button">Refresh</button>
         </section>
+
+        <details class="integration-drawer">
+          <summary>Integrations</summary>
+          <div class="integration-grid">
+            <label>
+              <span>CoinGlass</span>
+              <input id="apiKeyInput" type="password" autocomplete="off" placeholder="CG-API-KEY" />
+            </label>
+            <label>
+              <span>Ably</span>
+              <input id="ablyKeyInput" type="password" autocomplete="off" placeholder="optional live alerts key" />
+            </label>
+            <label>
+              <span>Live channel</span>
+              <input id="ablyChannelInput" type="text" autocomplete="off" value="monatise-live-alerts" />
+            </label>
+            <label>
+              <span>ElevenLabs</span>
+              <input id="elevenKeyInput" type="password" autocomplete="off" placeholder="xi-api-key" />
+            </label>
+            <label>
+              <span>OpenAI</span>
+              <input id="openaiKeyInput" type="password" autocomplete="off" placeholder="sk-proj..." />
+            </label>
+          </div>
+        </details>
 
         <section class="price-band">
           <div class="market-title">
@@ -175,12 +189,30 @@
           <article class="panel price-panel">
             <div class="panel-head">
               <div>
-                <h2 id="pricePanelTitle">BTC Price Reflection</h2>
-                <p id="priceSource">Waiting for data</p>
+                <h2 id="pricePanelTitle">BTC Live Candles</h2>
+                <p id="priceSource">Waiting for live candles</p>
               </div>
               <span id="pricePulse" class="pill">idle</span>
             </div>
             <canvas id="priceCanvas" height="260" aria-label="BTC price chart"></canvas>
+            <div class="structure-legend">
+              <span class="legend-candle">Candles</span>
+              <span class="legend-fvg">FVG zones</span>
+              <span class="legend-liq">Liquidity zones</span>
+              <span class="legend-signal">Monatise signals</span>
+            </div>
+            <div id="structureSummary" class="structure-summary">Waiting for market structure.</div>
+          </article>
+
+          <article class="panel wide tradingview-panel">
+            <div class="panel-head">
+              <div>
+                <h2>TradingView Live Chart</h2>
+                <p id="tradingViewSource">BINANCE:BTCUSDT</p>
+              </div>
+              <a id="tradingViewLink" class="ghost-link" href="https://www.tradingview.com/chart/?symbol=BINANCE:BTCUSDT" target="_blank" rel="noreferrer">Open TradingView</a>
+            </div>
+            <iframe id="tradingViewFrame" title="TradingView chart" loading="lazy"></iframe>
           </article>
 
           <article class="panel">
@@ -266,10 +298,6 @@
             </div>
             <div class="voice-grid">
               <label>
-                <span>ElevenLabs API key</span>
-                <input id="elevenKeyInput" type="password" autocomplete="off" placeholder="xi-api-key" />
-              </label>
-              <label>
                 <span>Voice ID</span>
                 <input id="elevenVoiceInput" type="text" autocomplete="off" value="JBFqnCBsd6RMkjVDRZzb" />
               </label>
@@ -304,10 +332,6 @@
               </div>
             </div>
             <div class="copilot-grid">
-              <label>
-                <span>OpenAI API key</span>
-                <input id="openaiKeyInput" type="password" autocomplete="off" placeholder="sk-proj..." />
-              </label>
               <label>
                 <span>Model</span>
                 <input id="openaiModelInput" type="text" autocomplete="off" value="gpt-5.5" />
