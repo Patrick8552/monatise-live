@@ -12,6 +12,8 @@
   --red: #ff6b7f;
   --amber: #ffbf47;
   --blue: #7aa7ff;
+  --magenta: #ff62d2;
+  --mint: #75ffd6;
   --violet: #b592ff;
   --shadow: 0 20px 70px rgba(0, 0, 0, 0.28);
 }
@@ -24,7 +26,8 @@ body {
   margin: 0;
   min-height: 100vh;
   background:
-    linear-gradient(180deg, rgba(82, 214, 255, 0.08), transparent 28rem),
+    linear-gradient(180deg, rgba(117, 255, 214, 0.08), transparent 18rem),
+    linear-gradient(130deg, rgba(255, 98, 210, 0.08), transparent 28rem),
     var(--bg);
   color: var(--text);
   font-family:
@@ -190,6 +193,57 @@ select {
   padding: 20px 24px;
   border-top: 0;
   background: #111923;
+}
+
+.atlas-band {
+  position: relative;
+  min-height: 260px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-top: 0;
+  background:
+    linear-gradient(120deg, rgba(117, 255, 214, 0.1), transparent 40%),
+    linear-gradient(300deg, rgba(255, 98, 210, 0.12), transparent 45%),
+    #081018;
+}
+
+#liquidityAtlasCanvas {
+  display: block;
+  width: 100%;
+  height: 260px;
+  border-radius: 0;
+  background: #081018;
+}
+
+.atlas-hud {
+  position: absolute;
+  left: 18px;
+  bottom: 16px;
+  display: grid;
+  gap: 6px;
+  max-width: min(520px, calc(100% - 36px));
+  pointer-events: none;
+}
+
+.atlas-hud span,
+.atlas-hud small {
+  color: var(--muted);
+}
+
+.atlas-hud span {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+}
+
+.atlas-hud strong {
+  font-size: clamp(1.5rem, 5vw, 3.4rem);
+  line-height: 0.92;
+  color: var(--text);
+  text-shadow: 0 0 30px rgba(117, 255, 214, 0.18);
+}
+
+.atlas-hud small {
+  line-height: 1.45;
 }
 
 .market-title strong {
@@ -616,6 +670,7 @@ canvas {
 
   .topbar,
   .price-band,
+  .atlas-band,
   .control-band,
   .integration-grid,
   .workspace-grid,
@@ -640,6 +695,7 @@ canvas {
   .panel,
   .control-band,
   .price-band,
+  .atlas-band,
   .topbar {
     padding: 14px;
   }

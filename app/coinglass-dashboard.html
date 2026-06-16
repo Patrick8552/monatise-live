@@ -121,6 +121,15 @@
           </div>
         </section>
 
+        <section class="atlas-band" aria-label="Monatise liquidity atlas">
+          <canvas id="liquidityAtlasCanvas" aria-label="3D liquidity and signal atlas"></canvas>
+          <div class="atlas-hud">
+            <span id="atlasMode">Monatise Liquidity Atlas</span>
+            <strong id="atlasSignal">WAIT</strong>
+            <small id="atlasDetail">VWAP, liquidity, funding, and structure will shape the field.</small>
+          </div>
+        </section>
+
         <section class="workspace-grid">
           <article class="panel framework-panel wide">
             <div class="panel-head">
@@ -362,6 +371,7 @@
       </main>
     </div>
     <script src="https://cdn.ably.com/lib/ably.min-2.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="./coinglass-dashboard.js"></script>
   </body>
 </html>

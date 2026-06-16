@@ -48,6 +48,10 @@ const els = {
   marketSymbol: document.querySelector("#marketSymbol"),
   assetPrice: document.querySelector("#assetPrice"),
   priceChange: document.querySelector("#priceChange"),
+  liquidityAtlasCanvas: document.querySelector("#liquidityAtlasCanvas"),
+  atlasMode: document.querySelector("#atlasMode"),
+  atlasSignal: document.querySelector("#atlasSignal"),
+  atlasDetail: document.querySelector("#atlasDetail"),
   fundingAverage: document.querySelector("#fundingAverage"),
   openInterest: document.querySelector("#openInterest"),
   fearGreed: document.querySelector("#fearGreed"),
@@ -112,6 +116,17 @@ const state = {
   apiKey: localStorage.getItem(API_KEY_STORAGE) || "",
   priceSeries: [],
   lastPrice: null,
+  atlas: {
+    renderer: null,
+    scene: null,
+    camera: null,
+    mesh: null,
+    particles: null,
+    material: null,
+    mode: "WAIT",
+    started: false,
+    fallback: false
+  },
   realtime: {
     client: null,
     channel: null,
@@ -197,6 +212,145 @@ function setSessionStatus(kind, text) {
   els.sessionStatusDot.className = `status-dot ${kind === "good" ? "good" : kind === "bad" ? "bad" : ""}`;
   els.sessionStatusText.textContent = text;
   els.sessionUpdated.textContent = new Date().toLocaleTimeString();
+}
+
+function initLiquidityAtlas() {
+  const canvas = els.liquidityAtlasCanvas;
+  if (!canvas || state.atlas.started) return;
+  state.atlas.started = true;
+  if (!window.THREE) {
+    state.atlas.fallback = true;
+    drawAtlasFallback();
+    return;
+  }
+  const THREE = window.THREE;
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 100);
+  camera.position.set(0, 0.9, 7);
+  const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, canvas, powerPreference: "high-performance" });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setClearColor(0x081018, 1);
+
+  const geometry = new THREE.PlaneGeometry(9, 3.4, 96, 28);
+  const material = new THREE.MeshStandardMaterial({
+    color: 0x75ffd6,
+    emissive: 0x102c31,
+    metalness: 0.25,
+    roughness: 0.55,
+    wireframe: true
+  });
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.rotation.x = -0.72;
+  mesh.position.y = -0.45;
+  scene.add(mesh);
+
+  const points = new THREE.BufferGeometry();
+  const positions = [];
+  const colors = [];
+  for (let i = 0; i < 260; i += 1) {
+    positions.push((Math.random() - 0.5) * 9, (Math.random() - 0.5) * 3.4, (Math.random() - 0.5) * 2.2);
+    colors.push(0.45 + Math.random() * 0.4, 0.8 + Math.random() * 0.2, 0.72 + Math.random() * 0.28);
+  }
+  points.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  points.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+  const particles = new THREE.Points(points, new THREE.PointsMaterial({ size: 0.045, vertexColors: true, transparent: true, opacity: 0.86 }));
+  scene.add(particles);
+
+  scene.add(new THREE.AmbientLight(0x8fd7ff, 0.75));
+  const keyLight = new THREE.PointLight(0xff62d2, 1.25, 12);
+  keyLight.position.set(3.8, 2.3, 4);
+  scene.add(keyLight);
+  const fillLight = new THREE.PointLight(0x75ffd6, 1.15, 10);
+  fillLight.position.set(-3.5, -1.6, 3);
+  scene.add(fillLight);
+
+  state.atlas.renderer = renderer;
+  state.atlas.scene = scene;
+  state.atlas.camera = camera;
+  state.atlas.mesh = mesh;
+  state.atlas.particles = particles;
+  state.atlas.material = material;
+
+  const render = (time) => {
+    if (!state.atlas.renderer) return;
+    resizeAtlas();
+    const t = time * 0.001;
+    const positionsAttr = mesh.geometry.attributes.position;
+    const directionLift = state.atlas.mode.includes("BUY") ? 0.18 : state.atlas.mode.includes("SELL") ? -0.18 : 0;
+    for (let i = 0; i < positionsAttr.count; i += 1) {
+      const x = positionsAttr.getX(i);
+      const y = positionsAttr.getY(i);
+      positionsAttr.setZ(i, Math.sin(x * 1.6 + t * 1.1) * 0.16 + Math.cos(y * 3.4 + t * 0.8) * 0.09 + directionLift);
+    }
+    positionsAttr.needsUpdate = true;
+    mesh.rotation.z = Math.sin(t * 0.16) * 0.025;
+    particles.rotation.z = t * 0.045;
+    particles.rotation.x = Math.sin(t * 0.12) * 0.08;
+    renderer.render(scene, camera);
+    requestAnimationFrame(render);
+  };
+  requestAnimationFrame(render);
+}
+
+function resizeAtlas() {
+  if (state.atlas.fallback) {
+    drawAtlasFallback();
+    return;
+  }
+  const canvas = els.liquidityAtlasCanvas;
+  const renderer = state.atlas.renderer;
+  if (!canvas || !renderer || !state.atlas.camera || !window.THREE) return;
+  const rect = canvas.getBoundingClientRect();
+  const width = Math.max(1, Math.floor(rect.width));
+  const height = Math.max(1, Math.floor(rect.height));
+  const size = renderer.getSize(new window.THREE.Vector2());
+  if (size.x !== width || size.y !== height) {
+    renderer.setSize(width, height, false);
+    state.atlas.camera.aspect = width / height;
+    state.atlas.camera.updateProjectionMatrix();
+  }
+}
+
+function updateLiquidityAtlas() {
+  const direction = els.setupDirection.textContent || "WAIT";
+  const asset = selectedCoin();
+  const vwap = state.market.vwapSignal || "VWAP pending";
+  const funding = state.market.hyperFunding == null ? "funding pending" : `funding ${formatPercent(state.market.hyperFunding, 4)}`;
+  const liq = state.market.liquidationBias || "liquidity forming";
+  state.atlas.mode = direction;
+  els.atlasSignal.textContent = `${asset} ${direction}`;
+  els.atlasSignal.className = direction.includes("BUY") ? "positive" : direction.includes("SELL") ? "negative" : "";
+  els.atlasDetail.textContent = `${vwap} · ${liq} · ${funding}`;
+  if (state.atlas.material) {
+    const color = direction.includes("BUY") ? 0x75ffd6 : direction.includes("SELL") ? 0xff62d2 : 0xffbf47;
+    state.atlas.material.color.setHex(color);
+    state.atlas.material.emissive.setHex(direction.includes("SELL") ? 0x321326 : direction.includes("BUY") ? 0x102c31 : 0x2b2110);
+  }
+  if (state.atlas.fallback) drawAtlasFallback();
+}
+
+function drawAtlasFallback() {
+  const canvas = els.liquidityAtlasCanvas;
+  if (!canvas) return;
+  const ctx = prepareCanvas(canvas);
+  const { width, height } = canvas.getBoundingClientRect();
+  ctx.clearRect(0, 0, width, height);
+  const gradient = ctx.createLinearGradient(0, 0, width, height);
+  gradient.addColorStop(0, "rgba(117, 255, 214, 0.22)");
+  gradient.addColorStop(0.45, "rgba(82, 214, 255, 0.08)");
+  gradient.addColorStop(1, "rgba(255, 98, 210, 0.18)");
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, width, height);
+  for (let i = 0; i < 34; i += 1) {
+    const y = (height / 34) * i;
+    ctx.strokeStyle = `rgba(238, 244, 251, ${i % 5 === 0 ? 0.18 : 0.06})`;
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    for (let x = 0; x <= width; x += 18) {
+      ctx.lineTo(x, y + Math.sin(x * 0.02 + i) * 10);
+    }
+    ctx.stroke();
+  }
 }
 
 function recordTelemetry(name, source, ok, ms, detail = "") {
@@ -1336,6 +1490,7 @@ function applyMonatiseFramework() {
   els.gridPlan.textContent = gridPlan;
   els.hedgeDirection.textContent = hedgeDirection;
   els.hedgePlan.textContent = hedgePlan;
+  updateLiquidityAtlas();
 
   return {
     asset: asset.coin,
@@ -1718,10 +1873,13 @@ els.clearSessionButton.addEventListener("click", () => {
 window.addEventListener("resize", () => {
   if (state.priceSeries.length) renderPrice(state.priceSeries);
   if (state.lastPrice) drawLiquidationMap(els.liqCanvas, syntheticLiquidations(state.lastPrice), state.lastPrice);
+  resizeAtlas();
 });
 
 renderTelemetry();
 renderLiveAlerts();
+initLiquidityAtlas();
+updateLiquidityAtlas();
 connectRealtime();
 refreshDashboard();
 setInterval(refreshDashboard, 60_000);
