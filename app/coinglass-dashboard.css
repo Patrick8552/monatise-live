@@ -225,6 +225,32 @@ select {
   pointer-events: none;
 }
 
+.atlas-controls {
+  position: absolute;
+  right: 16px;
+  top: 14px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: min(360px, calc(100% - 32px));
+}
+
+.atlas-controls button {
+  min-height: 32px;
+  padding: 0 11px;
+  border-color: rgba(117, 255, 214, 0.34);
+  background: rgba(8, 16, 24, 0.74);
+  backdrop-filter: blur(10px);
+  font-size: 0.78rem;
+}
+
+.atlas-controls button.active {
+  border-color: var(--mint);
+  background: rgba(117, 255, 214, 0.16);
+  color: var(--text);
+}
+
 .atlas-hud span,
 .atlas-hud small {
   color: var(--muted);

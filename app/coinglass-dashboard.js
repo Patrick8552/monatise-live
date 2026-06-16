@@ -52,6 +52,7 @@ const els = {
   atlasMode: document.querySelector("#atlasMode"),
   atlasSignal: document.querySelector("#atlasSignal"),
   atlasDetail: document.querySelector("#atlasDetail"),
+  atlasButtons: document.querySelectorAll("[data-atlas-view]"),
   fundingAverage: document.querySelector("#fundingAverage"),
   openInterest: document.querySelector("#openInterest"),
   fearGreed: document.querySelector("#fearGreed"),
@@ -123,6 +124,15 @@ const state = {
     mesh: null,
     particles: null,
     material: null,
+    heatmapGroup: null,
+    zoneGroup: null,
+    structureGroup: null,
+    ecosystemGroup: null,
+    heatmapBars: [],
+    zones: [],
+    ecosystemNodes: [],
+    view: "btc",
+    pointer: { x: 0, y: 0 },
     mode: "WAIT",
     started: false,
     fallback: false
@@ -256,6 +266,16 @@ function initLiquidityAtlas() {
   const particles = new THREE.Points(points, new THREE.PointsMaterial({ size: 0.045, vertexColors: true, transparent: true, opacity: 0.86 }));
   scene.add(particles);
 
+  const heatmapGroup = new THREE.Group();
+  const zoneGroup = new THREE.Group();
+  const structureGroup = new THREE.Group();
+  const ecosystemGroup = new THREE.Group();
+  scene.add(heatmapGroup, zoneGroup, structureGroup, ecosystemGroup);
+  buildAtlasHeatmap(THREE, heatmapGroup);
+  buildAtlasZones(THREE, zoneGroup);
+  buildAtlasStructure(THREE, structureGroup);
+  buildAtlasEcosystem(THREE, ecosystemGroup);
+
   scene.add(new THREE.AmbientLight(0x8fd7ff, 0.75));
   const keyLight = new THREE.PointLight(0xff62d2, 1.25, 12);
   keyLight.position.set(3.8, 2.3, 4);
@@ -270,6 +290,16 @@ function initLiquidityAtlas() {
   state.atlas.mesh = mesh;
   state.atlas.particles = particles;
   state.atlas.material = material;
+  state.atlas.heatmapGroup = heatmapGroup;
+  state.atlas.zoneGroup = zoneGroup;
+  state.atlas.structureGroup = structureGroup;
+  state.atlas.ecosystemGroup = ecosystemGroup;
+
+  canvas.addEventListener("pointermove", (event) => {
+    const rect = canvas.getBoundingClientRect();
+    state.atlas.pointer.x = ((event.clientX - rect.left) / Math.max(1, rect.width) - 0.5) * 2;
+    state.atlas.pointer.y = ((event.clientY - rect.top) / Math.max(1, rect.height) - 0.5) * -2;
+  });
 
   const render = (time) => {
     if (!state.atlas.renderer) return;
@@ -286,10 +316,94 @@ function initLiquidityAtlas() {
     mesh.rotation.z = Math.sin(t * 0.16) * 0.025;
     particles.rotation.z = t * 0.045;
     particles.rotation.x = Math.sin(t * 0.12) * 0.08;
+    heatmapGroup.rotation.y = state.atlas.pointer.x * 0.08;
+    zoneGroup.children.forEach((zone, index) => {
+      zone.position.y += Math.sin(t * 0.9 + index) * 0.0009;
+      zone.rotation.z = Math.sin(t * 0.35 + index) * 0.08;
+    });
+    structureGroup.children.forEach((child, index) => {
+      child.position.z = Math.sin(t * 1.4 + index) * 0.04;
+    });
+    ecosystemGroup.rotation.y += (state.atlas.pointer.x * 0.16 - ecosystemGroup.rotation.y) * 0.04;
+    ecosystemGroup.rotation.x += (state.atlas.pointer.y * 0.08 - ecosystemGroup.rotation.x) * 0.04;
     renderer.render(scene, camera);
     requestAnimationFrame(render);
   };
   requestAnimationFrame(render);
+}
+
+function buildAtlasHeatmap(THREE, group) {
+  const geometry = new THREE.BoxGeometry(0.12, 1, 0.12);
+  state.atlas.heatmapBars = [];
+  for (let i = 0; i < 42; i += 1) {
+    const side = i % 2 === 0 ? 1 : -1;
+    const distance = Math.floor(i / 2);
+    const material = new THREE.MeshStandardMaterial({
+      color: side > 0 ? 0x75ffd6 : 0xff62d2,
+      emissive: side > 0 ? 0x12342f : 0x371229,
+      transparent: true,
+      opacity: 0.74,
+      roughness: 0.42,
+      metalness: 0.2
+    });
+    const bar = new THREE.Mesh(geometry, material);
+    bar.position.set((distance - 10) * 0.36, -1.36, side * (0.55 + distance * 0.025));
+    bar.scale.y = 0.15 + Math.abs(Math.sin(i * 1.7)) * 0.72;
+    group.add(bar);
+    state.atlas.heatmapBars.push(bar);
+  }
+}
+
+function buildAtlasZones(THREE, group) {
+  const zoneGeometry = new THREE.PlaneGeometry(1.35, 0.22);
+  state.atlas.zones = [];
+  for (let i = 0; i < 8; i += 1) {
+    const material = new THREE.MeshBasicMaterial({
+      color: i % 2 ? 0xffbf47 : 0x52d6ff,
+      transparent: true,
+      opacity: 0.24,
+      side: THREE.DoubleSide
+    });
+    const zone = new THREE.Mesh(zoneGeometry, material);
+    zone.position.set(-3.7 + i * 1.05, 0.1 + Math.sin(i) * 0.35, -0.4 + (i % 3) * 0.42);
+    zone.rotation.x = -0.62;
+    group.add(zone);
+    state.atlas.zones.push(zone);
+  }
+}
+
+function buildAtlasStructure(THREE, group) {
+  const bullish = new THREE.LineBasicMaterial({ color: 0x75ffd6, transparent: true, opacity: 0.95 });
+  const bearish = new THREE.LineBasicMaterial({ color: 0xff62d2, transparent: true, opacity: 0.95 });
+  for (let lane = 0; lane < 3; lane += 1) {
+    const points = [];
+    for (let i = 0; i < 8; i += 1) {
+      points.push(new THREE.Vector3(-4 + i * 1.14, 0.55 + Math.sin(i * 0.9 + lane) * 0.32, -0.9 + lane * 0.55));
+    }
+    const geometry = new THREE.BufferGeometry().setFromPoints(points);
+    group.add(new THREE.Line(geometry, lane === 1 ? bearish : bullish));
+  }
+}
+
+function buildAtlasEcosystem(THREE, group) {
+  const btc = createAtlasNode(THREE, "BTC", 0xffbf47, -1.15);
+  const gold = createAtlasNode(THREE, "Gold", 0xf7d774, 1.15);
+  group.add(btc.mesh, gold.mesh);
+  state.atlas.ecosystemNodes = [btc, gold];
+}
+
+function createAtlasNode(THREE, label, color, x) {
+  const geometry = new THREE.SphereGeometry(0.34, 32, 16);
+  const material = new THREE.MeshStandardMaterial({
+    color,
+    emissive: color === 0xffbf47 ? 0x402800 : 0x332600,
+    metalness: 0.45,
+    roughness: 0.32
+  });
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.position.set(x, 0.82, 0.35);
+  mesh.userData.label = label;
+  return { label, mesh };
 }
 
 function resizeAtlas() {
@@ -314,19 +428,65 @@ function resizeAtlas() {
 function updateLiquidityAtlas() {
   const direction = els.setupDirection.textContent || "WAIT";
   const asset = selectedCoin();
+  const viewLabel = state.atlas.view === "gold" ? "Gold macro" : state.atlas.view === "dual" ? `${asset} + Gold` : `${asset} crypto`;
   const vwap = state.market.vwapSignal || "VWAP pending";
   const funding = state.market.hyperFunding == null ? "funding pending" : `funding ${formatPercent(state.market.hyperFunding, 4)}`;
   const liq = state.market.liquidationBias || "liquidity forming";
   state.atlas.mode = direction;
-  els.atlasSignal.textContent = `${asset} ${direction}`;
+  els.atlasMode.textContent = `Monatise Liquidity Atlas · ${viewLabel}`;
+  els.atlasSignal.textContent = state.atlas.view === "gold" ? `Gold ${goldSignalFromCrypto(direction)}` : `${asset} ${direction}`;
   els.atlasSignal.className = direction.includes("BUY") ? "positive" : direction.includes("SELL") ? "negative" : "";
-  els.atlasDetail.textContent = `${vwap} · ${liq} · ${funding}`;
+  els.atlasDetail.textContent = state.atlas.view === "gold"
+    ? `Gold hedge lens · BTC ${direction} · ${vwap} · ${liq}`
+    : `${vwap} · ${liq} · ${funding}`;
   if (state.atlas.material) {
-    const color = direction.includes("BUY") ? 0x75ffd6 : direction.includes("SELL") ? 0xff62d2 : 0xffbf47;
+    const color = state.atlas.view === "gold" ? 0xf7d774 : direction.includes("BUY") ? 0x75ffd6 : direction.includes("SELL") ? 0xff62d2 : 0xffbf47;
     state.atlas.material.color.setHex(color);
     state.atlas.material.emissive.setHex(direction.includes("SELL") ? 0x321326 : direction.includes("BUY") ? 0x102c31 : 0x2b2110);
   }
+  updateAtlasHeatmapObjects(direction);
+  updateAtlasEcosystemObjects();
   if (state.atlas.fallback) drawAtlasFallback();
+}
+
+function goldSignalFromCrypto(direction) {
+  if (direction.includes("BUY")) return "hedge watch";
+  if (direction.includes("SELL")) return "safe-haven bid";
+  return "macro neutral";
+}
+
+function updateAtlasHeatmapObjects(direction) {
+  const squeeze = state.market.liquidationBias === "short squeeze";
+  const flush = state.market.liquidationBias === "long flush";
+  const vwapLift = Number(state.market.vwapScore || 0);
+  state.atlas.heatmapBars.forEach((bar, index) => {
+    const side = index % 2 === 0 ? 1 : -1;
+    const bias = squeeze && side > 0 ? 1.55 : flush && side < 0 ? 1.55 : 0.86;
+    const directionBias = direction.includes("BUY") && side > 0 ? 1.25 : direction.includes("SELL") && side < 0 ? 1.25 : 1;
+    const goldBias = state.atlas.view === "gold" ? 0.72 + (index % 5) * 0.08 : 1;
+    bar.scale.y = (0.18 + Math.abs(Math.sin(index * 1.27 + vwapLift)) * 0.92) * bias * directionBias * goldBias;
+    bar.position.y = -1.48 + bar.scale.y * 0.45;
+    bar.material.opacity = Math.min(0.9, 0.46 + bar.scale.y * 0.18);
+  });
+  state.atlas.zones.forEach((zone, index) => {
+    const isGold = state.atlas.view === "gold";
+    zone.material.color.setHex(isGold ? 0xf7d774 : index % 2 ? 0xffbf47 : 0x52d6ff);
+    zone.material.opacity = isGold ? 0.2 + (index % 3) * 0.04 : 0.22 + Math.abs(vwapLift) * 0.04;
+  });
+}
+
+function updateAtlasEcosystemObjects() {
+  state.atlas.ecosystemNodes.forEach((node) => {
+    const isGold = node.label === "Gold";
+    const active =
+      state.atlas.view === "dual" ||
+      (state.atlas.view === "gold" && isGold) ||
+      (state.atlas.view === "btc" && !isGold);
+    node.mesh.visible = state.atlas.view === "dual" || active;
+    node.mesh.scale.setScalar(active ? 1.18 : 0.72);
+    node.mesh.material.opacity = active ? 1 : 0.42;
+    node.mesh.material.transparent = !active;
+  });
 }
 
 function drawAtlasFallback() {
@@ -350,6 +510,27 @@ function drawAtlasFallback() {
       ctx.lineTo(x, y + Math.sin(x * 0.02 + i) * 10);
     }
     ctx.stroke();
+  }
+  const view = state.atlas.view;
+  const nodes = view === "dual" ? [["BTC", width * 0.36, height * 0.42], ["Gold", width * 0.64, height * 0.42]] : [[view === "gold" ? "Gold" : selectedCoin(), width * 0.5, height * 0.42]];
+  nodes.forEach(([label, x, y]) => {
+    ctx.beginPath();
+    ctx.arc(x, y, 28, 0, Math.PI * 2);
+    ctx.fillStyle = label === "Gold" ? "rgba(247, 215, 116, 0.34)" : "rgba(117, 255, 214, 0.28)";
+    ctx.fill();
+    ctx.strokeStyle = label === "Gold" ? "rgba(247, 215, 116, 0.86)" : "rgba(117, 255, 214, 0.86)";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = "#eef4fb";
+    ctx.font = "bold 13px system-ui";
+    ctx.textAlign = "center";
+    ctx.fillText(label, x, y + 4);
+  });
+  for (let i = 0; i < 14; i += 1) {
+    const x = (width / 14) * i + 6;
+    const h = 14 + Math.abs(Math.sin(i + state.market.vwapScore)) * 54;
+    ctx.fillStyle = i % 2 ? "rgba(255, 98, 210, 0.48)" : "rgba(117, 255, 214, 0.48)";
+    ctx.fillRect(x, height - h - 12, Math.max(3, width / 42), h);
   }
 }
 
@@ -1850,6 +2031,14 @@ els.openaiModelInput.addEventListener("change", () => {
 els.copilotAskButton.addEventListener("click", handleCopilotQuestion);
 els.copilotQuestionInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") handleCopilotQuestion();
+});
+
+els.atlasButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    state.atlas.view = button.dataset.atlasView || "btc";
+    els.atlasButtons.forEach((item) => item.classList.toggle("active", item === button));
+    updateLiquidityAtlas();
+  });
 });
 
 els.refreshButton.addEventListener("click", refreshDashboard);
