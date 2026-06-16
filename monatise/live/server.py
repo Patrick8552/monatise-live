@@ -709,7 +709,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             "script-src 'self' https://cdnjs.cloudflare.com; "
             "style-src 'self'; "
             "img-src 'self' data:; "
-            "connect-src 'self' https://open-api-v4.coinglass.com https://api.binance.com https://api.hyperliquid.xyz https://api.alternative.me; "
+            "connect-src 'self' https://open-api-v4.coinglass.com https://api.binance.com https://api.hyperliquid.xyz https://api.alternative.me https://postgresql.org https://www.postgresql.org; "
             "frame-ancestors 'none'; "
             "base-uri 'self'; "
             "form-action 'self' https://checkout.stripe.com https://api.flutterwave.com https://*.flutterwave.com",
