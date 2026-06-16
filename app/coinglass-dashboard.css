@@ -65,6 +65,7 @@ button:hover {
 .topbar,
 .control-band,
 .integration-drawer,
+.source-band,
 .price-band,
 .panel {
   border: 1px solid var(--line);
@@ -85,7 +86,8 @@ button:hover {
 .market-title p,
 .panel-head p,
 label span,
-.mini-metrics span {
+.mini-metrics span,
+.source-band span {
   margin: 0;
   color: var(--muted);
   font-size: 0.78rem;
@@ -191,6 +193,43 @@ h2 {
 
 .integration-drawer:not([open]) .integration-grid {
   display: none;
+}
+
+.source-band {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.85fr) minmax(260px, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 16px;
+  border-top: 0;
+  background: #0f1720;
+}
+
+.source-band > div {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.source-band strong {
+  color: var(--text);
+  font-size: 1rem;
+  line-height: 1.2;
+}
+
+.source-band small {
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.source-band.ready {
+  border-color: rgba(90, 230, 143, 0.34);
+  background: linear-gradient(90deg, rgba(90, 230, 143, 0.08), rgba(15, 23, 32, 0.96));
+}
+
+.source-band.waiting {
+  border-color: rgba(255, 191, 71, 0.34);
+  background: linear-gradient(90deg, rgba(255, 191, 71, 0.08), rgba(15, 23, 32, 0.96));
 }
 
 label {
@@ -769,6 +808,7 @@ canvas {
 @media (max-width: 1100px) {
   .control-band,
   .integration-grid,
+  .source-band,
   .price-band,
   .workspace-grid {
     grid-template-columns: 1fr 1fr;
@@ -813,6 +853,7 @@ canvas {
 
   .topbar,
   .price-band,
+  .source-band,
   .atlas-band,
   .control-band,
   .integration-grid,
@@ -840,6 +881,7 @@ canvas {
   .panel,
   .control-band,
   .price-band,
+  .source-band,
   .atlas-band,
   .topbar {
     padding: 14px;

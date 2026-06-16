@@ -38,6 +38,7 @@ const els = {
   copilotQuestionInput: document.querySelector("#copilotQuestionInput"),
   copilotAskButton: document.querySelector("#copilotAskButton"),
   refreshButton: document.querySelector("#refreshButton"),
+  openIntegrationsButton: document.querySelector("#openIntegrationsButton"),
   installDashboardButton: document.querySelector("#installDashboardButton"),
   clearSessionButton: document.querySelector("#clearSessionButton"),
   sessionStatusDot: document.querySelector("#sessionStatusDot"),
@@ -60,6 +61,10 @@ const els = {
   fearGreed: document.querySelector("#fearGreed"),
   liqBias: document.querySelector("#liqBias"),
   vwapMetric: document.querySelector("#vwapMetric"),
+  coinGlassStatus: document.querySelector("#coinGlassStatus"),
+  coinGlassStatusDetail: document.querySelector("#coinGlassStatusDetail"),
+  coinGlassPriceRef: document.querySelector("#coinGlassPriceRef"),
+  coinGlassRouteRef: document.querySelector("#coinGlassRouteRef"),
   priceSource: document.querySelector("#priceSource"),
   fundingSource: document.querySelector("#fundingSource"),
   oiSource: document.querySelector("#oiSource"),
@@ -1195,7 +1200,25 @@ function syncAssetLabels() {
   els.headerMarketSymbol.textContent = asset.pair;
   els.pricePanelTitle.textContent = `${asset.coin} Live Candles`;
   els.setupAsset.textContent = `${asset.coin} setup`;
+  updateCoinGlassSourceStatus();
   syncTradingView(asset);
+}
+
+function updateCoinGlassSourceStatus(message = "") {
+  const asset = selectedAsset();
+  const exchange = els.exchangeSelect.value;
+  const interval = els.intervalSelect.value;
+  const ready = hasKey();
+  const sourceBand = document.querySelector(".source-band");
+  sourceBand?.classList.toggle("ready", ready);
+  sourceBand?.classList.toggle("waiting", !ready);
+  els.coinGlassStatus.textContent = ready ? "Key saved locally" : "Key required";
+  els.coinGlassStatusDetail.textContent = ready
+    ? message || "CoinGlass will be used for price, funding, OI, liquidations, fear/greed, news, VWAP/history research, and Monatise signals."
+    : "Add your CG-API-KEY in Integrations to unlock live price, funding, OI, liquidations, fear/greed, news, VWAP/history research, and Monatise signals.";
+  els.coinGlassPriceRef.textContent = `${asset.pair} · CoinGlass futures price history`;
+  els.coinGlassRouteRef.textContent = `/api/futures/price/history · exchange ${exchange} · interval ${interval}`;
+  els.openIntegrationsButton.textContent = ready ? "Update CoinGlass Key" : "Add CoinGlass Key";
 }
 
 function syncTradingView(asset = selectedAsset()) {
@@ -1406,6 +1429,7 @@ function renderPrice(series) {
   els.priceChange.className = change >= 0 ? "positive" : "negative";
   els.headerPriceChange.className = change >= 0 ? "positive" : "negative";
   els.pricePulse.textContent = "live";
+  updateCoinGlassSourceStatus(`Live CoinGlass price ${formatUsd(last.close)} · ${series.length} candles loaded.`);
   const research = studyHistoricalPattern(series);
   renderResearch(research);
   const structure = analyzeMarketStructure(series, research);
@@ -2117,6 +2141,7 @@ async function refreshDashboard() {
     els.headerPriceChange.className = "";
     els.priceSource.textContent = `CoinGlass price unavailable · ${error.message}`;
     els.pricePulse.textContent = "offline";
+    updateCoinGlassSourceStatus(error.message);
     drawCanvasNotice(els.priceCanvas, "CoinGlass price history required", error.message);
   }
 
@@ -2149,6 +2174,7 @@ async function refreshDashboard() {
 els.apiKeyInput.addEventListener("change", () => {
   state.apiKey = els.apiKeyInput.value.trim();
   localStorage.setItem(API_KEY_STORAGE, state.apiKey);
+  updateCoinGlassSourceStatus(state.apiKey ? "CoinGlass key saved locally. Refreshing live market data." : "CoinGlass key removed.");
   refreshDashboard();
 });
 
@@ -2231,6 +2257,11 @@ els.atlasButtons.forEach((button) => {
 });
 
 els.refreshButton.addEventListener("click", refreshDashboard);
+els.openIntegrationsButton?.addEventListener("click", () => {
+  const drawer = els.apiKeyInput.closest(".integration-drawer");
+  if (drawer) drawer.open = true;
+  els.apiKeyInput.focus();
+});
 els.installDashboardButton?.addEventListener("click", async () => {
   if (!deferredDashboardInstallPrompt) return;
   deferredDashboardInstallPrompt.prompt();

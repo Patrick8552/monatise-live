@@ -11,7 +11,7 @@
     <link rel="manifest" href="./manifest.webmanifest?v=20260616-dashboard-install" />
     <link rel="icon" href="./icon-lotus.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./icon-lotus.svg" />
-    <link rel="stylesheet" href="./coinglass-dashboard.css?v=20260616-coinglass-only" />
+    <link rel="stylesheet" href="./coinglass-dashboard.css?v=20260616-source-status" />
   </head>
   <body>
     <div class="app-shell">
@@ -103,6 +103,20 @@
             </label>
           </div>
         </details>
+
+        <section class="source-band" aria-label="CoinGlass source status">
+          <div>
+            <span>CoinGlass source</span>
+            <strong id="coinGlassStatus">Key required</strong>
+            <small id="coinGlassStatusDetail">Add your CG-API-KEY in Integrations to unlock live price, funding, OI, liquidations, fear/greed, news, VWAP/history research, and Monatise signals.</small>
+          </div>
+          <div>
+            <span>Price reference</span>
+            <strong id="coinGlassPriceRef">BTCUSDT · futures price history</strong>
+            <small id="coinGlassRouteRef">/api/futures/price/history · exchange Binance · interval 1h</small>
+          </div>
+          <button id="openIntegrationsButton" type="button" class="ghost-button">Add CoinGlass Key</button>
+        </section>
 
         <section class="price-band">
           <div class="market-title">
@@ -430,6 +444,6 @@
     </div>
     <script src="https://cdn.ably.com/lib/ably.min-2.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="./coinglass-dashboard.js?v=20260616-coinglass-only"></script>
+    <script src="./coinglass-dashboard.js?v=20260616-source-status"></script>
   </body>
 </html>
