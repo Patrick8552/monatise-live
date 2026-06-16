@@ -1,10 +1,13 @@
-const CACHE_NAME = "monatise-shell-20260615-signal-levels";
+const CACHE_NAME = "monatise-shell-20260616-grid-signals";
 const SHELL_ASSETS = [
   "./",
   "./index.html",
+  "./coinglass-dashboard.html?v=20260616-grid-signals",
   "./styles.css?v=20260615-signal-levels",
   "./app.js?v=20260615-signal-levels",
-  "./manifest.webmanifest?v=20260615-lotus",
+  "./coinglass-dashboard.css?v=20260616-grid-signals",
+  "./coinglass-dashboard.js?v=20260616-grid-signals",
+  "./manifest.webmanifest?v=20260616-grid-signals",
   "./icon-lotus.svg"
 ];
 
