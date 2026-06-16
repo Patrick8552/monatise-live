@@ -720,8 +720,10 @@ function evaluateLiveAlerts(setup) {
 
 function publishGeneratedSignal(setup) {
   if (!setup) return;
-  const price = Number(setup.price);
-  const vwap = Number(setup.vwap);
+  const rawPrice = Number(setup.price);
+  const rawVwap = Number(setup.vwap);
+  const price = Number.isFinite(rawPrice) && rawPrice > 0 ? rawPrice : state.lastPrice;
+  const vwap = Number.isFinite(rawVwap) && rawVwap > 0 ? rawVwap : null;
   const signal = buildGeneratedSignal(setup, price, vwap);
   renderGeneratedSignal(signal);
 
@@ -734,7 +736,7 @@ function publishGeneratedSignal(setup) {
       kind: "monatise signal",
       asset: signal.asset,
       title: `${signal.asset} ${signal.action}`,
-      detail: `${signal.entryPlan} ${signal.gridHedge}. ${signal.invalidationPlan}`,
+      detail: `${signal.buyGridPlan} ${signal.sellGridPlan} Hedge: ${signal.hedgeDirection}.`,
       payload: signal
     });
   }
@@ -744,7 +746,11 @@ function buildGeneratedSignal(setup, price, vwap) {
   const action = setup.direction === "BUY SETUP" ? "BUY" : setup.direction === "SELL SETUP" ? "SELL" : "WAIT";
   const atrPct = averageTrueRangePercent(state.priceSeries.slice(-24)) || 0.6;
   const riskPct = Math.max(0.35, Math.min(1.6, atrPct * 1.15));
+  const spacingPct = Math.max(0.12, Math.min(0.55, riskPct / 3));
   const entry = Number.isFinite(price) ? price : state.lastPrice;
+  const anchor = Number.isFinite(vwap) ? (entry + vwap) / 2 : entry;
+  const buyGrid = buildGridLevels(anchor, "buy", spacingPct, action);
+  const sellGrid = buildGridLevels(anchor, "sell", spacingPct, action);
   const invalidation = action === "BUY"
     ? entry * (1 - riskPct / 100)
     : action === "SELL"
@@ -769,18 +775,58 @@ function buildGeneratedSignal(setup, price, vwap) {
     entry,
     invalidation,
     target,
+    buyGrid,
+    sellGrid,
+    buyGridText: formatGridLevels(buyGrid),
+    sellGridText: formatGridLevels(sellGrid),
     entryPlan: action === "WAIT"
       ? "No entry until the framework score clears the setup threshold."
       : `${action} near ${formatUsd(entry)}; first target ${formatUsd(target)}.`,
     invalidationPlan: action === "WAIT"
       ? "VWAP and market structure are the wait-state guard rails."
       : `Invalidate on acceptance beyond ${formatUsd(invalidation)}.`,
-    gridHedge: `${setup.gridDirection}; ${setup.hedgeDirection}`,
+    buyGridPlan: gridSidePlan("buy", action, setup.asset, buyGrid, setup.scaleAction),
+    sellGridPlan: gridSidePlan("sell", action, setup.asset, sellGrid, setup.scaleAction),
+    hedgeDirection: setup.hedgeDirection,
+    hedgePlan: `${setup.gridPlan} ${setup.hedgePlan}`,
+    gridHedge: `Buys ${formatGridLevels(buyGrid)}; sells ${formatGridLevels(sellGrid)}; ${setup.hedgeDirection}`,
     gridHedgePlan: `${setup.gridPlan} ${setup.hedgePlan}`,
     thesis: `${setup.direction} · confidence ${setup.confidence}% · score ${setup.score >= 0 ? "+" : ""}${setup.score}`,
     evidence: bestChecks.length ? bestChecks.join(" · ") : "Framework checks are still warming up.",
     time: new Date().toLocaleTimeString()
   };
+}
+
+function buildGridLevels(anchor, side, spacingPct, action) {
+  if (!Number.isFinite(anchor)) return [];
+  const biasShift = action === "BUY" ? 0.35 : action === "SELL" ? -0.35 : 0;
+  return [1, 2, 3].map((step) => {
+    const direction = side === "buy" ? -1 : 1;
+    const pct = spacingPct * (step + (side === "buy" ? -biasShift : biasShift));
+    return anchor * (1 + direction * pct / 100);
+  });
+}
+
+function formatGridLevels(levels) {
+  if (!levels.length) return "--";
+  return levels.map((level) => formatUsd(level)).join(" / ");
+}
+
+function gridSidePlan(side, action, asset, levels, scaleAction) {
+  const levelText = formatGridLevels(levels);
+  if (action === "WAIT") {
+    return side === "buy"
+      ? `Rest small ${asset} bids only after VWAP/structure confirms: ${levelText}.`
+      : `Rest small ${asset} asks only after VWAP/structure confirms: ${levelText}.`;
+  }
+  if (action === "BUY") {
+    return side === "buy"
+      ? `Primary ${asset} grid buys below mark: ${levelText}; ${scaleAction === "average down" ? "average down carefully into researched support" : "add only on controlled pullbacks"}.`
+      : `Take-profit ${asset} grid sells above mark: ${levelText}; recycle fills back into lower bids.`;
+  }
+  return side === "sell"
+    ? `Primary ${asset} grid sells above mark: ${levelText}; ${scaleAction === "average up" ? "average up carefully into researched resistance" : "add only into controlled strength"}.`
+    : `Cover ${asset} grid buys below mark: ${levelText}; recycle fills back into higher offers.`;
 }
 
 function renderGeneratedSignal(signal) {
@@ -791,12 +837,12 @@ function renderGeneratedSignal(signal) {
   els.signalAction.textContent = signal.action;
   els.signalAction.className = signal.action === "BUY" ? "positive" : signal.action === "SELL" ? "negative" : "";
   els.signalThesis.textContent = signal.thesis;
-  els.signalEntry.textContent = signal.action === "WAIT" ? "WAIT" : formatUsd(signal.entry);
-  els.signalEntryPlan.textContent = signal.entryPlan;
-  els.signalInvalidation.textContent = signal.action === "WAIT" ? "VWAP / structure" : formatUsd(signal.invalidation);
-  els.signalInvalidationPlan.textContent = signal.invalidationPlan;
-  els.signalGridHedge.textContent = signal.gridHedge;
-  els.signalGridHedgePlan.textContent = signal.gridHedgePlan;
+  els.signalEntry.textContent = signal.buyGridText;
+  els.signalEntryPlan.textContent = signal.buyGridPlan;
+  els.signalInvalidation.textContent = signal.sellGridText;
+  els.signalInvalidationPlan.textContent = signal.sellGridPlan;
+  els.signalGridHedge.textContent = signal.hedgeDirection;
+  els.signalGridHedgePlan.textContent = `${signal.hedgePlan} Invalidation: ${signal.action === "WAIT" ? "VWAP / structure" : formatUsd(signal.invalidation)}.`;
   els.signalEvidence.textContent = `${signal.liveChecks} / ${signal.checksTotal} checks`;
   els.signalEvidencePlan.textContent = signal.evidence;
 }
@@ -810,7 +856,7 @@ function renderSignalLog() {
     <div class="signal-row">
       <strong class="${signal.action === "BUY" ? "positive" : signal.action === "SELL" ? "negative" : ""}">${signal.action}</strong>
       <span>${signal.asset} · ${signal.time}</span>
-      <small>${signal.thesis} · ${signal.gridHedge}</small>
+      <small>${signal.thesis} · buys ${signal.buyGridText} · sells ${signal.sellGridText} · ${signal.hedgeDirection}</small>
     </div>
   `).join("");
 }
