@@ -348,6 +348,94 @@ select {
   min-height: 210px;
 }
 
+.signals-panel {
+  grid-column: 1 / -1;
+  min-height: 260px;
+  background:
+    linear-gradient(110deg, rgba(117, 255, 214, 0.08), transparent 36%),
+    linear-gradient(270deg, rgba(255, 98, 210, 0.08), transparent 42%),
+    rgba(18, 25, 35, 0.9);
+}
+
+.signal-ticket {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.9fr) 1.6fr;
+  gap: 12px;
+}
+
+.signal-primary,
+.signal-detail-grid div,
+.signal-row {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #0f1620;
+}
+
+.signal-primary {
+  display: grid;
+  align-content: center;
+  gap: 10px;
+  min-height: 178px;
+  padding: 18px;
+}
+
+.signal-primary span,
+.signal-detail-grid span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+}
+
+.signal-primary strong {
+  font-size: clamp(2.2rem, 6vw, 5rem);
+  line-height: 0.86;
+}
+
+.signal-primary p,
+.signal-detail-grid small {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.signal-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.signal-detail-grid div {
+  display: grid;
+  align-content: center;
+  gap: 9px;
+  min-height: 120px;
+  padding: 14px;
+}
+
+.signal-detail-grid strong {
+  font-size: clamp(1rem, 2vw, 1.45rem);
+  overflow-wrap: anywhere;
+}
+
+.signal-log {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.signal-row {
+  display: grid;
+  grid-template-columns: minmax(92px, 0.35fr) minmax(110px, 0.45fr) 1fr;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  color: var(--muted);
+}
+
+.signal-row strong {
+  color: var(--text);
+}
+
 .setup-grid {
   display: grid;
   grid-template-columns: minmax(260px, 1.2fr) repeat(3, minmax(160px, 0.8fr));
@@ -669,9 +757,14 @@ canvas {
     grid-column: 1 / -1;
   }
 
+  .signal-ticket,
   .setup-grid,
   .research-grid,
   .voice-output {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .signal-detail-grid {
     grid-template-columns: 1fr 1fr;
   }
 
@@ -700,6 +793,8 @@ canvas {
   .control-band,
   .integration-grid,
   .workspace-grid,
+  .signal-ticket,
+  .signal-detail-grid,
   .setup-grid,
   .research-grid,
   .voice-grid,
@@ -727,6 +822,7 @@ canvas {
   }
 
   .telemetry-row,
+  .signal-row,
   .metric-row {
     grid-template-columns: 1fr;
   }

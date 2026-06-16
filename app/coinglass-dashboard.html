@@ -136,6 +136,46 @@
         </section>
 
         <section class="workspace-grid">
+          <article class="panel signals-panel wide">
+            <div class="panel-head">
+              <div>
+                <h2>Monatise Generated Signals</h2>
+                <p id="signalTimestamp">Waiting for first market read</p>
+              </div>
+              <span id="signalState" class="pill">signal pending</span>
+            </div>
+            <div class="signal-ticket">
+              <div class="signal-primary">
+                <span id="signalAsset">BTC signal</span>
+                <strong id="signalAction">WAIT</strong>
+                <p id="signalThesis">Monatise will generate the current setup after candles, VWAP, liquidity, funding, and Hyperliquid context load.</p>
+              </div>
+              <div class="signal-detail-grid">
+                <div>
+                  <span>Entry</span>
+                  <strong id="signalEntry">--</strong>
+                  <small id="signalEntryPlan">Waiting for signal.</small>
+                </div>
+                <div>
+                  <span>Invalidation</span>
+                  <strong id="signalInvalidation">--</strong>
+                  <small id="signalInvalidationPlan">Waiting for risk line.</small>
+                </div>
+                <div>
+                  <span>Grid + Hedge</span>
+                  <strong id="signalGridHedge">--</strong>
+                  <small id="signalGridHedgePlan">Waiting for grid decision.</small>
+                </div>
+                <div>
+                  <span>Evidence</span>
+                  <strong id="signalEvidence">0 checks</strong>
+                  <small id="signalEvidencePlan">Waiting for framework checks.</small>
+                </div>
+              </div>
+            </div>
+            <div id="signalLog" class="signal-log"></div>
+          </article>
+
           <article class="panel framework-panel wide">
             <div class="panel-head">
               <div>

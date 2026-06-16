@@ -69,6 +69,20 @@ const els = {
   pricePulse: document.querySelector("#pricePulse"),
   maxPain: document.querySelector("#maxPain"),
   setupConfidence: document.querySelector("#setupConfidence"),
+  signalTimestamp: document.querySelector("#signalTimestamp"),
+  signalState: document.querySelector("#signalState"),
+  signalAsset: document.querySelector("#signalAsset"),
+  signalAction: document.querySelector("#signalAction"),
+  signalThesis: document.querySelector("#signalThesis"),
+  signalEntry: document.querySelector("#signalEntry"),
+  signalEntryPlan: document.querySelector("#signalEntryPlan"),
+  signalInvalidation: document.querySelector("#signalInvalidation"),
+  signalInvalidationPlan: document.querySelector("#signalInvalidationPlan"),
+  signalGridHedge: document.querySelector("#signalGridHedge"),
+  signalGridHedgePlan: document.querySelector("#signalGridHedgePlan"),
+  signalEvidence: document.querySelector("#signalEvidence"),
+  signalEvidencePlan: document.querySelector("#signalEvidencePlan"),
+  signalLog: document.querySelector("#signalLog"),
   setupAsset: document.querySelector("#setupAsset"),
   setupDirection: document.querySelector("#setupDirection"),
   setupReason: document.querySelector("#setupReason"),
@@ -117,6 +131,7 @@ const state = {
   apiKey: localStorage.getItem(API_KEY_STORAGE) || "",
   priceSeries: [],
   lastPrice: null,
+  signals: [],
   atlas: {
     renderer: null,
     scene: null,
@@ -701,6 +716,103 @@ function evaluateLiveAlerts(setup) {
       payload: setup
     });
   }
+}
+
+function publishGeneratedSignal(setup) {
+  if (!setup) return;
+  const price = Number(setup.price);
+  const vwap = Number(setup.vwap);
+  const signal = buildGeneratedSignal(setup, price, vwap);
+  renderGeneratedSignal(signal);
+
+  const signature = `${signal.asset}:${signal.action}:${Math.round(price || 0)}:${signal.score}:${Math.floor(Date.now() / 60000)}`;
+  if (state.signals[0]?.signature !== signature) {
+    state.signals.unshift({ ...signal, signature });
+    state.signals = state.signals.slice(0, 8);
+    renderSignalLog();
+    pushLiveAlert({
+      kind: "monatise signal",
+      asset: signal.asset,
+      title: `${signal.asset} ${signal.action}`,
+      detail: `${signal.entryPlan} ${signal.gridHedge}. ${signal.invalidationPlan}`,
+      payload: signal
+    });
+  }
+}
+
+function buildGeneratedSignal(setup, price, vwap) {
+  const action = setup.direction === "BUY SETUP" ? "BUY" : setup.direction === "SELL SETUP" ? "SELL" : "WAIT";
+  const atrPct = averageTrueRangePercent(state.priceSeries.slice(-24)) || 0.6;
+  const riskPct = Math.max(0.35, Math.min(1.6, atrPct * 1.15));
+  const entry = Number.isFinite(price) ? price : state.lastPrice;
+  const invalidation = action === "BUY"
+    ? entry * (1 - riskPct / 100)
+    : action === "SELL"
+      ? entry * (1 + riskPct / 100)
+      : Number.isFinite(vwap) ? vwap : entry;
+  const target = action === "BUY"
+    ? Math.max(entry * (1 + riskPct / 100), Number.isFinite(vwap) ? vwap : entry)
+    : action === "SELL"
+      ? Math.min(entry * (1 - riskPct / 100), Number.isFinite(vwap) ? vwap : entry)
+      : Number.isFinite(vwap) ? vwap : entry;
+  const bestChecks = setup.checks
+    .filter((check) => check.live || Math.abs(check.score) > 0)
+    .slice(0, 4)
+    .map((check) => `${check.name}: ${check.detail}`);
+  return {
+    asset: setup.asset,
+    action,
+    confidence: setup.confidence,
+    score: setup.score,
+    liveChecks: setup.liveChecks,
+    checksTotal: setup.checks.length,
+    entry,
+    invalidation,
+    target,
+    entryPlan: action === "WAIT"
+      ? "No entry until the framework score clears the setup threshold."
+      : `${action} near ${formatUsd(entry)}; first target ${formatUsd(target)}.`,
+    invalidationPlan: action === "WAIT"
+      ? "VWAP and market structure are the wait-state guard rails."
+      : `Invalidate on acceptance beyond ${formatUsd(invalidation)}.`,
+    gridHedge: `${setup.gridDirection}; ${setup.hedgeDirection}`,
+    gridHedgePlan: `${setup.gridPlan} ${setup.hedgePlan}`,
+    thesis: `${setup.direction} · confidence ${setup.confidence}% · score ${setup.score >= 0 ? "+" : ""}${setup.score}`,
+    evidence: bestChecks.length ? bestChecks.join(" · ") : "Framework checks are still warming up.",
+    time: new Date().toLocaleTimeString()
+  };
+}
+
+function renderGeneratedSignal(signal) {
+  els.signalTimestamp.textContent = `Generated ${signal.time}`;
+  els.signalState.textContent = signal.action === "WAIT" ? "watch signal" : "active signal";
+  els.signalState.className = `pill ${signal.action === "BUY" ? "positive" : signal.action === "SELL" ? "negative" : ""}`;
+  els.signalAsset.textContent = `${signal.asset} generated signal`;
+  els.signalAction.textContent = signal.action;
+  els.signalAction.className = signal.action === "BUY" ? "positive" : signal.action === "SELL" ? "negative" : "";
+  els.signalThesis.textContent = signal.thesis;
+  els.signalEntry.textContent = signal.action === "WAIT" ? "WAIT" : formatUsd(signal.entry);
+  els.signalEntryPlan.textContent = signal.entryPlan;
+  els.signalInvalidation.textContent = signal.action === "WAIT" ? "VWAP / structure" : formatUsd(signal.invalidation);
+  els.signalInvalidationPlan.textContent = signal.invalidationPlan;
+  els.signalGridHedge.textContent = signal.gridHedge;
+  els.signalGridHedgePlan.textContent = signal.gridHedgePlan;
+  els.signalEvidence.textContent = `${signal.liveChecks} / ${signal.checksTotal} checks`;
+  els.signalEvidencePlan.textContent = signal.evidence;
+}
+
+function renderSignalLog() {
+  if (!state.signals.length) {
+    els.signalLog.innerHTML = `<div class="signal-row"><strong>No signals yet</strong><span>--</span><small>Waiting for the first framework pass.</small></div>`;
+    return;
+  }
+  els.signalLog.innerHTML = state.signals.slice(0, 5).map((signal) => `
+    <div class="signal-row">
+      <strong class="${signal.action === "BUY" ? "positive" : signal.action === "SELL" ? "negative" : ""}">${signal.action}</strong>
+      <span>${signal.asset} · ${signal.time}</span>
+      <small>${signal.thesis} · ${signal.gridHedge}</small>
+    </div>
+  `).join("");
 }
 
 function setVoiceStatus(text) {
@@ -1950,6 +2062,7 @@ async function refreshDashboard() {
 
   await Promise.allSettled(jobs);
   const setup = applyMonatiseFramework();
+  publishGeneratedSignal(setup);
   evaluateLiveAlerts(setup);
   const failures = state.telemetry.slice(0, 8).filter((item) => !item.ok).length;
   setSessionStatus(failures ? "bad" : "good", failures ? "Session degraded" : "Session live");
@@ -2067,6 +2180,7 @@ window.addEventListener("resize", () => {
 
 renderTelemetry();
 renderLiveAlerts();
+renderSignalLog();
 initLiquidityAtlas();
 updateLiquidityAtlas();
 connectRealtime();
