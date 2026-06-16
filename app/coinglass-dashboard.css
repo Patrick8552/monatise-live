@@ -117,6 +117,26 @@ h2 {
   justify-content: flex-end;
 }
 
+.mobile-price-chip {
+  display: none;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  color: var(--muted);
+}
+
+.mobile-price-chip span,
+.mobile-price-chip small {
+  font-size: 0.78rem;
+}
+
+.mobile-price-chip strong {
+  color: var(--text);
+  font-size: clamp(1.5rem, 8vw, 2.35rem);
+  line-height: 0.92;
+}
+
 .status-dot {
   width: 12px;
   height: 12px;
@@ -807,6 +827,10 @@ canvas {
   .topbar {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .mobile-price-chip {
+    display: flex;
   }
 
   .session-strip {

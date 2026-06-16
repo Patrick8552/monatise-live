@@ -11,7 +11,7 @@
     <link rel="manifest" href="./manifest.webmanifest?v=20260616-dashboard-install" />
     <link rel="icon" href="./icon-lotus.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./icon-lotus.svg" />
-    <link rel="stylesheet" href="./coinglass-dashboard.css?v=20260616-grid-signals" />
+    <link rel="stylesheet" href="./coinglass-dashboard.css?v=20260616-mobile-price" />
   </head>
   <body>
     <div class="app-shell">
@@ -19,6 +19,11 @@
         <div>
           <p class="eyebrow">Coinglass + Hyperliquid telemetry</p>
           <h1 id="dashboardTitle">BTC Trading Dashboard</h1>
+          <div class="mobile-price-chip" aria-label="Selected asset live price">
+            <span id="headerMarketSymbol">BTCUSDT</span>
+            <strong id="headerAssetPrice">$--</strong>
+            <small id="headerPriceChange">Waiting for candles</small>
+          </div>
         </div>
         <div class="session-strip" aria-label="Session status">
           <span id="sessionStatusDot" class="status-dot"></span>
@@ -425,6 +430,6 @@
     </div>
     <script src="https://cdn.ably.com/lib/ably.min-2.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="./coinglass-dashboard.js?v=20260616-grid-signals"></script>
+    <script src="./coinglass-dashboard.js?v=20260616-mobile-price"></script>
   </body>
 </html>

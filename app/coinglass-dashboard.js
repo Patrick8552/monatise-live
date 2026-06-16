@@ -46,6 +46,9 @@ const els = {
   sessionStatusText: document.querySelector("#sessionStatusText"),
   sessionUpdated: document.querySelector("#sessionUpdated"),
   dashboardTitle: document.querySelector("#dashboardTitle"),
+  headerMarketSymbol: document.querySelector("#headerMarketSymbol"),
+  headerAssetPrice: document.querySelector("#headerAssetPrice"),
+  headerPriceChange: document.querySelector("#headerPriceChange"),
   marketSymbol: document.querySelector("#marketSymbol"),
   assetPrice: document.querySelector("#assetPrice"),
   priceChange: document.querySelector("#priceChange"),
@@ -1176,6 +1179,7 @@ function syncAssetLabels() {
   const asset = selectedAsset();
   els.dashboardTitle.textContent = `${asset.coin} Trading Dashboard`;
   els.marketSymbol.textContent = asset.pair;
+  els.headerMarketSymbol.textContent = asset.pair;
   els.pricePanelTitle.textContent = `${asset.coin} Live Candles`;
   els.setupAsset.textContent = `${asset.coin} setup`;
   syncTradingView(asset);
@@ -1417,8 +1421,11 @@ function renderPrice(series) {
   const change = previous ? ((last.close - previous.close) / previous.close) * 100 : 0;
   state.market.priceChange = change;
   els.assetPrice.textContent = formatUsd(last.close);
+  els.headerAssetPrice.textContent = formatUsd(last.close);
   els.priceChange.textContent = `${change >= 0 ? "Up" : "Down"} ${formatPercent(change, 2)} last candle`;
+  els.headerPriceChange.textContent = `${change >= 0 ? "Up" : "Down"} ${formatPercent(change, 2)}`;
   els.priceChange.className = change >= 0 ? "positive" : "negative";
+  els.headerPriceChange.className = change >= 0 ? "positive" : "negative";
   els.pricePulse.textContent = "live";
   const research = studyHistoricalPattern(series);
   renderResearch(research);
