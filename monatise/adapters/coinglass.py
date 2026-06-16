@@ -57,6 +57,13 @@ class CoinGlassAdapter:
     def open_interest(self, symbol: str) -> list[dict[str, Any]]:
         return self._get("/api/futures/open-interest/exchange-list", {"symbol": self._coin(symbol)})
 
+    def funding_rate(self, symbol: str) -> list[dict[str, Any]]:
+        exchange, pair = self._market(symbol)
+        return self._get("/api/futures/funding-rate/oi-weight-history", {"exchange": exchange, "symbol": pair})
+
+    def fear_greed(self) -> list[dict[str, Any]]:
+        return self._get("/api/index/fear-greed-history", {})
+
     def account_subscription(self) -> dict[str, Any]:
         data = self._get("/api/user/account/subscription", {})
         return dict(data) if isinstance(data, dict) else {}

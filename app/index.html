@@ -25,6 +25,7 @@
         </div>
         <nav class="desk-nav" aria-label="primary navigation">
           <a href="./index.html" aria-current="page">Desk</a>
+          <a href="./coinglass-dashboard.html">Coinglass</a>
           <button id="installAppButton" type="button" hidden>Install App</button>
         </nav>
         <div class="status-strip" aria-label="simulation status">
@@ -57,6 +58,7 @@
       <nav class="desk-jump-nav" aria-label="desk sections">
         <a href="#trade">Signal Builder</a>
         <a href="#risk">Quality Gate</a>
+        <a href="#markets">Market Intel</a>
         <a href="#hedge">Hedge Layer</a>
         <a href="#chat">AI Chat</a>
         <a href="#account">Signal Profile</a>
@@ -226,9 +228,10 @@
               </div>
               <div id="chatMessages" class="chat-messages" aria-live="polite"></div>
               <div class="chat-quick-actions" aria-label="chat prompts">
-                <button type="button" data-chat-prompt="Explain the current signal">Explain Signal</button>
+                <button type="button" data-chat-prompt="Explain the current signal using CoinGlass funding, open interest, liquidations, and session context">Explain Signal</button>
                 <button type="button" data-chat-prompt="Which entry should I use?">Entry Plan</button>
                 <button type="button" data-chat-prompt="Explain the risk and lot size">Risk</button>
+                <button type="button" data-chat-prompt="Show me historical setups like this">Research</button>
                 <button type="button" data-chat-prompt="Explain the hedge layer">Hedge</button>
                 <button type="button" data-chat-prompt="Why is the app waiting?">Wait State</button>
               </div>
@@ -406,11 +409,11 @@
           </div>
         </section>
 
-        <section id="markets" class="desk-section utility-hidden" aria-hidden="true">
+        <section id="markets" class="desk-section">
           <div class="section-head">
             <div>
-              <p class="eyebrow">Market intelligence</p>
-              <h2 id="marketTitle">BTC-USD signal map</h2>
+              <p class="eyebrow">CoinGlass market intelligence</p>
+              <h2 id="marketTitle">BTC-USD control center</h2>
             </div>
             <div class="price-pill">
               <span>Mark</span>
@@ -419,13 +422,45 @@
           </div>
 
           <section class="market-stage" aria-label="market visualization">
-            <p id="liquiditySource" class="liquidity-source">Signals only. No exchange orders.</p>
+            <p id="liquiditySource" class="liquidity-source">CoinGlass feeds provide candles, funding, open interest, liquidations, and market context. Monatise still shows signals only and does not place orders from this screen.</p>
+            <div id="coinglassServices" class="coinglass-services" aria-label="CoinGlass services">
+              <article>
+                <span>Funding</span>
+                <strong id="coinGlassFunding">Waiting</strong>
+                <em>Bias check</em>
+              </article>
+              <article>
+                <span>Open Interest</span>
+                <strong id="coinGlassOpenInterest">Waiting</strong>
+                <em>Participation</em>
+              </article>
+              <article>
+                <span>Liquidations</span>
+                <strong id="coinGlassLiquidations">Waiting</strong>
+                <em>Liquidity map</em>
+              </article>
+              <article>
+                <span>Fear & Greed</span>
+                <strong id="coinGlassFearGreed">Waiting</strong>
+                <em>Sentiment</em>
+              </article>
+            </div>
             <div id="market3dMap" class="market-3d-map" aria-label="3D live market signal field">
               <div class="market-3d-overlay">
                 <strong id="market3dTitle">BTC signal field</strong>
                 <span id="market3dMeta">London/New York window · CoinGlass analysis</span>
               </div>
             </div>
+            <section class="tradingview-panel" aria-label="live TradingView chart">
+              <div class="panel-head">
+                <h2>Live Trading Chart</h2>
+                <div class="tradingview-actions">
+                  <span id="tradingViewMeta">TradingView candles · FVG and CHoCH/BOS reviewed by Monatise</span>
+                  <button id="openTradingViewButton" type="button">Open Chart</button>
+                </div>
+              </div>
+              <div id="tradingViewWidget" class="tradingview-widget"></div>
+            </section>
             <div id="fibAnalysis" class="fib-analysis" aria-label="Chart signal analysis">
               <div class="fib-head">
                 <strong>Chart Signal Analysis</strong>
@@ -447,6 +482,14 @@
             <div id="marketStrip" class="market-strip" aria-label="live market prices"></div>
             <div id="marketRadar" class="market-radar" aria-label="multi asset market radar"></div>
             <div id="assetGroups" class="asset-groups utility-hidden" aria-label="asset classes"></div>
+            <section id="researchSystem" class="research-system" aria-label="historical research system">
+              <div class="research-head">
+                <strong>Research System</strong>
+                <span id="researchStatus">Historical probability model</span>
+              </div>
+              <div id="researchStats" class="research-stats"></div>
+              <p id="researchNarrative">Ask Monatise AI for historical setups to compare current funding, open interest, liquidity sweeps, and 15m CHoCH conditions.</p>
+            </section>
           </section>
         </section>
 

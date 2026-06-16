@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Monatise Market Dashboard</title>
+    <link rel="stylesheet" href="./coinglass-dashboard.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Coinglass + Hyperliquid telemetry</p>
+          <h1 id="dashboardTitle">BTC Trading Dashboard</h1>
+        </div>
+        <div class="session-strip" aria-label="Session status">
+          <span id="sessionStatusDot" class="status-dot"></span>
+          <span id="sessionStatusText">Starting session</span>
+          <span id="sessionUpdated">--</span>
+        </div>
+      </header>
+
+      <main>
+        <section class="control-band" aria-label="Dashboard controls">
+          <label class="key-field">
+            <span>CoinGlass API key</span>
+            <input id="apiKeyInput" type="password" autocomplete="off" placeholder="CG-API-KEY" />
+          </label>
+          <label>
+            <span>Asset</span>
+            <select id="assetSelect">
+              <option value="BTC" selected>BTC</option>
+              <option value="ETH">ETH</option>
+              <option value="SOL">SOL</option>
+              <option value="XRP">XRP</option>
+              <option value="DOGE">DOGE</option>
+              <option value="BNB">BNB</option>
+            </select>
+          </label>
+          <label>
+            <span>Exchange</span>
+            <select id="exchangeSelect">
+              <option>Binance</option>
+              <option>OKX</option>
+              <option>Bybit</option>
+              <option>CME</option>
+            </select>
+          </label>
+          <label>
+            <span>Interval</span>
+            <select id="intervalSelect">
+              <option value="15m">15m</option>
+              <option value="30m">30m</option>
+              <option value="1h" selected>1h</option>
+              <option value="4h">4h</option>
+              <option value="1d">1d</option>
+            </select>
+          </label>
+          <label>
+            <span>Liquidation range</span>
+            <select id="liqRangeSelect">
+              <option value="1d" selected>1d</option>
+              <option value="7d">7d</option>
+              <option value="30d">30d</option>
+              <option value="180d">180d</option>
+              <option value="365d">365d</option>
+            </select>
+          </label>
+          <button id="refreshButton" type="button">Refresh</button>
+        </section>
+
+        <section class="price-band">
+          <div class="market-title">
+            <p id="marketSymbol">BTCUSDT</p>
+            <strong id="assetPrice">$--</strong>
+            <span id="priceChange">--</span>
+          </div>
+          <div class="mini-metrics">
+            <div>
+              <span>Funding avg</span>
+              <strong id="fundingAverage">--</strong>
+            </div>
+            <div>
+              <span>Open interest</span>
+              <strong id="openInterest">$--</strong>
+            </div>
+            <div>
+              <span>Fear & greed</span>
+              <strong id="fearGreed">--</strong>
+            </div>
+            <div>
+              <span>Liquidation bias</span>
+              <strong id="liqBias">--</strong>
+            </div>
+            <div>
+              <span>VWAP</span>
+              <strong id="vwapMetric">--</strong>
+            </div>
+          </div>
+        </section>
+
+        <section class="workspace-grid">
+          <article class="panel framework-panel wide">
+            <div class="panel-head">
+              <div>
+                <h2>Monatise Framework</h2>
+                <p id="frameworkSource">Waiting for selected asset context</p>
+              </div>
+              <span id="setupConfidence" class="pill">confidence --</span>
+            </div>
+            <div class="setup-grid">
+              <div class="setup-primary">
+                <span id="setupAsset">BTC setup</span>
+                <strong id="setupDirection">WAIT</strong>
+                <p id="setupReason">Funding, open interest, liquidation pressure, VWAP, price trend, history, and Hyperliquid confirmation will decide the grid.</p>
+              </div>
+              <div class="setup-card">
+                <span>Grid</span>
+                <strong id="gridDirection">Neutral grid</strong>
+                <small id="gridPlan">Wait for data alignment.</small>
+              </div>
+              <div class="setup-card">
+                <span>Hedge</span>
+                <strong id="hedgeDirection">Flat hedge</strong>
+                <small id="hedgePlan">No hedge until risk imbalance appears.</small>
+              </div>
+              <div class="setup-card">
+                <span>Checks</span>
+                <strong id="frameworkChecks">0 / 8</strong>
+                <small id="frameworkBias">No confirmed bias yet.</small>
+              </div>
+            </div>
+          </article>
+
+          <article class="panel research-panel wide">
+            <div class="panel-head">
+              <div>
+                <h2>CoinGlass Research System</h2>
+                <p id="researchSource">Studying selected asset history</p>
+              </div>
+              <span id="researchPattern" class="pill">pattern --</span>
+            </div>
+            <div class="research-grid">
+              <div class="research-card">
+                <span>History + VWAP Study</span>
+                <strong id="historySignal">Waiting</strong>
+                <small id="historyStats">Needs recent candles.</small>
+              </div>
+              <div class="research-card">
+                <span>VWAP Position</span>
+                <strong id="vwapSignal">Waiting</strong>
+                <small id="vwapDetail">VWAP distance will appear here.</small>
+              </div>
+              <div class="research-card">
+                <span>Scale Plan</span>
+                <strong id="scaleAction">Wait</strong>
+                <small id="scalePlan">No averaging plan yet.</small>
+              </div>
+              <div class="research-card">
+                <span>Pattern Memory</span>
+                <strong id="patternMemory">--</strong>
+                <small id="patternDetail">Pullback and bounce behavior will appear here.</small>
+              </div>
+            </div>
+          </article>
+
+          <article class="panel price-panel">
+            <div class="panel-head">
+              <div>
+                <h2 id="pricePanelTitle">BTC Price Reflection</h2>
+                <p id="priceSource">Waiting for data</p>
+              </div>
+              <span id="pricePulse" class="pill">idle</span>
+            </div>
+            <canvas id="priceCanvas" height="260" aria-label="BTC price chart"></canvas>
+          </article>
+
+          <article class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Funding Rate Check</h2>
+                <p id="fundingSource">Coinglass futures funding rate</p>
+              </div>
+            </div>
+            <div id="fundingList" class="metric-list"></div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Open Interest Check</h2>
+                <p id="oiSource">Coinglass futures open interest</p>
+              </div>
+            </div>
+            <div id="oiList" class="metric-list"></div>
+          </article>
+
+          <article class="panel wide">
+            <div class="panel-head">
+              <div>
+                <h2>Liquidation Map</h2>
+                <p id="liqSource">Coinglass aggregated liquidation map</p>
+              </div>
+              <span id="maxPain" class="pill">max pain --</span>
+            </div>
+            <canvas id="liqCanvas" height="280" aria-label="BTC liquidation map"></canvas>
+          </article>
+
+          <article class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Hyperliquid Check</h2>
+                <p id="hyperSource">Hyperliquid public market context</p>
+              </div>
+            </div>
+            <div id="hyperList" class="metric-list"></div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Fear & Greed</h2>
+                <p id="fgSource">Coinglass crypto index</p>
+              </div>
+            </div>
+            <div class="gauge-wrap">
+              <div class="gauge" id="fgGauge"><span>--</span></div>
+              <p id="fgLabel">Waiting for index</p>
+            </div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>News Alerts</h2>
+                <p id="newsSource">Coinglass instant news</p>
+              </div>
+            </div>
+            <div id="newsList" class="news-list"></div>
+          </article>
+
+          <article class="panel telemetry-panel wide">
+            <div class="panel-head">
+              <div>
+                <h2>Session Telemetry</h2>
+              <p>Monatise routes market telemetry through Coinglass first, then Hyperliquid confirmation.</p>
+              </div>
+              <button id="clearSessionButton" type="button" class="ghost-button">Clear</button>
+            </div>
+            <div id="telemetryList" class="telemetry-list"></div>
+          </article>
+        </section>
+      </main>
+    </div>
+    <script src="./coinglass-dashboard.js"></script>
+  </body>
+</html>

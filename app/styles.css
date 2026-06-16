@@ -341,6 +341,7 @@ label .range-readout {
   gap: 14px;
   grid-template-areas:
     "account trade risk"
+    "markets markets markets"
     "activity activity activity";
   grid-template-columns: minmax(270px, 320px) minmax(0, 1fr) minmax(310px, 370px);
   margin: 0 auto;
@@ -353,10 +354,6 @@ label .range-readout {
 
 #risk {
   grid-area: risk;
-  max-height: calc(100vh - 126px);
-  overflow: auto;
-  position: sticky;
-  top: 112px;
 }
 
 #markets {
@@ -365,10 +362,6 @@ label .range-readout {
 
 #account {
   grid-area: account;
-  max-height: calc(100vh - 126px);
-  overflow: auto;
-  position: sticky;
-  top: 112px;
 }
 
 #activity {
@@ -426,9 +419,8 @@ label .range-readout {
 }
 
 .tradingview-panel {
-  display: none;
+  display: grid;
   gap: 12px;
-  grid-column: 1 / -1;
   min-height: 460px;
   padding: 0;
   overflow: hidden;
@@ -471,6 +463,60 @@ label .range-readout {
   display: block;
   height: 420px;
   width: 100%;
+}
+
+.coinglass-services {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-bottom: 12px;
+}
+
+.coinglass-services article,
+.research-stats article {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-left: 3px solid var(--cyan);
+  border-radius: 6px;
+  display: grid;
+  gap: 4px;
+  min-height: 82px;
+  padding: 10px;
+}
+
+.coinglass-services article:nth-child(2) {
+  border-left-color: var(--accent);
+}
+
+.coinglass-services article:nth-child(3) {
+  border-left-color: var(--sell);
+}
+
+.coinglass-services article:nth-child(4) {
+  border-left-color: var(--buy);
+}
+
+.coinglass-services span,
+.research-stats span {
+  color: rgba(249, 255, 251, 0.58);
+  font-size: 0.68rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.coinglass-services strong,
+.research-stats strong {
+  color: #f9fffb;
+  font-size: 0.95rem;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.coinglass-services em {
+  color: rgba(249, 255, 251, 0.62);
+  font-size: 0.7rem;
+  font-style: normal;
+  font-weight: 800;
 }
 
 .panel.execution-ticket {
@@ -1835,6 +1881,48 @@ canvas {
   padding: 10px;
 }
 
+.research-system {
+  background:
+    linear-gradient(160deg, rgba(232, 162, 20, 0.12), rgba(0, 168, 120, 0.08)),
+    rgba(4, 9, 11, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 6px;
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+}
+
+.research-head {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.research-head strong {
+  color: #f9fffb;
+  font-size: 0.86rem;
+}
+
+.research-head span,
+.research-system p {
+  color: rgba(249, 255, 251, 0.68);
+  font-size: 0.72rem;
+  font-weight: 850;
+  line-height: 1.42;
+  margin: 0;
+}
+
+.research-stats {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.research-stats article {
+  min-height: 74px;
+}
+
 .context-head {
   align-items: center;
   display: flex;
@@ -3010,6 +3098,7 @@ button:disabled {
   .desk-sections {
     grid-template-areas:
       "trade risk"
+      "markets markets"
       "account account"
       "activity activity";
     grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
@@ -3060,6 +3149,7 @@ button:disabled {
     grid-template-areas:
       "trade"
       "risk"
+      "markets"
       "account"
       "activity";
   }
@@ -3186,7 +3276,9 @@ button:disabled {
   .ticket-sizing,
   .ticket-grid,
   .chat-quick-actions,
+  .coinglass-services,
   .hedge-summary,
+  .research-stats,
   .strategy-metrics {
     grid-template-columns: 1fr 1fr;
   }
@@ -3320,8 +3412,10 @@ button:disabled {
   .ticket-grid,
   .chat-form,
   .chat-quick-actions,
+  .coinglass-services,
   .hedge-summary,
   .entry-ladder,
+  .research-stats,
   .strategy-metrics,
   .fib-metrics,
   .fvg-metrics,

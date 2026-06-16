@@ -343,12 +343,18 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                 adapter = CoinGlassAdapter(self.config)
                 subscription: dict = {}
                 unavailable: list[dict] = []
+                funding: list[dict] = []
+                fear_greed: list[dict] = []
                 open_interest: list[dict] = []
                 liquidations: list[dict] = []
                 try:
                     subscription = adapter.account_subscription()
                 except (CoinGlassPlanError, RuntimeError) as error:
                     unavailable.append({"feature": "subscription", "reason": str(error)})
+                try:
+                    funding = adapter.funding_rate(symbol)
+                except (CoinGlassPlanError, RuntimeError) as error:
+                    unavailable.append({"feature": "fundingRate", "reason": str(error)})
                 try:
                     open_interest = adapter.open_interest(symbol)
                 except (CoinGlassPlanError, RuntimeError) as error:
@@ -357,13 +363,20 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                     liquidations = adapter.liquidation_history(symbol, limit=24, interval=interval)
                 except (CoinGlassPlanError, RuntimeError) as error:
                     unavailable.append({"feature": "liquidations", "reason": str(error)})
+                try:
+                    fear_greed = adapter.fear_greed()
+                except (CoinGlassPlanError, RuntimeError) as error:
+                    unavailable.append({"feature": "fearGreed", "reason": str(error)})
                 self._json(
                     {
                         "symbol": symbol,
+                        "interval": interval,
                         "source": "CoinGlass",
                         "subscription": subscription,
                         "available": not unavailable,
                         "unavailable": unavailable,
+                        "fundingRate": funding,
+                        "fearGreed": fear_greed,
                         "openInterest": open_interest,
                         "liquidations": liquidations,
                     }
@@ -696,7 +709,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             "script-src 'self' https://cdnjs.cloudflare.com; "
             "style-src 'self'; "
             "img-src 'self' data:; "
-            "connect-src 'self'; "
+            "connect-src 'self' https://open-api-v4.coinglass.com https://api.binance.com https://api.hyperliquid.xyz https://api.alternative.me; "
             "frame-ancestors 'none'; "
             "base-uri 'self'; "
             "form-action 'self' https://checkout.stripe.com https://api.flutterwave.com https://*.flutterwave.com",
