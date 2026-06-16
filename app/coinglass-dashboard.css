@@ -326,6 +326,13 @@ canvas {
   align-items: end;
 }
 
+.copilot-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.65fr) minmax(140px, 0.45fr) minmax(280px, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+}
+
 .voice-actions {
   display: flex;
   gap: 8px;
@@ -364,6 +371,29 @@ canvas {
 #voiceAudio {
   width: 100%;
   margin-top: 14px;
+}
+
+.copilot-output {
+  min-height: 120px;
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #0f1620;
+}
+
+.copilot-output span {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+}
+
+.copilot-output p {
+  margin: 0;
+  line-height: 1.55;
+  white-space: pre-wrap;
 }
 
 .metric-row,
@@ -480,6 +510,10 @@ canvas {
     grid-template-columns: 1fr 1fr;
   }
 
+  .copilot-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
   .mini-metrics {
     grid-template-columns: 1fr 1fr;
   }
@@ -499,6 +533,7 @@ canvas {
   .research-grid,
   .voice-grid,
   .voice-output,
+  .copilot-grid,
   .mini-metrics {
     grid-template-columns: 1fr;
   }

@@ -296,6 +296,34 @@
             <audio id="voiceAudio" controls></audio>
           </article>
 
+          <article class="panel wide">
+            <div class="panel-head">
+              <div>
+                <h2>AI Copilot</h2>
+                <p id="copilotStatus">OpenAI platform copilot ready</p>
+              </div>
+            </div>
+            <div class="copilot-grid">
+              <label>
+                <span>OpenAI API key</span>
+                <input id="openaiKeyInput" type="password" autocomplete="off" placeholder="sk-proj..." />
+              </label>
+              <label>
+                <span>Model</span>
+                <input id="openaiModelInput" type="text" autocomplete="off" value="gpt-5.5" />
+              </label>
+              <label class="copilot-question">
+                <span>Ask Copilot</span>
+                <input id="copilotQuestionInput" type="text" autocomplete="off" placeholder="Ask for setup, risk, grid steps, hedge, or invalidation..." />
+              </label>
+              <button id="copilotAskButton" type="button">Ask</button>
+            </div>
+            <div class="copilot-output">
+              <span>Copilot Response</span>
+              <p id="copilotAnswer">Ask a question and the copilot will reason over the current Monatise dashboard state.</p>
+            </div>
+          </article>
+
           <article class="panel telemetry-panel wide">
             <div class="panel-head">
               <div>

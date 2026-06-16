@@ -3,12 +3,15 @@ const BINANCE_BASE = "https://api.binance.com";
 const HYPER_BASE = "https://api.hyperliquid.xyz/info";
 const ALT_FG = "https://api.alternative.me/fng/?limit=30&format=json";
 const ELEVEN_BASE = "https://api.elevenlabs.io";
+const OPENAI_BASE = "https://api.openai.com";
 const SESSION_KEY = "btc-coinglass-dashboard-session";
 const API_KEY_STORAGE = "btc-coinglass-api-key";
 const ABLY_KEY_STORAGE = "monatise-ably-api-key";
 const ABLY_CHANNEL_STORAGE = "monatise-ably-channel";
 const ELEVEN_KEY_STORAGE = "monatise-elevenlabs-api-key";
 const ELEVEN_VOICE_STORAGE = "monatise-elevenlabs-voice-id";
+const OPENAI_KEY_STORAGE = "monatise-openai-api-key";
+const OPENAI_MODEL_STORAGE = "monatise-openai-model";
 const ASSETS = {
   BTC: { coin: "BTC", pair: "BTCUSDT", hyper: "BTC" },
   ETH: { coin: "ETH", pair: "ETHUSDT", hyper: "ETH" },
@@ -32,6 +35,10 @@ const els = {
   voiceRecordButton: document.querySelector("#voiceRecordButton"),
   voiceAskButton: document.querySelector("#voiceAskButton"),
   voiceStopButton: document.querySelector("#voiceStopButton"),
+  openaiKeyInput: document.querySelector("#openaiKeyInput"),
+  openaiModelInput: document.querySelector("#openaiModelInput"),
+  copilotQuestionInput: document.querySelector("#copilotQuestionInput"),
+  copilotAskButton: document.querySelector("#copilotAskButton"),
   refreshButton: document.querySelector("#refreshButton"),
   clearSessionButton: document.querySelector("#clearSessionButton"),
   sessionStatusDot: document.querySelector("#sessionStatusDot"),
@@ -89,6 +96,8 @@ const els = {
   voiceTranscript: document.querySelector("#voiceTranscript"),
   voiceAnswer: document.querySelector("#voiceAnswer"),
   voiceAudio: document.querySelector("#voiceAudio"),
+  copilotStatus: document.querySelector("#copilotStatus"),
+  copilotAnswer: document.querySelector("#copilotAnswer"),
   telemetryList: document.querySelector("#telemetryList"),
   fgGauge: document.querySelector("#fgGauge"),
   fgLabel: document.querySelector("#fgLabel")
@@ -117,6 +126,10 @@ const state = {
     recording: false,
     audioUrl: null
   },
+  copilot: {
+    apiKey: localStorage.getItem(OPENAI_KEY_STORAGE) || "",
+    model: localStorage.getItem(OPENAI_MODEL_STORAGE) || "gpt-5.5"
+  },
   market: {
     priceChange: 0,
     fundingAverage: null,
@@ -142,6 +155,8 @@ els.ablyKeyInput.value = state.realtime.key;
 els.ablyChannelInput.value = state.realtime.channelName;
 els.elevenKeyInput.value = state.voice.apiKey;
 els.elevenVoiceInput.value = state.voice.voiceId;
+els.openaiKeyInput.value = state.copilot.apiKey;
+els.openaiModelInput.value = state.copilot.model;
 
 function readSession() {
   try {
@@ -401,6 +416,100 @@ function answerVoiceQuestion(question) {
     return `${s.asset} research signal is ${s.research}. Scale plan says ${s.scale}. The framework reason is: ${s.reason}`;
   }
   return `${s.asset} is currently ${s.direction} with ${s.confidence}. The grid is ${s.grid}, hedge is ${s.hedge}, VWAP is ${s.vwap}, and the active thesis is: ${s.reason}`;
+}
+
+function setCopilotStatus(text) {
+  els.copilotStatus.textContent = text;
+}
+
+function extractOpenAIText(payload) {
+  if (payload.output_text) return payload.output_text;
+  const chunks = [];
+  (payload.output || []).forEach((item) => {
+    (item.content || []).forEach((part) => {
+      if (part.text) chunks.push(part.text);
+    });
+  });
+  return chunks.join("\n").trim() || "No copilot text returned.";
+}
+
+function localCopilotAnswer(question) {
+  const s = currentSetupSnapshot();
+  return [
+    `${s.asset} copilot fallback: ${s.direction} with ${s.confidence}.`,
+    `Grid: ${s.grid}. ${s.gridPlan}`,
+    `Hedge: ${s.hedge}. ${s.hedgePlan}`,
+    `VWAP: ${s.vwap}; ${s.vwapSignal}. Funding ${s.funding}, OI ${s.oi}, liquidation bias ${s.liquidation}.`,
+    question.trim() ? `Question handled locally: ${question.trim()}` : "Add an OpenAI API key to unlock deeper copilot reasoning."
+  ].join("\n");
+}
+
+async function askOpenAICopilot(question) {
+  const clean = question.trim();
+  const snapshot = currentSetupSnapshot();
+  if (!clean) return "Ask the copilot about setup, grid, hedge, invalidation, risk, VWAP, funding, or open interest.";
+  if (!state.copilot.apiKey.trim()) return localCopilotAnswer(clean);
+
+  const started = performance.now();
+  const response = await fetch(`${OPENAI_BASE}/v1/responses`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${state.copilot.apiKey}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model: state.copilot.model.trim() || "gpt-5.5",
+      reasoning: { effort: "low" },
+      instructions: [
+        "You are the Monatise trading copilot inside a dashboard.",
+        "Use only the provided dashboard snapshot and question.",
+        "Do not invent live prices, exchange fills, or execution certainty.",
+        "Answer with setup, grid, hedge, invalidation, and caution when relevant.",
+        "This is trading analysis, not financial advice."
+      ].join(" "),
+      input: [
+        {
+          role: "developer",
+          content: `Dashboard snapshot:\n${JSON.stringify(snapshot, null, 2)}`
+        },
+        {
+          role: "user",
+          content: clean
+        }
+      ]
+    })
+  });
+  const ms = Math.round(performance.now() - started);
+  if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+  const payload = await response.json();
+  recordTelemetry("AI copilot", "OpenAI", true, ms, state.copilot.model);
+  return extractOpenAIText(payload);
+}
+
+async function handleCopilotQuestion() {
+  const question = els.copilotQuestionInput.value;
+  setCopilotStatus(state.copilot.apiKey.trim() ? "Thinking with OpenAI" : "Using local copilot fallback");
+  els.copilotAskButton.disabled = true;
+  els.copilotAskButton.textContent = "Thinking";
+  try {
+    const answer = await askOpenAICopilot(question);
+    els.copilotAnswer.textContent = answer;
+    pushLiveAlert({
+      kind: "ai copilot",
+      asset: selectedCoin(),
+      title: `${selectedCoin()} AI copilot response`,
+      detail: answer.slice(0, 260),
+      payload: { question, answer }
+    });
+    setCopilotStatus(state.copilot.apiKey.trim() ? "OpenAI copilot complete" : "Local copilot complete");
+  } catch (error) {
+    recordTelemetry("AI copilot", "OpenAI", false, 0, error.message);
+    els.copilotAnswer.textContent = localCopilotAnswer(question);
+    setCopilotStatus(`OpenAI copilot failed · ${error.message}`);
+  } finally {
+    els.copilotAskButton.disabled = false;
+    els.copilotAskButton.textContent = "Ask";
+  }
 }
 
 async function transcribeWithElevenLabs(blob) {
@@ -1428,6 +1537,24 @@ els.voiceStopButton.addEventListener("click", () => {
   }
   els.voiceAudio.pause();
   setVoiceStatus("Voice stopped");
+});
+
+els.openaiKeyInput.addEventListener("change", () => {
+  state.copilot.apiKey = els.openaiKeyInput.value.trim();
+  localStorage.setItem(OPENAI_KEY_STORAGE, state.copilot.apiKey);
+  setCopilotStatus(state.copilot.apiKey ? "OpenAI key saved locally" : "OpenAI key required for platform copilot");
+});
+
+els.openaiModelInput.addEventListener("change", () => {
+  state.copilot.model = els.openaiModelInput.value.trim() || "gpt-5.5";
+  els.openaiModelInput.value = state.copilot.model;
+  localStorage.setItem(OPENAI_MODEL_STORAGE, state.copilot.model);
+  setCopilotStatus(`OpenAI model set to ${state.copilot.model}`);
+});
+
+els.copilotAskButton.addEventListener("click", handleCopilotQuestion);
+els.copilotQuestionInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") handleCopilotQuestion();
 });
 
 els.refreshButton.addEventListener("click", refreshDashboard);
