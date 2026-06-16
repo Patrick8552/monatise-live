@@ -84,7 +84,37 @@ Users log in and save their own Hyperliquid API wallet credentials in the
 dashboard before starting the trading loop.
 
 Password recovery sends a six-digit email code, so Render also needs SMTP
-configured:
+configured. Monatise supports plain SMTP plus provider presets for Resend and
+Postmark. Keep these values in Render secrets, not in the browser.
+
+```text
+MONATISE_SMTP_PROVIDER=resend
+MONATISE_SMTP_FROM=Monatise <no-reply@yourdomain.com>
+MONATISE_SMTP_PASSWORD=re_your_resend_api_key
+MONATISE_ALERT_EMAILS=ops@yourdomain.com,trader@yourdomain.com
+```
+
+Resend SMTP defaults are applied automatically when
+`MONATISE_SMTP_PROVIDER=resend`: host `smtp.resend.com`, port `587`, username
+`resend`, password set to your Resend API key, and STARTTLS enabled.
+
+For Postmark:
+
+```text
+MONATISE_SMTP_PROVIDER=postmark
+MONATISE_SMTP_FROM=Monatise <no-reply@yourdomain.com>
+MONATISE_SMTP_USERNAME=server-api-token-or-smtp-access-key
+MONATISE_SMTP_PASSWORD=server-api-token-or-smtp-secret-key
+MONATISE_SMTP_STREAM=outbound
+MONATISE_ALERT_EMAILS=ops@yourdomain.com,trader@yourdomain.com
+```
+
+Postmark SMTP defaults are applied automatically when
+`MONATISE_SMTP_PROVIDER=postmark`: host `smtp.postmarkapp.com`, port `587`, and
+STARTTLS enabled. `MONATISE_SMTP_STREAM` is sent as the Postmark message stream
+header.
+
+Generic SMTP remains available:
 
 ```text
 MONATISE_SMTP_HOST=smtp.example.com
@@ -95,6 +125,9 @@ MONATISE_SMTP_PASSWORD=secret
 MONATISE_SMTP_STARTTLS=true
 MONATISE_SMTP_SSL=false
 ```
+
+When `MONATISE_ALERT_EMAILS` is set, accepted TradingView webhooks also send
+email notifications through the same SMTP provider.
 
 TradingView indicator alerts can be added as a forex confluence feed. Configure
 Render with:

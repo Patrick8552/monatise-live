@@ -33,6 +33,8 @@ services:
         sync: false
       - key: MONATISE_SMTP_HOST
         sync: false
+      - key: MONATISE_SMTP_PROVIDER
+        sync: false
       - key: MONATISE_SMTP_FROM
         sync: false
       - key: MONATISE_SMTP_PORT
@@ -40,6 +42,10 @@ services:
       - key: MONATISE_SMTP_USERNAME
         sync: false
       - key: MONATISE_SMTP_PASSWORD
+        sync: false
+      - key: MONATISE_SMTP_STREAM
+        sync: false
+      - key: MONATISE_ALERT_EMAILS
         sync: false
       - key: MONATISE_SMTP_SSL
         value: false

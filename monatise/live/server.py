@@ -15,7 +15,7 @@ from monatise.analysis.fvg import analyze_fvg
 from monatise.adapters.coinglass import CoinGlassAdapter, CoinGlassPlanError
 from monatise.adapters.hyperliquid import HyperliquidAdapter
 from monatise.live.config import RuntimeConfig
-from monatise.live.emailer import EmailDeliveryError, expose_dev_reset_code, send_password_reset_code
+from monatise.live.emailer import EmailDeliveryError, expose_dev_reset_code, send_password_reset_code, send_trading_alert_email
 from monatise.live.service import JsonEncoder, TradingService
 from monatise.live.users import User, UserCredentials, UserStore, encryption_key_configured
 
@@ -467,7 +467,16 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             alert = normalize_tradingview_alert(payload)
             with self.tradingview_lock:
                 self.tradingview_alerts = [alert, *self.tradingview_alerts[:49]]
-            self._json({"accepted": True, "alert": alert})
+            email_recipients = 0
+            email_error = ""
+            try:
+                email_recipients = send_trading_alert_email(alert)
+            except EmailDeliveryError as error:
+                email_error = str(error)
+            response = {"accepted": True, "alert": alert, "emailRecipients": email_recipients}
+            if email_error:
+                response["emailError"] = email_error
+            self._json(response)
             return
         if parsed.path == "/api/register":
             payload = self._read_json()
