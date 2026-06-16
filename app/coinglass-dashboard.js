@@ -1342,7 +1342,8 @@ async function getLiquidations() {
   for (const url of mapUrls) {
     try {
       const payload = await timedFetch("Liquidation map", "CoinGlass", url, { headers: cgHeaders() });
-      window.__monatiseLastLiquidationMap = summarizeLiquidationPayload(payload);
+      const shapeSummary = summarizeLiquidationPayload(payload);
+      document.body.dataset.liqShape = shapeSummary.label;
       levels = parseLiquidationMap(payload);
       mapSymbol = new URL(url, window.location.origin).searchParams.get("symbol") || mapSymbol;
       if (levels.length) break;
@@ -1359,7 +1360,7 @@ async function getLiquidations() {
     ? (painPayload.value.data || []).find((item) => item.symbol === asset.coin)
     : null;
   if (!levels.length && mapErrors.length) {
-    const shape = window.__monatiseLastLiquidationMap?.label || "unknown payload";
+    const shape = document.body.dataset.liqShape || "unknown payload";
     throw new Error(`CoinGlass liquidation map returned no price levels (${mapErrors.join("; ")}; shape ${shape})`);
   }
   return { levels, assetPain, mapSymbol };
@@ -1931,7 +1932,7 @@ function renderLiquidations(result) {
 
 function renderLiquidationsLocked(error) {
   els.liqSource.textContent = "CoinGlass liquidation map required";
-  els.maxPain.textContent = "max pain gated";
+  els.maxPain.textContent = error.message.slice(0, 160);
   els.liqBias.textContent = "CoinGlass key";
   els.liqBias.className = "";
   state.market.liquidationBias = null;
