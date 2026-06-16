@@ -1432,7 +1432,10 @@ function parseLiquidationMap(payload) {
   const addLevel = (row) => {
     if (Array.isArray(row)) {
       const price = Number(row[0]);
-      const level = Number(row[1]);
+      const level = row.slice(1).reduce((sum, value) => {
+        const numeric = Number(value);
+        return Number.isFinite(numeric) && numeric > 0 ? sum + numeric : sum;
+      }, 0);
       if (Number.isFinite(price) && Number.isFinite(level)) entries.push({ price, level });
       return;
     }
@@ -1467,6 +1470,71 @@ function parseLiquidationMap(payload) {
       : level;
     if (Number.isFinite(price) && Number.isFinite(combined)) entries.push({ price, level: combined });
   };
+  const addMatrixLevels = (value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    const priceAxis = firstNumericArray(value, [
+      "prices",
+      "price_list",
+      "priceList",
+      "price_axis",
+      "priceAxis",
+      "y_axis",
+      "yAxis",
+      "y"
+    ]);
+    if (!priceAxis.length) return false;
+    const matrix = firstArray(value, [
+      "heatmap",
+      "liq_map",
+      "liqMap",
+      "liquidation_map",
+      "liquidationMap",
+      "liquidation_list",
+      "liquidationList",
+      "values",
+      "series",
+      "data"
+    ]);
+    if (!Array.isArray(matrix) || !matrix.length) return false;
+    let added = 0;
+    matrix.forEach((row, rowIndex) => {
+      if (!Array.isArray(row)) return;
+      if (row.length >= 3) {
+        const priceIndex = Number(row[1]);
+        const price = Number.isInteger(priceIndex) && priceAxis[priceIndex] != null ? priceAxis[priceIndex] : Number(row[0]);
+        const level = row.slice(2).reduce((sum, value) => {
+          const numeric = Number(value);
+          return Number.isFinite(numeric) && numeric > 0 ? sum + numeric : sum;
+        }, 0);
+        if (Number.isFinite(price) && level > 0) {
+          entries.push({ price, level });
+          added += 1;
+        }
+        return;
+      }
+      if (row.length === priceAxis.length) {
+        row.forEach((value, index) => {
+          const price = priceAxis[index];
+          const level = Number(value);
+          if (Number.isFinite(price) && Number.isFinite(level) && level > 0) {
+            entries.push({ price, level });
+            added += 1;
+          }
+        });
+        return;
+      }
+      const price = priceAxis[rowIndex];
+      const level = row.reduce((sum, value) => {
+        const numeric = Number(value);
+        return Number.isFinite(numeric) && numeric > 0 ? sum + numeric : sum;
+      }, 0);
+      if (Number.isFinite(price) && level > 0) {
+        entries.push({ price, level });
+        added += 1;
+      }
+    });
+    return added > 0;
+  };
   const visit = (value) => {
     if (!value) return;
     if (Array.isArray(value)) {
@@ -1478,6 +1546,7 @@ function parseLiquidationMap(payload) {
       return;
     }
     if (typeof value === "object") {
+      if (addMatrixLevels(value)) return;
       addLevel(value);
       Object.entries(value).forEach(([key, child]) => {
         const numericKey = Number(key);
@@ -1506,6 +1575,23 @@ function firstFinite(row, keys) {
     if (Number.isFinite(value)) return value;
   }
   return NaN;
+}
+
+function firstNumericArray(row, keys) {
+  for (const key of keys) {
+    const value = row[key];
+    if (!Array.isArray(value)) continue;
+    const numbers = value.map(Number).filter(Number.isFinite);
+    if (numbers.length) return numbers;
+  }
+  return [];
+}
+
+function firstArray(row, keys) {
+  for (const key of keys) {
+    if (Array.isArray(row[key])) return row[key];
+  }
+  return [];
 }
 
 function renderPrice(series) {
