@@ -2,7 +2,7 @@
   "name": "Monatise Signal Console",
   "short_name": "Monatise",
   "description": "Monatise signal desk for setup review, risk sizing, and profile tracking.",
-  "start_url": "./index.html?v=20260616-grid-signals",
+  "start_url": "./dashboard/",
   "scope": "./",
   "display": "standalone",
   "background_color": "#f8faf5",

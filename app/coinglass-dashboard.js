@@ -40,6 +40,7 @@ const els = {
   copilotQuestionInput: document.querySelector("#copilotQuestionInput"),
   copilotAskButton: document.querySelector("#copilotAskButton"),
   refreshButton: document.querySelector("#refreshButton"),
+  installDashboardButton: document.querySelector("#installDashboardButton"),
   clearSessionButton: document.querySelector("#clearSessionButton"),
   sessionStatusDot: document.querySelector("#sessionStatusDot"),
   sessionStatusText: document.querySelector("#sessionStatusText"),
@@ -125,6 +126,8 @@ const els = {
   fgGauge: document.querySelector("#fgGauge"),
   fgLabel: document.querySelector("#fgLabel")
 };
+
+let deferredDashboardInstallPrompt = null;
 
 const state = {
   telemetry: readSession(),
@@ -214,6 +217,21 @@ function readSession() {
 
 function saveSession() {
   sessionStorage.setItem(SESSION_KEY, JSON.stringify(state.telemetry.slice(-60)));
+}
+
+function setupDashboardInstall() {
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("./sw.js").catch(() => {});
+  }
+  window.addEventListener("beforeinstallprompt", (event) => {
+    event.preventDefault();
+    deferredDashboardInstallPrompt = event;
+    if (els.installDashboardButton) els.installDashboardButton.hidden = false;
+  });
+  window.addEventListener("appinstalled", () => {
+    deferredDashboardInstallPrompt = null;
+    if (els.installDashboardButton) els.installDashboardButton.hidden = true;
+  });
 }
 
 function formatUsd(value, compact = false) {
@@ -2201,6 +2219,13 @@ els.atlasButtons.forEach((button) => {
 });
 
 els.refreshButton.addEventListener("click", refreshDashboard);
+els.installDashboardButton?.addEventListener("click", async () => {
+  if (!deferredDashboardInstallPrompt) return;
+  deferredDashboardInstallPrompt.prompt();
+  await deferredDashboardInstallPrompt.userChoice.catch(() => {});
+  deferredDashboardInstallPrompt = null;
+  els.installDashboardButton.hidden = true;
+});
 els.assetSelect.addEventListener("change", () => {
   resetMarketContext();
   state.realtime.lastSetup = null;
@@ -2224,6 +2249,7 @@ window.addEventListener("resize", () => {
   resizeAtlas();
 });
 
+setupDashboardInstall();
 renderTelemetry();
 renderLiveAlerts();
 renderSignalLog();
