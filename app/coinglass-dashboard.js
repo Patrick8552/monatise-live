@@ -1,4 +1,4 @@
-const CG_BASE = "https://open-api-v4.coinglass.com";
+const CG_BASE = "/api/coinglass/proxy";
 const HYPER_BASE = "https://api.hyperliquid.xyz/info";
 const ELEVEN_BASE = "https://api.elevenlabs.io";
 const OPENAI_BASE = "https://api.openai.com";
@@ -1166,15 +1166,25 @@ async function timedFetch(name, source, url, options = {}) {
   }
 }
 
+function currentCoinGlassKey() {
+  return (els.apiKeyInput?.value || state.apiKey || "").trim();
+}
+
+function syncCoinGlassKey(message = "") {
+  state.apiKey = currentCoinGlassKey();
+  localStorage.setItem(API_KEY_STORAGE, state.apiKey);
+  updateCoinGlassSourceStatus(message || (state.apiKey ? "CoinGlass key saved locally." : "CoinGlass key removed."));
+}
+
 function cgHeaders() {
   return {
     accept: "application/json",
-    "CG-API-KEY": state.apiKey
+    "X-CG-API-KEY": currentCoinGlassKey()
   };
 }
 
 function hasKey() {
-  return state.apiKey.trim().length > 0;
+  return currentCoinGlassKey().length > 0;
 }
 
 function requireCoinGlass(label) {
@@ -2171,10 +2181,12 @@ async function refreshDashboard() {
   els.refreshButton.textContent = "Refresh";
 }
 
+els.apiKeyInput.addEventListener("input", () => {
+  syncCoinGlassKey();
+});
+
 els.apiKeyInput.addEventListener("change", () => {
-  state.apiKey = els.apiKeyInput.value.trim();
-  localStorage.setItem(API_KEY_STORAGE, state.apiKey);
-  updateCoinGlassSourceStatus(state.apiKey ? "CoinGlass key saved locally. Refreshing live market data." : "CoinGlass key removed.");
+  syncCoinGlassKey(state.apiKey ? "CoinGlass key saved locally. Refreshing live market data." : "CoinGlass key removed.");
   refreshDashboard();
 });
 

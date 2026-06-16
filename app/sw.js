@@ -1,14 +1,14 @@
-const CACHE_NAME = "monatise-shell-20260616-source-status";
+const CACHE_NAME = "monatise-shell-20260616-cg-proxy";
 const SHELL_ASSETS = [
   "./",
   "./index.html",
   "./cg.html",
   "./dashboard/",
-  "./coinglass-dashboard.html?v=20260616-source-status",
+  "./coinglass-dashboard.html?v=20260616-cg-proxy",
   "./styles.css?v=20260615-signal-levels",
   "./app.js?v=20260615-signal-levels",
-  "./coinglass-dashboard.css?v=20260616-source-status",
-  "./coinglass-dashboard.js?v=20260616-source-status",
+  "./coinglass-dashboard.css?v=20260616-cg-proxy",
+  "./coinglass-dashboard.js?v=20260616-cg-proxy",
   "./manifest.webmanifest?v=20260616-dashboard-install",
   "./icon-lotus.svg"
 ];

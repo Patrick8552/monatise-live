@@ -7,7 +7,9 @@ from dataclasses import replace
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import os
 from pathlib import Path
+from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlparse
+from urllib.request import Request, urlopen
 
 from monatise.analysis.context import context_assets, grid_instruction, indicator_snapshot
 from monatise.analysis.fibonacci import analyze_fibonacci
@@ -34,6 +36,16 @@ TRADINGVIEW_ACTIONS = {
     "WAIT": "WAIT",
     "NEUTRAL": "WAIT",
     "HOLD": "WAIT",
+}
+COINGLASS_PROXY_BASE = "https://open-api-v4.coinglass.com"
+COINGLASS_PROXY_PATHS = {
+    "/api/article/list",
+    "/api/futures/funding-rate/exchange-list",
+    "/api/futures/liquidation/aggregated-map",
+    "/api/futures/liquidation/max-pain",
+    "/api/futures/open-interest/exchange-list",
+    "/api/futures/price/history",
+    "/api/index/fear-greed-history",
 }
 
 
@@ -334,6 +346,43 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                 )
             except Exception as error:  # noqa: BLE001
                 self._error(502, str(error))
+            return
+        if parsed.path.startswith("/api/coinglass/proxy/"):
+            proxy_path = "/" + parsed.path.removeprefix("/api/coinglass/proxy/")
+            if proxy_path not in COINGLASS_PROXY_PATHS:
+                self._error(404, "CoinGlass proxy route is not allowed")
+                return
+            api_key = (self.headers.get("X-CG-API-KEY") or self.headers.get("CG-API-KEY") or "").strip()
+            if not api_key:
+                self._error(401, "CoinGlass API key is required")
+                return
+            url = f"{COINGLASS_PROXY_BASE}{proxy_path}"
+            if parsed.query:
+                url = f"{url}?{parsed.query}"
+            request = Request(
+                url,
+                headers={"accept": "application/json", "CG-API-KEY": api_key},
+                method="GET",
+            )
+            try:
+                with urlopen(request, timeout=15) as response:  # noqa: S310
+                    body = response.read()
+            except HTTPError as error:
+                body = error.read() or json.dumps({"message": str(error)}).encode("utf-8")
+                self.send_response(error.code)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            except (URLError, TimeoutError) as error:
+                self._error(502, f"CoinGlass proxy request failed: {error}")
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
             return
         if parsed.path == "/api/coinglass/context":
             query = parse_qs(parsed.query)
