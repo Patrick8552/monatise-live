@@ -1342,6 +1342,7 @@ async function getLiquidations() {
   for (const url of mapUrls) {
     try {
       const payload = await timedFetch("Liquidation map", "CoinGlass", url, { headers: cgHeaders() });
+      window.__monatiseLastLiquidationMap = summarizeLiquidationPayload(payload);
       levels = parseLiquidationMap(payload);
       mapSymbol = new URL(url, window.location.origin).searchParams.get("symbol") || mapSymbol;
       if (levels.length) break;
@@ -1358,7 +1359,8 @@ async function getLiquidations() {
     ? (painPayload.value.data || []).find((item) => item.symbol === asset.coin)
     : null;
   if (!levels.length && mapErrors.length) {
-    throw new Error(`CoinGlass liquidation map returned no price levels (${mapErrors.join("; ")})`);
+    const shape = window.__monatiseLastLiquidationMap?.label || "unknown payload";
+    throw new Error(`CoinGlass liquidation map returned no price levels (${mapErrors.join("; ")}; shape ${shape})`);
   }
   return { levels, assetPain, mapSymbol };
 }
@@ -1592,6 +1594,26 @@ function firstArray(row, keys) {
     if (Array.isArray(row[key])) return row[key];
   }
   return [];
+}
+
+function summarizeLiquidationPayload(payload) {
+  const seen = new Set();
+  const parts = [];
+  const walk = (value, path = "root", depth = 0) => {
+    if (parts.length > 12 || depth > 3 || value == null) return;
+    if (Array.isArray(value)) {
+      parts.push(`${path}:array(${value.length})`);
+      if (value.length) walk(value[0], `${path}[0]`, depth + 1);
+      return;
+    }
+    if (typeof value !== "object" || seen.has(value)) return;
+    seen.add(value);
+    const keys = Object.keys(value).slice(0, 12);
+    parts.push(`${path}:{${keys.join(",")}}`);
+    keys.slice(0, 8).forEach((key) => walk(value[key], `${path}.${key}`, depth + 1));
+  };
+  walk(payload);
+  return { label: parts.join(" > ") };
 }
 
 function renderPrice(series) {

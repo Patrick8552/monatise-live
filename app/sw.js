@@ -1,14 +1,14 @@
-const CACHE_NAME = "monatise-shell-20260616-liq-map2";
+const CACHE_NAME = "monatise-shell-20260616-liq-map3";
 const SHELL_ASSETS = [
   "./",
   "./index.html",
   "./cg.html",
   "./dashboard/",
-  "./coinglass-dashboard.html?v=20260616-liq-map2",
+  "./coinglass-dashboard.html?v=20260616-liq-map3",
   "./styles.css?v=20260615-signal-levels",
   "./app.js?v=20260615-signal-levels",
-  "./coinglass-dashboard.css?v=20260616-liq-map2",
-  "./coinglass-dashboard.js?v=20260616-liq-map2",
+  "./coinglass-dashboard.css?v=20260616-liq-map3",
+  "./coinglass-dashboard.js?v=20260616-liq-map3",
   "./manifest.webmanifest?v=20260616-dashboard-install",
   "./icon-lotus.svg"
 ];
