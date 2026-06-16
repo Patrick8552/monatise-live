@@ -2,6 +2,7 @@ const CACHE_NAME = "monatise-shell-20260616-grid-signals";
 const SHELL_ASSETS = [
   "./",
   "./index.html",
+  "./cg.html",
   "./coinglass-dashboard.html?v=20260616-grid-signals",
   "./styles.css?v=20260615-signal-levels",
   "./app.js?v=20260615-signal-levels",
