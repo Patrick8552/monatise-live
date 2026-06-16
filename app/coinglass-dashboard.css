@@ -118,11 +118,15 @@ h2 {
 }
 
 .mobile-price-chip {
-  display: none;
-  align-items: baseline;
-  gap: 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   flex-wrap: wrap;
   margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(117, 255, 214, 0.36);
+  border-radius: 8px;
+  background: rgba(15, 22, 32, 0.92);
   color: var(--muted);
 }
 
@@ -133,7 +137,7 @@ h2 {
 
 .mobile-price-chip strong {
   color: var(--text);
-  font-size: clamp(1.5rem, 8vw, 2.35rem);
+  font-size: clamp(1.8rem, 8vw, 2.65rem);
   line-height: 0.92;
 }
 
@@ -827,10 +831,6 @@ canvas {
   .topbar {
     align-items: flex-start;
     flex-direction: column;
-  }
-
-  .mobile-price-chip {
-    display: flex;
   }
 
   .session-strip {

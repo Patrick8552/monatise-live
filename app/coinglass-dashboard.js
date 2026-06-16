@@ -254,6 +254,16 @@ function formatPercent(value, digits = 3) {
   return `${number >= 0 ? "+" : ""}${number.toFixed(digits)}%`;
 }
 
+function updateTopPrice(price, detail = "Live mark") {
+  const value = Number(price);
+  if (!Number.isFinite(value) || value <= 0) return;
+  const formatted = formatUsd(value);
+  els.assetPrice.textContent = formatted;
+  els.headerAssetPrice.textContent = formatted;
+  els.headerPriceChange.textContent = detail;
+  els.headerPriceChange.className = "";
+}
+
 function setSessionStatus(kind, text) {
   els.sessionStatusDot.className = `status-dot ${kind === "good" ? "good" : kind === "bad" ? "bad" : ""}`;
   els.sessionStatusText.textContent = text;
@@ -1420,10 +1430,8 @@ function renderPrice(series) {
   state.lastPrice = last.close;
   const change = previous ? ((last.close - previous.close) / previous.close) * 100 : 0;
   state.market.priceChange = change;
-  els.assetPrice.textContent = formatUsd(last.close);
-  els.headerAssetPrice.textContent = formatUsd(last.close);
+  updateTopPrice(last.close, `${change >= 0 ? "Up" : "Down"} ${formatPercent(change, 2)}`);
   els.priceChange.textContent = `${change >= 0 ? "Up" : "Down"} ${formatPercent(change, 2)} last candle`;
-  els.headerPriceChange.textContent = `${change >= 0 ? "Up" : "Down"} ${formatPercent(change, 2)}`;
   els.priceChange.className = change >= 0 ? "positive" : "negative";
   els.headerPriceChange.className = change >= 0 ? "positive" : "negative";
   els.pricePulse.textContent = "live";
@@ -1776,6 +1784,10 @@ function renderHyperliquid(ctx) {
   state.market.hyperFunding = ctx.funding;
   state.market.hyperOpenInterest = ctx.openInterest;
   state.market.hyperPrice = ctx.markPrice;
+  if (!state.lastPrice) {
+    state.lastPrice = ctx.markPrice;
+    updateTopPrice(ctx.markPrice, "Hyperliquid mark");
+  }
   els.hyperSource.textContent = `Hyperliquid public context · ${ctx.coin}-PERP`;
   els.hyperList.innerHTML = [
     ["Mark price", formatUsd(ctx.markPrice), "Oracle " + formatUsd(ctx.oraclePrice)],
