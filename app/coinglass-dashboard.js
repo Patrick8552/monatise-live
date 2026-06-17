@@ -13,6 +13,8 @@ const OPENAI_MODEL_STORAGE = "monatise-openai-model";
 const TRADER_ACCOUNT_STORAGE = "monatise-trader-account-size";
 const TRADER_RISK_STORAGE = "monatise-trader-risk-pct";
 const LOCKED_SIGNAL_STORAGE = "monatise-locked-signal";
+const ANALYSIS_INTERVAL = "30m";
+const DEFAULT_VIEW_INTERVAL = "1h";
 const ASSET_DEFINITIONS = [
   "BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "ADA", "AVAX", "LINK", "TRX", "TON", "DOT", "BCH", "LTC", "UNI", "NEAR",
   "APT", "ICP", "ETC", "ATOM", "FIL", "ARB", "OP", "SUI", "SEI", "INJ", "TIA", "WLD", "AAVE", "MKR", "RUNE", "GRT",
@@ -263,6 +265,7 @@ els.openaiKeyInput.value = state.copilot.apiKey;
 els.openaiModelInput.value = state.copilot.model;
 els.traderAccountInput.value = localStorage.getItem(TRADER_ACCOUNT_STORAGE) || "1000";
 els.traderRiskInput.value = localStorage.getItem(TRADER_RISK_STORAGE) || "1";
+els.intervalSelect.value = DEFAULT_VIEW_INTERVAL;
 if (!state.voice.apiKey) els.voiceStatus.textContent = "Text response mode";
 if (!state.copilot.apiKey) els.copilotStatus.textContent = "Local copilot fallback";
 renderTraderMode();
@@ -1570,7 +1573,7 @@ function chooseAsset(coin) {
 function updateCoinGlassSourceStatus(message = "") {
   const asset = selectedAsset();
   const exchange = els.exchangeSelect.value;
-  const interval = els.intervalSelect.value;
+  const viewInterval = els.intervalSelect.value || DEFAULT_VIEW_INTERVAL;
   const ready = hasKey();
   const sourceBand = document.querySelector(".source-band");
   sourceBand?.classList.toggle("ready", ready);
@@ -1580,7 +1583,7 @@ function updateCoinGlassSourceStatus(message = "") {
     ? message || "CoinGlass will be used for price, funding, OI, liquidations, fear/greed, news, VWAP/history research, and Monatise signals."
     : "Add your CG-API-KEY in Integrations to unlock live price, funding, OI, liquidations, fear/greed, news, VWAP/history research, and Monatise signals.";
   els.coinGlassPriceRef.textContent = `${asset.pair} · CoinGlass futures price history`;
-  els.coinGlassRouteRef.textContent = `/api/futures/price/history · exchange ${exchange} · interval ${interval}`;
+  els.coinGlassRouteRef.textContent = `/api/futures/price/history · exchange ${exchange} · analysis ${ANALYSIS_INTERVAL} · view ${viewInterval}`;
   els.openIntegrationsButton.textContent = ready ? "Update CoinGlass Key" : "Add CoinGlass Key";
 }
 
@@ -1622,7 +1625,7 @@ function resetMarketContext() {
 
 async function getPriceForAsset(asset, limit = "96") {
   const exchange = els.exchangeSelect.value;
-  const interval = els.intervalSelect.value;
+  const interval = ANALYSIS_INTERVAL;
   requireCoinGlass(`${asset.coin} price history`);
   const params = new URLSearchParams({
     exchange,
@@ -1651,9 +1654,9 @@ async function getPriceForAsset(asset, limit = "96") {
 async function getPrice() {
   const asset = selectedAsset();
   const exchange = els.exchangeSelect.value;
-  const interval = els.intervalSelect.value;
+  const interval = ANALYSIS_INTERVAL;
   const rows = await getPriceForAsset(asset);
-  els.priceSource.textContent = `CoinGlass futures price history · ${asset.pair} · ${exchange} · ${interval}`;
+  els.priceSource.textContent = `CoinGlass futures price history · ${asset.pair} · ${exchange} · analysis ${interval} · view ${els.intervalSelect.value || DEFAULT_VIEW_INTERVAL}`;
   return rows;
 }
 
@@ -2203,7 +2206,7 @@ function renderResearch(research) {
   state.market.pattern = research.pattern;
   els.vwapMetric.textContent = `${research.vwapSignal} ${formatPercent(research.vwapDistance, 2)}`;
   els.vwapMetric.className = research.vwapScore > 0 ? "positive" : research.vwapScore < 0 ? "negative" : "";
-  els.researchSource.textContent = `CoinGlass history study · ${asset.coin} · ${els.intervalSelect.value} candles`;
+  els.researchSource.textContent = `CoinGlass history study · ${asset.coin} · ${ANALYSIS_INTERVAL} analysis candles`;
   els.researchPattern.textContent = research.pattern;
   els.historySignal.textContent = research.signal;
   els.historyStats.textContent = research.stats;
