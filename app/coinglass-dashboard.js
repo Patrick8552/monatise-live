@@ -1001,6 +1001,13 @@ function currentSetupSnapshot() {
     asset: selectedCoin(),
     symbol: selectedPair(),
     price: els.assetPrice.textContent,
+    signalAction: els.signalAction.textContent,
+    signalEntry: els.signalEntry.textContent,
+    signalInvalidation: els.signalInvalidation.textContent,
+    signalTarget: els.signalGridHedge.textContent,
+    signalState: els.signalState.textContent,
+    signalTiming: els.signalTimestamp.textContent,
+    signalThesis: els.signalThesis.textContent,
     direction: els.setupDirection.textContent,
     confidence: els.setupConfidence.textContent,
     grid: els.gridDirection.textContent,
@@ -1058,13 +1065,82 @@ function extractOpenAIText(payload) {
 }
 
 function localCopilotAnswer(question) {
+  const clean = question.trim();
+  const q = clean.toLowerCase();
   const s = currentSetupSnapshot();
+  const isActive = ["BUY", "SELL"].includes(s.signalAction);
+  const personalPrefix = `${s.asset} personal read: ${isActive ? `${s.signalAction} snapshot is active` : `${s.direction} is not an active entry yet`}.`;
+  const levels = isActive
+    ? `Entry ${s.signalEntry}, invalidation ${s.signalInvalidation}, target ${s.signalTarget}.`
+    : `No locked entry/target yet. Wait for an active BUY or SELL snapshot; current guard rail is ${s.signalInvalidation}.`;
+
+  if (q.includes("should i") || q.includes("can i") || q.includes("enter") || q.includes("buy now") || q.includes("sell now")) {
+    return [
+      personalPrefix,
+      levels,
+      isActive
+        ? `If you choose to act, the invalidation is the line that proves the setup wrong; do not chase beyond the entry zone.`
+        : "For you personally, the cleaner action is patience until Monatise prints a locked BUY or SELL snapshot.",
+      `Context: ${s.confidence}; ${s.reason}`
+    ].join("\n");
+  }
+
+  if (q.includes("already in") || q.includes("holding") || q.includes("position") || q.includes("manage")) {
+    return [
+      personalPrefix,
+      levels,
+      isActive
+        ? `If your position matches ${s.signalAction}, manage around the locked invalidation and first target. If it is opposite, reduce risk or wait for structural invalidation before trusting the flip.`
+        : "If you are already in while Monatise is waiting, tighten risk around market structure instead of treating this as a fresh confirmation.",
+      `Hedge context: ${s.hedge}. ${s.hedgePlan}`
+    ].join("\n");
+  }
+
+  if (q.includes("risk") || q.includes("size") || q.includes("lot") || q.includes("capital") || q.includes("account")) {
+    const capitalMatch = clean.match(/(?:\$|usd\s*)?([0-9][0-9,]*(?:\.[0-9]+)?)(?:\s*(?:usd|dollars|account|capital))?/i);
+    const capital = capitalMatch ? Number(capitalMatch[1].replace(/,/g, "")) : null;
+    const riskMatch = clean.match(/([0-9]+(?:\.[0-9]+)?)\s*%/);
+    const riskPct = riskMatch ? Number(riskMatch[1]) : 1;
+    const riskLine = Number.isFinite(capital) && capital > 0
+      ? `At ${riskPct}% risk on ${formatUsd(capital)}, maximum loss budget is ${formatUsd(capital * riskPct / 100)}. Size the trade so entry to invalidation equals that budget or less.`
+      : "Use a fixed risk budget first, then size from entry to invalidation. Without account size, I would not guess your lot size.";
+    return [
+      personalPrefix,
+      levels,
+      riskLine,
+      "This is analysis, not financial advice; keep risk small enough that invalidation can be honored."
+    ].join("\n");
+  }
+
+  if (q.includes("stop") || q.includes("invalidation") || q.includes("wrong")) {
+    return [
+      personalPrefix,
+      `Invalidation: ${s.signalInvalidation}.`,
+      isActive
+        ? "That is the fixed line for the current snapshot. Do not move it just because live data wiggles."
+        : "There is no active fixed stop yet because the signal is not in BUY/SELL snapshot mode.",
+      `Snapshot state: ${s.signalState}; ${s.signalTiming}`
+    ].join("\n");
+  }
+
+  if (q.includes("target") || q.includes("take profit") || q.includes("tp")) {
+    return [
+      personalPrefix,
+      `Target: ${s.signalTarget}.`,
+      isActive
+        ? "Treat this as the first target from the locked snapshot; reassess after the snapshot window or if invalidation hits."
+        : "No active target is locked yet because the setup is still waiting.",
+      `Thesis: ${s.signalThesis}`
+    ].join("\n");
+  }
+
   return [
-    `${s.asset} copilot fallback: ${s.direction} with ${s.confidence}.`,
+    `${s.asset} copilot: ${s.direction} with ${s.confidence}.`,
+    `Signal: ${s.signalAction} · ${levels}`,
     `Grid: ${s.grid}. ${s.gridPlan}`,
     `Hedge: ${s.hedge}. ${s.hedgePlan}`,
     `VWAP: ${s.vwap}; ${s.vwapSignal}. Funding ${s.funding}, OI ${s.oi}, liquidation bias ${s.liquidation}.`,
-    question.trim() ? `Question handled locally: ${question.trim()}` : "Connect OpenAI in Integrations to unlock deeper copilot reasoning."
+    clean ? `Your question: ${clean}` : "Ask a personal setup, risk, entry, invalidation, target, or position-management question."
   ].join("\n");
 }
 
@@ -1087,8 +1163,11 @@ async function askOpenAICopilot(question) {
       instructions: [
         "You are the Monatise trading copilot inside a dashboard.",
         "Use only the provided dashboard snapshot and question.",
+        "Answer the user's individual question directly using the visible signal fields.",
+        "When the user asks what they should do, frame the answer as conditional analysis: if they choose to trade, use the displayed entry, invalidation, target, and risk controls.",
         "Do not invent live prices, exchange fills, or execution certainty.",
-        "Answer with setup, grid, hedge, invalidation, and caution when relevant.",
+        "Answer with entry, invalidation, target, setup, grid, hedge, and caution when relevant.",
+        "If the dashboard has no active BUY or SELL snapshot, say to wait instead of fabricating a trade.",
         "This is trading analysis, not financial advice."
       ].join(" "),
       input: [
