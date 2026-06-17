@@ -2475,16 +2475,7 @@ function applyMonatiseFramework() {
   const score = checks.reduce((sum, check) => sum + check.score, 0);
   const direction = score >= 2 ? "BUY SETUP" : score <= -2 ? "SELL SETUP" : "WAIT";
   const confidence = Math.min(100, Math.round((Math.abs(score) / 6) * 100 + liveChecks * 5));
-  const hedgeInputs = {
-    funding: Number.isFinite(Number(m.fundingAverage)),
-    liquidations: Boolean(m.liquidationBias),
-    openInterest: Number.isFinite(Number(m.oiChange))
-  };
-  const hedgeDataReady = hedgeInputs.funding && hedgeInputs.liquidations && hedgeInputs.openInterest;
-  const fundingRisk = Math.abs(Number(m.fundingAverage || 0)) > 0.04;
-  const buyHedgeRisk = direction === "BUY SETUP" && (m.fundingAverage > 0.015 || m.liquidationBias === "long flush" || m.oiChange < -0.5);
-  const sellHedgeRisk = direction === "SELL SETUP" && (m.fundingAverage < -0.015 || m.liquidationBias === "short squeeze" || m.oiChange > 0.5);
-  const hedgePct = hedgeDataReady && fundingRisk ? 50 : hedgeDataReady && (buyHedgeRisk || sellHedgeRisk) ? 25 : 0;
+  const hedge = hedgeFromCoinGlass({ direction, score, confidence, market: m });
 
   els.frameworkSource.textContent = `${asset.coin} selected · CoinGlass research + VWAP + CoinGlass derivatives checks`;
   els.setupDirection.textContent = direction;
@@ -2496,29 +2487,15 @@ function applyMonatiseFramework() {
 
   let gridDirection = `Neutral grid ${asset.coin}`;
   let gridPlan = "Use small two-sided grid or wait until funding/OI/liquidation checks align.";
-  let hedgeDirection = "Flat hedge";
-  let hedgePlan = hedgeDataReady
-    ? "Stay capital-light until the setup confirms."
-    : "No hedge percentage until CoinGlass funding, open interest, and liquidation map are all live.";
+  let hedgeDirection = hedge.direction;
+  let hedgePlan = hedge.plan;
 
   if (direction === "BUY SETUP") {
     gridDirection = `Buy grid ${asset.coin}`;
     gridPlan = gridPlanForResearch("buy", m.scaleAction, m.vwapSignal);
-    hedgeDirection = !hedgeDataReady ? "Hedge data pending" : hedgePct ? `Short hedge ${hedgePct}%` : "No hedge";
-    hedgePlan = !hedgeDataReady
-      ? "No hedge percentage until CoinGlass funding, open interest, and liquidation map are all live."
-      : hedgePct
-        ? "Keep a partial short only because funding, OI, and liquidation data confirm elevated long-side risk."
-        : "Long setup has no confirmed hedge requirement from funding, OI, and liquidation data.";
   } else if (direction === "SELL SETUP") {
     gridDirection = `Sell grid ${asset.coin}`;
     gridPlan = gridPlanForResearch("sell", m.scaleAction, m.vwapSignal);
-    hedgeDirection = !hedgeDataReady ? "Hedge data pending" : hedgePct ? `Long hedge ${hedgePct}%` : "No hedge";
-    hedgePlan = !hedgeDataReady
-      ? "No hedge percentage until CoinGlass funding, open interest, and liquidation map are all live."
-      : hedgePct
-        ? "Keep a partial long only because funding, OI, and liquidation data confirm elevated short-side risk."
-        : "Short setup has no confirmed hedge requirement from funding, OI, and liquidation data.";
   }
 
   els.gridDirection.textContent = gridDirection;
@@ -2537,11 +2514,99 @@ function applyMonatiseFramework() {
     gridPlan,
     hedgeDirection,
     hedgePlan,
+    hedgePct: hedge.percent,
+    hedgeData: hedge.data,
     price: state.lastPrice,
     vwap: m.vwap,
     vwapSignal: m.vwapSignal,
     scaleAction: m.scaleAction,
     checks
+  };
+}
+
+function hedgeFromCoinGlass({ direction, score, confidence, market }) {
+  const m = market || {};
+  const reasons = [];
+  const data = [];
+  let pressure = 0;
+  const add = (label, value, contribution, reason) => {
+    const hasValue = value !== null && value !== undefined && value !== "";
+    const live = hasValue && (Number.isFinite(Number(value)) || typeof value === "string");
+    if (!live) return;
+    data.push(label);
+    pressure += contribution;
+    if (contribution) reasons.push(reason);
+  };
+
+  const funding = Number(m.fundingAverage);
+  if (Number.isFinite(funding)) {
+    add("funding", funding, funding > 0.015 ? -1 : funding < -0.015 ? 1 : 0, `funding ${formatPercent(funding, 4)}`);
+    if (Math.abs(funding) > 0.04) {
+      pressure += funding > 0 ? -1 : 1;
+      reasons.push(`crowded funding ${formatPercent(funding, 4)}`);
+    }
+  }
+
+  const oi = Number(m.oiChange);
+  if (Number.isFinite(oi)) {
+    add("open interest", oi, oi > 0.5 ? 1 : oi < -0.5 ? -1 : 0, `OI ${formatPercent(oi, 2)} 24h`);
+  }
+
+  if (m.liquidationBias) {
+    add(
+      "liquidations",
+      m.liquidationBias,
+      m.liquidationBias === "short squeeze" ? 1 : m.liquidationBias === "long flush" ? -1 : 0,
+      `liquidation map ${m.liquidationBias}`
+    );
+  }
+
+  const vwapScore = Number(m.vwapScore);
+  if (Number.isFinite(vwapScore) && m.vwapSignal) {
+    add("VWAP", m.vwapSignal, vwapScore, `${m.vwapSignal} ${formatPercent(Number(m.vwapDistance || 0), 2)}`);
+  }
+
+  const fearGreed = Number(m.fearGreed);
+  if (Number.isFinite(fearGreed)) {
+    add("fear/greed", fearGreed, fearGreed > 72 ? -1 : fearGreed < 28 ? 1 : 0, `fear/greed ${Math.round(fearGreed)}`);
+  }
+
+  if (m.researchSignal) {
+    add("history", m.researchSignal, Number(m.researchScore || 0), `${m.researchSignal} history`);
+  }
+
+  const setupSide = direction === "BUY SETUP" ? 1 : direction === "SELL SETUP" ? -1 : 0;
+  const adversePressure = setupSide ? pressure * -setupSide : Math.abs(pressure);
+  const liveData = data.length;
+  const enoughData = liveData >= 2;
+  const strongSetup = Math.abs(Number(score || 0)) >= 3 || Number(confidence || 0) >= 65;
+  let percent = 0;
+  if (enoughData && adversePressure >= 3) percent = strongSetup ? 50 : 35;
+  else if (enoughData && adversePressure >= 2) percent = 25;
+  else if (enoughData && adversePressure >= 1) percent = 15;
+
+  if (!setupSide) {
+    return {
+      data,
+      direction: enoughData && Math.abs(pressure) >= 2 ? `Hedge watch ${pressure > 0 ? "short risk" : "long risk"}` : "Flat hedge",
+      percent: 0,
+      plan: enoughData
+        ? `No active BUY/SELL hedge yet. CoinGlass hedge lens is reading ${pressure > 0 ? "upside squeeze risk" : pressure < 0 ? "downside flush risk" : "balanced risk"} from ${data.join(", ")}.`
+        : "Add CoinGlass funding, open interest, liquidation map, and VWAP data to unlock hedge sizing."
+    };
+  }
+
+  const hedgeSide = setupSide > 0 ? "Short" : "Long";
+  const setupLabel = setupSide > 0 ? "long" : "short";
+  return {
+    data,
+    direction: percent ? `${hedgeSide} hedge ${percent}%` : "No hedge",
+    percent,
+    plan: percent
+      ? `${hedgeSide} ${percent}% because CoinGlass shows adverse risk against the ${setupLabel} setup: ${reasons.slice(0, 4).join(" · ")}. Datapoints: ${data.join(", ")}.`
+      : enoughData
+        ? `No hedge required yet. CoinGlass datapoints (${data.join(", ")}) do not show enough adverse pressure against the ${setupLabel} setup.`
+        : "Hedge sizing needs at least two live CoinGlass datapoints: funding, OI, liquidations, VWAP, fear/greed, or history."
   };
 }
 
