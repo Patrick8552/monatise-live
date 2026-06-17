@@ -1,14 +1,14 @@
-const CACHE_NAME = "monatise-shell-20260617-asset-monitor";
+const CACHE_NAME = "monatise-shell-20260617-news-sessions";
 const SHELL_ASSETS = [
   "./",
   "./index.html",
   "./cg.html",
   "./dashboard/",
-  "./coinglass-dashboard.html?v=20260617-asset-monitor",
+  "./coinglass-dashboard.html?v=20260617-news-sessions",
   "./styles.css?v=20260615-signal-levels",
   "./app.js?v=20260615-signal-levels",
-  "./coinglass-dashboard.css?v=20260617-asset-monitor",
-  "./coinglass-dashboard.js?v=20260617-asset-monitor",
+  "./coinglass-dashboard.css?v=20260617-news-sessions",
+  "./coinglass-dashboard.js?v=20260617-news-sessions",
   "./manifest.webmanifest?v=20260616-dashboard-install",
   "./icon-lotus.svg"
 ];

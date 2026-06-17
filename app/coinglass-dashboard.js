@@ -130,6 +130,7 @@ const els = {
   oiList: document.querySelector("#oiList"),
   hyperList: document.querySelector("#hyperList"),
   newsList: document.querySelector("#newsList"),
+  sessionTimers: document.querySelector("#sessionTimers"),
   liveAlertStatus: document.querySelector("#liveAlertStatus"),
   liveAlertList: document.querySelector("#liveAlertList"),
   voiceStatus: document.querySelector("#voiceStatus"),
@@ -2280,13 +2281,20 @@ function renderFearGreed(rows) {
 function renderNews(rows) {
   if (!rows.length) throw new Error("No news rows");
   els.newsSource.textContent = "CoinGlass instant news alerts";
-  els.newsList.innerHTML = rows.map((row) => `
-    <div class="news-item">
-      <strong>${stripHtml(row.article_title || "Market alert")}</strong>
-      <small>${row.source_name || "CoinGlass"} · ${formatTime(row.article_release_time)}</small>
-      <p>${stripHtml(row.article_description || "").slice(0, 160)}</p>
-    </div>
-  `).join("");
+  els.newsList.innerHTML = rows.map((row) => {
+    const title = stripHtml(row.article_title || "Market alert");
+    const description = stripHtml(row.article_description || "").slice(0, 180);
+    return `
+      <article class="news-item rich-news">
+        <img src="${newsImageData(title, description)}" alt="" loading="lazy" />
+        <div>
+          <strong>${escapeHtml(title)}</strong>
+          <small>${escapeHtml(row.source_name || "CoinGlass")} · ${formatTime(row.article_release_time)}</small>
+          <p>${escapeHtml(description || "Market event detected. Review price, funding, OI, liquidations, and session timing before acting.")}</p>
+        </div>
+      </article>
+    `;
+  }).join("");
 }
 
 function renderNewsLocked(error) {
@@ -2639,10 +2647,118 @@ function formatTime(ms) {
   });
 }
 
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function stripHtml(input) {
   const template = document.createElement("template");
   template.innerHTML = input || "";
   return (template.content.textContent || "").replace(/\s+/g, " ").trim();
+}
+
+function newsTopic(title, description = "") {
+  const text = `${title} ${description}`.toLowerCase();
+  if (/bitcoin|btc/.test(text)) return { accent: "#ffbf47", label: "BTC", shape: "bars" };
+  if (/ethereum|eth/.test(text)) return { accent: "#7aa7ff", label: "ETH", shape: "nodes" };
+  if (/fed|rate|inflation|cpi|ppi|macro|dollar|treasury/.test(text)) return { accent: "#52d6ff", label: "MACRO", shape: "wave" };
+  if (/hack|security|exploit|attack|risk|liquidation/.test(text)) return { accent: "#ff6b7f", label: "RISK", shape: "alert" };
+  if (/etf|institution|fund|flow/.test(text)) return { accent: "#75ffd6", label: "FLOW", shape: "flow" };
+  if (/solana|sol/.test(text)) return { accent: "#b592ff", label: "SOL", shape: "nodes" };
+  return { accent: "#ff62d2", label: "NEWS", shape: "wave" };
+}
+
+function newsImageData(title, description = "") {
+  const topic = newsTopic(title, description);
+  const paths = {
+    alert: `<path d="M44 22 18 70h52L44 22Z" fill="${topic.accent}" opacity=".82"/><rect x="41" y="39" width="6" height="18" rx="3" fill="#081018"/><circle cx="44" cy="62" r="3" fill="#081018"/>`,
+    bars: `<rect x="16" y="52" width="9" height="24" rx="3" fill="${topic.accent}"/><rect x="31" y="36" width="9" height="40" rx="3" fill="${topic.accent}" opacity=".78"/><rect x="46" y="24" width="9" height="52" rx="3" fill="${topic.accent}" opacity=".58"/><path d="M13 58c18-22 37-27 62-41" stroke="#eef4fb" stroke-width="4" fill="none" opacity=".8"/>`,
+    flow: `<path d="M14 55c18-18 34 17 52-1" stroke="${topic.accent}" stroke-width="8" fill="none" stroke-linecap="round"/><path d="M14 36c16-16 35 12 56-7" stroke="#eef4fb" stroke-width="5" fill="none" stroke-linecap="round" opacity=".72"/>`,
+    nodes: `<circle cx="24" cy="30" r="10" fill="${topic.accent}"/><circle cx="62" cy="26" r="7" fill="#eef4fb" opacity=".78"/><circle cx="48" cy="66" r="12" fill="${topic.accent}" opacity=".72"/><path d="M31 34 55 28M29 38l14 20M57 34 50 55" stroke="#eef4fb" stroke-width="3" opacity=".65"/>`,
+    wave: `<path d="M9 57c14-25 25 22 40-2s26-8 34 10" stroke="${topic.accent}" stroke-width="7" fill="none" stroke-linecap="round"/><path d="M8 36c19-12 36 9 53-12" stroke="#eef4fb" stroke-width="4" fill="none" opacity=".65"/>`
+  };
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180" viewBox="0 0 88 88"><defs><linearGradient id="bg" x1="0" x2="1" y1="0" y2="1"><stop stop-color="#111923"/><stop offset="1" stop-color="#081018"/></linearGradient></defs><rect width="88" height="88" rx="12" fill="url(#bg)"/><circle cx="72" cy="16" r="22" fill="${topic.accent}" opacity=".16"/><circle cx="15" cy="78" r="28" fill="${topic.accent}" opacity=".1"/>${paths[topic.shape]}<text x="12" y="82" fill="#90a3b8" font-size="9" font-family="Arial, sans-serif" font-weight="700">${topic.label}</text></svg>`;
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
+const SESSION_WINDOWS = [
+  { asset: "crypto", close: null, focus: "Crypto", note: "24/7 market. Best liquidity usually appears during London/New York overlap.", open: null },
+  { asset: "forex", close: 6, focus: "Sydney", note: "AUD/NZD pairs; lower volatility than London/New York.", open: 21 },
+  { asset: "forex", close: 9, focus: "Tokyo", note: "JPY and Asia risk tone.", open: 0 },
+  { asset: "forex", close: 16, focus: "London", note: "Best forex liquidity for EUR, GBP, gold, oil, and crypto continuation.", open: 7 },
+  { asset: "forex", close: 21, focus: "New York", note: "Best overlap with London from 12:00-16:00 UTC.", open: 12 }
+];
+
+function utcMinutes(date = new Date()) {
+  return date.getUTCHours() * 60 + date.getUTCMinutes();
+}
+
+function isUtcWindowOpen(openHour, closeHour, date = new Date()) {
+  if (openHour == null || closeHour == null) return true;
+  const now = utcMinutes(date);
+  const open = openHour * 60;
+  const close = closeHour * 60;
+  return open < close ? now >= open && now < close : now >= open || now < close;
+}
+
+function minutesUntilUtcHour(hour, date = new Date()) {
+  const target = hour * 60;
+  const now = utcMinutes(date);
+  return (target - now + 1440) % 1440;
+}
+
+function durationShort(minutes) {
+  const value = Math.max(0, Math.round(minutes));
+  const hours = Math.floor(value / 60);
+  const mins = value % 60;
+  return hours ? `${hours}h ${mins}m` : `${mins}m`;
+}
+
+function utcHour(hour) {
+  return `${String(hour).padStart(2, "0")}:00 UTC`;
+}
+
+function localHour(hour) {
+  const now = new Date();
+  const date = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), hour, 0, 0));
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function renderSessionTimers(date = new Date()) {
+  if (!els.sessionTimers) return;
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "local";
+  const rows = SESSION_WINDOWS.map((session) => {
+    if (session.asset === "crypto") {
+      return `<article class="session-card open">
+        <span>${escapeHtml(session.focus)}</span>
+        <strong>Open 24/7</strong>
+        <small>Best: 12:00-16:00 UTC (${localHour(12)}-${localHour(16)} local) · ${escapeHtml(session.note)}</small>
+      </article>`;
+    }
+    const open = isUtcWindowOpen(session.open, session.close, date);
+    const change = open ? minutesUntilUtcHour(session.close, date) : minutesUntilUtcHour(session.open, date);
+    return `<article class="session-card ${open ? "open" : "closed"}">
+      <span>${escapeHtml(session.focus)}</span>
+      <strong>${open ? `Closes in ${durationShort(change)}` : `Opens in ${durationShort(change)}`}</strong>
+      <small>${utcHour(session.open)}-${utcHour(session.close)} · ${localHour(session.open)}-${localHour(session.close)} local · ${escapeHtml(session.note)}</small>
+    </article>`;
+  }).join("");
+  els.sessionTimers.innerHTML = `
+    <div class="timezone-strip">
+      <strong>${date.toISOString().slice(11, 19)} UTC</strong>
+      <span>${date.toLocaleTimeString()} · ${escapeHtml(tz)}</span>
+    </div>
+    <div class="best-window">
+      <strong>Best windows</strong>
+      <span>Crypto: London/New York overlap, 12:00-16:00 UTC. Forex: London 07:00-16:00 UTC and London/New York overlap 12:00-16:00 UTC.</span>
+    </div>
+    <div class="session-card-grid">${rows}</div>
+  `;
 }
 
 async function refreshDashboard() {
@@ -2835,10 +2951,12 @@ renderTelemetry();
 renderLiveAlerts();
 renderSignalLog();
 renderMonitorGrid();
+renderSessionTimers();
 initLiquidityAtlas();
 updateLiquidityAtlas();
 connectRealtime();
 refreshDashboard();
 refreshAutonomousMonitor();
+setInterval(renderSessionTimers, 1000);
 setInterval(refreshDashboard, 60_000);
 setInterval(refreshAutonomousMonitor, 90_000);
