@@ -2458,14 +2458,50 @@ function renderHyperliquidLocked(error) {
   ], "confirm");
 }
 
+function marketFundingContext(market = state.market) {
+  const cg = Number(market.fundingAverage);
+  if (Number.isFinite(cg)) {
+    return { label: "CoinGlass funding", live: true, source: "CoinGlass", value: cg };
+  }
+  const hyper = Number(market.hyperFunding);
+  if (Number.isFinite(hyper)) {
+    return { label: "Hyperliquid funding fallback", live: true, source: "Hyperliquid", value: hyper };
+  }
+  return { label: "Funding", live: false, source: "", value: null };
+}
+
+function marketOpenInterestContext(market = state.market) {
+  const cgChange = Number(market.oiChange);
+  if (Number.isFinite(cgChange)) {
+    return { label: "CoinGlass open interest", live: true, source: "CoinGlass", type: "change", value: cgChange };
+  }
+  const hyperOi = Number(market.hyperOpenInterest);
+  if (Number.isFinite(hyperOi) && hyperOi > 0) {
+    return { label: "Hyperliquid OI fallback", live: true, source: "Hyperliquid", type: "level", value: hyperOi };
+  }
+  return { label: "Open interest", live: false, source: "", type: "", value: null };
+}
+
 function applyMonatiseFramework() {
   const asset = selectedAsset();
   const m = state.market;
   const checks = [];
+  const fundingContext = marketFundingContext(m);
+  const oiContext = marketOpenInterestContext(m);
 
   addCheck(checks, "Price trend", m.priceChange, m.priceChange > 0.15 ? 1 : m.priceChange < -0.15 ? -1 : 0, `${formatPercent(m.priceChange || 0, 2)} last candle`);
-  addCheck(checks, "Funding", m.fundingAverage, m.fundingAverage > 0.015 ? -1 : m.fundingAverage < -0.015 ? 1 : 0, m.fundingAverage == null ? "waiting" : `${formatPercent(m.fundingAverage, 4)} average`);
-  addCheck(checks, "Open interest", m.oiChange, m.oiChange > 0.5 ? 1 : m.oiChange < -0.5 ? -1 : 0, m.oiChange == null ? "waiting" : `${formatPercent(m.oiChange, 2)} 24h`);
+  addCheck(checks, "Funding", fundingContext.live ? fundingContext.value : null, fundingContext.value > 0.015 ? -1 : fundingContext.value < -0.015 ? 1 : 0, fundingContext.live ? `${formatPercent(fundingContext.value, 4)} · ${fundingContext.source}` : "waiting");
+  addCheck(
+    checks,
+    "Open interest",
+    oiContext.live ? oiContext.value : null,
+    oiContext.type === "change" ? (oiContext.value > 0.5 ? 1 : oiContext.value < -0.5 ? -1 : 0) : 0,
+    oiContext.live
+      ? oiContext.type === "change"
+        ? `${formatPercent(oiContext.value, 2)} 24h · ${oiContext.source}`
+        : `${Number(oiContext.value).toLocaleString(undefined, { maximumFractionDigits: 0 })} contracts · ${oiContext.source}`
+      : "waiting"
+  );
   addCheck(checks, "Liquidations", m.liquidationBias, m.liquidationBias === "short squeeze" ? 1 : m.liquidationBias === "long flush" ? -1 : 0, m.liquidationBias || "waiting");
   addCheck(checks, "Fear/greed", m.fearGreed, m.fearGreed > 72 ? -1 : m.fearGreed < 28 ? 1 : 0, m.fearGreed == null ? "waiting" : `${Math.round(m.fearGreed)}`);
   addCheck(checks, "VWAP", m.vwapSignal, m.vwapScore, m.vwapSignal ? `${m.vwapSignal} · ${formatPercent(m.vwapDistance, 2)} from VWAP` : "waiting");
@@ -2477,7 +2513,7 @@ function applyMonatiseFramework() {
   const confidence = Math.min(100, Math.round((Math.abs(score) / 6) * 100 + liveChecks * 5));
   const hedge = hedgeFromCoinGlass({ direction, score, confidence, market: m });
 
-  els.frameworkSource.textContent = `${asset.coin} selected · CoinGlass research + VWAP + CoinGlass derivatives checks`;
+  els.frameworkSource.textContent = `${asset.coin} selected · CoinGlass primary data + Hyperliquid fallback for funding/OI`;
   els.setupDirection.textContent = direction;
   els.setupDirection.className = direction.includes("BUY") ? "positive" : direction.includes("SELL") ? "negative" : "";
   els.setupConfidence.textContent = `confidence ${confidence}%`;
@@ -2538,18 +2574,35 @@ function hedgeFromCoinGlass({ direction, score, confidence, market }) {
     if (contribution) reasons.push(reason);
   };
 
-  const funding = Number(m.fundingAverage);
-  if (Number.isFinite(funding)) {
-    add("funding", funding, funding > 0.015 ? -1 : funding < -0.015 ? 1 : 0, `funding ${formatPercent(funding, 4)}`);
+  const fundingContext = marketFundingContext(m);
+  const funding = Number(fundingContext.value);
+  if (fundingContext.live) {
+    add(
+      fundingContext.source === "Hyperliquid" ? "Hyperliquid funding" : "CoinGlass funding",
+      funding,
+      funding > 0.015 ? -1 : funding < -0.015 ? 1 : 0,
+      `${fundingContext.label} ${formatPercent(funding, 4)}`
+    );
     if (Math.abs(funding) > 0.04) {
       pressure += funding > 0 ? -1 : 1;
-      reasons.push(`crowded funding ${formatPercent(funding, 4)}`);
+      reasons.push(`crowded ${fundingContext.source || "market"} funding ${formatPercent(funding, 4)}`);
     }
   }
 
-  const oi = Number(m.oiChange);
-  if (Number.isFinite(oi)) {
-    add("open interest", oi, oi > 0.5 ? 1 : oi < -0.5 ? -1 : 0, `OI ${formatPercent(oi, 2)} 24h`);
+  const oiContext = marketOpenInterestContext(m);
+  const oi = Number(oiContext.value);
+  if (oiContext.live) {
+    add(
+      oiContext.source === "Hyperliquid" ? "Hyperliquid OI" : "CoinGlass OI",
+      oi,
+      oiContext.type === "change" ? (oi > 0.5 ? 1 : oi < -0.5 ? -1 : 0) : 0,
+      oiContext.type === "change"
+        ? `${oiContext.label} ${formatPercent(oi, 2)} 24h`
+        : `${oiContext.label} ${oi.toLocaleString(undefined, { maximumFractionDigits: 0 })} contracts`
+    );
+    if (oiContext.type === "level" && Math.abs(pressure) > 0) {
+      reasons.push(`${oiContext.label} confirms live derivatives participation`);
+    }
   }
 
   if (m.liquidationBias) {
@@ -2591,8 +2644,8 @@ function hedgeFromCoinGlass({ direction, score, confidence, market }) {
       direction: enoughData && Math.abs(pressure) >= 2 ? `Hedge watch ${pressure > 0 ? "short risk" : "long risk"}` : "Flat hedge",
       percent: 0,
       plan: enoughData
-        ? `No active BUY/SELL hedge yet. CoinGlass hedge lens is reading ${pressure > 0 ? "upside squeeze risk" : pressure < 0 ? "downside flush risk" : "balanced risk"} from ${data.join(", ")}.`
-        : "Add CoinGlass funding, open interest, liquidation map, and VWAP data to unlock hedge sizing."
+        ? `No active BUY/SELL hedge yet. Hedge lens is reading ${pressure > 0 ? "upside squeeze risk" : pressure < 0 ? "downside flush risk" : "balanced risk"} from ${data.join(", ")}.`
+        : "Add CoinGlass or Hyperliquid funding/OI plus liquidation map or VWAP data to unlock hedge sizing."
     };
   }
 
@@ -2603,10 +2656,10 @@ function hedgeFromCoinGlass({ direction, score, confidence, market }) {
     direction: percent ? `${hedgeSide} hedge ${percent}%` : "No hedge",
     percent,
     plan: percent
-      ? `${hedgeSide} ${percent}% because CoinGlass shows adverse risk against the ${setupLabel} setup: ${reasons.slice(0, 4).join(" · ")}. Datapoints: ${data.join(", ")}.`
+      ? `${hedgeSide} ${percent}% because market data shows adverse risk against the ${setupLabel} setup: ${reasons.slice(0, 4).join(" · ")}. Datapoints: ${data.join(", ")}.`
       : enoughData
-        ? `No hedge required yet. CoinGlass datapoints (${data.join(", ")}) do not show enough adverse pressure against the ${setupLabel} setup.`
-        : "Hedge sizing needs at least two live CoinGlass datapoints: funding, OI, liquidations, VWAP, fear/greed, or history."
+        ? `No hedge required yet. Datapoints (${data.join(", ")}) do not show enough adverse pressure against the ${setupLabel} setup.`
+        : "Hedge sizing needs at least two live datapoints: CoinGlass/Hyperliquid funding, OI, liquidations, VWAP, fear/greed, or history."
   };
 }
 
