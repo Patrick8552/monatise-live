@@ -958,12 +958,16 @@ function renderGeneratedSignal(signal) {
   els.signalAction.textContent = signal.action;
   els.signalAction.className = signal.action === "BUY" ? "positive" : signal.action === "SELL" ? "negative" : "";
   els.signalThesis.textContent = signal.thesis;
-  els.signalEntry.textContent = signal.buyGridText;
-  els.signalEntryPlan.textContent = signal.buyGridPlan;
-  els.signalInvalidation.textContent = signal.sellGridText;
-  els.signalInvalidationPlan.textContent = signal.sellGridPlan;
-  els.signalGridHedge.textContent = signal.hedgeDirection;
-  els.signalGridHedgePlan.textContent = `${signal.hedgePlan} Invalidation: ${signal.action === "WAIT" ? "VWAP / structure" : formatUsd(signal.invalidation)}.`;
+  els.signalEntry.textContent = signal.action === "WAIT" ? "--" : formatUsd(signal.entry);
+  els.signalEntryPlan.textContent = signal.action === "WAIT"
+    ? signal.entryPlan
+    : `${signal.entryPlan} Grid: buys ${signal.buyGridText}; sells ${signal.sellGridText}.`;
+  els.signalInvalidation.textContent = signal.action === "WAIT" ? "VWAP / structure" : formatUsd(signal.invalidation);
+  els.signalInvalidationPlan.textContent = signal.invalidationPlan;
+  els.signalGridHedge.textContent = signal.action === "WAIT" ? "--" : formatUsd(signal.target);
+  els.signalGridHedgePlan.textContent = signal.action === "WAIT"
+    ? "No target until a BUY or SELL snapshot is active."
+    : `First target locked from snapshot. Hedge: ${signal.hedgeDirection}. ${signal.hedgePlan}`;
   els.signalEvidence.textContent = `${signal.liveChecks} / ${signal.checksTotal} checks`;
   els.signalEvidencePlan.textContent = signal.evidence;
 }
@@ -977,7 +981,7 @@ function renderSignalLog() {
     <div class="signal-row">
       <strong class="${signal.action === "BUY" ? "positive" : signal.action === "SELL" ? "negative" : ""}">${signal.action}</strong>
       <span>${signal.asset} · ${signal.snapshotTime || signal.time}</span>
-      <small>${signal.thesis} · buys ${signal.buyGridText} · sells ${signal.sellGridText} · ${signal.hedgeDirection}</small>
+      <small>${signal.thesis} · entry ${formatUsd(signal.entry)} · invalidation ${signal.action === "WAIT" ? "VWAP / structure" : formatUsd(signal.invalidation)} · target ${formatUsd(signal.target)} · ${signal.hedgeDirection}</small>
     </div>
   `).join("");
 }

@@ -11,7 +11,7 @@
     <link rel="manifest" href="./manifest.webmanifest?v=20260616-dashboard-install" />
     <link rel="icon" href="./icon-lotus.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./icon-lotus.svg" />
-    <link rel="stylesheet" href="./coinglass-dashboard.css?v=20260617-snapshot-lock" />
+    <link rel="stylesheet" href="./coinglass-dashboard.css?v=20260617-signal-invalidation" />
   </head>
   <body>
     <div class="app-shell">
@@ -179,19 +179,19 @@
               </div>
               <div class="signal-detail-grid">
                 <div>
-                  <span>Grid Buys</span>
+                  <span>Entry</span>
                   <strong id="signalEntry">--</strong>
-                  <small id="signalEntryPlan">Waiting for buy grid.</small>
+                  <small id="signalEntryPlan">Waiting for entry.</small>
                 </div>
                 <div>
-                  <span>Grid Sells</span>
+                  <span>Invalidation</span>
                   <strong id="signalInvalidation">--</strong>
-                  <small id="signalInvalidationPlan">Waiting for sell grid.</small>
+                  <small id="signalInvalidationPlan">Waiting for invalidation.</small>
                 </div>
                 <div>
-                  <span>Hedge</span>
+                  <span>Target</span>
                   <strong id="signalGridHedge">--</strong>
-                  <small id="signalGridHedgePlan">Waiting for hedge decision.</small>
+                  <small id="signalGridHedgePlan">Waiting for target.</small>
                 </div>
                 <div>
                   <span>Evidence</span>
@@ -444,6 +444,6 @@
     </div>
     <script src="https://cdn.ably.com/lib/ably.min-2.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="./coinglass-dashboard.js?v=20260617-snapshot-lock"></script>
+    <script src="./coinglass-dashboard.js?v=20260617-signal-invalidation"></script>
   </body>
 </html>
