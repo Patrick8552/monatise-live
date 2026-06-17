@@ -1,14 +1,14 @@
-const CACHE_NAME = "monatise-shell-20260617-hedge-data-gate";
+const CACHE_NAME = "monatise-shell-20260617-trader-mode";
 const SHELL_ASSETS = [
   "./",
   "./index.html",
   "./cg.html",
   "./dashboard/",
-  "./coinglass-dashboard.html?v=20260617-hedge-data-gate",
+  "./coinglass-dashboard.html?v=20260617-trader-mode",
   "./styles.css?v=20260615-signal-levels",
   "./app.js?v=20260615-signal-levels",
-  "./coinglass-dashboard.css?v=20260617-hedge-data-gate",
-  "./coinglass-dashboard.js?v=20260617-hedge-data-gate",
+  "./coinglass-dashboard.css?v=20260617-trader-mode",
+  "./coinglass-dashboard.js?v=20260617-trader-mode",
   "./manifest.webmanifest?v=20260616-dashboard-install",
   "./icon-lotus.svg"
 ];

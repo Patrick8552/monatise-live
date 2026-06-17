@@ -11,7 +11,7 @@
     <link rel="manifest" href="./manifest.webmanifest?v=20260616-dashboard-install" />
     <link rel="icon" href="./icon-lotus.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./icon-lotus.svg" />
-    <link rel="stylesheet" href="./coinglass-dashboard.css?v=20260617-hedge-data-gate" />
+    <link rel="stylesheet" href="./coinglass-dashboard.css?v=20260617-trader-mode" />
   </head>
   <body>
     <div class="app-shell">
@@ -208,6 +208,42 @@
                   <span>Evidence</span>
                   <strong id="signalEvidence">0 checks</strong>
                   <small id="signalEvidencePlan">Waiting for framework checks.</small>
+                </div>
+              </div>
+            </div>
+            <div class="trader-mode" aria-label="Trader mode risk sizing">
+              <div class="trader-mode-head">
+                <div>
+                  <span>Trader Mode</span>
+                  <strong id="traderRiskNote">Waiting for active signal</strong>
+                </div>
+                <div class="trader-inputs">
+                  <label>
+                    <span>Account</span>
+                    <input id="traderAccountInput" type="number" min="0" step="100" inputmode="decimal" value="1000" />
+                  </label>
+                  <label>
+                    <span>Risk %</span>
+                    <input id="traderRiskInput" type="number" min="0.1" max="10" step="0.1" inputmode="decimal" value="1" />
+                  </label>
+                </div>
+              </div>
+              <div class="trader-metrics">
+                <div>
+                  <span>Max loss</span>
+                  <strong id="traderMaxLoss">--</strong>
+                </div>
+                <div>
+                  <span>Position size</span>
+                  <strong id="traderPositionSize">--</strong>
+                </div>
+                <div>
+                  <span>Stop distance</span>
+                  <strong id="traderStopDistance">--</strong>
+                </div>
+                <div>
+                  <span>Reward / risk</span>
+                  <strong id="traderRewardRisk">--</strong>
                 </div>
               </div>
             </div>
@@ -465,6 +501,6 @@
     </div>
     <script src="https://cdn.ably.com/lib/ably.min-2.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="./coinglass-dashboard.js?v=20260617-hedge-data-gate"></script>
+    <script src="./coinglass-dashboard.js?v=20260617-trader-mode"></script>
   </body>
 </html>

@@ -10,6 +10,8 @@ const ELEVEN_KEY_STORAGE = "monatise-elevenlabs-api-key";
 const ELEVEN_VOICE_STORAGE = "monatise-elevenlabs-voice-id";
 const OPENAI_KEY_STORAGE = "monatise-openai-api-key";
 const OPENAI_MODEL_STORAGE = "monatise-openai-model";
+const TRADER_ACCOUNT_STORAGE = "monatise-trader-account-size";
+const TRADER_RISK_STORAGE = "monatise-trader-risk-pct";
 const ASSET_DEFINITIONS = [
   "BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "ADA", "AVAX", "LINK", "TRX", "TON", "DOT", "BCH", "LTC", "UNI", "NEAR",
   "APT", "ICP", "ETC", "ATOM", "FIL", "ARB", "OP", "SUI", "SEI", "INJ", "TIA", "WLD", "AAVE", "MKR", "RUNE", "GRT",
@@ -100,6 +102,13 @@ const els = {
   signalEvidence: document.querySelector("#signalEvidence"),
   signalEvidencePlan: document.querySelector("#signalEvidencePlan"),
   signalLog: document.querySelector("#signalLog"),
+  traderAccountInput: document.querySelector("#traderAccountInput"),
+  traderRiskInput: document.querySelector("#traderRiskInput"),
+  traderMaxLoss: document.querySelector("#traderMaxLoss"),
+  traderPositionSize: document.querySelector("#traderPositionSize"),
+  traderStopDistance: document.querySelector("#traderStopDistance"),
+  traderRewardRisk: document.querySelector("#traderRewardRisk"),
+  traderRiskNote: document.querySelector("#traderRiskNote"),
   setupAsset: document.querySelector("#setupAsset"),
   setupDirection: document.querySelector("#setupDirection"),
   setupReason: document.querySelector("#setupReason"),
@@ -153,6 +162,7 @@ const state = {
   lastPrice: null,
   signals: [],
   lockedSignal: null,
+  activeSignal: null,
   atlas: {
     renderer: null,
     scene: null,
@@ -231,8 +241,11 @@ els.elevenKeyInput.value = state.voice.apiKey;
 els.elevenVoiceInput.value = state.voice.voiceId;
 els.openaiKeyInput.value = state.copilot.apiKey;
 els.openaiModelInput.value = state.copilot.model;
+els.traderAccountInput.value = localStorage.getItem(TRADER_ACCOUNT_STORAGE) || "1000";
+els.traderRiskInput.value = localStorage.getItem(TRADER_RISK_STORAGE) || "1";
 if (!state.voice.apiKey) els.voiceStatus.textContent = "Text response mode";
 if (!state.copilot.apiKey) els.copilotStatus.textContent = "Local copilot fallback";
+renderTraderMode();
 
 function readSession() {
   try {
@@ -270,6 +283,11 @@ function formatUsd(value, compact = false) {
     maximumFractionDigits: compact || Math.abs(number) >= 1000 ? 0 : 2,
     notation: compact ? "compact" : "standard"
   }).format(number);
+}
+
+function positiveInputValue(input, fallback) {
+  const value = Number(input?.value);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
 function formatPercent(value, digits = 3) {
@@ -965,7 +983,51 @@ function gridSidePlan(side, action, asset, levels, scaleAction) {
     : `Cover ${asset} grid buys below mark: ${levelText}; recycle fills back into higher offers.`;
 }
 
+function renderTraderMode(signal = state.activeSignal) {
+  const accountSize = positiveInputValue(els.traderAccountInput, 1000);
+  const riskPct = positiveInputValue(els.traderRiskInput, 1);
+  const maxLoss = accountSize * riskPct / 100;
+  const action = signal?.action || "WAIT";
+  const entry = Number(signal?.entry);
+  const invalidation = Number(signal?.invalidation);
+  const target = Number(signal?.target);
+  const hasSizingInputs = ["BUY", "SELL"].includes(action)
+    && Number.isFinite(entry)
+    && Number.isFinite(invalidation)
+    && Number.isFinite(target)
+    && entry > 0
+    && invalidation > 0
+    && target > 0
+    && entry !== invalidation;
+
+  els.traderMaxLoss.textContent = formatUsd(maxLoss);
+
+  if (!hasSizingInputs) {
+    els.traderPositionSize.textContent = "--";
+    els.traderStopDistance.textContent = "--";
+    els.traderRewardRisk.textContent = "--";
+    els.traderRiskNote.textContent = "Waiting for an active BUY or SELL snapshot with invalidation.";
+    return;
+  }
+
+  const stopDistance = Math.abs(entry - invalidation);
+  const rewardDistance = Math.abs(target - entry);
+  const units = maxLoss / stopDistance;
+  const notional = units * entry;
+  const rewardRisk = rewardDistance / stopDistance;
+  const unitLabel = signal.asset || selectedCoin();
+  const unitText = units >= 100
+    ? units.toLocaleString(undefined, { maximumFractionDigits: 0 })
+    : units.toLocaleString(undefined, { maximumFractionDigits: 4 });
+
+  els.traderPositionSize.textContent = `${unitText} ${unitLabel}`;
+  els.traderStopDistance.textContent = formatUsd(stopDistance);
+  els.traderRewardRisk.textContent = `${rewardRisk.toFixed(2)}R`;
+  els.traderRiskNote.textContent = `${formatUsd(maxLoss)} max loss from ${formatUsd(entry)} entry to ${formatUsd(invalidation)} invalidation. Est. notional ${formatUsd(notional)}.`;
+}
+
 function renderGeneratedSignal(signal) {
+  state.activeSignal = signal;
   els.signalTimestamp.textContent = signal.snapshotTime
     ? `Snapshot ${signal.snapshotTime} · reassess ${signal.reassessTime}`
     : `Generated ${signal.time}`;
@@ -987,6 +1049,7 @@ function renderGeneratedSignal(signal) {
     : `First target locked from snapshot. Hedge: ${signal.hedgeDirection}. ${signal.hedgePlan}`;
   els.signalEvidence.textContent = `${signal.liveChecks} / ${signal.checksTotal} checks`;
   els.signalEvidencePlan.textContent = signal.evidence;
+  renderTraderMode(signal);
 }
 
 function renderSignalLog() {
@@ -2902,6 +2965,16 @@ els.openaiModelInput.addEventListener("change", () => {
   els.openaiModelInput.value = state.copilot.model;
   localStorage.setItem(OPENAI_MODEL_STORAGE, state.copilot.model);
   setCopilotStatus(`OpenAI model set to ${state.copilot.model}`);
+});
+
+els.traderAccountInput.addEventListener("input", () => {
+  localStorage.setItem(TRADER_ACCOUNT_STORAGE, els.traderAccountInput.value);
+  renderTraderMode();
+});
+
+els.traderRiskInput.addEventListener("input", () => {
+  localStorage.setItem(TRADER_RISK_STORAGE, els.traderRiskInput.value);
+  renderTraderMode();
 });
 
 els.copilotAskButton.addEventListener("click", handleCopilotQuestion);
