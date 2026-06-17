@@ -162,6 +162,34 @@ for Silver, `TVC:SPX`, `TVC:NDX`, `NASDAQ:AAPL`, `NASDAQ:TSLA`, and
 `NASDAQ:NVDA`. Monatise normalizes exchange-prefixed alert symbols before
 matching them to its watchlist.
 
+For Gold, include the TradingView indicator stack in the alert body when your
+Pine alert has those states available:
+
+```json
+{
+  "symbol": "{{ticker}}",
+  "action": "SELL",
+  "confidence": 78,
+  "indicator": "Gold TradingView stack",
+  "timeframe": "{{interval}}",
+  "price": "{{close}}",
+  "indicators": {
+    "luxalgo": "sell",
+    "historical_color": "bearish",
+    "liquidity_swings": "lower high",
+    "wick_extremity": "bearish rejection",
+    "equal_highs_lows": "equal highs swept",
+    "liquidity_grabs": "bearish grab",
+    "dynamic_trend_pivot": "below pivot",
+    "auto_fib": "below 0.618",
+    "daily_vwap": "below",
+    "volume_profile": "below value area",
+    "htf_levels": "below resistance",
+    "rsi_sma_cross": "cross down"
+  }
+}
+```
+
 See [deploy/render-hosting.md](deploy/render-hosting.md) for details.
 
 ## Quick Start

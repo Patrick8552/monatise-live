@@ -54,3 +54,28 @@ def test_tradingview_alert_normalizes_stock_and_index_symbols() -> None:
     assert stock["action"] == "BUY"
     assert index["symbol"] == "NASDAQ"
     assert index["action"] == "SELL"
+
+
+def test_tradingview_alert_preserves_gold_indicator_stack() -> None:
+    alert = normalize_tradingview_alert(
+        {
+            "symbol": "OANDA:XAUUSD",
+            "action": "SELL",
+            "indicators": {
+                "luxalgo": "sell",
+                "liquidity_grabs": "bearish",
+                "auto_fib": "below 0.618",
+                "daily_vwap": "below",
+            },
+            "volume_profile": "below value area",
+            "rsi_sma_cross": "cross down",
+        }
+    )
+
+    assert alert["symbol"] == "GOLD"
+    assert alert["indicators"]["luxalgo"] == "sell"
+    assert alert["indicators"]["liquidity_grabs"] == "bearish"
+    assert alert["indicators"]["auto_fib"] == "below 0.618"
+    assert alert["indicators"]["daily_vwap"] == "below"
+    assert alert["indicators"]["volume_profile"] == "below value area"
+    assert alert["indicators"]["rsi_sma_cross"] == "cross down"

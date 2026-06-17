@@ -84,6 +84,34 @@ def _normalize_alert_action(value: str) -> str:
     return TRADINGVIEW_ACTIONS.get(str(value).strip().upper(), "WAIT")
 
 
+def _normalize_indicator_payload(payload: dict) -> dict:
+    indicator_keys = {
+        "luxalgo",
+        "historical_color",
+        "liquidity_swings",
+        "wick_extremity",
+        "equal_highs_lows",
+        "liquidity_grabs",
+        "dynamic_trend_pivot",
+        "auto_fib",
+        "daily_vwap",
+        "volume_profile",
+        "htf_levels",
+        "rsi_sma_cross",
+    }
+    raw = payload.get("indicators")
+    indicators = raw if isinstance(raw, dict) else {}
+    normalized = {
+        str(key).strip().lower(): str(value).strip()[:80]
+        for key, value in indicators.items()
+        if str(key).strip()
+    }
+    for key in indicator_keys:
+        if key in payload:
+            normalized[key] = str(payload.get(key, "")).strip()[:80]
+    return normalized
+
+
 def normalize_tradingview_alert(payload: dict | str) -> dict:
     if isinstance(payload, str):
         raw = payload.strip()
@@ -109,6 +137,7 @@ def normalize_tradingview_alert(payload: dict | str) -> dict:
         "confidence": confidence,
         "timeframe": str(payload.get("timeframe") or payload.get("interval") or "").strip()[:24],
         "indicator": str(payload.get("indicator") or payload.get("strategy") or "TradingView").strip()[:64],
+        "indicators": _normalize_indicator_payload(payload),
         "price": str(payload.get("price") or payload.get("close") or "").strip()[:32],
         "message": str(payload.get("message") or payload.get("note") or "").strip()[:240],
         "receivedAt": time.time(),

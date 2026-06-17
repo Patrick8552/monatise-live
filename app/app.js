@@ -964,8 +964,52 @@ function tradingViewAlertSignature(signal = latestTradingViewSignal) {
     signal.action || "",
     signal.confidence || "",
     signal.receivedAt || "",
-    signal.price || ""
+    signal.price || "",
+    JSON.stringify(signal.indicators || {})
   ].join(":");
+}
+
+function indicatorBiasValue(value) {
+  const text = String(value || "").toLowerCase();
+  if (!text || ["0", "none", "neutral", "wait", "n/a", "na"].includes(text)) return 0;
+  if (/(sell|short|bear|bearish|down|below|resistance|reject|lower|cross down|supply)/.test(text)) return -1;
+  if (/(buy|long|bull|bullish|up|above|support|reclaim|higher|cross up|demand)/.test(text)) return 1;
+  return 0;
+}
+
+function goldIndicatorConfluence(signal = latestTradingViewSignal) {
+  if (!signal || String(signal.symbol || "").toUpperCase() !== "GOLD") {
+    return { bias: 0, detail: "", live: 0, total: 0 };
+  }
+  const indicators = signal.indicators || {};
+  const stack = [
+    ["LuxAlgo", "luxalgo"],
+    ["Historical color", "historical_color"],
+    ["Liquidity swings", "liquidity_swings"],
+    ["Wick extremity", "wick_extremity"],
+    ["Equal highs/lows", "equal_highs_lows"],
+    ["Liquidity grabs", "liquidity_grabs"],
+    ["Dynamic trend pivot", "dynamic_trend_pivot"],
+    ["Auto fib", "auto_fib"],
+    ["Daily VWAP", "daily_vwap"],
+    ["Volume profile", "volume_profile"],
+    ["HTF levels", "htf_levels"],
+    ["RSI/SMA cross", "rsi_sma_cross"]
+  ];
+  const readings = stack
+    .map(([label, key]) => ({ label, value: indicators[key], bias: indicatorBiasValue(indicators[key]) }))
+    .filter((item) => String(item.value || "").trim());
+  const bias = readings.reduce((sum, item) => sum + item.bias, 0);
+  const strongest = readings
+    .filter((item) => item.bias)
+    .slice(0, 4)
+    .map((item) => `${item.label}: ${item.value}`);
+  return {
+    bias,
+    detail: strongest.length ? `Gold indicators ${strongest.join(" · ")}.` : "",
+    live: readings.length,
+    total: stack.length
+  };
 }
 
 function tradingViewConfluence(direction) {
@@ -975,16 +1019,30 @@ function tradingViewConfluence(direction) {
   const confidence = Math.max(0, Math.min(100, Number(signal.confidence || 0)));
   const receivedAt = Number(signal.receivedAt || 0) * 1000;
   const fresh = receivedAt > 0 && Date.now() - receivedAt <= 2 * 60 * 60 * 1000;
+  const goldStack = goldIndicatorConfluence(signal);
+  const goldBoost =
+    selectedAsset === "GOLD" && ["LONG", "SHORT"].includes(direction)
+      ? direction === "LONG"
+        ? Math.max(-14, Math.min(14, goldStack.bias * 2))
+        : Math.max(-14, Math.min(14, goldStack.bias * -2))
+      : 0;
   if (!fresh || !["BUY", "SELL"].includes(action) || confidence < 50) {
-    return { boost: 0, detail: "TradingView confluence is neutral or stale.", status: "neutral" };
+    return {
+      boost: goldBoost,
+      detail: goldStack.detail || "TradingView confluence is neutral or stale.",
+      goldIndicators: goldStack,
+      status: goldBoost ? (goldBoost > 0 ? "aligned" : "conflict") : "neutral"
+    };
   }
   const aligned = (direction === "LONG" && action === "BUY") || (direction === "SHORT" && action === "SELL");
   const conflicting = (direction === "LONG" && action === "SELL") || (direction === "SHORT" && action === "BUY");
-  const boost = aligned ? Math.min(12, 4 + Math.round(confidence / 12)) : conflicting ? -Math.min(18, 6 + Math.round(confidence / 10)) : 0;
+  const alertBoost = aligned ? Math.min(12, 4 + Math.round(confidence / 12)) : conflicting ? -Math.min(18, 6 + Math.round(confidence / 10)) : 0;
+  const boost = Math.max(-22, Math.min(18, alertBoost + goldBoost));
   const label = `${signal.indicator || "TradingView"} ${action} ${confidence.toFixed(0)}%`;
-  if (aligned) return { boost, detail: `${label} agrees with the setup.`, status: "aligned" };
-  if (conflicting) return { boost, detail: `${label} conflicts with the setup.`, status: "conflict" };
-  return { boost: 0, detail: `${label} is watchlist confluence only.`, status: "watch" };
+  const stackDetail = goldStack.detail ? ` ${goldStack.detail}` : "";
+  if (aligned) return { boost, detail: `${label} agrees with the setup.${stackDetail}`, goldIndicators: goldStack, status: boost >= 0 ? "aligned" : "conflict" };
+  if (conflicting) return { boost, detail: `${label} conflicts with the setup.${stackDetail}`, goldIndicators: goldStack, status: boost >= 0 ? "aligned" : "conflict" };
+  return { boost: goldBoost, detail: `${label} is watchlist confluence only.${stackDetail}`, goldIndicators: goldStack, status: goldBoost ? (goldBoost > 0 ? "aligned" : "conflict") : "watch" };
 }
 
 function signalFromHealth(health, mark) {
@@ -1120,6 +1178,7 @@ function renderTradingViewSignal() {
   const statusClass = action === "BUY" || action === "SELL" ? "aligned" : "wait";
   const receivedAt = Number(signal.receivedAt || 0) * 1000;
   const receivedLabel = receivedAt ? formatSignalTime(new Date(receivedAt)) : "latest";
+  const goldStack = goldIndicatorConfluence(signal);
   els.tradingViewSignalPanel.innerHTML = `
     <div class="strategy-status ${statusClass}">
       <strong>TV ${action}</strong>
@@ -1130,8 +1189,9 @@ function renderTradingViewSignal() {
       <span>Confidence <strong>${Number(signal.confidence || 0).toFixed(0)}%</strong></span>
       <span>Price <strong>${signal.price || "alert"}</strong></span>
       <span>Received <strong>${receivedLabel}</strong></span>
+      ${goldStack.total ? `<span>Gold stack <strong>${goldStack.live}/${goldStack.total}</strong></span>` : ""}
     </div>
-    <p>${signal.message || "TradingView indicator alert received. Use this as confluence, not an execution command."}</p>
+    <p>${goldStack.detail || signal.message || "TradingView indicator alert received. Use this as confluence, not an execution command."}</p>
   `;
 }
 
