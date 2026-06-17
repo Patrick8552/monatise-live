@@ -2354,8 +2354,16 @@ function applyMonatiseFramework() {
   const score = checks.reduce((sum, check) => sum + check.score, 0);
   const direction = score >= 2 ? "BUY SETUP" : score <= -2 ? "SELL SETUP" : "WAIT";
   const confidence = Math.min(100, Math.round((Math.abs(score) / 6) * 100 + liveChecks * 5));
-  const risk = Math.abs(Number(m.fundingAverage || 0)) > 0.04;
-  const hedgePct = risk ? 50 : Math.abs(score) >= 3 ? 25 : 0;
+  const hedgeInputs = {
+    funding: Number.isFinite(Number(m.fundingAverage)),
+    liquidations: Boolean(m.liquidationBias),
+    openInterest: Number.isFinite(Number(m.oiChange))
+  };
+  const hedgeDataReady = hedgeInputs.funding && hedgeInputs.liquidations && hedgeInputs.openInterest;
+  const fundingRisk = Math.abs(Number(m.fundingAverage || 0)) > 0.04;
+  const buyHedgeRisk = direction === "BUY SETUP" && (m.fundingAverage > 0.015 || m.liquidationBias === "long flush" || m.oiChange < -0.5);
+  const sellHedgeRisk = direction === "SELL SETUP" && (m.fundingAverage < -0.015 || m.liquidationBias === "short squeeze" || m.oiChange > 0.5);
+  const hedgePct = hedgeDataReady && fundingRisk ? 50 : hedgeDataReady && (buyHedgeRisk || sellHedgeRisk) ? 25 : 0;
 
   els.frameworkSource.textContent = `${asset.coin} selected · CoinGlass research + VWAP + CoinGlass derivatives checks`;
   els.setupDirection.textContent = direction;
@@ -2368,18 +2376,28 @@ function applyMonatiseFramework() {
   let gridDirection = `Neutral grid ${asset.coin}`;
   let gridPlan = "Use small two-sided grid or wait until funding/OI/liquidation checks align.";
   let hedgeDirection = "Flat hedge";
-  let hedgePlan = "Stay capital-light until the setup confirms.";
+  let hedgePlan = hedgeDataReady
+    ? "Stay capital-light until the setup confirms."
+    : "No hedge percentage until CoinGlass funding, open interest, and liquidation map are all live.";
 
   if (direction === "BUY SETUP") {
     gridDirection = `Buy grid ${asset.coin}`;
     gridPlan = gridPlanForResearch("buy", m.scaleAction, m.vwapSignal);
-    hedgeDirection = hedgePct ? `Short hedge ${hedgePct}%` : "No hedge";
-    hedgePlan = hedgePct ? "Keep a partial short while funding/liquidation risk is elevated." : "Long setup is clean enough to run unhedged.";
+    hedgeDirection = !hedgeDataReady ? "Hedge data pending" : hedgePct ? `Short hedge ${hedgePct}%` : "No hedge";
+    hedgePlan = !hedgeDataReady
+      ? "No hedge percentage until CoinGlass funding, open interest, and liquidation map are all live."
+      : hedgePct
+        ? "Keep a partial short only because funding, OI, and liquidation data confirm elevated long-side risk."
+        : "Long setup has no confirmed hedge requirement from funding, OI, and liquidation data.";
   } else if (direction === "SELL SETUP") {
     gridDirection = `Sell grid ${asset.coin}`;
     gridPlan = gridPlanForResearch("sell", m.scaleAction, m.vwapSignal);
-    hedgeDirection = hedgePct ? `Long hedge ${hedgePct}%` : "No hedge";
-    hedgePlan = hedgePct ? "Keep a partial long while squeeze or crowded-short risk is elevated." : "Short setup is clean enough to run unhedged.";
+    hedgeDirection = !hedgeDataReady ? "Hedge data pending" : hedgePct ? `Long hedge ${hedgePct}%` : "No hedge";
+    hedgePlan = !hedgeDataReady
+      ? "No hedge percentage until CoinGlass funding, open interest, and liquidation map are all live."
+      : hedgePct
+        ? "Keep a partial long only because funding, OI, and liquidation data confirm elevated short-side risk."
+        : "Short setup has no confirmed hedge requirement from funding, OI, and liquidation data.";
   }
 
   els.gridDirection.textContent = gridDirection;
