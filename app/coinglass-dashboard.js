@@ -141,6 +141,7 @@ const state = {
   priceSeries: [],
   lastPrice: null,
   signals: [],
+  lockedSignal: null,
   atlas: {
     renderer: null,
     scene: null,
@@ -203,6 +204,8 @@ const state = {
     pattern: null
   }
 };
+
+const SIGNAL_SNAPSHOT_LOCK_MS = 30 * 60 * 1000;
 
 els.apiKeyInput.value = state.apiKey;
 els.ablyKeyInput.value = state.realtime.key;
@@ -759,10 +762,11 @@ function publishGeneratedSignal(setup) {
   const rawVwap = Number(setup.vwap);
   const price = Number.isFinite(rawPrice) && rawPrice > 0 ? rawPrice : state.lastPrice;
   const vwap = Number.isFinite(rawVwap) && rawVwap > 0 ? rawVwap : null;
-  const signal = buildGeneratedSignal(setup, price, vwap);
+  const candidate = buildGeneratedSignal(setup, price, vwap);
+  const signal = snapshotLockedSignal(candidate, setup, price);
   renderGeneratedSignal(signal);
 
-  const signature = `${signal.asset}:${signal.action}:${Math.round(price || 0)}:${signal.score}:${Math.floor(Date.now() / 60000)}`;
+  const signature = `${signal.asset}:${signal.action}:${Math.round(signal.entry || 0)}:${signal.score}:${Math.floor(signal.snapshotAtMs / SIGNAL_SNAPSHOT_LOCK_MS)}`;
   if (state.signals[0]?.signature !== signature) {
     state.signals.unshift({ ...signal, signature });
     state.signals = state.signals.slice(0, 8);
@@ -775,6 +779,86 @@ function publishGeneratedSignal(setup) {
       payload: signal
     });
   }
+}
+
+function snapshotLockedSignal(candidate, setup, price) {
+  const now = Date.now();
+  const locked = state.lockedSignal;
+  const sameAsset = locked && locked.asset === candidate.asset;
+  const stillLocked = sameAsset && now < locked.reassessAtMs;
+  const invalidated = stillLocked && hasStructuralInvalidation(locked, setup, price);
+
+  if (invalidated) {
+    const canceled = {
+      ...locked,
+      action: "WAIT",
+      liveChecks: candidate.liveChecks,
+      checksTotal: candidate.checksTotal,
+      evidence: candidate.evidence,
+      status: "invalidated",
+      stateLabel: "setup invalidated",
+      thesis: `Setup canceled. Structural invalidation confirmed beyond ${formatUsd(locked.invalidation)}. Waiting for the next snapshot.`,
+      invalidationPlan: "Major structural invalidation canceled the setup. A fresh snapshot is required.",
+      time: candidate.time
+    };
+    state.lockedSignal = null;
+    return canceled;
+  }
+
+  if (stillLocked && locked.action !== "WAIT") {
+    return {
+      ...locked,
+      liveChecks: candidate.liveChecks,
+      checksTotal: candidate.checksTotal,
+      evidence: candidate.evidence,
+      status: candidate.action !== locked.action && candidate.action !== "WAIT" ? "watch" : "active",
+      stateLabel: candidate.action !== locked.action && candidate.action !== "WAIT" ? "watch - bias locked" : "active snapshot",
+      thesis: snapshotThesis(locked, candidate),
+      time: candidate.time
+    };
+  }
+
+  const snapshotAtMs = now;
+  const reassessAtMs = now + SIGNAL_SNAPSHOT_LOCK_MS;
+  const fresh = {
+    ...candidate,
+    snapshotAtMs,
+    reassessAtMs,
+    snapshotTime: formatClock(snapshotAtMs),
+    reassessTime: formatClock(reassessAtMs),
+    status: candidate.action === "WAIT" ? "watch" : "active",
+    stateLabel: candidate.action === "WAIT" ? "watch signal" : "active snapshot",
+    thesis: candidate.action === "WAIT"
+      ? candidate.thesis
+      : `At ${formatClock(snapshotAtMs)}, probability favored ${candidate.action === "BUY" ? "buyers" : "sellers"}. Entry, invalidation, and targets are locked until ${formatClock(reassessAtMs)}.`
+  };
+  state.lockedSignal = fresh.action === "WAIT" ? null : fresh;
+  return fresh;
+}
+
+function hasStructuralInvalidation(signal, setup, price) {
+  const mark = Number(price);
+  const invalidation = Number(signal.invalidation);
+  if (!Number.isFinite(mark) || !Number.isFinite(invalidation)) return false;
+  const oppositeStrong =
+    (signal.action === "BUY" && setup.direction === "SELL SETUP" && setup.score <= -3) ||
+    (signal.action === "SELL" && setup.direction === "BUY SETUP" && setup.score >= 3);
+  const priceInvalidated =
+    (signal.action === "BUY" && mark <= invalidation) ||
+    (signal.action === "SELL" && mark >= invalidation);
+  return priceInvalidated && oppositeStrong;
+}
+
+function snapshotThesis(locked, candidate) {
+  const base = `At ${locked.snapshotTime}, probability favored ${locked.action === "BUY" ? "buyers" : "sellers"}. Entry, invalidation, and targets stay fixed until ${locked.reassessTime}.`;
+  if (candidate.action !== locked.action && candidate.action !== "WAIT") {
+    return `${base} Live data is conflicting now, but structural invalidation has not confirmed.`;
+  }
+  return base;
+}
+
+function formatClock(timestamp) {
+  return new Date(timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
 function buildGeneratedSignal(setup, price, vwap) {
@@ -865,9 +949,11 @@ function gridSidePlan(side, action, asset, levels, scaleAction) {
 }
 
 function renderGeneratedSignal(signal) {
-  els.signalTimestamp.textContent = `Generated ${signal.time}`;
-  els.signalState.textContent = signal.action === "WAIT" ? "watch signal" : "active signal";
-  els.signalState.className = `pill ${signal.action === "BUY" ? "positive" : signal.action === "SELL" ? "negative" : ""}`;
+  els.signalTimestamp.textContent = signal.snapshotTime
+    ? `Snapshot ${signal.snapshotTime} · reassess ${signal.reassessTime}`
+    : `Generated ${signal.time}`;
+  els.signalState.textContent = signal.stateLabel || (signal.action === "WAIT" ? "watch signal" : "active signal");
+  els.signalState.className = `pill ${signal.action === "BUY" ? "positive" : signal.action === "SELL" ? "negative" : signal.status === "invalidated" ? "negative" : ""}`;
   els.signalAsset.textContent = `${signal.asset} generated signal`;
   els.signalAction.textContent = signal.action;
   els.signalAction.className = signal.action === "BUY" ? "positive" : signal.action === "SELL" ? "negative" : "";
@@ -890,7 +976,7 @@ function renderSignalLog() {
   els.signalLog.innerHTML = state.signals.slice(0, 5).map((signal) => `
     <div class="signal-row">
       <strong class="${signal.action === "BUY" ? "positive" : signal.action === "SELL" ? "negative" : ""}">${signal.action}</strong>
-      <span>${signal.asset} · ${signal.time}</span>
+      <span>${signal.asset} · ${signal.snapshotTime || signal.time}</span>
       <small>${signal.thesis} · buys ${signal.buyGridText} · sells ${signal.sellGridText} · ${signal.hedgeDirection}</small>
     </div>
   `).join("");
