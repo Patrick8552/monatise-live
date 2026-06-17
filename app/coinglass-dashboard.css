@@ -163,11 +163,55 @@ h2 {
 
 .control-band {
   display: grid;
-  grid-template-columns: repeat(4, minmax(120px, 1fr)) auto;
+  grid-template-columns: minmax(120px, 0.75fr) minmax(220px, 1.2fr) repeat(3, minmax(120px, 0.8fr)) auto;
   gap: 12px;
   align-items: end;
   padding: 16px;
   border-top: 0;
+}
+
+.asset-search-box {
+  position: relative;
+}
+
+.asset-search-results {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  display: none;
+  max-height: 280px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #0c121a;
+  box-shadow: var(--shadow);
+}
+
+.asset-search-results.open {
+  display: grid;
+}
+
+.asset-search-results button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 40px;
+  border: 0;
+  border-bottom: 1px solid rgba(144, 163, 184, 0.12);
+  border-radius: 0;
+  background: transparent;
+  padding: 0 12px;
+  text-align: left;
+}
+
+.asset-search-results button:hover {
+  background: rgba(82, 214, 255, 0.1);
+}
+
+.asset-search-results small {
+  color: var(--muted);
 }
 
 .integration-drawer {
@@ -230,6 +274,50 @@ h2 {
 .source-band.waiting {
   border-color: rgba(255, 191, 71, 0.34);
   background: linear-gradient(90deg, rgba(255, 191, 71, 0.08), rgba(15, 23, 32, 0.96));
+}
+
+.monitor-panel {
+  margin-top: 16px;
+  min-height: 190px;
+}
+
+.monitor-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(130px, 1fr));
+  gap: 10px;
+}
+
+.monitor-card {
+  display: grid;
+  gap: 6px;
+  min-height: 104px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #0f1620;
+  padding: 10px;
+}
+
+.monitor-card strong {
+  font-size: 1.05rem;
+}
+
+.monitor-card span,
+.monitor-card small {
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.35;
+}
+
+.monitor-card.positive {
+  border-color: rgba(90, 230, 143, 0.34);
+}
+
+.monitor-card.negative {
+  border-color: rgba(255, 107, 127, 0.34);
+}
+
+.monitor-card.error {
+  border-color: rgba(255, 191, 71, 0.34);
 }
 
 label {
@@ -843,6 +931,10 @@ canvas {
   .mini-metrics {
     grid-template-columns: 1fr 1fr;
   }
+
+  .monitor-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 720px) {
@@ -865,6 +957,7 @@ canvas {
   .voice-grid,
   .voice-output,
   .copilot-grid,
+  .monitor-grid,
   .mini-metrics {
     grid-template-columns: 1fr;
   }

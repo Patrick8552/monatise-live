@@ -11,7 +11,7 @@
     <link rel="manifest" href="./manifest.webmanifest?v=20260616-dashboard-install" />
     <link rel="icon" href="./icon-lotus.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./icon-lotus.svg" />
-    <link rel="stylesheet" href="./coinglass-dashboard.css?v=20260617-copilot-personal" />
+    <link rel="stylesheet" href="./coinglass-dashboard.css?v=20260617-asset-monitor" />
   </head>
   <body>
     <div class="app-shell">
@@ -39,12 +39,12 @@
             <span>Asset</span>
             <select id="assetSelect">
               <option value="BTC" selected>BTC</option>
-              <option value="ETH">ETH</option>
-              <option value="SOL">SOL</option>
-              <option value="XRP">XRP</option>
-              <option value="DOGE">DOGE</option>
-              <option value="BNB">BNB</option>
             </select>
+          </label>
+          <label class="asset-search-box">
+            <span>Search assets</span>
+            <input id="assetSearchInput" type="search" autocomplete="off" placeholder="Search BTC, ETH, SOL, PEPE..." />
+            <div id="assetSearchResults" class="asset-search-results" aria-label="Asset search results"></div>
           </label>
           <label>
             <span>Exchange</span>
@@ -116,6 +116,17 @@
             <small id="coinGlassRouteRef">/api/futures/price/history · exchange Binance · interval 1h</small>
           </div>
           <button id="openIntegrationsButton" type="button" class="ghost-button">Add CoinGlass Key</button>
+        </section>
+
+        <section class="panel monitor-panel wide" aria-label="Autonomous CoinGlass asset monitor">
+          <div class="panel-head">
+            <div>
+              <h2>Autonomous Asset Monitor</h2>
+              <p id="monitorStatus">Waiting for CoinGlass key to scan the asset universe</p>
+            </div>
+            <span class="pill">auto scan</span>
+          </div>
+          <div id="monitorGrid" class="monitor-grid"></div>
         </section>
 
         <section class="price-band">
@@ -444,6 +455,6 @@
     </div>
     <script src="https://cdn.ably.com/lib/ably.min-2.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="./coinglass-dashboard.js?v=20260617-copilot-personal"></script>
+    <script src="./coinglass-dashboard.js?v=20260617-asset-monitor"></script>
   </body>
 </html>

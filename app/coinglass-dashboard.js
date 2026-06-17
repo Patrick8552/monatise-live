@@ -10,17 +10,25 @@ const ELEVEN_KEY_STORAGE = "monatise-elevenlabs-api-key";
 const ELEVEN_VOICE_STORAGE = "monatise-elevenlabs-voice-id";
 const OPENAI_KEY_STORAGE = "monatise-openai-api-key";
 const OPENAI_MODEL_STORAGE = "monatise-openai-model";
-const ASSETS = {
-  BTC: { coin: "BTC", pair: "BTCUSDT", hyper: "BTC", tv: "BINANCE:BTCUSDT" },
-  ETH: { coin: "ETH", pair: "ETHUSDT", hyper: "ETH", tv: "BINANCE:ETHUSDT" },
-  SOL: { coin: "SOL", pair: "SOLUSDT", hyper: "SOL", tv: "BINANCE:SOLUSDT" },
-  XRP: { coin: "XRP", pair: "XRPUSDT", hyper: "XRP", tv: "BINANCE:XRPUSDT" },
-  DOGE: { coin: "DOGE", pair: "DOGEUSDT", hyper: "DOGE", tv: "BINANCE:DOGEUSDT" },
-  BNB: { coin: "BNB", pair: "BNBUSDT", hyper: "BNB", tv: "BINANCE:BNBUSDT" }
-};
+const ASSET_DEFINITIONS = [
+  "BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "ADA", "AVAX", "LINK", "TRX", "TON", "DOT", "BCH", "LTC", "UNI", "NEAR",
+  "APT", "ICP", "ETC", "ATOM", "FIL", "ARB", "OP", "SUI", "SEI", "INJ", "TIA", "WLD", "AAVE", "MKR", "RUNE", "GRT",
+  "ALGO", "JUP", "PYTH", "JTO", "ONDO", "ENA", "WIF", "PEPE", "SHIB", "FLOKI", "BONK", "ORDI", "1000SATS", "1000RATS",
+  "FET", "RNDR", "TAO", "LDO", "STX", "IMX", "SAND", "MANA", "AXS", "GALA", "APE", "GMT", "DYDX", "BLUR", "STRK",
+  "ZK", "ZRO", "NOT", "PEOPLE", "ENS", "CRV", "COMP", "SNX", "SUSHI", "YFI", "1INCH", "KAS", "MATIC", "POL", "XLM",
+  "HBAR", "VET", "THETA", "EGLD", "XMR", "ZEC", "DASH", "KAVA", "MINA", "ROSE", "CELO", "FLOW", "CHZ", "QNT"
+].map((coin) => ({
+  coin,
+  hyper: ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE"].includes(coin) ? coin : "",
+  pair: `${coin}USDT`,
+  tv: `BINANCE:${coin}USDT`
+}));
+const ASSETS = Object.fromEntries(ASSET_DEFINITIONS.map((asset) => [asset.coin, asset]));
 
 const els = {
   apiKeyInput: document.querySelector("#apiKeyInput"),
+  assetSearchInput: document.querySelector("#assetSearchInput"),
+  assetSearchResults: document.querySelector("#assetSearchResults"),
   assetSelect: document.querySelector("#assetSelect"),
   exchangeSelect: document.querySelector("#exchangeSelect"),
   intervalSelect: document.querySelector("#intervalSelect"),
@@ -49,6 +57,8 @@ const els = {
   headerAssetPrice: document.querySelector("#headerAssetPrice"),
   headerPriceChange: document.querySelector("#headerPriceChange"),
   marketSymbol: document.querySelector("#marketSymbol"),
+  monitorGrid: document.querySelector("#monitorGrid"),
+  monitorStatus: document.querySelector("#monitorStatus"),
   assetPrice: document.querySelector("#assetPrice"),
   priceChange: document.querySelector("#priceChange"),
   liquidityAtlasCanvas: document.querySelector("#liquidityAtlasCanvas"),
@@ -183,6 +193,12 @@ const state = {
   copilot: {
     apiKey: localStorage.getItem(OPENAI_KEY_STORAGE) || "",
     model: localStorage.getItem(OPENAI_MODEL_STORAGE) || "gpt-5.5"
+  },
+  monitor: {
+    cursor: 0,
+    lastRun: 0,
+    results: {},
+    scanning: false
   },
   market: {
     priceChange: 0,
@@ -1364,6 +1380,14 @@ function selectedAsset() {
   return ASSETS[els.assetSelect.value] || ASSETS.BTC;
 }
 
+function populateAssetSelect() {
+  const current = els.assetSelect.value || "BTC";
+  els.assetSelect.innerHTML = ASSET_DEFINITIONS.map((asset) => (
+    `<option value="${asset.coin}">${asset.coin}</option>`
+  )).join("");
+  els.assetSelect.value = ASSETS[current] ? current : "BTC";
+}
+
 function selectedCoin() {
   return selectedAsset().coin;
 }
@@ -1381,6 +1405,43 @@ function syncAssetLabels() {
   els.setupAsset.textContent = `${asset.coin} setup`;
   updateCoinGlassSourceStatus();
   syncTradingView(asset);
+}
+
+function assetMatches(query) {
+  const clean = query.trim().toUpperCase();
+  if (!clean) return ASSET_DEFINITIONS.slice(0, 18);
+  return ASSET_DEFINITIONS.filter((asset) => (
+    asset.coin.includes(clean) ||
+    asset.pair.includes(clean) ||
+    asset.tv.toUpperCase().includes(clean)
+  )).slice(0, 24);
+}
+
+function renderAssetSearch() {
+  if (!els.assetSearchResults) return;
+  const matches = assetMatches(els.assetSearchInput.value);
+  els.assetSearchResults.innerHTML = matches.length
+    ? matches.map((asset) => `
+        <button type="button" data-asset-search="${asset.coin}">
+          <strong>${asset.coin}</strong>
+          <small>${asset.pair}</small>
+        </button>
+      `).join("")
+    : `<button type="button" disabled><strong>No match</strong><small>Try BTC, SOL, PEPE</small></button>`;
+  els.assetSearchResults.classList.toggle("open", Boolean(els.assetSearchInput.value.trim()));
+}
+
+function chooseAsset(coin) {
+  if (!ASSETS[coin]) return;
+  els.assetSelect.value = coin;
+  if (els.assetSearchInput) els.assetSearchInput.value = "";
+  els.assetSearchResults?.classList.remove("open");
+  resetMarketContext();
+  state.lockedSignal = null;
+  state.realtime.lastSetup = null;
+  state.realtime.lastEntrySignal = null;
+  state.realtime.lastGridCompletion = null;
+  refreshDashboard();
 }
 
 function updateCoinGlassSourceStatus(message = "") {
@@ -1435,8 +1496,7 @@ function resetMarketContext() {
   };
 }
 
-async function getPrice() {
-  const asset = selectedAsset();
+async function getPriceForAsset(asset, limit = "96") {
   const exchange = els.exchangeSelect.value;
   const interval = els.intervalSelect.value;
   requireCoinGlass(`${asset.coin} price history`);
@@ -1444,7 +1504,7 @@ async function getPrice() {
     exchange,
     symbol: asset.pair,
     interval,
-    limit: "96"
+    limit
   });
   const payload = await timedFetch(
     `${asset.coin} price`,
@@ -1461,8 +1521,89 @@ async function getPrice() {
     volume: Number(row.volume_usd)
   })).filter((row) => Number.isFinite(row.close) && Number.isFinite(row.high) && Number.isFinite(row.low));
   if (!rows.length) throw new Error(`CoinGlass returned no ${asset.coin} price rows`);
+  return rows;
+}
+
+async function getPrice() {
+  const asset = selectedAsset();
+  const exchange = els.exchangeSelect.value;
+  const interval = els.intervalSelect.value;
+  const rows = await getPriceForAsset(asset);
   els.priceSource.textContent = `CoinGlass futures price history · ${asset.pair} · ${exchange} · ${interval}`;
   return rows;
+}
+
+function monitorAssetKeys() {
+  const selected = selectedCoin();
+  const keys = ASSET_DEFINITIONS.map((asset) => asset.coin);
+  return [selected, ...keys.filter((coin) => coin !== selected)];
+}
+
+function renderMonitorGrid() {
+  if (!els.monitorGrid) return;
+  const results = Object.values(state.monitor.results)
+    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+    .slice(0, 36);
+  els.monitorGrid.innerHTML = results.length
+    ? results.map((item) => {
+        const pct = Number(item.changePct);
+        const className = item.error ? "error" : pct > 0 ? "positive" : pct < 0 ? "negative" : "";
+        return `
+          <button type="button" class="monitor-card ${className}" data-monitor-asset="${item.coin}">
+            <span>${item.pair}</span>
+            <strong>${item.price || "$--"}</strong>
+            <small>${item.error ? item.error : `${formatPercent(pct || 0, 2)} · ${item.direction}`}</small>
+          </button>
+        `;
+      }).join("")
+    : `<article class="monitor-card"><span>Scanner idle</span><strong>--</strong><small>Add CoinGlass key to start autonomous monitoring.</small></article>`;
+}
+
+async function refreshAutonomousMonitor() {
+  if (!els.monitorStatus || state.monitor.scanning) return;
+  if (!hasKey()) {
+    els.monitorStatus.textContent = "Add CoinGlass key to autonomously scan supported futures assets";
+    renderMonitorGrid();
+    return;
+  }
+  state.monitor.scanning = true;
+  const keys = monitorAssetKeys();
+  const batchSize = 8;
+  const start = state.monitor.cursor % keys.length;
+  const batch = Array.from({ length: batchSize }, (_, index) => keys[(start + index) % keys.length]);
+  state.monitor.cursor = (start + batchSize) % keys.length;
+  els.monitorStatus.textContent = `Scanning ${batch.join(", ")} · ${keys.length} assets in rotation`;
+  const settled = await Promise.allSettled(batch.map(async (coin) => {
+    const asset = ASSETS[coin];
+    const rows = await getPriceForAsset(asset, "32");
+    const last = rows.at(-1);
+    const prior = rows.at(-2) || rows[0];
+    const changePct = prior?.close ? ((last.close - prior.close) / prior.close) * 100 : 0;
+    state.monitor.results[coin] = {
+      coin,
+      pair: asset.pair,
+      price: formatUsd(last.close),
+      changePct,
+      direction: changePct > 0.12 ? "bid lifting" : changePct < -0.12 ? "offer pressure" : "range",
+      updatedAt: Date.now()
+    };
+  }));
+  settled.forEach((result, index) => {
+    if (result.status === "rejected") {
+      const coin = batch[index];
+      const asset = ASSETS[coin];
+      state.monitor.results[coin] = {
+        coin,
+        pair: asset.pair,
+        error: result.reason?.message || "unavailable",
+        updatedAt: Date.now()
+      };
+    }
+  });
+  state.monitor.lastRun = Date.now();
+  state.monitor.scanning = false;
+  els.monitorStatus.textContent = `Autonomous scan active · ${Object.keys(state.monitor.results).length}/${keys.length} assets checked · last ${new Date(state.monitor.lastRun).toLocaleTimeString()}`;
+  renderMonitorGrid();
 }
 
 async function getFunding() {
@@ -2561,6 +2702,7 @@ els.apiKeyInput.addEventListener("input", () => {
 els.apiKeyInput.addEventListener("change", () => {
   syncCoinGlassKey(state.apiKey ? "CoinGlass key saved locally. Refreshing live market data." : "CoinGlass key removed.");
   refreshDashboard();
+  refreshAutonomousMonitor();
 });
 
 els.ablyKeyInput.addEventListener("change", () => {
@@ -2654,12 +2796,18 @@ els.installDashboardButton?.addEventListener("click", async () => {
   deferredDashboardInstallPrompt = null;
   els.installDashboardButton.hidden = true;
 });
+els.assetSearchInput?.addEventListener("input", renderAssetSearch);
+els.assetSearchInput?.addEventListener("focus", renderAssetSearch);
+els.assetSearchResults?.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-asset-search]");
+  if (button) chooseAsset(button.dataset.assetSearch);
+});
+els.monitorGrid?.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-monitor-asset]");
+  if (button) chooseAsset(button.dataset.monitorAsset);
+});
 els.assetSelect.addEventListener("change", () => {
-  resetMarketContext();
-  state.realtime.lastSetup = null;
-  state.realtime.lastEntrySignal = null;
-  state.realtime.lastGridCompletion = null;
-  refreshDashboard();
+  chooseAsset(els.assetSelect.value);
 });
 els.exchangeSelect.addEventListener("change", refreshDashboard);
 els.intervalSelect.addEventListener("change", refreshDashboard);
@@ -2681,12 +2829,16 @@ window.addEventListener("resize", () => {
   resizeAtlas();
 });
 
+populateAssetSelect();
 setupDashboardInstall();
 renderTelemetry();
 renderLiveAlerts();
 renderSignalLog();
+renderMonitorGrid();
 initLiquidityAtlas();
 updateLiquidityAtlas();
 connectRealtime();
 refreshDashboard();
+refreshAutonomousMonitor();
 setInterval(refreshDashboard, 60_000);
+setInterval(refreshAutonomousMonitor, 90_000);
