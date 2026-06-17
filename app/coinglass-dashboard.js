@@ -218,6 +218,7 @@ const state = {
     oiChange: null,
     liquidationBias: null,
     liquidationLevels: [],
+    liquiditySource: "",
     fearGreed: null,
     hyperFunding: null,
     hyperOpenInterest: null,
@@ -1603,6 +1604,7 @@ function resetMarketContext() {
     oiChange: null,
     liquidationBias: null,
     liquidationLevels: [],
+    liquiditySource: "",
     fearGreed: null,
     hyperFunding: null,
     hyperOpenInterest: null,
@@ -1865,6 +1867,39 @@ async function getHyperliquidContext() {
     dayVolume: Number(ctx.dayNtlVlm),
     prevDayPrice: Number(ctx.prevDayPx)
   };
+}
+
+async function getHyperliquidBookLiquidity() {
+  const asset = selectedAsset();
+  if (!asset.hyper) throw new Error(`${asset.coin} is not mapped to a Hyperliquid market`);
+  const payload = await timedFetch(
+    `${asset.coin} Hyperliquid book`,
+    "Hyperliquid public",
+    HYPER_BASE,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ type: "l2Book", coin: asset.hyper })
+    }
+  );
+  const [bids = [], asks = []] = payload?.levels || [];
+  const toLevel = (row, side) => {
+    const price = Number(row.px);
+    const size = Number(row.sz);
+    if (!Number.isFinite(price) || !Number.isFinite(size) || price <= 0 || size <= 0) return null;
+    return {
+      level: price * size,
+      price,
+      side,
+      source: "Hyperliquid order book"
+    };
+  };
+  const levels = [
+    ...bids.slice(0, 20).map((row) => toLevel(row, "bid")),
+    ...asks.slice(0, 20).map((row) => toLevel(row, "ask"))
+  ].filter(Boolean);
+  if (!levels.length) throw new Error("Hyperliquid order book returned no depth levels");
+  return { levels, mapSymbol: `${asset.hyper}-PERP`, source: "Hyperliquid order book" };
 }
 
 function parseLiquidationMap(payload) {
@@ -2357,31 +2392,45 @@ function renderLiquidations(result) {
   const asset = selectedAsset();
   const current = state.lastPrice || 100000;
   const levels = result.levels || [];
-  if (!levels.length) throw new Error("CoinGlass returned no liquidation map levels");
+  const source = result.source || "CoinGlass";
+  if (!levels.length) throw new Error(`${source} returned no liquidity levels`);
   const below = levels.filter((row) => row.price < current).reduce((sum, row) => sum + row.level, 0);
   const above = levels.filter((row) => row.price >= current).reduce((sum, row) => sum + row.level, 0);
-  const bias = above > below ? "short squeeze" : "long flush";
+  const bias = source === "Hyperliquid order book"
+    ? above > below ? "ask wall" : "bid wall"
+    : above > below ? "short squeeze" : "long flush";
   state.market.liquidationBias = bias;
   state.market.liquidationLevels = levels;
+  state.market.liquiditySource = source;
   els.liqBias.textContent = bias;
   els.liqBias.className = above > below ? "positive" : "negative";
-  els.liqSource.textContent = `CoinGlass aggregated liquidation map · ${result.mapSymbol || asset.pair}`;
+  els.liqSource.textContent = source === "Hyperliquid order book"
+    ? `Hyperliquid order-book liquidity fallback · ${result.mapSymbol || asset.hyper}`
+    : `CoinGlass aggregated liquidation map · ${result.mapSymbol || asset.pair}`;
   if (result.assetPain) {
     els.maxPain.textContent = `max pain ${formatUsd(result.assetPain.short_max_pain_liq_price)} / ${formatUsd(result.assetPain.long_max_pain_liq_price)}`;
+  } else if (source === "Hyperliquid order book") {
+    els.maxPain.textContent = "order-book liquidity, not liquidation heat map";
   } else {
     els.maxPain.textContent = "max pain gated";
   }
   drawLiquidationMap(els.liqCanvas, levels, current);
 }
 
-function renderLiquidationsLocked(error) {
-  els.liqSource.textContent = "CoinGlass liquidation map required";
-  els.maxPain.textContent = error.message.slice(0, 160);
-  els.liqBias.textContent = "CoinGlass key";
-  els.liqBias.className = "";
-  state.market.liquidationBias = null;
-  state.market.liquidationLevels = [];
-  drawCanvasNotice(els.liqCanvas, "CoinGlass liquidation map required", error.message);
+async function renderLiquidationsLocked(error) {
+  try {
+    const fallback = await getHyperliquidBookLiquidity();
+    renderLiquidations(fallback);
+  } catch (fallbackError) {
+    els.liqSource.textContent = "CoinGlass liquidation map and Hyperliquid book unavailable";
+    els.maxPain.textContent = `${error.message}; ${fallbackError.message}`.slice(0, 160);
+    els.liqBias.textContent = "Liquidity pending";
+    els.liqBias.className = "";
+    state.market.liquidationBias = null;
+    state.market.liquidationLevels = [];
+    state.market.liquiditySource = "";
+    drawCanvasNotice(els.liqCanvas, "Liquidity data unavailable", `${error.message}; ${fallbackError.message}`);
+  }
 }
 
 function renderFearGreed(rows) {
@@ -2502,7 +2551,13 @@ function applyMonatiseFramework() {
         : `${Number(oiContext.value).toLocaleString(undefined, { maximumFractionDigits: 0 })} contracts · ${oiContext.source}`
       : "waiting"
   );
-  addCheck(checks, "Liquidations", m.liquidationBias, m.liquidationBias === "short squeeze" ? 1 : m.liquidationBias === "long flush" ? -1 : 0, m.liquidationBias || "waiting");
+  addCheck(
+    checks,
+    m.liquiditySource === "Hyperliquid order book" ? "Book liquidity" : "Liquidations",
+    m.liquidationBias,
+    m.liquidationBias === "short squeeze" || m.liquidationBias === "bid wall" ? 1 : m.liquidationBias === "long flush" || m.liquidationBias === "ask wall" ? -1 : 0,
+    m.liquidationBias ? `${m.liquidationBias}${m.liquiditySource ? ` · ${m.liquiditySource}` : ""}` : "waiting"
+  );
   addCheck(checks, "Fear/greed", m.fearGreed, m.fearGreed > 72 ? -1 : m.fearGreed < 28 ? 1 : 0, m.fearGreed == null ? "waiting" : `${Math.round(m.fearGreed)}`);
   addCheck(checks, "VWAP", m.vwapSignal, m.vwapScore, m.vwapSignal ? `${m.vwapSignal} · ${formatPercent(m.vwapDistance, 2)} from VWAP` : "waiting");
   addCheck(checks, "History research", m.researchSignal, m.researchScore > 0 ? 1 : m.researchScore < 0 ? -1 : 0, m.researchSignal ? `${m.researchSignal} · ${m.scaleAction}` : "waiting");
@@ -2606,11 +2661,12 @@ function hedgeFromCoinGlass({ direction, score, confidence, market }) {
   }
 
   if (m.liquidationBias) {
+    const bookFallback = m.liquiditySource === "Hyperliquid order book";
     add(
-      "liquidations",
+      bookFallback ? "Hyperliquid book" : "CoinGlass liquidations",
       m.liquidationBias,
-      m.liquidationBias === "short squeeze" ? 1 : m.liquidationBias === "long flush" ? -1 : 0,
-      `liquidation map ${m.liquidationBias}`
+      m.liquidationBias === "short squeeze" || m.liquidationBias === "bid wall" ? 1 : m.liquidationBias === "long flush" || m.liquidationBias === "ask wall" ? -1 : 0,
+      bookFallback ? `order book ${m.liquidationBias}` : `liquidation map ${m.liquidationBias}`
     );
   }
 
@@ -2820,7 +2876,12 @@ function drawLiquidationMap(canvas, levels, current) {
   levels.forEach((row) => {
     const x = xFor(row.price);
     const barHeight = Math.max(10, (row.level / maxLevel) * (height - 70));
-    ctx.fillStyle = row.price >= current ? "rgba(90, 230, 143, 0.72)" : "rgba(255, 107, 127, 0.72)";
+    ctx.fillStyle =
+      row.side === "ask"
+        ? "rgba(255, 107, 127, 0.72)"
+        : row.side === "bid"
+          ? "rgba(90, 230, 143, 0.72)"
+          : row.price >= current ? "rgba(90, 230, 143, 0.72)" : "rgba(255, 107, 127, 0.72)";
     ctx.fillRect(x - 7, height - 32 - barHeight, 14, barHeight);
   });
   const currentX = xFor(current);
@@ -2833,6 +2894,10 @@ function drawLiquidationMap(canvas, levels, current) {
   ctx.fillStyle = "#eef4fb";
   ctx.font = "12px system-ui";
   ctx.fillText(`${selectedCoin()} ${formatUsd(current)}`, Math.min(currentX + 8, width - 120), 28);
+  if (levels.some((row) => row.source === "Hyperliquid order book")) {
+    ctx.fillStyle = "#90a3b8";
+    ctx.fillText("Hyperliquid book depth", 48, 28);
+  }
   ctx.fillStyle = "#90a3b8";
   ctx.fillText(formatUsd(minPrice), 12, height - 12);
   ctx.fillText(formatUsd(maxPrice), width - 104, height - 12);
