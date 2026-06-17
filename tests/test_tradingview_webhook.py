@@ -34,3 +34,23 @@ def test_tradingview_alert_clamps_confidence() -> None:
     assert alert["symbol"] == "USDJPY"
     assert alert["action"] == "WAIT"
     assert alert["confidence"] == 100
+
+
+def test_tradingview_alert_normalizes_gold_and_silver_symbols() -> None:
+    gold = normalize_tradingview_alert({"symbol": "OANDA:XAUUSD", "action": "long"})
+    silver = normalize_tradingview_alert({"symbol": "OANDA:XAGUSD", "action": "short"})
+
+    assert gold["symbol"] == "GOLD"
+    assert gold["action"] == "BUY"
+    assert silver["symbol"] == "XAG"
+    assert silver["action"] == "SELL"
+
+
+def test_tradingview_alert_normalizes_stock_and_index_symbols() -> None:
+    stock = normalize_tradingview_alert({"symbol": "NASDAQ:AAPL", "action": "bullish"})
+    index = normalize_tradingview_alert({"symbol": "TVC:IXIC", "action": "bearish"})
+
+    assert stock["symbol"] == "AAPL"
+    assert stock["action"] == "BUY"
+    assert index["symbol"] == "NASDAQ"
+    assert index["action"] == "SELL"

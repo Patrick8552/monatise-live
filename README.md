@@ -129,7 +129,9 @@ MONATISE_SMTP_SSL=false
 When `MONATISE_ALERT_EMAILS` is set, accepted TradingView webhooks also send
 email notifications through the same SMTP provider.
 
-TradingView indicator alerts can be added as a forex confluence feed. Configure
+TradingView indicator alerts can be added as a forex, metals, indices, stocks,
+and crypto confluence feed. Do not enter TradingView login credentials into
+Monatise; TradingView Premium connects through alert webhooks. Configure
 Render with:
 
 ```text
@@ -154,6 +156,11 @@ Use a JSON alert message like:
   "price": "{{close}}"
 }
 ```
+
+Recommended TradingView symbols include `OANDA:XAUUSD` for Gold, `OANDA:XAGUSD`
+for Silver, `TVC:SPX`, `TVC:NDX`, `NASDAQ:AAPL`, `NASDAQ:TSLA`, and
+`NASDAQ:NVDA`. Monatise normalizes exchange-prefixed alert symbols before
+matching them to its watchlist.
 
 See [deploy/render-hosting.md](deploy/render-hosting.md) for details.
 

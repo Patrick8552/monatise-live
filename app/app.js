@@ -189,6 +189,7 @@ let lastTicketSnapshot = null;
 let pendingArmReview = false;
 let deferredInstallPrompt = null;
 let latestTradingViewSignal = null;
+let latestTradingViewSignalSignature = "";
 let candleCsvBuffer = sampleCsv;
 let tradingRules = {
   chartInterval: "1h",
@@ -206,6 +207,7 @@ let tradingRules = {
 localStorage.removeItem("monatiseControlToken");
 
 const assetMetadata = {
+  AAPL: { name: "Apple", route: "TradingView stock watch" },
   BNB: { name: "BNB", route: "Core Hyperliquid perp" },
   BRENTOIL: { name: "Brent Oil", route: "Hyperliquid xyz:BRENTOIL builder perp" },
   BTC: { name: "Bitcoin", route: "Core Hyperliquid perp" },
@@ -214,11 +216,20 @@ const assetMetadata = {
   ETH: { name: "Ethereum", route: "Core Hyperliquid perp" },
   GOLD: { name: "Gold", route: "Hyperliquid xyz:GOLD builder perp" },
   HYPE: { name: "Hyperliquid", route: "Core Hyperliquid perp" },
+  NDX: { name: "Nasdaq 100", route: "TradingView index watch" },
+  NVDA: { name: "NVIDIA", route: "TradingView stock watch" },
+  QQQ: { name: "Invesco QQQ", route: "TradingView ETF watch" },
   SOL: { name: "Solana", route: "Core Hyperliquid perp" },
+  SPX: { name: "S&P 500", route: "TradingView index watch" },
+  SPY: { name: "SPDR S&P 500 ETF", route: "TradingView ETF watch" },
+  TSLA: { name: "Tesla", route: "TradingView stock watch" },
+  USOIL: { name: "US Oil", route: "TradingView commodity watch" },
+  XAG: { name: "Silver", route: "TradingView metals watch" },
   XRP: { name: "XRP", route: "Core Hyperliquid perp" }
 };
 
 const tradingViewSymbols = {
+  AAPL: "NASDAQ:AAPL",
   AUDJPY: "FX:AUDJPY",
   AUDUSD: "FX:AUDUSD",
   BNB: "BINANCE:BNBUSDT",
@@ -233,9 +244,18 @@ const tradingViewSymbols = {
   GBPUSD: "FX:GBPUSD",
   GOLD: "OANDA:XAUUSD",
   HYPE: "CRYPTO:HYPEUSD",
+  NDX: "TVC:NDX",
+  NASDAQ: "TVC:IXIC",
+  NVDA: "NASDAQ:NVDA",
   NZDUSD: "FX:NZDUSD",
+  QQQ: "NASDAQ:QQQ",
   SOL: "BINANCE:SOLUSDT",
+  SPX: "TVC:SPX",
+  SPY: "AMEX:SPY",
+  TSLA: "NASDAQ:TSLA",
   USDJPY: "FX:USDJPY",
+  USOIL: "TVC:USOIL",
+  XAG: "OANDA:XAGUSD",
   XRP: "BINANCE:XRPUSDT"
 };
 
@@ -937,6 +957,36 @@ function renderEntryLadder(levels = []) {
   `;
 }
 
+function tradingViewAlertSignature(signal = latestTradingViewSignal) {
+  if (!signal) return "";
+  return [
+    signal.symbol || "",
+    signal.action || "",
+    signal.confidence || "",
+    signal.receivedAt || "",
+    signal.price || ""
+  ].join(":");
+}
+
+function tradingViewConfluence(direction) {
+  const signal = latestTradingViewSignal;
+  if (!signal) return { boost: 0, detail: "", status: "none" };
+  const action = String(signal.action || "WAIT").toUpperCase();
+  const confidence = Math.max(0, Math.min(100, Number(signal.confidence || 0)));
+  const receivedAt = Number(signal.receivedAt || 0) * 1000;
+  const fresh = receivedAt > 0 && Date.now() - receivedAt <= 2 * 60 * 60 * 1000;
+  if (!fresh || !["BUY", "SELL"].includes(action) || confidence < 50) {
+    return { boost: 0, detail: "TradingView confluence is neutral or stale.", status: "neutral" };
+  }
+  const aligned = (direction === "LONG" && action === "BUY") || (direction === "SHORT" && action === "SELL");
+  const conflicting = (direction === "LONG" && action === "SELL") || (direction === "SHORT" && action === "BUY");
+  const boost = aligned ? Math.min(12, 4 + Math.round(confidence / 12)) : conflicting ? -Math.min(18, 6 + Math.round(confidence / 10)) : 0;
+  const label = `${signal.indicator || "TradingView"} ${action} ${confidence.toFixed(0)}%`;
+  if (aligned) return { boost, detail: `${label} agrees with the setup.`, status: "aligned" };
+  if (conflicting) return { boost, detail: `${label} conflicts with the setup.`, status: "conflict" };
+  return { boost: 0, detail: `${label} is watchlist confluence only.`, status: "watch" };
+}
+
 function signalFromHealth(health, mark) {
   const trend = String(fibAnalysis?.trend || contextRadar?.indicator?.trend || "flat").toLowerCase();
   const action = String(contextRadar?.instruction?.action || "normal").toLowerCase();
@@ -986,7 +1036,8 @@ function signalFromHealth(health, mark) {
   const warningPenalty = Math.min(24, health.warnings.length * 6);
   const fvgBoost =
     (direction === "LONG" && gapDirection === "bullish") || (direction === "SHORT" && gapDirection === "bearish") ? 6 : 0;
-  const rawConfidence = confidenceBase + fvgBoost - contextPenalty - warningPenalty;
+  const tvConfluence = tradingViewConfluence(direction);
+  const rawConfidence = confidenceBase + fvgBoost + tvConfluence.boost - contextPenalty - warningPenalty;
   const confidence =
     direction === "WAIT"
       ? Math.max(5, Math.min(25, rawConfidence))
@@ -1016,8 +1067,9 @@ function signalFromHealth(health, mark) {
       direction === "WAIT"
         ? "No usable signal while quality gates are blocked."
         : direction === "WATCH"
-          ? "Market structure is mixed; keep it as a watchlist idea until confirmation improves."
-          : `${signalLabel(direction)} from ${trend || "mixed"} structure with ${gapDirection || "no active"} FVG confluence and ${action} context.`,
+          ? `Market structure is mixed; keep it as a watchlist idea until confirmation improves. ${tvConfluence.detail}`.trim()
+          : `${signalLabel(direction)} from ${trend || "mixed"} structure with ${gapDirection || "no active"} FVG confluence and ${action} context. ${tvConfluence.detail}`.trim(),
+    tradingViewConfluence: tvConfluence,
     trigger
   };
 }
@@ -1090,10 +1142,20 @@ async function loadTradingViewSignals() {
     if (!response.ok) throw new Error("TradingView bridge unavailable");
     const payload = await response.json();
     latestTradingViewSignal = payload.alerts?.[0] || null;
+    const signature = tradingViewAlertSignature();
     renderTradingViewSignal();
+    if (signature !== latestTradingViewSignalSignature) {
+      latestTradingViewSignalSignature = signature;
+      rebuildFromInputs();
+    }
   } catch {
     latestTradingViewSignal = null;
+    const signature = tradingViewAlertSignature();
     renderTradingViewSignal();
+    if (signature !== latestTradingViewSignalSignature) {
+      latestTradingViewSignalSignature = signature;
+      rebuildFromInputs();
+    }
   }
 }
 
@@ -1138,6 +1200,7 @@ function renderStrategyReadout(orders, options = {}) {
       <span>Range <strong>${Number.isFinite(health.gridFloor) ? money(health.gridFloor) : "pending"} - ${
         Number.isFinite(health.gridCeiling) ? money(health.gridCeiling) : "pending"
       }</strong></span>
+      <span>TradingView <strong>${signal.tradingViewConfluence?.status || "none"}</strong></span>
       <span>Timing <strong>${timing.status}</strong></span>
       <span>Signal ${timing.active ? "expires" : "works"} <strong>${timing.active ? formatSignalTime(timing.expiresAt) : formatSignalTime(timing.opensAt)}</strong></span>
       <span>Doctrine <strong>invalidation required</strong></span>
@@ -1597,6 +1660,9 @@ function renderTradingViewChart() {
 
 function mergeSelectableAssets(assets = []) {
   const bySymbol = new Map(selectableAssets.map((asset) => [asset.symbol, asset]));
+  Object.keys(assetMetadata).forEach((symbol) => {
+    bySymbol.set(symbol, { ...bySymbol.get(symbol), symbol, tradable: false });
+  });
   assets.forEach((asset) => {
     const symbol = String(asset.symbol || "").toUpperCase();
     if (!symbol) return;
@@ -2822,8 +2888,8 @@ function renderMarketRadar() {
 function renderAssetGroups() {
   const commodityWatch = marketGroups.commodities && marketGroups.commodities.length
     ? [...marketGroups.commodities]
-    : ["GOLD", "CL", "BRENTOIL"].map((symbol) => ({ symbol, tradable: false }));
-  ["GOLD", "CL", "BRENTOIL"].forEach((symbol) => {
+    : ["GOLD", "XAG", "CL", "BRENTOIL", "USOIL"].map((symbol) => ({ symbol, tradable: false }));
+  ["GOLD", "XAG", "CL", "BRENTOIL", "USOIL"].forEach((symbol) => {
     if (!commodityWatch.some((asset) => asset.symbol === symbol)) {
       commodityWatch.push({ symbol, tradable: false });
     }
@@ -2836,7 +2902,7 @@ function renderAssetGroups() {
     ["HIP-3 builder", marketGroups.builder || []],
     ["Gold / oil perps", commodityWatch],
     ["Forex watch", forexWatch],
-    ["Stock watch", marketGroups.stocks || []]
+    ["Stock watch", marketGroups.stocks?.length ? marketGroups.stocks : ["SPX", "NDX", "QQQ", "SPY", "AAPL", "TSLA", "NVDA"].map((symbol) => ({ symbol, tradable: false }))]
   ];
   els.assetGroups.innerHTML = groups
     .map(([title, items]) => {

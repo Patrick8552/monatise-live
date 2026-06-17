@@ -60,10 +60,24 @@ def _normalize_alert_symbol(value: str) -> str:
     if ":" in raw:
         raw = raw.rsplit(":", 1)[-1]
     symbol = "".join(character for character in raw if character.isalnum())
+    aliases = {
+        "XAUUSD": "GOLD",
+        "GOLD": "GOLD",
+        "GC1": "GOLD",
+        "GC": "GOLD",
+        "XAGUSD": "XAG",
+        "SILVER": "XAG",
+        "SI1": "XAG",
+        "USOIL": "CL",
+        "WTICOUSD": "CL",
+        "UKOIL": "BRENTOIL",
+        "IXIC": "NASDAQ",
+    }
+    if symbol in aliases:
+        return aliases[symbol]
     if len(symbol) == 6 and symbol[:3].isalpha() and symbol[3:].isalpha():
         return symbol
-    aliases = {"XAUUSD": "GOLD", "GOLD": "GOLD", "XAGUSD": "XAG", "SILVER": "XAG"}
-    return aliases.get(symbol, symbol[:16])
+    return symbol[:16]
 
 
 def _normalize_alert_action(value: str) -> str:

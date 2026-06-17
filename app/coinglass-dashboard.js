@@ -12,6 +12,7 @@ const OPENAI_KEY_STORAGE = "monatise-openai-api-key";
 const OPENAI_MODEL_STORAGE = "monatise-openai-model";
 const TRADER_ACCOUNT_STORAGE = "monatise-trader-account-size";
 const TRADER_RISK_STORAGE = "monatise-trader-risk-pct";
+const LOCKED_SIGNAL_STORAGE = "monatise-locked-signal";
 const ASSET_DEFINITIONS = [
   "BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "ADA", "AVAX", "LINK", "TRX", "TON", "DOT", "BCH", "LTC", "UNI", "NEAR",
   "APT", "ICP", "ETC", "ATOM", "FIL", "ARB", "OP", "SUI", "SEI", "INJ", "TIA", "WLD", "AAVE", "MKR", "RUNE", "GRT",
@@ -161,7 +162,7 @@ const state = {
   priceSeries: [],
   lastPrice: null,
   signals: [],
-  lockedSignal: null,
+  lockedSignal: readLockedSignal(),
   activeSignal: null,
   atlas: {
     renderer: null,
@@ -233,6 +234,24 @@ const state = {
 };
 
 const SIGNAL_SNAPSHOT_LOCK_MS = 30 * 60 * 1000;
+
+function readLockedSignal() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(LOCKED_SIGNAL_STORAGE) || "null");
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function setLockedSignal(signal) {
+  state.lockedSignal = signal || null;
+  if (state.lockedSignal) {
+    localStorage.setItem(LOCKED_SIGNAL_STORAGE, JSON.stringify(state.lockedSignal));
+  } else {
+    localStorage.removeItem(LOCKED_SIGNAL_STORAGE);
+  }
+}
 
 els.apiKeyInput.value = state.apiKey;
 els.ablyKeyInput.value = state.realtime.key;
@@ -821,33 +840,39 @@ function snapshotLockedSignal(candidate, setup, price) {
   const locked = state.lockedSignal;
   const sameAsset = locked && locked.asset === candidate.asset;
   const stillLocked = sameAsset && now < locked.reassessAtMs;
-  const invalidated = stillLocked && hasStructuralInvalidation(locked, setup, price);
+  const resolution = sameAsset ? lockedSignalResolution(locked, price, now) : null;
+  const invalidated = stillLocked && (resolution?.status === "invalidated" || hasStructuralInvalidation(locked, setup, price));
 
-  if (invalidated) {
+  if (resolution || invalidated) {
+    const resolvedStatus = resolution?.status || "invalidated";
+    const resolvedLabel = resolvedStatus === "target-hit" ? "target hit" : resolvedStatus;
     const canceled = {
       ...locked,
       action: "WAIT",
       liveChecks: candidate.liveChecks,
       checksTotal: candidate.checksTotal,
       evidence: candidate.evidence,
-      status: "invalidated",
-      stateLabel: "setup invalidated",
-      thesis: `Setup canceled. Structural invalidation confirmed beyond ${formatUsd(locked.invalidation)}. Waiting for the next snapshot.`,
-      invalidationPlan: "Major structural invalidation canceled the setup. A fresh snapshot is required.",
+      status: resolvedStatus,
+      stateLabel: `setup ${resolvedLabel}`,
+      thesis: resolution?.detail || `Setup canceled. Structural invalidation confirmed beyond ${formatUsd(locked.invalidation)}. Waiting for the next snapshot.`,
+      entryPlan: "No new entry until a fresh BUY or SELL snapshot forms.",
+      invalidationPlan: resolution?.detail || "Major structural invalidation canceled the setup. A fresh snapshot is required.",
       time: candidate.time
     };
-    state.lockedSignal = null;
+    setLockedSignal(null);
     return canceled;
   }
 
   if (stillLocked && locked.action !== "WAIT") {
+    const liveActionChanged = candidate.action !== locked.action;
+    const liveWait = candidate.action === "WAIT";
     return {
       ...locked,
       liveChecks: candidate.liveChecks,
       checksTotal: candidate.checksTotal,
       evidence: candidate.evidence,
-      status: candidate.action !== locked.action && candidate.action !== "WAIT" ? "watch" : "active",
-      stateLabel: candidate.action !== locked.action && candidate.action !== "WAIT" ? "watch - bias locked" : "active snapshot",
+      status: liveActionChanged ? "locked" : "active",
+      stateLabel: liveWait ? "active snapshot - wait ignored" : liveActionChanged ? "active snapshot - bias locked" : "active snapshot",
       thesis: snapshotThesis(locked, candidate),
       time: candidate.time
     };
@@ -867,8 +892,38 @@ function snapshotLockedSignal(candidate, setup, price) {
       ? candidate.thesis
       : `At ${formatClock(snapshotAtMs)}, probability favored ${candidate.action === "BUY" ? "buyers" : "sellers"}. Entry, invalidation, and targets are locked until ${formatClock(reassessAtMs)}.`
   };
-  state.lockedSignal = fresh.action === "WAIT" ? null : fresh;
+  setLockedSignal(fresh.action === "WAIT" ? null : fresh);
   return fresh;
+}
+
+function lockedSignalResolution(signal, price, now = Date.now()) {
+  const mark = Number(price);
+  const target = Number(signal.target);
+  const invalidation = Number(signal.invalidation);
+  if (Number(signal.reassessAtMs) && now >= Number(signal.reassessAtMs)) {
+    return {
+      status: "expired",
+      detail: `Snapshot expired at ${signal.reassessTime}. Waiting for the next framework pass.`
+    };
+  }
+  if (!Number.isFinite(mark)) return null;
+  if (signal.action === "BUY") {
+    if (Number.isFinite(target) && mark >= target) {
+      return { status: "target-hit", detail: `Target reached at ${formatUsd(target)}. Waiting for the next snapshot.` };
+    }
+    if (Number.isFinite(invalidation) && mark <= invalidation) {
+      return { status: "invalidated", detail: `Invalidation accepted beyond ${formatUsd(invalidation)}. Waiting for the next snapshot.` };
+    }
+  }
+  if (signal.action === "SELL") {
+    if (Number.isFinite(target) && mark <= target) {
+      return { status: "target-hit", detail: `Target reached at ${formatUsd(target)}. Waiting for the next snapshot.` };
+    }
+    if (Number.isFinite(invalidation) && mark >= invalidation) {
+      return { status: "invalidated", detail: `Invalidation accepted beyond ${formatUsd(invalidation)}. Waiting for the next snapshot.` };
+    }
+  }
+  return null;
 }
 
 function hasStructuralInvalidation(signal, setup, price) {
@@ -886,6 +941,9 @@ function hasStructuralInvalidation(signal, setup, price) {
 
 function snapshotThesis(locked, candidate) {
   const base = `At ${locked.snapshotTime}, probability favored ${locked.action === "BUY" ? "buyers" : "sellers"}. Entry, invalidation, and targets stay fixed until ${locked.reassessTime}.`;
+  if (candidate.action === "WAIT") {
+    return `${base} Live framework moved to WAIT, but the active snapshot remains in force until target, invalidation, or expiry.`;
+  }
   if (candidate.action !== locked.action && candidate.action !== "WAIT") {
     return `${base} Live data is conflicting now, but structural invalidation has not confirmed.`;
   }
@@ -1501,7 +1559,7 @@ function chooseAsset(coin) {
   if (els.assetSearchInput) els.assetSearchInput.value = "";
   els.assetSearchResults?.classList.remove("open");
   resetMarketContext();
-  state.lockedSignal = null;
+  setLockedSignal(null);
   state.realtime.lastSetup = null;
   state.realtime.lastEntrySignal = null;
   state.realtime.lastGridCompletion = null;
