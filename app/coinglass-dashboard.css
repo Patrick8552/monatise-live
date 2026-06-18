@@ -82,6 +82,30 @@ button:hover {
   border-radius: 8px 8px 0 0;
 }
 
+.dashboard-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+}
+
+.dashboard-nav a {
+  border: 1px solid rgba(117, 255, 214, 0.32);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 850;
+  padding: 8px 11px;
+  text-decoration: none;
+}
+
+.dashboard-nav a:hover,
+.dashboard-nav a[aria-current="page"] {
+  background: rgba(117, 255, 214, 0.14);
+  border-color: rgba(117, 255, 214, 0.6);
+  color: var(--text);
+}
+
 .eyebrow,
 .market-title p,
 .panel-head p,

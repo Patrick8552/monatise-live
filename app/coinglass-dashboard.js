@@ -1524,7 +1524,7 @@ function selectedPair() {
 
 function syncAssetLabels() {
   const asset = selectedAsset();
-  els.dashboardTitle.textContent = `${asset.coin} Trading Dashboard`;
+  els.dashboardTitle.textContent = `${asset.coin} Market Dashboard`;
   els.marketSymbol.textContent = asset.pair;
   els.headerMarketSymbol.textContent = asset.pair;
   els.pricePanelTitle.textContent = `${asset.coin} Live Candles`;
@@ -1580,8 +1580,8 @@ function updateCoinGlassSourceStatus(message = "") {
   sourceBand?.classList.toggle("waiting", !ready);
   els.coinGlassStatus.textContent = ready ? "Key saved locally" : "Key required";
   els.coinGlassStatusDetail.textContent = ready
-    ? message || "CoinGlass will be used for price, funding, OI, liquidations, fear/greed, news, VWAP/history research, and Monatise signals."
-    : "Add your CG-API-KEY in Integrations to unlock live price, funding, OI, liquidations, fear/greed, news, VWAP/history research, and Monatise signals.";
+    ? message || "CoinGlass will be used for price, funding, OI, liquidations, fear/greed, news, VWAP/history research, and signal context."
+    : "Add your CG-API-KEY in Integrations to unlock live price, funding, OI, liquidations, fear/greed, news, VWAP/history research, and signal context.";
   els.coinGlassPriceRef.textContent = `${asset.pair} · CoinGlass futures price history`;
   els.coinGlassRouteRef.textContent = `/api/futures/price/history · exchange ${exchange} · analysis ${ANALYSIS_INTERVAL} · view ${viewInterval}`;
   els.openIntegrationsButton.textContent = ready ? "Update CoinGlass Key" : "Add CoinGlass Key";

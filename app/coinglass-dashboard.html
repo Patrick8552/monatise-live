@@ -17,14 +17,18 @@
     <div class="app-shell">
       <header class="topbar">
         <div>
-          <p class="eyebrow">CoinGlass market telemetry</p>
-          <h1 id="dashboardTitle">BTC Trading Dashboard</h1>
+          <p class="eyebrow">Market intelligence dashboard</p>
+          <h1 id="dashboardTitle">BTC Market Dashboard</h1>
           <div class="mobile-price-chip" aria-label="Selected asset live price">
             <span id="headerMarketSymbol">BTCUSDT</span>
             <strong id="headerAssetPrice">$--</strong>
             <small id="headerPriceChange">Waiting for candles</small>
           </div>
         </div>
+        <nav class="dashboard-nav" aria-label="primary navigation">
+          <a href="./index.html">Signal Console</a>
+          <a href="./dashboard/" aria-current="page">Market Dashboard</a>
+        </nav>
         <div class="session-strip" aria-label="Session status">
           <span id="sessionStatusDot" class="status-dot"></span>
           <span id="sessionStatusText">Starting session</span>
@@ -108,7 +112,7 @@
           <div>
             <span>CoinGlass source</span>
             <strong id="coinGlassStatus">Key required</strong>
-            <small id="coinGlassStatusDetail">Add your CG-API-KEY in Integrations to unlock live price, funding, OI, liquidations, fear/greed, news, VWAP/history research, and Monatise signals.</small>
+            <small id="coinGlassStatusDetail">Add your CG-API-KEY in Integrations to unlock live price, funding, OI, liquidations, fear/greed, news, VWAP/history research, and signal context.</small>
           </div>
           <div>
             <span>Price reference</span>
@@ -186,7 +190,7 @@
               <div class="signal-primary">
                 <span id="signalAsset">BTC signal</span>
                 <strong id="signalAction">WAIT</strong>
-                <p id="signalThesis">Monatise will generate the current setup after CoinGlass candles, VWAP, liquidity, funding, and open interest load.</p>
+                <p id="signalThesis">Dashboard context will shape the current setup after CoinGlass candles, VWAP, liquidity, funding, and open interest load.</p>
               </div>
               <div class="signal-detail-grid">
                 <div>
