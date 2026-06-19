@@ -401,7 +401,7 @@ const assetMetadata = {
   EURJPY: { name: "EUR/JPY", route: "TradingView forex watch" },
   EURUSD: { name: "EUR/USD", route: "TradingView forex watch" },
   GBPUSD: { name: "GBP/USD", route: "TradingView forex watch" },
-  GOLD: { name: "Gold", route: "Hyperliquid xyz:GOLD builder perp" },
+  GOLD: { name: "Gold", route: "TradingView OANDA:XAUUSD primary signal feed" },
   HYPE: { name: "Hyperliquid", route: "Core Hyperliquid perp" },
   NDX: { name: "Nasdaq 100", route: "TradingView index watch" },
   NASDAQ: { name: "Nasdaq Composite", route: "TradingView index watch" },
@@ -1182,6 +1182,8 @@ function strategyHealth(mark, orders, snapshot = null) {
 }
 
 function setupGridOrders(mark, snapshot = null) {
+  const tradingViewOrders = tradingViewGridOrders(mark, snapshot);
+  if (tradingViewOrders.length) return tradingViewOrders;
   if (!fibAnalysis || fibAnalysis.error || fibAnalysis.symbol !== selectedAsset || !Number.isFinite(Number(mark))) {
     return [];
   }
@@ -1370,6 +1372,71 @@ function tradingViewAlertSignature(signal = latestTradingViewSignal) {
   ].join(":");
 }
 
+function activeTradingViewSignal(maxAgeMs = 15 * 60 * 1000) {
+  const signal = latestTradingViewSignal;
+  if (!signal || String(signal.symbol || "").toUpperCase() !== selectedAsset) return null;
+  const receivedAt = Number(signal.receivedAt || 0) * 1000;
+  if (!receivedAt || Date.now() - receivedAt > maxAgeMs) return null;
+  return signal;
+}
+
+function tradingViewSignalPrice(signal = activeTradingViewSignal()) {
+  const value = Number(signal?.priceValue ?? signal?.price);
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function tradingViewSetup(signal = activeTradingViewSignal()) {
+  const setup = signal?.setup || {};
+  const value = (key) => {
+    const numeric = Number(setup[key]);
+    return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+  };
+  return {
+    entry: value("entry"),
+    stop: value("stop"),
+    targetOne: value("targetOne"),
+    targetTwo: value("targetTwo"),
+    thesis: String(setup.thesis || signal?.message || "").trim(),
+    trigger: String(setup.trigger || "").trim()
+  };
+}
+
+function tradingViewGridOrders(mark, snapshot = null) {
+  const signal = activeTradingViewSignal();
+  if (!signal) return [];
+  const setup = tradingViewSetup(signal);
+  const levels = Array.isArray(signal.grid) ? [...signal.grid] : [];
+  if (setup.entry) levels.push({ label: "tv-entry", price: setup.entry, side: signal.action === "SELL" ? "sell" : "buy" });
+  if (setup.targetOne) levels.push({ label: "tv-target-1", price: setup.targetOne, side: signal.action === "SELL" ? "buy" : "sell" });
+  if (setup.targetTwo) levels.push({ label: "tv-target-2", price: setup.targetTwo, side: signal.action === "SELL" ? "buy" : "sell" });
+  if (setup.stop) levels.push({ label: "tv-stop", price: setup.stop, side: signal.action === "SELL" ? "buy" : "sell" });
+  const quoteSize = Number(snapshot?.tradingRules?.orderQuoteSize ?? tradingRules.orderQuoteSize ?? els.quoteInput?.value ?? 0);
+  const notional = Number.isFinite(quoteSize) && quoteSize > 0 ? quoteSize : 100;
+  const seen = new Set();
+  return levels
+    .map((level, index) => {
+      const price = Number(level.price);
+      if (!Number.isFinite(price) || price <= 0) return null;
+      const rounded = Math.round(price * 100000) / 100000;
+      if (seen.has(rounded)) return null;
+      seen.add(rounded);
+      const side = String(level.side || "").toLowerCase().startsWith("s") ? "sell" : "buy";
+      return {
+        level_id: String(level.label || `tv-${index + 1}`).toLowerCase().replace(/\s+/g, "-"),
+        metadata: { source: "tradingview" },
+        order_id: `tv-${selectedAsset}-${side}-${index + 1}`,
+        price,
+        quantity: notional / price,
+        side,
+        status: "draft",
+        symbol: selectedAsset
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => Math.abs(a.price - Number(mark || a.price)) - Math.abs(b.price - Number(mark || b.price)))
+    .slice(0, 12);
+}
+
 function indicatorBiasValue(value) {
   const text = String(value || "").toLowerCase();
   if (!text || ["0", "none", "neutral", "wait", "n/a", "na"].includes(text)) return 0;
@@ -1446,7 +1513,57 @@ function tradingViewConfluence(direction) {
   return { boost: goldBoost, detail: `${label} is watchlist confluence only.${stackDetail}`, goldIndicators: goldStack, status: goldBoost ? (goldBoost > 0 ? "aligned" : "conflict") : "watch" };
 }
 
+function tradingViewPrimarySignal(health, mark) {
+  const signal = activeTradingViewSignal();
+  if (!signal) return null;
+  const action = String(signal.action || "WAIT").toUpperCase();
+  if (!["BUY", "SELL"].includes(action)) return null;
+  const setup = tradingViewSetup(signal);
+  const direction = action === "BUY" ? "LONG" : "SHORT";
+  const price = tradingViewSignalPrice(signal) || Number(mark);
+  const entry = setup.entry || price;
+  const fallbackRisk = Number.isFinite(price) && price > 0 ? price * setupRiskPct(selectedAsset) * 0.55 : 0;
+  const stop =
+    setup.stop ||
+    (direction === "SHORT" ? entry + fallbackRisk : entry - fallbackRisk);
+  const riskDistance = Math.abs(entry - stop);
+  const targetOne =
+    setup.targetOne ||
+    (direction === "SHORT" ? entry - Math.max(riskDistance * 1.5, 1) : entry + Math.max(riskDistance * 1.5, 1));
+  const targetTwo =
+    setup.targetTwo ||
+    (direction === "SHORT" ? targetOne - Math.max(riskDistance, 1) : targetOne + Math.max(riskDistance, 1));
+  const confidence = Math.max(50, Math.min(95, Number(signal.confidence || 70)));
+  const trigger =
+    setup.trigger ||
+    (direction === "LONG"
+      ? `TradingView BUY holds above ${money(entry)}`
+      : `TradingView SELL rejects below ${money(entry)}`);
+  const entryLevels = buildEntryLadder(direction, price, entry, Math.max(riskDistance, fallbackRisk || 1), targetOne, selectedAsset);
+  const route = signal.classification?.route || "TradingView primary signal feed";
+  return {
+    confidence,
+    direction,
+    entry,
+    entryLevels,
+    stop,
+    targetOne,
+    targetTwo,
+    thesis:
+      setup.thesis ||
+      `${route}. ${signal.indicator || "TradingView"} ${action} ${confidence.toFixed(0)}% is controlling the displayed setup, grid, and hedge.`,
+    tradingViewConfluence: {
+      detail: "TradingView alert is the primary setup source.",
+      status: "primary"
+    },
+    tradingViewHedge: signal.hedge || null,
+    trigger
+  };
+}
+
 function signalFromHealth(health, mark) {
+  const tradingViewSignal = tradingViewPrimarySignal(health, mark);
+  if (tradingViewSignal) return tradingViewSignal;
   const trend = String(fibAnalysis?.trend || contextRadar?.indicator?.trend || "flat").toLowerCase();
   const action = String(contextRadar?.instruction?.action || "normal").toLowerCase();
   const rsi = Number(contextRadar?.indicator?.rsi || 50);
@@ -1575,9 +1692,9 @@ function renderTradingViewSignal() {
     els.tradingViewSignalPanel.innerHTML = `
       <div class="strategy-status wait">
         <strong>TV LOCKED</strong>
-        <span>Private TradingView confluence</span>
+        <span>Private TradingView signal feed</span>
       </div>
-      <p>Request access or log in to view live TradingView alerts, 5m checks, and 15m confluence locks for ${assetLabel(selectedAsset)}.</p>
+      <p>Request access or log in to view live TradingView price, setup, grid, and hedge alerts for ${assetLabel(selectedAsset)}.</p>
     `;
     return;
   }
@@ -1602,13 +1719,13 @@ function renderTradingViewSignal() {
   const fastReassessLabel = fastReassessAt ? formatSignalTime(new Date(fastReassessAt)) : "pending";
   const reassessAt = Number(classification.snapshotWindow?.reassessAt || 0) * 1000;
   const reassessLabel = reassessAt ? formatSignalTime(new Date(reassessAt)) : "pending";
-  const route = classification.route || "confluence feed";
+  const route = classification.route || "TradingView primary feed";
   const goldStack = goldIndicatorConfluence(signal);
   const detail =
     classification.executionNote ||
     goldStack.detail ||
     signal.message ||
-    "TradingView indicator alert received. Use this as confluence, not an execution command.";
+    "TradingView alert received as the primary setup feed. Execution still stays behind Monatise risk gates.";
   els.tradingViewSignalPanel.innerHTML = `
     <div class="strategy-status ${statusClass}">
       <strong>TV ${action}</strong>
@@ -3020,11 +3137,14 @@ function syncSelectedAsset() {
   els.symbolInput.value = `${selectedAsset}-USD`;
   const live = markets.find((asset) => asset.symbol === selectedAsset);
   const selectable = selectableAssets.find((asset) => asset.symbol === selectedAsset);
+  const tvPrice = tradingViewSignalPrice();
   if (els.assetDetail) {
     els.assetDetail.innerHTML = `
       <strong>${assetLabel(selectedAsset)}</strong>
       <span>${assetRoute(selectedAsset)}${
-        live
+        tvPrice
+          ? ` · TradingView alert ${money(tvPrice)}`
+          : live
           ? ` · live mark ${money(live.price)}`
           : selectable?.exchange
             ? ` · CoinGlass ${selectable.exchange} ${selectable.instrument || ""}`
@@ -3800,6 +3920,30 @@ function hedgePlanFromSignal(signal, sizing, context = {}) {
       status: "Standby"
     };
   }
+  const tvHedge = signal?.tradingViewHedge || {};
+  const tvSide = String(tvHedge.side || "").toUpperCase();
+  const tvRatioRaw = Number(tvHedge.ratio);
+  const tvRatio = Number.isFinite(tvRatioRaw) && tvRatioRaw > 1 ? tvRatioRaw / 100 : tvRatioRaw;
+  if (["LONG", "SHORT"].includes(tvSide) || (Number.isFinite(tvRatio) && tvRatio > 0)) {
+    const ratio = Math.max(0.05, Math.min(0.8, Number.isFinite(tvRatio) && tvRatio > 0 ? tvRatio : 0.35));
+    const entry = Number(signal.entry);
+    const stop = Number(signal.stop);
+    const targetOne = Number(signal.targetOne);
+    const hedgeNotional = Math.max(0, Number(sizing?.notional || 0) * ratio);
+    const hedgeRisk = Math.max(0, Number(sizing?.stopLoss || 0) * ratio);
+    return {
+      active: true,
+      hardExit: Number(tvHedge.hardExit) || stop,
+      hedgeNotional,
+      hedgeRatio: ratio,
+      hedgeRisk,
+      hedgeSide: ["LONG", "SHORT"].includes(tvSide) ? tvSide : direction === "LONG" ? "SHORT" : "LONG",
+      note: tvHedge.note || "TradingView supplied the hedge instruction for this setup.",
+      release: Number(tvHedge.release) || targetOne,
+      status: `TV ${Math.round(ratio * 100)}% hedge`,
+      trigger: Number(tvHedge.trigger) || entry
+    };
+  }
   const entry = Number(signal.entry);
   const stop = Number(signal.stop);
   const targetOne = Number(signal.targetOne);
@@ -3917,6 +4061,8 @@ function formatInputNumber(value) {
 }
 
 function currentMarketPrice() {
+  const tvPrice = tradingViewSignalPrice();
+  if (tvPrice) return tvPrice;
   const live = markets.find((asset) => asset.symbol === selectedAsset);
   return Number.isFinite(Number(live?.price)) ? Number(live.price) : null;
 }
@@ -4228,9 +4374,10 @@ function renderBackend(snapshot) {
   els.riskStatus.textContent = snapshot.riskStatus || "ready";
   els.runState.textContent = snapshot.running ? "Backend running" : "Backend ready";
   updateLiveDesk(snapshot);
+  selectedAsset = snapshot.symbol || selectedAsset;
+  const tvMark = tradingViewSignalPrice();
   if (snapshot.markPrice) {
-    els.markPrice.textContent = money(snapshot.markPrice);
-    selectedAsset = snapshot.symbol || selectedAsset;
+    els.markPrice.textContent = money(tvMark || snapshot.markPrice);
     syncSelectedAsset();
   }
   if (snapshot.portfolio) {
@@ -4269,20 +4416,23 @@ function renderBackend(snapshot) {
     els.exchangeOrderMetric.textContent = String(snapshot.desk.exchangeOrderCount || 0);
   }
   const liveOrders = snapshot.openOrders || [];
-  const liveMark = Number(snapshot.markPrice ?? currentMarketPrice());
+  const liveMark = Number(tvMark || snapshot.markPrice || currentMarketPrice());
   const setupOrders = liveOrders.length ? liveOrders : setupGridOrders(liveMark, snapshot);
   const usingSetupGrid = !liveOrders.length && setupOrders.length > 0;
+  const usingTradingViewGrid = usingSetupGrid && setupOrders.some((order) => order.metadata?.source === "tradingview");
   const hasExchangeState = Boolean(snapshot.running || snapshot.liveReady || snapshot.desk?.exchangeOrderCount || liveOrders.length || usingSetupGrid);
   renderOpenOrders(setupOrders, {
     emptyText: hasExchangeState ? "No setup-grid levels" : "Backend connected",
-    emptyHint: hasExchangeState ? "Waiting for live Fibonacci/FVG levels" : "No signal levels are being shown",
+    emptyHint: hasExchangeState ? "Waiting for TradingView setup levels" : "No signal levels are being shown",
     mark: Number.isFinite(liveMark) ? liveMark : undefined,
     snapshot,
     source: liveOrders.length ? "live" : usingSetupGrid ? "setup" : "backend",
-    title: liveOrders.length ? "Live Signal Levels" : usingSetupGrid ? "Hyperliquid Setup Grid" : "Backend State"
+    title: liveOrders.length ? "Live Signal Levels" : usingTradingViewGrid ? "TradingView Setup Grid" : usingSetupGrid ? "Setup Grid" : "Backend State"
   });
   const sourceLabel = hasExchangeState
-    ? `${String(snapshot.mode || "live").toUpperCase()} ${String(snapshot.network || "mainnet").toUpperCase()} signal state with CoinGlass context`
+    ? usingTradingViewGrid
+      ? "TradingView primary price, signal, setup grid, and hedge state"
+      : `${String(snapshot.mode || "live").toUpperCase()} ${String(snapshot.network || "mainnet").toUpperCase()} signal state`
     : "Backend connected - no live signal levels";
   els.liquiditySource.textContent = sourceLabel;
   renderTradingViewChart();
@@ -4326,7 +4476,7 @@ function renderOpenOrders(orders, options = {}) {
         .map(
           (order) => `<article class="order-row ${order.side} ${source}">
             <strong>${String(order.side).toUpperCase() === "BUY" ? "Support" : "Resistance"} ${money(order.price)}</strong>
-            <span>${source === "setup" ? "draft grid" : `${Number(order.quantity || 0).toFixed(5)} ${order.symbol || selectedAsset}`}</span>
+            <span>${order.metadata?.source === "tradingview" ? "TradingView level" : source === "setup" ? "draft grid" : `${Number(order.quantity || 0).toFixed(5)} ${order.symbol || selectedAsset}`}</span>
           </article>`
         )
         .join("")
@@ -4467,17 +4617,21 @@ function render() {
   const previewMark = live ? Number(live.price) : mark;
   const liveSetupOrders = setupGridOrders(previewMark);
   const usingSetupGrid = liveSetupOrders.length > 0;
+  const usingTradingViewGrid = usingSetupGrid && liveSetupOrders.some((order) => order.metadata?.source === "tradingview");
   const setupOrders = usingSetupGrid ? liveSetupOrders : state.openOrders;
   renderOpenOrders(setupOrders, {
     emptyHint: "Run a sample or connect the backend",
     emptyText: "No preview levels",
     mark: previewMark,
     source: usingSetupGrid ? "setup" : "preview",
-    title: usingSetupGrid ? "Hyperliquid Setup Grid" : "Signal Preview"
+    title: usingTradingViewGrid ? "TradingView Setup Grid" : usingSetupGrid ? "Setup Grid" : "Signal Preview"
   });
-  els.markPrice.textContent = live ? money(live.price) : money(mark);
+  const visibleMark = currentMarketPrice() || (live ? Number(live.price) : mark);
+  els.markPrice.textContent = money(visibleMark);
   els.marketTitle.textContent = `${selectedAsset}-USD signal map`;
-  els.liquiditySource.textContent = "CoinGlass is the market data provider for candles, funding, open interest, liquidations, and context. Signals only. No exchange orders.";
+  els.liquiditySource.textContent = usingTradingViewGrid
+    ? "TradingView is driving the visible price, signal, grid, and hedge. No exchange orders."
+    : "TradingView drives watch-asset signals; CoinGlass and Hyperliquid remain secondary context. No exchange orders.";
   els.runState.textContent = state.activeIndex >= state.candles.length ? "Complete" : "Ready";
   renderTradingViewChart();
   renderCoinGlassServices();

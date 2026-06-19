@@ -96,12 +96,60 @@ def _normalize_alert_action(value: str) -> str:
 
 def _tradingview_route(symbol: str) -> str:
     if symbol in COMMODITY_WATCHLIST:
-        return "metals and commodities confluence"
+        return "metals and commodities primary signal feed"
     if symbol in FOREX_WATCHLIST:
-        return "forex confluence"
+        return "forex primary signal feed"
     if symbol in STOCK_WATCHLIST:
-        return "stocks and indices confluence"
-    return "crypto confluence"
+        return "stocks and indices primary signal feed"
+    return "crypto confluence feed"
+
+
+def _float_payload(payload: dict, *keys: str) -> float | None:
+    for key in keys:
+        value = payload.get(key)
+        if value in {None, ""}:
+            continue
+        try:
+            return float(str(value).replace(",", ""))
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _normalize_tradingview_grid(payload: dict) -> list[dict]:
+    raw = payload.get("grid") or payload.get("levels") or payload.get("orders")
+    levels: list[dict] = []
+    if isinstance(raw, list):
+        for index, item in enumerate(raw[:12]):
+            if isinstance(item, dict):
+                price = _float_payload(item, "price", "level", "entry")
+                side = str(item.get("side") or item.get("action") or "").strip().lower()
+                label = str(item.get("label") or item.get("level_id") or f"tv-{index + 1}").strip()[:32]
+            else:
+                price = None
+                side = ""
+                label = f"tv-{index + 1}"
+                try:
+                    price = float(str(item).replace(",", ""))
+                except (TypeError, ValueError):
+                    pass
+            if price is None or price <= 0:
+                continue
+            levels.append({"label": label, "price": price, "side": "sell" if side.startswith("s") else "buy"})
+    elif isinstance(raw, str):
+        for index, part in enumerate(raw.replace("|", ",").split(",")[:12]):
+            item = part.strip()
+            if not item:
+                continue
+            side = "sell" if item.lower().startswith(("sell", "short", "resistance")) else "buy"
+            number = "".join(character for character in item if character.isdigit() or character in ".-")
+            try:
+                price = float(number)
+            except ValueError:
+                continue
+            if price > 0:
+                levels.append({"label": f"tv-{index + 1}", "price": price, "side": side})
+    return levels
 
 
 def _indicator_bias_value(value: str) -> int:
@@ -150,7 +198,7 @@ def classify_tradingview_alert(alert: dict, now: float | None = None) -> dict:
         state = "watch"
     lock_start = int(received_at) if received_at else int(now)
     return {
-        "role": "confluence_only",
+        "role": "tradingview_primary_signal",
         "route": _tradingview_route(str(alert.get("symbol") or "")),
         "state": state,
         "fresh": fresh,
@@ -169,7 +217,7 @@ def classify_tradingview_alert(alert: dict, now: float | None = None) -> dict:
             "reassessAt": lock_start + TRADINGVIEW_SNAPSHOT_LOCK_SECONDS,
         },
         "executionAllowed": False,
-        "executionNote": "TradingView is confluence only; Monatise risk and snapshot gates decide execution.",
+        "executionNote": "TradingView is the primary signal feed here; Monatise still keeps execution behind risk and snapshot gates.",
     }
 
 
@@ -228,6 +276,24 @@ def normalize_tradingview_alert(payload: dict | str) -> dict:
         "indicator": str(payload.get("indicator") or payload.get("strategy") or "TradingView").strip()[:64],
         "indicators": _normalize_indicator_payload(payload),
         "price": str(payload.get("price") or payload.get("close") or "").strip()[:32],
+        "priceValue": _float_payload(payload, "price", "close", "mark"),
+        "setup": {
+            "entry": _float_payload(payload, "entry", "entryPrice", "plannedEntry"),
+            "stop": _float_payload(payload, "stop", "stopLoss", "sl", "invalidation"),
+            "targetOne": _float_payload(payload, "target1", "targetOne", "tp1", "target"),
+            "targetTwo": _float_payload(payload, "target2", "targetTwo", "tp2"),
+            "trigger": str(payload.get("trigger") or "").strip()[:120],
+            "thesis": str(payload.get("thesis") or payload.get("setup") or "").strip()[:240],
+        },
+        "grid": _normalize_tradingview_grid(payload),
+        "hedge": {
+            "side": str(payload.get("hedgeSide") or payload.get("hedge_side") or "").strip().upper()[:12],
+            "ratio": _float_payload(payload, "hedgeRatio", "hedge_ratio", "hedgePct", "hedgePercent"),
+            "trigger": _float_payload(payload, "hedgeTrigger", "hedge_trigger"),
+            "release": _float_payload(payload, "hedgeRelease", "hedge_release"),
+            "hardExit": _float_payload(payload, "hedgeHardExit", "hedge_hard_exit", "hardExit"),
+            "note": str(payload.get("hedgeNote") or payload.get("hedge_note") or "").strip()[:180],
+        },
         "message": str(payload.get("message") or payload.get("note") or "").strip()[:240],
         "receivedAt": time.time(),
     }
@@ -656,7 +722,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                     "alerts": enriched_alerts,
                     "count": len(alerts),
                     "source": "TradingView webhook alerts",
-                    "role": "confluence_only",
+                    "role": "tradingview_primary_signal",
                     "snapshotPolicy": {
                         "lockSeconds": TRADINGVIEW_SNAPSHOT_LOCK_SECONDS,
                         "freshSeconds": TRADINGVIEW_FRESH_SECONDS,

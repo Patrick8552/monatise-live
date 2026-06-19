@@ -169,11 +169,12 @@ Then set the TradingView webhook URL to:
 https://monatise-live.onrender.com/api/tradingview/webhook?token=YOUR_SECRET
 ```
 
-Accepted TradingView alerts are classified as `confluence_only`. The webhook
-can confirm, conflict with, or stale out beside a Monatise setup, but it cannot
-directly place live orders. TradingView confluence uses a 5-minute freshness
-check and a 15-minute setup lock, while Monatise keeps execution behind risk
-limits, invalidation rules, and the Hyperliquid execution gate.
+Accepted TradingView alerts are classified as the primary signal feed for
+metals, forex, stocks, indices, and other watch assets. A fresh alert can drive
+the displayed price, setup, grid levels, and hedge plan, but it still cannot
+directly place live orders. TradingView uses a 5-minute freshness check and a
+15-minute setup lock, while Monatise keeps execution behind risk limits,
+invalidation rules, and the private execution gate.
 
 Use a JSON alert message like:
 
@@ -184,7 +185,19 @@ Use a JSON alert message like:
   "confidence": 78,
   "indicator": "My TradingView setup",
   "timeframe": "{{interval}}",
-  "price": "{{close}}"
+  "price": "{{close}}",
+  "entry": "{{close}}",
+  "stop": 4125,
+  "target1": 4185,
+  "target2": 4215,
+  "grid": [
+    { "side": "buy", "price": 4145, "label": "support" },
+    { "side": "sell", "price": 4185, "label": "target" }
+  ],
+  "hedgeSide": "SHORT",
+  "hedgeRatio": 35,
+  "hedgeTrigger": 4138,
+  "hedgeRelease": 4175
 }
 ```
 

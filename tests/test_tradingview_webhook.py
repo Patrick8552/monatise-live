@@ -84,7 +84,7 @@ def test_tradingview_alert_preserves_gold_indicator_stack() -> None:
     assert alert["indicators"]["rsi_sma_cross"] == "cross down"
 
 
-def test_tradingview_alert_classification_is_confluence_only() -> None:
+def test_tradingview_alert_classification_is_primary_signal_feed() -> None:
     alert = normalize_tradingview_alert(
         {
             "symbol": "OANDA:XAUUSD",
@@ -102,8 +102,8 @@ def test_tradingview_alert_classification_is_confluence_only() -> None:
 
     classification = classify_tradingview_alert(alert, now=1_060)
 
-    assert classification["role"] == "confluence_only"
-    assert classification["route"] == "metals and commodities confluence"
+    assert classification["role"] == "tradingview_primary_signal"
+    assert classification["route"] == "metals and commodities primary signal feed"
     assert classification["state"] == "confirming"
     assert classification["agreement"] == "confirming"
     assert classification["fresh"] is True
@@ -113,6 +113,37 @@ def test_tradingview_alert_classification_is_confluence_only() -> None:
     assert classification["snapshotWindow"]["fastReassessAt"] == 1_300
     assert classification["snapshotWindow"]["reassessAt"] == 1_900
     assert classification["executionAllowed"] is False
+
+
+def test_tradingview_alert_preserves_setup_grid_and_hedge_fields() -> None:
+    alert = normalize_tradingview_alert(
+        {
+            "symbol": "OANDA:XAUUSD",
+            "action": "SELL",
+            "price": "4162.45",
+            "entry": "4160",
+            "stop": "4175",
+            "target1": "4130",
+            "target2": "4100",
+            "grid": [
+                {"side": "sell", "price": "4160", "label": "entry"},
+                {"side": "buy", "price": "4130", "label": "tp1"},
+            ],
+            "hedgeSide": "LONG",
+            "hedgeRatio": "35",
+            "hedgeTrigger": "4168",
+            "hedgeRelease": "4140",
+        }
+    )
+
+    assert alert["priceValue"] == 4162.45
+    assert alert["setup"]["entry"] == 4160
+    assert alert["setup"]["stop"] == 4175
+    assert alert["setup"]["targetOne"] == 4130
+    assert alert["setup"]["targetTwo"] == 4100
+    assert alert["grid"][0] == {"label": "entry", "price": 4160.0, "side": "sell"}
+    assert alert["hedge"]["side"] == "LONG"
+    assert alert["hedge"]["ratio"] == 35
 
 
 def test_tradingview_alert_classification_flags_conflict_and_stale() -> None:
@@ -127,7 +158,7 @@ def test_tradingview_alert_classification_flags_conflict_and_stale() -> None:
     fresh = classify_tradingview_alert(alert, now=1_060)
     stale = classify_tradingview_alert(alert, now=1_301)
 
-    assert fresh["route"] == "forex confluence"
+    assert fresh["route"] == "forex primary signal feed"
     assert fresh["state"] == "conflict-watch"
     assert fresh["agreement"] == "conflicting"
     assert stale["state"] == "stale"
@@ -141,7 +172,7 @@ def test_enriched_tradingview_alert_keeps_raw_alert_fields() -> None:
 
     assert enriched["symbol"] == "NVDA"
     assert enriched["action"] == "BUY"
-    assert enriched["classification"]["route"] == "stocks and indices confluence"
+    assert enriched["classification"]["route"] == "stocks and indices primary signal feed"
     assert enriched["classification"]["executionAllowed"] is False
 
 
@@ -150,9 +181,9 @@ def test_tradingview_classification_routes_watch_assets() -> None:
     forex = classify_tradingview_alert({"symbol": "AUDUSD", "action": "SELL", "confidence": 72, "receivedAt": 1_000}, now=1_010)
     etf = classify_tradingview_alert({"symbol": "QQQ", "action": "BUY", "confidence": 72, "receivedAt": 1_000}, now=1_010)
 
-    assert silver["route"] == "metals and commodities confluence"
-    assert forex["route"] == "forex confluence"
-    assert etf["route"] == "stocks and indices confluence"
+    assert silver["route"] == "metals and commodities primary signal feed"
+    assert forex["route"] == "forex primary signal feed"
+    assert etf["route"] == "stocks and indices primary signal feed"
 
 
 def test_operator_status_reports_non_secret_integration_state() -> None:
