@@ -534,7 +534,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             query = parse_qs(parsed.query)
             symbol = _normalize_alert_symbol(str(query.get("symbol", [""])[0]))
             with self.tradingview_lock:
-                alerts = list(self.tradingview_alerts)
+                alerts = list(type(self).tradingview_alerts)
             if symbol:
                 alerts = [alert for alert in alerts if alert.get("symbol") == symbol]
             self._json(
@@ -612,7 +612,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                 payload = body.decode("utf-8", errors="replace")
             alert = normalize_tradingview_alert(payload)
             with self.tradingview_lock:
-                self.tradingview_alerts = [alert, *self.tradingview_alerts[:49]]
+                type(self).tradingview_alerts = [alert, *type(self).tradingview_alerts[:49]]
             email_recipients = 0
             email_error = ""
             try:
