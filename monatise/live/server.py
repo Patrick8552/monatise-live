@@ -37,6 +37,8 @@ TRADINGVIEW_ACTIONS = {
     "NEUTRAL": "WAIT",
     "HOLD": "WAIT",
 }
+TRADINGVIEW_FRESH_SECONDS = 2 * 60 * 60
+TRADINGVIEW_SNAPSHOT_LOCK_SECONDS = 30 * 60
 COINGLASS_PROXY_BASE = "https://open-api-v4.coinglass.com"
 COINGLASS_PROXY_PATHS = {
     "/api/article/list",
@@ -82,6 +84,83 @@ def _normalize_alert_symbol(value: str) -> str:
 
 def _normalize_alert_action(value: str) -> str:
     return TRADINGVIEW_ACTIONS.get(str(value).strip().upper(), "WAIT")
+
+
+def _tradingview_route(symbol: str) -> str:
+    if symbol in COMMODITY_WATCHLIST:
+        return "metals and commodities confluence"
+    if symbol in FOREX_WATCHLIST:
+        return "forex confluence"
+    if symbol in STOCK_WATCHLIST:
+        return "stocks and indices confluence"
+    return "crypto confluence"
+
+
+def _indicator_bias_value(value: str) -> int:
+    text = str(value or "").lower()
+    if not text or text in {"0", "none", "neutral", "wait", "n/a", "na"}:
+        return 0
+    bearish_terms = ("sell", "short", "bear", "bearish", "down", "below", "resistance", "reject", "lower", "cross down", "supply")
+    bullish_terms = ("buy", "long", "bull", "bullish", "up", "above", "support", "reclaim", "higher", "cross up", "demand")
+    if any(term in text for term in bearish_terms):
+        return -1
+    if any(term in text for term in bullish_terms):
+        return 1
+    return 0
+
+
+def classify_tradingview_alert(alert: dict, now: float | None = None) -> dict:
+    now = time.time() if now is None else now
+    action = str(alert.get("action") or "WAIT").upper()
+    try:
+        confidence = max(0.0, min(100.0, float(alert.get("confidence") or 0)))
+    except (TypeError, ValueError):
+        confidence = 0.0
+    received_at = float(alert.get("receivedAt") or 0)
+    age_seconds = max(0, int(now - received_at)) if received_at else None
+    fresh = received_at > 0 and age_seconds is not None and age_seconds <= TRADINGVIEW_FRESH_SECONDS
+    indicators = alert.get("indicators") if isinstance(alert.get("indicators"), dict) else {}
+    indicator_score = sum(_indicator_bias_value(value) for value in indicators.values())
+    indicator_bias = "BUY" if indicator_score > 0 else "SELL" if indicator_score < 0 else "WAIT"
+    if action in {"BUY", "SELL"} and indicator_bias in {"BUY", "SELL"}:
+        agreement = "confirming" if action == indicator_bias else "conflicting"
+    elif action in {"BUY", "SELL"}:
+        agreement = "candidate"
+    elif indicator_bias in {"BUY", "SELL"}:
+        agreement = "indicator-watch"
+    else:
+        agreement = "informational"
+    if not fresh:
+        state = "stale"
+    elif agreement == "conflicting":
+        state = "conflict-watch"
+    elif action in {"BUY", "SELL"} and confidence >= 70:
+        state = "confirming"
+    elif action in {"BUY", "SELL"} and confidence >= 50:
+        state = "candidate"
+    else:
+        state = "watch"
+    lock_start = int(received_at) if received_at else int(now)
+    return {
+        "role": "confluence_only",
+        "route": _tradingview_route(str(alert.get("symbol") or "")),
+        "state": state,
+        "fresh": fresh,
+        "ageSeconds": age_seconds,
+        "agreement": agreement,
+        "action": action,
+        "confidence": confidence,
+        "indicatorBias": indicator_bias,
+        "indicatorScore": indicator_score,
+        "indicatorCount": len(indicators),
+        "snapshotWindow": {
+            "lockSeconds": TRADINGVIEW_SNAPSHOT_LOCK_SECONDS,
+            "startedAt": lock_start,
+            "reassessAt": lock_start + TRADINGVIEW_SNAPSHOT_LOCK_SECONDS,
+        },
+        "executionAllowed": False,
+        "executionNote": "TradingView is confluence only; Monatise risk and snapshot gates decide execution.",
+    }
 
 
 def _normalize_indicator_payload(payload: dict) -> dict:
@@ -142,6 +221,12 @@ def normalize_tradingview_alert(payload: dict | str) -> dict:
         "message": str(payload.get("message") or payload.get("note") or "").strip()[:240],
         "receivedAt": time.time(),
     }
+
+
+def enrich_tradingview_alert(alert: dict, now: float | None = None) -> dict:
+    enriched = dict(alert)
+    enriched["classification"] = classify_tradingview_alert(enriched, now=now)
+    return enriched
 
 
 def operator_status_payload(config: RuntimeConfig) -> dict:
@@ -537,12 +622,18 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                 alerts = list(type(self).tradingview_alerts)
             if symbol:
                 alerts = [alert for alert in alerts if alert.get("symbol") == symbol]
+            enriched_alerts = [enrich_tradingview_alert(alert) for alert in alerts[:20]]
             self._json(
                 {
                     "configured": bool(self.config.tradingview_webhook_token),
-                    "alerts": alerts[:20],
+                    "alerts": enriched_alerts,
                     "count": len(alerts),
                     "source": "TradingView webhook alerts",
+                    "role": "confluence_only",
+                    "snapshotPolicy": {
+                        "lockSeconds": TRADINGVIEW_SNAPSHOT_LOCK_SECONDS,
+                        "freshSeconds": TRADINGVIEW_FRESH_SECONDS,
+                    },
                 }
             )
             return
@@ -611,6 +702,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             except json.JSONDecodeError:
                 payload = body.decode("utf-8", errors="replace")
             alert = normalize_tradingview_alert(payload)
+            enriched_alert = enrich_tradingview_alert(alert)
             with self.tradingview_lock:
                 type(self).tradingview_alerts = [alert, *type(self).tradingview_alerts[:49]]
             email_recipients = 0
@@ -619,7 +711,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                 email_recipients = send_trading_alert_email(alert)
             except EmailDeliveryError as error:
                 email_error = str(error)
-            response = {"accepted": True, "alert": alert, "emailRecipients": email_recipients}
+            response = {"accepted": True, "alert": enriched_alert, "emailRecipients": email_recipients}
             if email_error:
                 response["emailError"] = email_error
             self._json(response)

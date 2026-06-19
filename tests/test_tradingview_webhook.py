@@ -1,7 +1,7 @@
 import os
 
 from monatise.live.config import LIVE_CONFIRMATION, RuntimeConfig
-from monatise.live.server import normalize_tradingview_alert, operator_status_payload
+from monatise.live.server import classify_tradingview_alert, enrich_tradingview_alert, normalize_tradingview_alert, operator_status_payload
 
 
 def test_tradingview_alert_normalizes_json_payload() -> None:
@@ -82,6 +82,65 @@ def test_tradingview_alert_preserves_gold_indicator_stack() -> None:
     assert alert["indicators"]["daily_vwap"] == "below"
     assert alert["indicators"]["volume_profile"] == "below value area"
     assert alert["indicators"]["rsi_sma_cross"] == "cross down"
+
+
+def test_tradingview_alert_classification_is_confluence_only() -> None:
+    alert = normalize_tradingview_alert(
+        {
+            "symbol": "OANDA:XAUUSD",
+            "action": "BUY",
+            "confidence": 81,
+            "receivedAt": 1_000,
+            "indicators": {
+                "luxalgo": "buy",
+                "daily_vwap": "above",
+                "liquidity_grabs": "bullish grab",
+            },
+        }
+    )
+    alert["receivedAt"] = 1_000
+
+    classification = classify_tradingview_alert(alert, now=1_060)
+
+    assert classification["role"] == "confluence_only"
+    assert classification["route"] == "metals and commodities confluence"
+    assert classification["state"] == "confirming"
+    assert classification["agreement"] == "confirming"
+    assert classification["fresh"] is True
+    assert classification["indicatorBias"] == "BUY"
+    assert classification["indicatorScore"] == 3
+    assert classification["snapshotWindow"]["reassessAt"] == 2_800
+    assert classification["executionAllowed"] is False
+
+
+def test_tradingview_alert_classification_flags_conflict_and_stale() -> None:
+    alert = {
+        "symbol": "EURUSD",
+        "action": "SELL",
+        "confidence": 66,
+        "receivedAt": 1_000,
+        "indicators": {"daily_vwap": "above", "rsi_sma_cross": "cross up"},
+    }
+
+    fresh = classify_tradingview_alert(alert, now=1_060)
+    stale = classify_tradingview_alert(alert, now=10_000)
+
+    assert fresh["route"] == "forex confluence"
+    assert fresh["state"] == "conflict-watch"
+    assert fresh["agreement"] == "conflicting"
+    assert stale["state"] == "stale"
+    assert stale["fresh"] is False
+
+
+def test_enriched_tradingview_alert_keeps_raw_alert_fields() -> None:
+    alert = normalize_tradingview_alert({"symbol": "NASDAQ:NVDA", "action": "long", "confidence": 72})
+
+    enriched = enrich_tradingview_alert(alert, now=alert["receivedAt"] + 5)
+
+    assert enriched["symbol"] == "NVDA"
+    assert enriched["action"] == "BUY"
+    assert enriched["classification"]["route"] == "stocks and indices confluence"
+    assert enriched["classification"]["executionAllowed"] is False
 
 
 def test_operator_status_reports_non_secret_integration_state() -> None:

@@ -2597,7 +2597,7 @@ canvas {
 }
 
 .compact-tv-metrics {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
 }
 
 .strategy-status {
@@ -2625,6 +2625,12 @@ canvas {
 .strategy-status.wait strong {
   background: rgba(230, 57, 70, 0.1);
   border-color: rgba(230, 57, 70, 0.28);
+  color: #a32632;
+}
+
+.strategy-status.conflict strong {
+  background: rgba(230, 57, 70, 0.12);
+  border-color: rgba(230, 57, 70, 0.36);
   color: #a32632;
 }
 

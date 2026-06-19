@@ -1385,6 +1385,13 @@ function signalLevelText(signal, key) {
   return hasExecutableSignalLevels(signal) && Number.isFinite(value) && value > 0 ? money(value) : "Pending";
 }
 
+function tradingViewStatusClass(classification = {}) {
+  const state = String(classification.state || "").toLowerCase();
+  if (state.includes("conflict") || state === "stale") return "conflict";
+  if (["confirming", "candidate"].includes(state)) return "aligned";
+  return "wait";
+}
+
 function renderTradingViewSignal() {
   if (!els.tradingViewSignalPanel) return;
   const signal = latestTradingViewSignal;
@@ -1399,23 +1406,36 @@ function renderTradingViewSignal() {
     return;
   }
   const action = String(signal.action || "WAIT").toUpperCase();
-  const statusClass = action === "BUY" || action === "SELL" ? "aligned" : "wait";
+  const classification = signal.classification || {};
+  const stateLabel = String(classification.state || (action === "BUY" || action === "SELL" ? "candidate" : "watch")).replace(/-/g, " ");
+  const statusClass = tradingViewStatusClass(classification);
   const receivedAt = Number(signal.receivedAt || 0) * 1000;
   const receivedLabel = receivedAt ? formatSignalTime(new Date(receivedAt)) : "latest";
+  const reassessAt = Number(classification.snapshotWindow?.reassessAt || 0) * 1000;
+  const reassessLabel = reassessAt ? formatSignalTime(new Date(reassessAt)) : "pending";
+  const route = classification.route || "confluence feed";
   const goldStack = goldIndicatorConfluence(signal);
+  const detail =
+    classification.executionNote ||
+    goldStack.detail ||
+    signal.message ||
+    "TradingView indicator alert received. Use this as confluence, not an execution command.";
   els.tradingViewSignalPanel.innerHTML = `
     <div class="strategy-status ${statusClass}">
       <strong>TV ${action}</strong>
-      <span>${signal.indicator || "TradingView"} · ${signal.timeframe || "live alert"}</span>
+      <span>${stateLabel} · ${signal.indicator || "TradingView"} · ${signal.timeframe || "live alert"}</span>
     </div>
     <div class="strategy-metrics compact-tv-metrics">
       <span>Pair <strong>${signal.symbol || selectedAsset}</strong></span>
       <span>Confidence <strong>${Number(signal.confidence || 0).toFixed(0)}%</strong></span>
       <span>Price <strong>${signal.price || "alert"}</strong></span>
       <span>Received <strong>${receivedLabel}</strong></span>
+      <span>Route <strong>${route}</strong></span>
+      <span>Agreement <strong>${classification.agreement || "watch"}</strong></span>
+      <span>Reassess <strong>${reassessLabel}</strong></span>
       ${goldStack.total ? `<span>Gold stack <strong>${goldStack.live}/${goldStack.total}</strong></span>` : ""}
     </div>
-    <p>${goldStack.detail || signal.message || "TradingView indicator alert received. Use this as confluence, not an execution command."}</p>
+    <p>${detail}</p>
   `;
 }
 

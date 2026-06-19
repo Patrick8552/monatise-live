@@ -144,6 +144,11 @@ Then set the TradingView webhook URL to:
 https://monatise-live.onrender.com/api/tradingview/webhook?token=YOUR_SECRET
 ```
 
+Accepted TradingView alerts are classified as `confluence_only`. The webhook
+can confirm, conflict with, or stale out beside a Monatise setup, but it cannot
+directly place live orders. Monatise keeps execution behind its snapshot lock,
+risk limits, invalidation rules, and Hyperliquid execution gate.
+
 Use a JSON alert message like:
 
 ```json
