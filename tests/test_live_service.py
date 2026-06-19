@@ -66,6 +66,8 @@ def test_live_tick_initializes_risk_baseline_from_live_mark() -> None:
     assert snapshot["executionMode"] == "dry_run"
     assert "risk" in snapshot
     assert snapshot["risk"]["max_daily_loss_pct"] > 0
+    assert snapshot["wealthCommand"]["score"] <= 100
+    assert snapshot["wealthCommand"]["posture"] in {"Offensive", "Selective", "Cautious", "Defensive"}
 
 
 def test_live_snapshot_exposes_readiness_checklist() -> None:
@@ -78,6 +80,7 @@ def test_live_snapshot_exposes_readiness_checklist() -> None:
     assert readiness["Order placement flag"]["ok"] is False
     assert readiness["Server session guard"]["ok"] is True
     assert "MONATISE_EXECUTION_MODE=live" in snapshot["requires"]
+    assert snapshot["wealthCommand"]["primaryBlock"]
 
 
 def test_client_drawdown_percentage_sets_daily_loss_limit() -> None:

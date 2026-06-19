@@ -138,6 +138,7 @@ class TradingService:
 
     def _snapshot_unlocked(self) -> dict:
         mark = self.state.mark_price or self._paper_candles[0].open
+        risk_snapshot = self.risk.snapshot(self.state.open_orders, self.portfolio, mark)
         return {
             "running": self.state.running,
             "mode": self.state.mode,
@@ -175,7 +176,7 @@ class TradingService:
                 "staleGridCancel": self.config.stale_grid_cancel,
             },
             "account": self.state.account,
-            "risk": asdict(self.risk.snapshot(self.state.open_orders, self.portfolio, mark)),
+            "risk": asdict(risk_snapshot),
             "desk": {
                 "orderAgeSeconds": max(0.0, time.time() - self.state.last_order_refresh)
                 if self.state.last_order_refresh
@@ -189,7 +190,104 @@ class TradingService:
                 if self.state.last_reconciliation
                 else 0.0,
             },
+            "wealthCommand": self.wealth_command(mark, risk_snapshot),
         }
+
+    def wealth_command(self, mark: float, risk_snapshot) -> dict:  # noqa: ANN001
+        account_value = self._account_value()
+        equity = account_value if account_value > 0 else self.portfolio.equity(mark)
+        open_notional = float(risk_snapshot.open_order_notional)
+        max_notional = max(float(risk_snapshot.max_total_notional), 1e-9)
+        margin_used = float(risk_snapshot.estimated_margin_used)
+        margin_cap = max(float(risk_snapshot.max_grid_margin), 1e-9)
+        exposure_pct = min(1.5, open_notional / max_notional)
+        margin_pct = min(1.5, margin_used / margin_cap)
+        drawdown_pct = float(risk_snapshot.drawdown_pct)
+        readiness = self.readiness_checklist()
+        blocking_items = [item for item in readiness if not item.get("ok") and item.get("severity") == "block"]
+        session_blocked = bool((self.state.session_guard or {}).get("active"))
+
+        score = 100
+        score -= min(35, round(exposure_pct * 28))
+        score -= min(25, round(margin_pct * 22))
+        score -= min(25, round(drawdown_pct * 180))
+        score -= min(24, len(blocking_items) * 8)
+        if self.risk.kill_switch:
+            score -= 30
+        if session_blocked:
+            score -= 18
+        if not self.state.open_orders:
+            score -= 8
+        score = max(0, min(100, score))
+
+        posture = "Defensive"
+        if score >= 80:
+            posture = "Offensive"
+        elif score >= 62:
+            posture = "Selective"
+        elif score >= 42:
+            posture = "Cautious"
+
+        primary_block = ""
+        if self.risk.kill_switch:
+            primary_block = "Kill switch is active"
+        elif session_blocked:
+            primary_block = str((self.state.session_guard or {}).get("message", "Session guard is active"))
+        elif blocking_items:
+            primary_block = str(blocking_items[0].get("detail") or blocking_items[0].get("label") or "Readiness block")
+
+        if primary_block:
+            action = f"Do not expand risk. Resolve: {primary_block}."
+        elif score >= 80:
+            action = "Opportunity quality is high. Monitor fills and keep invalidation strict."
+        elif score >= 62:
+            action = "Opportunity is usable. Prefer smaller sizing until confirmation improves."
+        elif score >= 42:
+            action = "Stay selective. Wait for cleaner structure or lower exposure."
+        else:
+            action = "Stand down. Preserve capital until the quality gate improves."
+
+        drivers = [
+            f"{self.config.symbol} mark {mark:,.2f}",
+            f"risk used {open_notional:,.2f} of {self.config.max_total_notional:,.2f}",
+            f"drawdown {drawdown_pct * 100:.2f}%",
+        ]
+        if self.state.open_orders:
+            drivers.append(f"{len(self.state.open_orders)} live levels")
+        else:
+            drivers.append("setup grid preview only")
+        if primary_block:
+            drivers.append(primary_block)
+
+        brief = (
+            f"{posture} posture on {self.config.symbol}. "
+            f"Equity lens {equity:,.2f}, risk status {self.state.risk_status or 'ready'}. "
+            f"{action}"
+        )
+
+        return {
+            "action": action,
+            "brief": brief,
+            "drivers": drivers[:5],
+            "equity": equity,
+            "exposurePct": exposure_pct,
+            "marginPct": margin_pct,
+            "openNotional": open_notional,
+            "posture": posture,
+            "primaryBlock": primary_block,
+            "score": score,
+            "updatedAt": time.time(),
+        }
+
+    def _account_value(self) -> float:
+        for key in ("displayValue", "accountValue", "perpEquity"):
+            try:
+                value = float(self.state.account.get(key, 0) or 0)
+            except (TypeError, ValueError):
+                value = 0.0
+            if value > 0:
+                return value
+        return 0.0
 
     def _refresh_live_status(self) -> None:
         try:

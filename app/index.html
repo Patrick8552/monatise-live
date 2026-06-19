@@ -57,6 +57,7 @@
 
       <nav class="desk-jump-nav" aria-label="desk sections">
         <a href="#trade">Signal Builder</a>
+        <a href="#wealth">CIO Brief</a>
         <a href="#risk">Quality Gate</a>
         <a href="#markets">Market Intel</a>
         <a href="#hedge">Hedge Layer</a>
@@ -88,6 +89,30 @@
             <span>Drawdown Cap</span>
             <strong id="decisionDrawdown">5.00%</strong>
           </article>
+        </div>
+      </section>
+
+      <section id="wealth" class="wealth-command" aria-label="Monatise wealth command center">
+        <div class="wealth-command-main">
+          <div class="wealth-command-head">
+            <div>
+              <p class="eyebrow">AI CIO assistant</p>
+              <h2>Wealth Command Center</h2>
+            </div>
+            <span id="cioPosture">Standby</span>
+          </div>
+          <p id="cioBrief">Login to load your executive risk brief, opportunity score, and next best action.</p>
+          <div id="cioDrivers" class="cio-drivers" aria-label="CIO decision drivers"></div>
+        </div>
+        <div class="opportunity-score" aria-label="opportunity score">
+          <span>Opportunity Score</span>
+          <strong id="opportunityScore">--</strong>
+          <em id="opportunityAction">Waiting for private desk context.</em>
+        </div>
+        <div class="concierge-actions" aria-label="wealth concierge actions">
+          <button type="button" data-chat-prompt="Give me the CIO brief">CIO Brief</button>
+          <button type="button" data-chat-prompt="Explain the opportunity score">Score</button>
+          <button type="button" data-chat-prompt="What should I do next?">Next Action</button>
         </div>
       </section>
 

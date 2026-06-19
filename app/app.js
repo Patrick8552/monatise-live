@@ -33,6 +33,9 @@ const els = {
   coinGlassLiquidations: document.querySelector("#coinGlassLiquidations"),
   coinGlassOpenInterest: document.querySelector("#coinGlassOpenInterest"),
   coinglassServices: document.querySelector("#coinglassServices"),
+  cioBrief: document.querySelector("#cioBrief"),
+  cioDrivers: document.querySelector("#cioDrivers"),
+  cioPosture: document.querySelector("#cioPosture"),
   credentialStatus: document.querySelector("#credentialStatus"),
   contextRadar: document.querySelector("#contextRadar"),
   chatForm: document.querySelector("#chatForm"),
@@ -86,6 +89,8 @@ const els = {
   openOrderBook: document.querySelector("#openOrderBook"),
   openOrderCount: document.querySelector("#openOrderCount"),
   openGridTitle: document.querySelector("#openGridTitle"),
+  opportunityAction: document.querySelector("#opportunityAction"),
+  opportunityScore: document.querySelector("#opportunityScore"),
   orderAgeMetric: document.querySelector("#orderAgeMetric"),
   passwordInput: document.querySelector("#passwordInput"),
   passwordToggle: document.querySelector("#passwordToggle"),
@@ -1391,6 +1396,7 @@ function renderExecutionTicket(orders = [], options = {}) {
   els.armStrategyButton.textContent = canReview ? "Save & Track Signal" : canDraft ? "Login To Track" : "Show Blocks";
   refreshChatOpening();
   updateDecisionSurface(snapshot);
+  renderWealthCommand(snapshot);
 }
 
 function escapeHtml(value = "") {
@@ -1478,8 +1484,21 @@ function answerSignalChat(prompt) {
   const ladder = entryLadderSummary(signal.entryLevels || []);
   const active = ["LONG", "SHORT"].includes(signal.direction);
   const blockText = context.primaryBlock || context.blocks?.[0]?.detail || context.health?.warnings?.[0] || "No hard block is visible.";
+  const wealth = lastBackendSnapshot?.wealthCommand || localWealthCommand();
 
   if (!question) return "Ask me about entry, TP, stop, lot size, confidence, or why the signal is waiting.";
+
+  if (/cio|brief|wealth command|executive/.test(lower)) {
+    return `${wealth.brief || "CIO brief is waiting for desk context."} Drivers: ${(wealth.drivers || []).join(" | ") || "none yet"}.`;
+  }
+
+  if (/opportunity score|score|quality/.test(lower)) {
+    return `Opportunity score is ${wealth.score ?? "--"}/100 with a ${wealth.posture || "standby"} posture. ${wealth.action || "Wait for a refreshed signal and risk snapshot."}`;
+  }
+
+  if (/next action|what should i do next|do next|action/.test(lower)) {
+    return wealth.action || (active ? `Review ${direction} invalidation and keep risk inside the configured drawdown cap.` : "Wait for a directional setup and a clear quality gate.");
+  }
 
   if (/wait|waiting|block|why|stuck/.test(lower)) {
     return active
@@ -1581,6 +1600,52 @@ function updateDecisionSurface(snapshot = null) {
     els.decisionExposure.textContent = money(openNotional);
   }
   els.decisionDrawdown.textContent = `${(drawdownPct * 100).toFixed(2)}%`;
+}
+
+function localWealthCommand() {
+  const ticket = lastTicketSnapshot || {};
+  const signal = ticket.signal || lastSignalCandidate || {};
+  const active = ["LONG", "SHORT"].includes(signal.direction);
+  const blocks = ticket.blocks || readinessBlocks(lastBackendSnapshot);
+  const score = active ? Math.max(0, Math.min(100, Number(signal.confidence || 0) - blocks.length * 10)) : Math.max(0, 42 - blocks.length * 8);
+  const posture = score >= 80 ? "Offensive" : score >= 62 ? "Selective" : score >= 42 ? "Cautious" : "Defensive";
+  const action = blocks.length
+    ? `Resolve: ${blocks[0]?.detail || blocks[0]?.label || "quality gate block"}.`
+    : active
+      ? "Review entry, stop, and target before saving the signal."
+      : "Wait for a cleaner directional setup.";
+  return {
+    action,
+    brief: `${posture} posture on ${assetLabel(selectedAsset)}. ${active ? `${signalLabel(signal.direction)} setup is forming at ${signal.confidence || 0}% confidence.` : "No directional setup is active yet."} ${action}`,
+    drivers: [
+      `${assetLabel(selectedAsset)} ${signalLabel(signal.direction || "WAIT")}`,
+      `${score}/100 opportunity quality`,
+      blocks.length ? `${blocks.length} gate block${blocks.length === 1 ? "" : "s"}` : "quality gate clear"
+    ],
+    posture,
+    score
+  };
+}
+
+function renderWealthCommand(snapshot = null) {
+  if (!els.cioBrief || !els.opportunityScore) return;
+  const command = snapshot?.wealthCommand || localWealthCommand();
+  const score = Number(command.score);
+  const scoreText = Number.isFinite(score) ? String(Math.round(score)) : "--";
+  const scoreClass = Number.isFinite(score) && score >= 80 ? "elite" : Number.isFinite(score) && score >= 62 ? "ready" : Number.isFinite(score) && score >= 42 ? "caution" : "blocked";
+  const posture = command.posture || "Standby";
+  const drivers = Array.isArray(command.drivers) && command.drivers.length ? command.drivers : ["Waiting for signal desk context"];
+
+  els.cioPosture.textContent = posture;
+  els.cioPosture.className = scoreClass;
+  els.cioBrief.textContent = command.brief || "CIO brief is waiting for fresh desk context.";
+  els.opportunityScore.textContent = scoreText;
+  els.opportunityScore.className = scoreClass;
+  els.opportunityAction.textContent = command.action || "Wait for the quality gate to refresh.";
+  els.cioDrivers.innerHTML = drivers
+    .slice(0, 5)
+    .map((driver) => `<span>${escapeHtml(driver)}</span>`)
+    .join("");
 }
 
 function updateLiveDesk(snapshot = null) {
@@ -3681,6 +3746,7 @@ function renderBackend(snapshot) {
   backendOnline = true;
   lastBackendSnapshot = snapshot;
   recordLiveEquity(snapshot);
+  renderWealthCommand(snapshot);
   els.backendStatus.textContent = `${snapshot.mode} ${snapshot.running ? "running" : "stopped"}`;
   els.candleCount.textContent = snapshot.running ? "backend loop" : "backend idle";
   els.riskStatus.textContent = snapshot.riskStatus || "ready";
@@ -3806,6 +3872,7 @@ async function refreshBackend() {
       backendOnline = false;
       lastBackendSnapshot = null;
       els.backendStatus.textContent = "Login required";
+      renderWealthCommand();
       updateLiveDesk();
       return;
     }
@@ -3814,6 +3881,7 @@ async function refreshBackend() {
       backendOnline = false;
       lastBackendSnapshot = null;
       els.backendStatus.textContent = "Login required";
+      renderWealthCommand();
       renderAuth({ authenticated: false, credentialsConfigured: false });
       return;
     }
@@ -3823,6 +3891,7 @@ async function refreshBackend() {
     backendOnline = false;
     lastBackendSnapshot = null;
     els.backendStatus.textContent = "Offline";
+    renderWealthCommand();
     updateLiveDesk();
   }
 }
