@@ -152,7 +152,9 @@ const els = {
   ticketNote: document.querySelector("#ticketNote"),
   ticketStatus: document.querySelector("#ticketStatus"),
   ticketSummary: document.querySelector("#ticketSummary"),
+  themeModeSelect: document.querySelector("#themeModeSelect"),
   tradeAuditLog: document.querySelector("#tradeAuditLog"),
+  languageSelect: document.querySelector("#languageSelect"),
   openTradingViewButton: document.querySelector("#openTradingViewButton"),
   tradingViewSignalPanel: document.querySelector("#tradingViewSignalPanel"),
   tradingViewMeta: document.querySelector("#tradingViewMeta"),
@@ -218,6 +220,170 @@ let tradingRules = {
   staleGridCancel: true
 };
 localStorage.removeItem("monatiseControlToken");
+
+const preferenceKeys = {
+  language: "monatiseLanguage:v1",
+  theme: "monatiseTheme:v1"
+};
+
+let selectedTheme = localStorage.getItem(preferenceKeys.theme) || "light";
+let selectedLanguage = localStorage.getItem(preferenceKeys.language) || "en";
+
+const languageCopy = {
+  en: {
+    activity: "Activity",
+    activation: "Activation",
+    aiChat: "AI Chat",
+    asset: "Asset",
+    cioBrief: "CIO Brief",
+    dashboard: "Market Dashboard",
+    dark: "Dark",
+    generate: "Generate",
+    hedgeLayer: "Hedge Layer",
+    installApp: "Install App",
+    language: "Language",
+    light: "Light",
+    login: "Login",
+    marketIntel: "Market Intel",
+    mode: "Mode",
+    operator: "Operator",
+    privateAccess: "Private Access",
+    requestAccess: "Request Access",
+    reset: "Reset",
+    riskLens: "Risk Lens",
+    signal: "Signal",
+    signalBuilder: "Signal Builder",
+    signalConsole: "Signal Console",
+    theme: "Theme",
+    workspace: "Workspace"
+  },
+  fr: {
+    activity: "Activite",
+    activation: "Activation",
+    aiChat: "Chat IA",
+    asset: "Actif",
+    cioBrief: "Brief CIO",
+    dashboard: "Tableau Marche",
+    dark: "Sombre",
+    generate: "Generer",
+    hedgeLayer: "Couverture",
+    installApp: "Installer",
+    language: "Langue",
+    light: "Clair",
+    login: "Connexion",
+    marketIntel: "Intel Marche",
+    mode: "Mode",
+    operator: "Operateur",
+    privateAccess: "Acces Prive",
+    requestAccess: "Demander Acces",
+    reset: "Reinitialiser",
+    riskLens: "Risque",
+    signal: "Signal",
+    signalBuilder: "Generateur",
+    signalConsole: "Console Signal",
+    theme: "Theme",
+    workspace: "Espace"
+  },
+  es: {
+    activity: "Actividad",
+    activation: "Activacion",
+    aiChat: "Chat IA",
+    asset: "Activo",
+    cioBrief: "Informe CIO",
+    dashboard: "Panel Mercado",
+    dark: "Oscuro",
+    generate: "Generar",
+    hedgeLayer: "Cobertura",
+    installApp: "Instalar",
+    language: "Idioma",
+    light: "Claro",
+    login: "Entrar",
+    marketIntel: "Intel Mercado",
+    mode: "Modo",
+    operator: "Operador",
+    privateAccess: "Acceso Privado",
+    requestAccess: "Solicitar Acceso",
+    reset: "Reiniciar",
+    riskLens: "Riesgo",
+    signal: "Senal",
+    signalBuilder: "Constructor",
+    signalConsole: "Consola",
+    theme: "Tema",
+    workspace: "Espacio"
+  },
+  pt: {
+    activity: "Atividade",
+    activation: "Ativacao",
+    aiChat: "Chat IA",
+    asset: "Ativo",
+    cioBrief: "Brief CIO",
+    dashboard: "Painel Mercado",
+    dark: "Escuro",
+    generate: "Gerar",
+    hedgeLayer: "Protecao",
+    installApp: "Instalar",
+    language: "Idioma",
+    light: "Claro",
+    login: "Entrar",
+    marketIntel: "Intel Mercado",
+    mode: "Modo",
+    operator: "Operador",
+    privateAccess: "Acesso Privado",
+    requestAccess: "Pedir Acesso",
+    reset: "Redefinir",
+    riskLens: "Risco",
+    signal: "Sinal",
+    signalBuilder: "Construtor",
+    signalConsole: "Console Sinal",
+    theme: "Tema",
+    workspace: "Espaco"
+  }
+};
+
+function t(key) {
+  return languageCopy[selectedLanguage]?.[key] || languageCopy.en[key] || key;
+}
+
+function applyThemePreference(theme = selectedTheme) {
+  selectedTheme = theme === "dark" ? "dark" : "light";
+  document.body.dataset.theme = selectedTheme;
+  localStorage.setItem(preferenceKeys.theme, selectedTheme);
+  if (els.themeModeSelect) els.themeModeSelect.value = selectedTheme;
+  renderTradingViewChart();
+}
+
+function applyLanguagePreference(language = selectedLanguage) {
+  selectedLanguage = languageCopy[language] ? language : "en";
+  document.documentElement.lang = selectedLanguage;
+  localStorage.setItem(preferenceKeys.language, selectedLanguage);
+  if (els.languageSelect) els.languageSelect.value = selectedLanguage;
+  if (els.themeModeSelect) {
+    const light = els.themeModeSelect.querySelector('option[value="light"]');
+    const dark = els.themeModeSelect.querySelector('option[value="dark"]');
+    if (light) light.textContent = t("light");
+    if (dark) dark.textContent = t("dark");
+  }
+  const languageLabels = document.querySelectorAll(".desk-preferences label span");
+  if (languageLabels[0]) languageLabels[0].textContent = t("theme");
+  if (languageLabels[1]) languageLabels[1].textContent = t("language");
+  const nav = document.querySelectorAll(".desk-nav a");
+  if (nav[0]) nav[0].textContent = t("signalConsole");
+  if (nav[1]) nav[1].textContent = t("dashboard");
+  if (els.installAppButton) els.installAppButton.textContent = t("installApp");
+  const jumps = document.querySelectorAll(".desk-jump-nav a");
+  [t("signalBuilder"), t("cioBrief"), "Quality Gate", t("activation"), t("operator"), t("marketIntel"), t("hedgeLayer"), t("aiChat"), t("privateAccess"), t("activity")].forEach((label, index) => {
+    if (jumps[index]) jumps[index].textContent = label;
+  });
+  const ops = document.querySelectorAll(".ops-ribbon article span");
+  if (ops[0]) ops[0].textContent = t("workspace");
+  if (ops[1]) ops[1].textContent = t("mode");
+  if (ops[2]) ops[2].textContent = t("riskLens");
+  if (ops[3]) ops[3].textContent = "Alert Size";
+  if (els.runButton) els.runButton.textContent = t("generate");
+  if (els.resetButton) els.resetButton.textContent = t("reset");
+  if (els.loginButton) els.loginButton.textContent = t("login");
+  if (els.registerButton) els.registerButton.textContent = t("requestAccess");
+}
 
 const assetMetadata = {
   AAPL: { name: "Apple", route: "TradingView stock watch" },
@@ -2026,8 +2192,9 @@ function renderTradingViewChart() {
   if (!els.tradingViewWidget) return;
   const tvSymbol = tradingViewSymbolForAsset(selectedAsset);
   const interval = tradingViewIntervals[tradingRules.chartInterval] || "60";
-  const src = `https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent(tvSymbol)}&interval=${encodeURIComponent(interval)}&theme=dark&style=1&timezone=Etc%2FUTC&hide_top_toolbar=1&hide_side_toolbar=0&allow_symbol_change=0&save_image=0&studies=%5B%5D`;
-  const signature = `${tvSymbol}:${interval}`;
+  const chartTheme = selectedTheme === "dark" ? "dark" : "light";
+  const src = `https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent(tvSymbol)}&interval=${encodeURIComponent(interval)}&theme=${chartTheme}&style=1&timezone=Etc%2FUTC&hide_top_toolbar=1&hide_side_toolbar=0&allow_symbol_change=0&save_image=0&studies=%5B%5D`;
+  const signature = `${tvSymbol}:${interval}:${chartTheme}`;
   if (lastTradingViewSignature === signature && els.tradingViewWidget.querySelector("iframe")) return;
   lastTradingViewSignature = signature;
   if (els.tradingViewMeta) {
@@ -4307,6 +4474,12 @@ els.stepButton.addEventListener("click", () => {
 });
 
 els.resetButton.addEventListener("click", reset);
+els.themeModeSelect?.addEventListener("change", () => {
+  applyThemePreference(els.themeModeSelect.value);
+});
+els.languageSelect?.addEventListener("change", () => {
+  applyLanguagePreference(els.languageSelect.value);
+});
 els.assetSelect.addEventListener("change", () => saveSelectedAsset(els.assetSelect.value));
 if (els.openTradingViewButton) {
   els.openTradingViewButton.addEventListener("click", openSelectedTradingViewChart);
@@ -4453,6 +4626,8 @@ els.backendStopButton.addEventListener("click", () => backendCommand("/api/stop"
 
 window.addEventListener("resize", render);
 window.addEventListener("resize", resizeMarketMap);
+applyThemePreference(selectedTheme);
+applyLanguagePreference(selectedLanguage);
 setupAppInstall();
 reset();
 initMarketMap();

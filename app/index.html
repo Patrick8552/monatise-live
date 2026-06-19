@@ -11,7 +11,7 @@
     <link rel="manifest" href="./manifest.webmanifest?v=20260616-dashboard-install" />
     <link rel="icon" href="./icon-lotus.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./icon-lotus.svg" />
-    <link rel="stylesheet" href="./styles.css?v=20260619-operator-console" />
+    <link rel="stylesheet" href="./styles.css?v=20260619-preferences" />
   </head>
   <body>
     <main class="shell">
@@ -28,6 +28,24 @@
           <a href="./dashboard/">Market Dashboard</a>
           <button id="installAppButton" type="button" hidden>Install App</button>
         </nav>
+        <div class="desk-preferences" aria-label="console preferences">
+          <label>
+            <span>Theme</span>
+            <select id="themeModeSelect">
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select>
+          </label>
+          <label>
+            <span>Language</span>
+            <select id="languageSelect">
+              <option value="en">English</option>
+              <option value="fr">Français</option>
+              <option value="es">Español</option>
+              <option value="pt">Português</option>
+            </select>
+          </label>
+        </div>
         <div class="status-strip" aria-label="simulation status">
           <span id="runState">Ready</span>
           <span id="liveModeStatus">Signal desk idle</span>
@@ -714,6 +732,6 @@
     </main>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="./app.js?v=20260619-operator-console"></script>
+    <script src="./app.js?v=20260619-preferences"></script>
   </body>
 </html>

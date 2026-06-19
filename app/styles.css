@@ -21,6 +21,20 @@
   --terminal-2: #1a2523;
 }
 
+body[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #080f12;
+  --ink: #edf7f1;
+  --muted: #9aaca5;
+  --panel: #101a1d;
+  --line: #26373b;
+  --soft: #0c1518;
+  --deep: #f5fff8;
+  --shadow: 0 18px 38px rgba(0, 0, 0, 0.34);
+  --terminal: #05090b;
+  --terminal-2: #0e181b;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -38,6 +52,15 @@ body {
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
     sans-serif;
+}
+
+body[data-theme="dark"] {
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+    linear-gradient(180deg, #081014 0%, #111b1e 100%),
+    var(--bg);
+  background-size: 28px 28px, 28px 28px, auto;
 }
 
 button,
@@ -150,6 +173,46 @@ h2 {
   justify-content: center;
 }
 
+.desk-preferences {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+}
+
+.desk-preferences label {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  display: flex;
+  gap: 6px;
+  padding: 5px 6px 5px 10px;
+}
+
+.desk-preferences span {
+  color: rgba(249, 255, 251, 0.68);
+  font-size: 0.68rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.desk-preferences select {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  color: #f9fffb;
+  font-size: 0.72rem;
+  font-weight: 850;
+  min-height: 30px;
+  padding: 4px 24px 4px 8px;
+}
+
+.desk-preferences option {
+  color: #111817;
+}
+
 .desk-nav a,
 .desk-nav button {
   background: rgba(255, 255, 255, 0.08);
@@ -189,6 +252,37 @@ h2 {
   box-shadow: 0 10px 22px rgba(17, 24, 23, 0.08);
   min-height: 64px;
   padding: 12px 14px;
+}
+
+body[data-theme="dark"] .ops-ribbon article,
+body[data-theme="dark"] .panel,
+body[data-theme="dark"] .rules-console,
+body[data-theme="dark"] .auth-box,
+body[data-theme="dark"] .signal-journal-panel,
+body[data-theme="dark"] .market-radar-row,
+body[data-theme="dark"] .asset-group,
+body[data-theme="dark"] .tradingview-signal-panel,
+body[data-theme="dark"] .strategy-readout,
+body[data-theme="dark"] .open-order-book article {
+  background: rgba(16, 26, 29, 0.94);
+  border-color: var(--line);
+  color: var(--ink);
+}
+
+body[data-theme="dark"] input,
+body[data-theme="dark"] select,
+body[data-theme="dark"] textarea {
+  background: #0b1417;
+  border-color: #2b3f43;
+  color: var(--ink);
+}
+
+body[data-theme="dark"] .desk-jump-nav a,
+body[data-theme="dark"] .range-readout,
+body[data-theme="dark"] label .range-readout {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: var(--line);
+  color: var(--muted);
 }
 
 .ops-ribbon article:nth-child(2) {
