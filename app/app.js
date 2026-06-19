@@ -23,6 +23,9 @@ const els = {
   backendStatus: document.querySelector("#backendStatus"),
   backendStopButton: document.querySelector("#backendStopButton"),
   accountMetricLabel: document.querySelector("#accountMetricLabel"),
+  activationList: document.querySelector("#activationList"),
+  activationNext: document.querySelector("#activationNext"),
+  activationStatus: document.querySelector("#activationStatus"),
   authStatus: document.querySelector("#authStatus"),
   candleCount: document.querySelector("#candleCount"),
   cashMetricLabel: document.querySelector("#cashMetricLabel"),
@@ -439,6 +442,99 @@ function readinessItems(snapshot = null) {
 
 function readinessBlocks(snapshot = null) {
   return readinessItems(snapshot).filter((item) => !item.ok && item.severity === "block");
+}
+
+function activationStepClass(step) {
+  if (step.done) return "done";
+  if (step.current) return "current";
+  return "pending";
+}
+
+function activationSteps(snapshot = null) {
+  const loggedIn = Boolean(currentUser.authenticated);
+  const hasCredentials = Boolean(currentUser.credentialsConfigured);
+  const mark = Number(snapshot?.markPrice ?? currentMarketPrice());
+  const marketReady = backendOnline && Number.isFinite(mark) && mark > 0;
+  const mode = snapshot?.mode || "paper";
+  const network = snapshot?.network || "local";
+  const running = Boolean(snapshot?.running);
+  const liveReady = Boolean(snapshot?.liveReady);
+  const requires = Array.isArray(snapshot?.requires) ? snapshot.requires : [];
+  const risk = snapshot?.risk || {};
+  const serverRules = snapshot?.tradingRules || {};
+  const maxOrder = Number(serverRules.maxOrderNotional ?? risk.max_order_notional ?? tradingRules.orderQuoteSize);
+  const maxTotal = Number(serverRules.maxTotalNotional ?? risk.max_total_notional ?? tradingRules.maxTotalNotional);
+  const tinyCaps = Number.isFinite(maxOrder) && Number.isFinite(maxTotal) && maxOrder <= 25 && maxTotal <= 150;
+
+  const steps = [
+    {
+      detail: loggedIn ? currentUser.username || "profile active" : "Register or log in before saving settings.",
+      done: loggedIn,
+      label: "Profile",
+      next: "Create or log in to a profile."
+    },
+    {
+      detail: marketReady ? `${assetLabel(selectedAsset)} feed is online.` : "Wait for CoinGlass and market mark data.",
+      done: marketReady,
+      label: "Market data",
+      next: "Confirm the market feed is online."
+    },
+    {
+      detail: hasCredentials ? "Hyperliquid private sync details are saved." : "Save the account address and API key when you are ready for private sync.",
+      done: hasCredentials,
+      label: "Private sync",
+      next: "Save private sync details."
+    },
+    {
+      detail:
+        running && (mode === "paper" || network === "testnet")
+          ? `${mode} ${network} loop is running.`
+          : "Run paper or testnet before mainnet.",
+      done: running && (mode === "paper" || network === "testnet"),
+      label: "Paper or testnet",
+      next: "Start private sync in paper or testnet."
+    },
+    {
+      detail: tinyCaps ? `${money(maxOrder)} order cap and ${money(maxTotal)} total cap.` : "Keep first live caps tiny before expanding.",
+      done: tinyCaps,
+      label: "Tiny risk caps",
+      next: "Set tiny first-live caps."
+    },
+    {
+      detail:
+        liveReady && mode === "live" && network === "mainnet" && requires.length === 0
+          ? "Live mainnet gates are armed."
+          : requires.length
+            ? requires[0]
+            : "Mainnet stays gated until rehearsal is complete.",
+      done: liveReady && mode === "live" && network === "mainnet" && requires.length === 0,
+      label: "Mainnet gate",
+      next: "Move to mainnet only after rehearsal."
+    }
+  ];
+
+  const nextIndex = steps.findIndex((step) => !step.done);
+  return steps.map((step, index) => ({ ...step, current: index === nextIndex }));
+}
+
+function renderActivationPath(snapshot = null) {
+  if (!els.activationList) return;
+  const steps = activationSteps(snapshot);
+  const nextStep = steps.find((step) => step.current);
+  const complete = steps.every((step) => step.done);
+  els.activationStatus.textContent = complete ? "Ready for monitored live" : nextStep?.label || "Ready";
+  els.activationNext.textContent = complete ? "Keep caps small and monitor every live start." : nextStep?.next || "Review the live desk.";
+  els.activationList.innerHTML = steps
+    .map(
+      (step, index) => `<article class="${activationStepClass(step)}">
+        <span>${String(index + 1).padStart(2, "0")}</span>
+        <div>
+          <strong>${step.label}</strong>
+          <em>${step.detail}</em>
+        </div>
+      </article>`
+    )
+    .join("");
 }
 
 function auditLevelFromType(type) {
@@ -1701,6 +1797,7 @@ function updateLiveDesk(snapshot = null) {
     els.riskStatus.textContent = sessionGuard.message || "forex session-break guard";
   }
   renderReadinessChecklist(snapshot);
+  renderActivationPath(snapshot);
   updateDecisionSurface(snapshot);
 }
 

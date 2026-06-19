@@ -11,7 +11,7 @@
     <link rel="manifest" href="./manifest.webmanifest?v=20260616-dashboard-install" />
     <link rel="icon" href="./icon-lotus.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./icon-lotus.svg" />
-    <link rel="stylesheet" href="./styles.css?v=20260615-signal-levels" />
+    <link rel="stylesheet" href="./styles.css?v=20260619-activation-path" />
   </head>
   <body>
     <main class="shell">
@@ -59,6 +59,7 @@
         <a href="#trade">Signal Builder</a>
         <a href="#wealth">CIO Brief</a>
         <a href="#risk">Quality Gate</a>
+        <a href="#activation">Activation</a>
         <a href="#markets">Market Intel</a>
         <a href="#hedge">Hedge Layer</a>
         <a href="#chat">AI Chat</a>
@@ -309,6 +310,17 @@
                 <button id="backendStopButton" type="button">Pause Sync</button>
               </div>
             </div>
+
+            <section id="activation" class="activation-panel" aria-label="safe activation path">
+              <div class="activation-head">
+                <div>
+                  <span>Activation path</span>
+                  <strong id="activationStatus">Profile first</strong>
+                </div>
+                <em id="activationNext">Create or log in to a profile.</em>
+              </div>
+              <div id="activationList" class="activation-list"></div>
+            </section>
 
             <div class="rules-console utility-hidden" aria-label="signal rules console">
               <div class="rules-head">
@@ -689,6 +701,6 @@
     </main>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="./app.js?v=20260615-signal-levels"></script>
+    <script src="./app.js?v=20260619-activation-path"></script>
   </body>
 </html>
