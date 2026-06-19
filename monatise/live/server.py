@@ -536,7 +536,11 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             if proxy_path not in COINGLASS_PROXY_PATHS:
                 self._error(404, "CoinGlass proxy route is not allowed")
                 return
-            api_key = (self.headers.get("X-CG-API-KEY") or self.headers.get("CG-API-KEY") or "").strip()
+            api_key = (
+                self.headers.get("X-CG-API-KEY")
+                or self.headers.get("CG-API-KEY")
+                or os.getenv("COINGLASS_API_KEY", "")
+            ).strip()
             if not api_key:
                 self._error(401, "CoinGlass API key is required")
                 return

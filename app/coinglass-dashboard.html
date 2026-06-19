@@ -86,8 +86,8 @@
           <summary>Integrations</summary>
           <div class="integration-grid">
             <label>
-              <span>CoinGlass</span>
-              <input id="apiKeyInput" type="password" autocomplete="off" placeholder="CG-API-KEY" />
+              <span>CoinGlass override</span>
+              <input id="apiKeyInput" type="password" autocomplete="off" placeholder="optional local CG-API-KEY" />
             </label>
             <label>
               <span>Ably</span>
@@ -111,15 +111,15 @@
         <section class="source-band" aria-label="CoinGlass source status">
           <div>
             <span>CoinGlass source</span>
-            <strong id="coinGlassStatus">Key required</strong>
-            <small id="coinGlassStatusDetail">Add your CG-API-KEY in Integrations to unlock live price, funding, OI, liquidations, fear/greed, news, VWAP/history research, and signal context.</small>
+            <strong id="coinGlassStatus">Checking server</strong>
+            <small id="coinGlassStatusDetail">Monatise checks the server-side CoinGlass connection. A local key is only an override.</small>
           </div>
           <div>
             <span>Price reference</span>
             <strong id="coinGlassPriceRef">BTCUSDT · futures price history</strong>
             <small id="coinGlassRouteRef">/api/futures/price/history · exchange Binance · analysis 30m · view 1h</small>
           </div>
-          <button id="openIntegrationsButton" type="button" class="ghost-button">Add CoinGlass Key</button>
+          <button id="openIntegrationsButton" type="button" class="ghost-button">Checking CoinGlass</button>
         </section>
 
         <section class="panel monitor-panel wide" aria-label="Autonomous CoinGlass asset monitor">

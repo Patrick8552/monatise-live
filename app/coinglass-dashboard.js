@@ -161,6 +161,8 @@ let deferredDashboardInstallPrompt = null;
 const state = {
   telemetry: readSession(),
   apiKey: localStorage.getItem(API_KEY_STORAGE) || "",
+  operator: null,
+  serverCoinGlassReady: false,
   priceSeries: [],
   lastPrice: null,
   signals: [],
@@ -1484,22 +1486,35 @@ function currentCoinGlassKey() {
 function syncCoinGlassKey(message = "") {
   state.apiKey = currentCoinGlassKey();
   localStorage.setItem(API_KEY_STORAGE, state.apiKey);
-  updateCoinGlassSourceStatus(message || (state.apiKey ? "CoinGlass key saved locally." : "CoinGlass key removed."));
+  updateCoinGlassSourceStatus(message || (state.apiKey ? "CoinGlass local override saved." : ""));
 }
 
 function cgHeaders() {
-  return {
-    accept: "application/json",
-    "X-CG-API-KEY": currentCoinGlassKey()
-  };
+  const headers = { accept: "application/json" };
+  const key = currentCoinGlassKey();
+  if (key) headers["X-CG-API-KEY"] = key;
+  return headers;
 }
 
 function hasKey() {
-  return currentCoinGlassKey().length > 0;
+  return state.serverCoinGlassReady || currentCoinGlassKey().length > 0;
 }
 
 function requireCoinGlass(label) {
-  if (!hasKey()) throw new Error(`CoinGlass API key required for ${label}`);
+  if (!hasKey()) throw new Error(`CoinGlass connection required for ${label}`);
+}
+
+async function loadOperatorStatus() {
+  try {
+    const response = await fetch("/api/operator", { cache: "no-store" });
+    if (!response.ok) throw new Error("operator unavailable");
+    state.operator = await response.json();
+    state.serverCoinGlassReady = Boolean(state.operator?.integrations?.coinglass?.configured);
+  } catch {
+    state.operator = null;
+    state.serverCoinGlassReady = false;
+  }
+  updateCoinGlassSourceStatus();
 }
 
 function selectedAsset() {
@@ -1574,17 +1589,21 @@ function updateCoinGlassSourceStatus(message = "") {
   const asset = selectedAsset();
   const exchange = els.exchangeSelect.value;
   const viewInterval = els.intervalSelect.value || DEFAULT_VIEW_INTERVAL;
-  const ready = hasKey();
+  const localKey = currentCoinGlassKey();
+  const serverReady = Boolean(state.serverCoinGlassReady);
+  const ready = serverReady || localKey.length > 0;
   const sourceBand = document.querySelector(".source-band");
   sourceBand?.classList.toggle("ready", ready);
   sourceBand?.classList.toggle("waiting", !ready);
-  els.coinGlassStatus.textContent = ready ? "Key saved locally" : "Key required";
+  els.coinGlassStatus.textContent = serverReady ? "Server connected" : localKey ? "Local key saved" : "Connection required";
   els.coinGlassStatusDetail.textContent = ready
-    ? message || "CoinGlass will be used for price, funding, OI, liquidations, fear/greed, news, VWAP/history research, and signal context."
-    : "Add your CG-API-KEY in Integrations to unlock live price, funding, OI, liquidations, fear/greed, news, VWAP/history research, and signal context.";
+    ? message || (serverReady
+      ? `Render provides the CoinGlass connection${state.operator?.integrations?.coinglass?.exchange ? ` via ${state.operator.integrations.coinglass.exchange}` : ""}. Local key override is optional.`
+      : "CoinGlass local key is saved for this browser.")
+    : "CoinGlass is not connected. Add a local key only if the server integration is unavailable.";
   els.coinGlassPriceRef.textContent = `${asset.pair} · CoinGlass futures price history`;
   els.coinGlassRouteRef.textContent = `/api/futures/price/history · exchange ${exchange} · analysis ${ANALYSIS_INTERVAL} · view ${viewInterval}`;
-  els.openIntegrationsButton.textContent = ready ? "Update CoinGlass Key" : "Add CoinGlass Key";
+  els.openIntegrationsButton.textContent = serverReady ? "CoinGlass Connected" : localKey ? "Update Local Key" : "Add Local Key";
 }
 
 function syncTradingView(asset = selectedAsset()) {
@@ -1683,13 +1702,13 @@ function renderMonitorGrid() {
           </button>
         `;
       }).join("")
-    : `<article class="monitor-card"><span>Scanner idle</span><strong>--</strong><small>Add CoinGlass key to start autonomous monitoring.</small></article>`;
+    : `<article class="monitor-card"><span>Scanner idle</span><strong>--</strong><small>CoinGlass connection starts autonomous monitoring.</small></article>`;
 }
 
 async function refreshAutonomousMonitor() {
   if (!els.monitorStatus || state.monitor.scanning) return;
   if (!hasKey()) {
-    els.monitorStatus.textContent = "Add CoinGlass key to autonomously scan supported futures assets";
+    els.monitorStatus.textContent = "Connect CoinGlass to autonomously scan supported futures assets";
     renderMonitorGrid();
     return;
   }
@@ -3290,8 +3309,10 @@ renderSessionTimers();
 initLiquidityAtlas();
 updateLiquidityAtlas();
 connectRealtime();
-refreshDashboard();
-refreshAutonomousMonitor();
+loadOperatorStatus().then(() => {
+  refreshDashboard();
+  refreshAutonomousMonitor();
+});
 setInterval(renderSessionTimers, 1000);
 setInterval(refreshDashboard, 60_000);
 setInterval(refreshAutonomousMonitor, 90_000);
