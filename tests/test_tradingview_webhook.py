@@ -109,7 +109,9 @@ def test_tradingview_alert_classification_is_confluence_only() -> None:
     assert classification["fresh"] is True
     assert classification["indicatorBias"] == "BUY"
     assert classification["indicatorScore"] == 3
-    assert classification["snapshotWindow"]["reassessAt"] == 2_800
+    assert classification["snapshotWindow"]["fastCheckSeconds"] == 300
+    assert classification["snapshotWindow"]["fastReassessAt"] == 1_300
+    assert classification["snapshotWindow"]["reassessAt"] == 1_900
     assert classification["executionAllowed"] is False
 
 
@@ -123,7 +125,7 @@ def test_tradingview_alert_classification_flags_conflict_and_stale() -> None:
     }
 
     fresh = classify_tradingview_alert(alert, now=1_060)
-    stale = classify_tradingview_alert(alert, now=10_000)
+    stale = classify_tradingview_alert(alert, now=1_301)
 
     assert fresh["route"] == "forex confluence"
     assert fresh["state"] == "conflict-watch"

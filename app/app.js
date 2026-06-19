@@ -1411,6 +1411,8 @@ function renderTradingViewSignal() {
   const statusClass = tradingViewStatusClass(classification);
   const receivedAt = Number(signal.receivedAt || 0) * 1000;
   const receivedLabel = receivedAt ? formatSignalTime(new Date(receivedAt)) : "latest";
+  const fastReassessAt = Number(classification.snapshotWindow?.fastReassessAt || 0) * 1000;
+  const fastReassessLabel = fastReassessAt ? formatSignalTime(new Date(fastReassessAt)) : "pending";
   const reassessAt = Number(classification.snapshotWindow?.reassessAt || 0) * 1000;
   const reassessLabel = reassessAt ? formatSignalTime(new Date(reassessAt)) : "pending";
   const route = classification.route || "confluence feed";
@@ -1432,6 +1434,7 @@ function renderTradingViewSignal() {
       <span>Received <strong>${receivedLabel}</strong></span>
       <span>Route <strong>${route}</strong></span>
       <span>Agreement <strong>${classification.agreement || "watch"}</strong></span>
+      <span>5m check <strong>${fastReassessLabel}</strong></span>
       <span>Reassess <strong>${reassessLabel}</strong></span>
       ${goldStack.total ? `<span>Gold stack <strong>${goldStack.live}/${goldStack.total}</strong></span>` : ""}
     </div>

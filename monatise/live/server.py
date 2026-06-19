@@ -37,8 +37,8 @@ TRADINGVIEW_ACTIONS = {
     "NEUTRAL": "WAIT",
     "HOLD": "WAIT",
 }
-TRADINGVIEW_FRESH_SECONDS = 2 * 60 * 60
-TRADINGVIEW_SNAPSHOT_LOCK_SECONDS = 30 * 60
+TRADINGVIEW_FRESH_SECONDS = 5 * 60
+TRADINGVIEW_SNAPSHOT_LOCK_SECONDS = 15 * 60
 COINGLASS_PROXY_BASE = "https://open-api-v4.coinglass.com"
 COINGLASS_PROXY_PATHS = {
     "/api/article/list",
@@ -155,7 +155,9 @@ def classify_tradingview_alert(alert: dict, now: float | None = None) -> dict:
         "indicatorCount": len(indicators),
         "snapshotWindow": {
             "lockSeconds": TRADINGVIEW_SNAPSHOT_LOCK_SECONDS,
+            "fastCheckSeconds": TRADINGVIEW_FRESH_SECONDS,
             "startedAt": lock_start,
+            "fastReassessAt": lock_start + TRADINGVIEW_FRESH_SECONDS,
             "reassessAt": lock_start + TRADINGVIEW_SNAPSHOT_LOCK_SECONDS,
         },
         "executionAllowed": False,
@@ -633,6 +635,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                     "snapshotPolicy": {
                         "lockSeconds": TRADINGVIEW_SNAPSHOT_LOCK_SECONDS,
                         "freshSeconds": TRADINGVIEW_FRESH_SECONDS,
+                        "fastCheckSeconds": TRADINGVIEW_FRESH_SECONDS,
                     },
                 }
             )
