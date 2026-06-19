@@ -92,7 +92,7 @@ def send_email(message: EmailMessage) -> None:
             _login_if_configured(smtp, settings.username, settings.password)
             smtp.send_message(message)
     except (OSError, smtplib.SMTPException) as error:
-        raise EmailDeliveryError("email could not be sent") from error
+        raise EmailDeliveryError(f"email could not be sent: {_safe_error_detail(error, settings)}") from error
 
 
 def smtp_settings() -> SmtpSettings:
@@ -135,6 +135,15 @@ def smtp_settings() -> SmtpSettings:
 
 def expose_dev_reset_code() -> bool:
     return os.getenv("MONATISE_EXPOSE_DEV_RESET_CODE", "").lower() == "true"
+
+
+def _safe_error_detail(error: BaseException, settings: SmtpSettings) -> str:
+    detail = str(error) or error.__class__.__name__
+    if settings.password:
+        detail = detail.replace(settings.password, "[redacted]")
+    if settings.username:
+        detail = detail.replace(settings.username, "[username]")
+    return detail[:320]
 
 
 def _apply_provider_headers(message: EmailMessage, settings: SmtpSettings) -> None:

@@ -45,3 +45,23 @@ def test_alert_recipients_parse_comma_list(monkeypatch) -> None:
     monkeypatch.setenv("MONATISE_ALERT_EMAILS", "ops@example.com, trader@example.com,, ")
 
     assert emailer._alert_recipients() == ["ops@example.com", "trader@example.com"]
+
+
+def test_safe_error_detail_redacts_credentials() -> None:
+    settings = emailer.SmtpSettings(
+        host="smtp.resend.com",
+        port=587,
+        sender="Monatise <onboarding@resend.dev>",
+        username="resend",
+        password="re_secret",
+        use_ssl=False,
+        use_starttls=True,
+        provider="resend",
+        stream="",
+    )
+
+    detail = emailer._safe_error_detail(RuntimeError("auth failed for resend using re_secret"), settings)
+
+    assert "re_secret" not in detail
+    assert "resend" not in detail
+    assert "[redacted]" in detail
