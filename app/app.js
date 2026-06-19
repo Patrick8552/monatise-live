@@ -423,7 +423,7 @@ function renderRegistrationDesk(me = currentUser) {
   }
   const clientName = els.clientNameInput.value.trim() || profile.clientName || "Client";
   const syncReady = Boolean(me.credentialsConfigured);
-  const planText = me.subscription ? `${me.subscription.plan} ${me.subscription.status}` : "free active";
+  const planText = "Private access";
   els.onboardingContact.textContent = `${clientName} / ${me.username}`;
   els.onboardingDrawdown.textContent = `${(tradingRules.maxDailyLossPct * 100).toFixed(1).replace(/\.0$/, "")}% cap`;
   els.onboardingAccount.textContent = syncReady ? "Saved" : "Optional";
@@ -885,7 +885,7 @@ function localReadinessItems(snapshot = null) {
   const maxDailyLossPct = Number(risk.max_daily_loss_pct || 0);
   return [
     {
-      detail: loggedIn ? currentUser.username || "profile active" : "register or log in to save signal preferences",
+      detail: loggedIn ? currentUser.username || "profile active" : "request access or log in to save signal preferences",
       label: "User session",
       ok: loggedIn,
       severity: "block"
@@ -897,7 +897,7 @@ function localReadinessItems(snapshot = null) {
       severity: "warn"
     },
     {
-      detail: mode === "live" ? "free access; signal gates still apply" : "free access",
+      detail: mode === "live" ? "private access; signal gates still apply" : "private access",
       label: "Signal access",
       ok: true,
       severity: isLiveMainnet ? "block" : "warn"
@@ -2552,7 +2552,7 @@ function renderTradingRules() {
     tradingRules.maxTotalNotional
   )} max signal risk · ${money(tradingRules.maxPositionValue)} exposure lens · disciplined stop band · ${tradingRules.chartInterval} CoinGlass analysis · ${signalWindowLabel} · CPI/PPI ${economicBlackoutMinutes}m blackout · ${tradingRules.sessionGuardMinutes}m session guard · ${
     tradingRules.londonCommodityOnly ? "London commodity guard on" : "London commodity guard off"
-  } · ${drawdownLabel} · ${tradingRules.staleGridCancel ? "stale signal expiry on" : "stale signal expiry off"} · free access`;
+  } · ${drawdownLabel} · ${tradingRules.staleGridCancel ? "stale signal expiry on" : "stale signal expiry off"} · private access`;
   els.ticketDrawdown.textContent = `${(tradingRules.maxDailyLossPct * 100).toFixed(2)}%`;
   els.decisionDrawdown.textContent = `${(tradingRules.maxDailyLossPct * 100).toFixed(2)}%`;
   renderForexSessions();
@@ -2572,13 +2572,13 @@ function renderAuth(me) {
   const loggedIn = Boolean(me.authenticated);
   els.authStatus.textContent = loggedIn ? me.username : "No profile";
   els.subscriptionStatus.textContent = me.subscription
-    ? `${me.subscription.plan} ${me.subscription.status}`
-    : "free active";
+    ? "Private access"
+    : "Selective";
   els.credentialStatus.textContent = loggedIn
     ? me.credentialsConfigured
       ? "Private sync saved for this signal profile."
       : "Private sync is optional. Save rules to keep this profile useful."
-    : "Register with an email to save preferences and receive reset codes.";
+    : "Request access with an email to save preferences and receive reset codes.";
   els.logoutButton.disabled = !loggedIn;
   els.saveCredentialsButton.disabled = !loggedIn;
   els.backendStartButton.disabled = !loggedIn || !me.credentialsConfigured;
@@ -2669,8 +2669,8 @@ async function loginOrRegister(path) {
     return;
   }
   actionButton.disabled = true;
-  actionButton.textContent = isRegister ? "Registering..." : "Logging in...";
-  setAuthStatus(isRegister ? "Registering..." : "Logging in...");
+  actionButton.textContent = isRegister ? "Requesting..." : "Logging in...";
+  setAuthStatus(isRegister ? "Requesting access..." : "Logging in...");
   try {
     const response = await jsonPost(path, { username, password });
     const payload = await response.json().catch(() => ({}));
@@ -2685,17 +2685,17 @@ async function loginOrRegister(path) {
     renderAuth(payload);
     if (isRegister) {
       renderRegistrationDesk(payload);
-      els.credentialStatus.textContent = "Profile created. Password reset codes will go to this email.";
+      els.credentialStatus.textContent = "Private profile created. Password reset codes will go to this email.";
       els.registrationDesk.scrollIntoView({ behavior: "smooth", block: "center" });
     }
-    addAuditEvent(isRegister ? "register" : "login", isRegister ? "User registered" : "User logged in", payload.username || username);
+    addAuditEvent(isRegister ? "access requested" : "login", isRegister ? "Private access profile created" : "User logged in", payload.username || username);
     refreshBackend();
   } catch {
     setAuthStatus("Auth request failed");
     els.credentialStatus.textContent = "Network request failed. Try again.";
   } finally {
     actionButton.disabled = false;
-    actionButton.textContent = isRegister ? "Register" : "Login";
+    actionButton.textContent = isRegister ? "Request Access" : "Login";
   }
 }
 
@@ -2766,7 +2766,7 @@ async function saveCredentials() {
 
 async function finishOnboarding() {
   if (!currentUser.authenticated) {
-    els.credentialStatus.textContent = "Register or log in before saving a signal profile.";
+    els.credentialStatus.textContent = "Request access or log in before saving a signal profile.";
     return;
   }
   if (els.clientNameInput.value.trim().length < 2) {
@@ -2788,7 +2788,7 @@ async function finishOnboarding() {
   }
   await saveTradingRules();
   renderRegistrationDesk();
-  els.credentialStatus.textContent = "Signal profile saved. Access is free for now.";
+  els.credentialStatus.textContent = "Signal profile saved. Private access is active.";
 }
 
 function syncSelectedAsset() {
