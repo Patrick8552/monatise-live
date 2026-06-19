@@ -221,21 +221,30 @@ localStorage.removeItem("monatiseControlToken");
 
 const assetMetadata = {
   AAPL: { name: "Apple", route: "TradingView stock watch" },
+  AUDJPY: { name: "AUD/JPY", route: "TradingView forex watch" },
+  AUDUSD: { name: "AUD/USD", route: "TradingView forex watch" },
   BNB: { name: "BNB", route: "Core Hyperliquid perp" },
   BRENTOIL: { name: "Brent Oil", route: "Hyperliquid xyz:BRENTOIL builder perp" },
   BTC: { name: "Bitcoin", route: "Core Hyperliquid perp" },
   CL: { name: "WTI Crude Oil", route: "Hyperliquid xyz:CL builder perp" },
   DOGE: { name: "Dogecoin", route: "Core Hyperliquid perp" },
   ETH: { name: "Ethereum", route: "Core Hyperliquid perp" },
+  EURGBP: { name: "EUR/GBP", route: "TradingView forex watch" },
+  EURJPY: { name: "EUR/JPY", route: "TradingView forex watch" },
+  EURUSD: { name: "EUR/USD", route: "TradingView forex watch" },
+  GBPUSD: { name: "GBP/USD", route: "TradingView forex watch" },
   GOLD: { name: "Gold", route: "Hyperliquid xyz:GOLD builder perp" },
   HYPE: { name: "Hyperliquid", route: "Core Hyperliquid perp" },
   NDX: { name: "Nasdaq 100", route: "TradingView index watch" },
+  NASDAQ: { name: "Nasdaq Composite", route: "TradingView index watch" },
   NVDA: { name: "NVIDIA", route: "TradingView stock watch" },
+  NZDUSD: { name: "NZD/USD", route: "TradingView forex watch" },
   QQQ: { name: "Invesco QQQ", route: "TradingView ETF watch" },
   SOL: { name: "Solana", route: "Core Hyperliquid perp" },
   SPX: { name: "S&P 500", route: "TradingView index watch" },
   SPY: { name: "SPDR S&P 500 ETF", route: "TradingView ETF watch" },
   TSLA: { name: "Tesla", route: "TradingView stock watch" },
+  USDJPY: { name: "USD/JPY", route: "TradingView forex watch" },
   USOIL: { name: "US Oil", route: "TradingView commodity watch" },
   XAG: { name: "Silver", route: "TradingView metals watch" },
   XRP: { name: "XRP", route: "Core Hyperliquid perp" }
@@ -1992,7 +2001,7 @@ function radarAssetLabel(symbol) {
 }
 
 function assetRoute(symbol) {
-  return assetMetadata[symbol]?.route || "Watchlist or strategy-preview asset";
+  return assetMetadata[symbol]?.route || (tradingViewSymbols[radarSymbol(symbol)] ? "TradingView watch asset" : "Watchlist or strategy-preview asset");
 }
 
 function tradingViewSymbolForAsset(symbol) {
@@ -2029,8 +2038,9 @@ function renderTradingViewChart() {
 
 function mergeSelectableAssets(assets = []) {
   const bySymbol = new Map(selectableAssets.map((asset) => [asset.symbol, asset]));
-  Object.keys(assetMetadata).forEach((symbol) => {
-    bySymbol.set(symbol, { ...bySymbol.get(symbol), symbol, tradable: false });
+  const guaranteedSymbols = new Set([...Object.keys(assetMetadata), ...Object.keys(tradingViewSymbols)]);
+  guaranteedSymbols.forEach((symbol) => {
+    bySymbol.set(symbol, { ...bySymbol.get(symbol), symbol, tradable: false, source: tradingViewSymbols[symbol] ? "TradingView" : "watchlist" });
   });
   assets.forEach((asset) => {
     const symbol = String(asset.symbol || "").toUpperCase();

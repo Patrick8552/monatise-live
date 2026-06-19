@@ -21,9 +21,9 @@ from monatise.live.emailer import EmailDeliveryError, expose_dev_reset_code, sen
 from monatise.live.service import JsonEncoder, TradingService
 from monatise.live.users import User, UserCredentials, UserStore, encryption_key_configured
 
-COMMODITY_WATCHLIST = ("GOLD", "CL", "BRENTOIL")
-FOREX_WATCHLIST = ("EURUSD", "GBPUSD", "USDJPY", "XAG")
-STOCK_WATCHLIST = ("SPX", "NDX", "NASDAQ", "AAPL", "TSLA", "NVDA")
+COMMODITY_WATCHLIST = ("GOLD", "XAG", "CL", "BRENTOIL", "USOIL")
+FOREX_WATCHLIST = ("EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "AUDJPY", "EURGBP", "EURJPY", "NZDUSD")
+STOCK_WATCHLIST = ("SPX", "NDX", "NASDAQ", "QQQ", "SPY", "AAPL", "TSLA", "NVDA")
 TRADINGVIEW_ACTIONS = {
     "BUY": "BUY",
     "BULL": "BUY",

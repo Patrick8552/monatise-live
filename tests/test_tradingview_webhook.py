@@ -145,6 +145,16 @@ def test_enriched_tradingview_alert_keeps_raw_alert_fields() -> None:
     assert enriched["classification"]["executionAllowed"] is False
 
 
+def test_tradingview_classification_routes_watch_assets() -> None:
+    silver = classify_tradingview_alert({"symbol": "XAG", "action": "BUY", "confidence": 72, "receivedAt": 1_000}, now=1_010)
+    forex = classify_tradingview_alert({"symbol": "AUDUSD", "action": "SELL", "confidence": 72, "receivedAt": 1_000}, now=1_010)
+    etf = classify_tradingview_alert({"symbol": "QQQ", "action": "BUY", "confidence": 72, "receivedAt": 1_000}, now=1_010)
+
+    assert silver["route"] == "metals and commodities confluence"
+    assert forex["route"] == "forex confluence"
+    assert etf["route"] == "stocks and indices confluence"
+
+
 def test_operator_status_reports_non_secret_integration_state() -> None:
     old_values = {
         key: os.environ.get(key)
