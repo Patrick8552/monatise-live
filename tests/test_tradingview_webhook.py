@@ -1,4 +1,7 @@
-from monatise.live.server import normalize_tradingview_alert
+import os
+
+from monatise.live.config import LIVE_CONFIRMATION, RuntimeConfig
+from monatise.live.server import normalize_tradingview_alert, operator_status_payload
 
 
 def test_tradingview_alert_normalizes_json_payload() -> None:
@@ -79,3 +82,50 @@ def test_tradingview_alert_preserves_gold_indicator_stack() -> None:
     assert alert["indicators"]["daily_vwap"] == "below"
     assert alert["indicators"]["volume_profile"] == "below value area"
     assert alert["indicators"]["rsi_sma_cross"] == "cross down"
+
+
+def test_operator_status_reports_non_secret_integration_state() -> None:
+    old_values = {
+        key: os.environ.get(key)
+        for key in [
+            "COINGLASS_API_KEY",
+            "MONATISE_SMTP_PROVIDER",
+            "MONATISE_SMTP_FROM",
+            "MONATISE_SMTP_PASSWORD",
+            "MONATISE_ALERT_EMAILS",
+            "RENDER_GIT_COMMIT",
+        ]
+    }
+    os.environ["COINGLASS_API_KEY"] = "cg_secret"
+    os.environ["MONATISE_SMTP_PROVIDER"] = "resend"
+    os.environ["MONATISE_SMTP_FROM"] = "Monatise <no-reply@example.com>"
+    os.environ["MONATISE_SMTP_PASSWORD"] = "smtp_secret"
+    os.environ["MONATISE_ALERT_EMAILS"] = "ops@example.com"
+    os.environ["RENDER_GIT_COMMIT"] = "abcdef123456"
+    try:
+        payload = operator_status_payload(
+            RuntimeConfig(
+                mode="live",
+                network="mainnet",
+                execution_mode="live",
+                allow_live_orders=True,
+                live_confirmation=LIVE_CONFIRMATION,
+                tradingview_webhook_token="tv_secret",
+            )
+        )
+    finally:
+        for key, value in old_values.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+    assert payload["deploy"]["commit"] == "abcdef123456"
+    assert payload["integrations"]["coinglass"]["configured"] is True
+    assert payload["integrations"]["tradingView"]["configured"] is True
+    assert payload["integrations"]["smtp"]["configured"] is True
+    assert payload["integrations"]["smtp"]["alertsConfigured"] is True
+    assert payload["riskCaps"]["allowLiveOrders"] is True
+    assert "cg_secret" not in str(payload)
+    assert "smtp_secret" not in str(payload)
+    assert "tv_secret" not in str(payload)

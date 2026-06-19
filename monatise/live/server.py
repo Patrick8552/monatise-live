@@ -16,7 +16,7 @@ from monatise.analysis.fibonacci import analyze_fibonacci
 from monatise.analysis.fvg import analyze_fvg
 from monatise.adapters.coinglass import CoinGlassAdapter, CoinGlassPlanError
 from monatise.adapters.hyperliquid import HyperliquidAdapter
-from monatise.live.config import RuntimeConfig
+from monatise.live.config import LIVE_CONFIRMATION, RuntimeConfig
 from monatise.live.emailer import EmailDeliveryError, expose_dev_reset_code, send_password_reset_code, send_trading_alert_email
 from monatise.live.service import JsonEncoder, TradingService
 from monatise.live.users import User, UserCredentials, UserStore, encryption_key_configured
@@ -141,6 +141,56 @@ def normalize_tradingview_alert(payload: dict | str) -> dict:
         "price": str(payload.get("price") or payload.get("close") or "").strip()[:32],
         "message": str(payload.get("message") or payload.get("note") or "").strip()[:240],
         "receivedAt": time.time(),
+    }
+
+
+def operator_status_payload(config: RuntimeConfig) -> dict:
+    smtp_provider = os.getenv("MONATISE_SMTP_PROVIDER", "").strip().lower()
+    smtp_host_configured = bool(os.getenv("MONATISE_SMTP_HOST", "").strip())
+    smtp_from_configured = bool(os.getenv("MONATISE_SMTP_FROM", "").strip())
+    smtp_password_configured = bool(os.getenv("MONATISE_SMTP_PASSWORD", "").strip())
+    smtp_configured = smtp_from_configured and (smtp_host_configured or smtp_provider in {"resend", "postmark"})
+    if smtp_configured and smtp_provider in {"resend", "postmark"}:
+        smtp_configured = smtp_password_configured
+    return {
+        "ok": True,
+        "service": "monatise-live",
+        "mode": config.mode,
+        "network": config.network,
+        "executionMode": config.execution_mode,
+        "publicUrl": os.getenv("MONATISE_PUBLIC_URL", ""),
+        "deploy": {
+            "commit": os.getenv("RENDER_GIT_COMMIT", os.getenv("MONATISE_GIT_COMMIT", "")),
+            "serviceId": os.getenv("RENDER_SERVICE_ID", ""),
+            "instanceId": os.getenv("RENDER_INSTANCE_ID", ""),
+        },
+        "integrations": {
+            "coinglass": {
+                "configured": bool(os.getenv("COINGLASS_API_KEY", "").strip()),
+                "exchange": os.getenv("COINGLASS_EXCHANGE", "Binance"),
+            },
+            "tradingView": {
+                "configured": bool(config.tradingview_webhook_token),
+            },
+            "smtp": {
+                "configured": smtp_configured,
+                "provider": smtp_provider or "generic",
+                "alertsConfigured": bool(os.getenv("MONATISE_ALERT_EMAILS", "").strip()),
+            },
+            "credentialStorage": {
+                "encrypted": encryption_key_configured(),
+            },
+        },
+        "riskCaps": {
+            "orderQuoteSize": config.order_quote_size,
+            "maxOrderNotional": config.max_order_notional,
+            "maxTotalNotional": config.max_total_notional,
+            "maxPositionValue": config.max_position_value,
+            "maxDailyLoss": config.max_daily_loss,
+            "maxDailyLossPct": config.max_daily_loss_pct,
+            "allowLiveOrders": config.allow_live_orders,
+            "liveConfirmation": config.live_confirmation == LIVE_CONFIRMATION,
+        },
     }
 
 
@@ -292,6 +342,9 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
         parsed = urlparse(self.path)
         if parsed.path == "/api/health":
             self._json({"ok": True})
+            return
+        if parsed.path == "/api/operator":
+            self._json(operator_status_payload(self.config))
             return
         if parsed.path == "/api/markets":
             try:

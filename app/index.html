@@ -11,7 +11,7 @@
     <link rel="manifest" href="./manifest.webmanifest?v=20260616-dashboard-install" />
     <link rel="icon" href="./icon-lotus.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./icon-lotus.svg" />
-    <link rel="stylesheet" href="./styles.css?v=20260619-activation-path" />
+    <link rel="stylesheet" href="./styles.css?v=20260619-operator-console" />
   </head>
   <body>
     <main class="shell">
@@ -60,6 +60,7 @@
         <a href="#wealth">CIO Brief</a>
         <a href="#risk">Quality Gate</a>
         <a href="#activation">Activation</a>
+        <a href="#operator">Operator</a>
         <a href="#markets">Market Intel</a>
         <a href="#hedge">Hedge Layer</a>
         <a href="#chat">AI Chat</a>
@@ -320,6 +321,18 @@
                 <em id="activationNext">Create or log in to a profile.</em>
               </div>
               <div id="activationList" class="activation-list"></div>
+            </section>
+
+            <section id="operator" class="operator-console" aria-label="operator console">
+              <div class="operator-head">
+                <div>
+                  <span>Operator console</span>
+                  <strong id="operatorStatus">Checking service</strong>
+                </div>
+                <em id="operatorDeploy">Deploy pending</em>
+              </div>
+              <div id="operatorGrid" class="operator-grid"></div>
+              <div id="operatorRunbook" class="operator-runbook">Waiting for live desk status.</div>
             </section>
 
             <div class="rules-console utility-hidden" aria-label="signal rules console">
@@ -701,6 +714,6 @@
     </main>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="./app.js?v=20260619-activation-path"></script>
+    <script src="./app.js?v=20260619-operator-console"></script>
   </body>
 </html>

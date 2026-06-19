@@ -92,6 +92,10 @@ const els = {
   openOrderBook: document.querySelector("#openOrderBook"),
   openOrderCount: document.querySelector("#openOrderCount"),
   openGridTitle: document.querySelector("#openGridTitle"),
+  operatorDeploy: document.querySelector("#operatorDeploy"),
+  operatorGrid: document.querySelector("#operatorGrid"),
+  operatorRunbook: document.querySelector("#operatorRunbook"),
+  operatorStatus: document.querySelector("#operatorStatus"),
   opportunityAction: document.querySelector("#opportunityAction"),
   opportunityScore: document.querySelector("#opportunityScore"),
   orderAgeMetric: document.querySelector("#orderAgeMetric"),
@@ -173,6 +177,7 @@ let selectableAssets = [];
 let selectedAsset = "BTC";
 let marketScene = null;
 let lastBackendSnapshot = null;
+let operatorStatus = null;
 let fibAnalysis = null;
 let fvgAnalysis = null;
 let fibLoading = false;
@@ -535,6 +540,124 @@ function renderActivationPath(snapshot = null) {
       </article>`
     )
     .join("");
+}
+
+function operatorCardClass(ok, warn = false) {
+  if (ok) return "ok";
+  return warn ? "warn" : "block";
+}
+
+function compactCommit(value) {
+  const commit = String(value || "").trim();
+  return commit ? commit.slice(0, 7) : "unknown";
+}
+
+function operatorCards(status = operatorStatus, snapshot = lastBackendSnapshot) {
+  const integrations = status?.integrations || {};
+  const riskCaps = status?.riskCaps || {};
+  const events = Array.isArray(snapshot?.events) ? snapshot.events : [];
+  const lastEvent = events[events.length - 1];
+  const running = Boolean(snapshot?.running);
+  const liveReady = Boolean(snapshot?.liveReady);
+  const requires = Array.isArray(snapshot?.requires) ? snapshot.requires : [];
+  const orderCap = Number(riskCaps.maxOrderNotional);
+  const totalCap = Number(riskCaps.maxTotalNotional);
+  const tinyCaps = Number.isFinite(orderCap) && Number.isFinite(totalCap) && orderCap <= 25 && totalCap <= 150;
+  return [
+    {
+      detail: status ? `${String(status.mode || "paper").toUpperCase()} / ${String(status.network || "local").toUpperCase()}` : "waiting for /api/operator",
+      label: "Runtime",
+      ok: Boolean(status?.ok),
+      value: status?.executionMode || "checking"
+    },
+    {
+      detail: status?.deploy?.serviceId ? `service ${status.deploy.serviceId}` : status?.publicUrl || "Render deploy metadata",
+      label: "Deploy",
+      ok: Boolean(status?.ok),
+      value: compactCommit(status?.deploy?.commit)
+    },
+    {
+      detail: integrations.coinglass?.configured ? `exchange ${integrations.coinglass.exchange || "Binance"}` : "set COINGLASS_API_KEY",
+      label: "CoinGlass",
+      ok: Boolean(integrations.coinglass?.configured),
+      value: integrations.coinglass?.configured ? "configured" : "missing"
+    },
+    {
+      detail: integrations.tradingView?.configured ? "webhook token ready" : "set MONATISE_TRADINGVIEW_WEBHOOK_TOKEN",
+      label: "TradingView",
+      ok: Boolean(integrations.tradingView?.configured),
+      value: integrations.tradingView?.configured ? "ready" : "missing"
+    },
+    {
+      detail: integrations.smtp?.configured
+        ? `${integrations.smtp.provider || "smtp"}${integrations.smtp.alertsConfigured ? " alerts" : " reset only"}`
+        : "configure sender, host/provider, and password",
+      label: "Email",
+      ok: Boolean(integrations.smtp?.configured),
+      value: integrations.smtp?.configured ? "ready" : "missing"
+    },
+    {
+      detail: integrations.credentialStorage?.encrypted ? "encrypted profile credential storage" : "set MONATISE_ENCRYPTION_KEY",
+      label: "Credentials",
+      ok: Boolean(integrations.credentialStorage?.encrypted),
+      value: integrations.credentialStorage?.encrypted ? "encrypted" : "not ready"
+    },
+    {
+      detail: tinyCaps ? `${money(orderCap)} order / ${money(totalCap)} total` : "first live rehearsal should stay tiny",
+      label: "Risk caps",
+      ok: tinyCaps,
+      warn: true,
+      value: tinyCaps ? "tiny" : "review"
+    },
+    {
+      detail: requires.length ? requires[0] : liveReady ? "live gates clear" : running ? "loop running" : "not running",
+      label: "Private sync",
+      ok: running || liveReady,
+      warn: true,
+      value: running ? "running" : liveReady ? "armed" : "idle"
+    },
+    {
+      detail: lastEvent?.message || snapshot?.riskStatus || "no runtime events yet",
+      label: "Last event",
+      ok: !/error|failed|max daily loss|guard/i.test(lastEvent?.message || snapshot?.riskStatus || ""),
+      warn: true,
+      value: lastEvent?.level || "standby"
+    }
+  ];
+}
+
+function renderOperatorConsole(snapshot = lastBackendSnapshot) {
+  if (!els.operatorGrid) return;
+  const cards = operatorCards(operatorStatus, snapshot);
+  const hardBlocks = cards.filter((card) => !card.ok && !card.warn).length;
+  const warnings = cards.filter((card) => !card.ok && card.warn).length;
+  const mode = operatorStatus ? `${String(operatorStatus.mode || "paper").toUpperCase()} ${String(operatorStatus.network || "local").toUpperCase()}` : "Checking";
+  els.operatorStatus.textContent = hardBlocks ? `${hardBlocks} operator block${hardBlocks === 1 ? "" : "s"}` : warnings ? `${warnings} operator watch${warnings === 1 ? "" : "es"}` : "Operator ready";
+  els.operatorDeploy.textContent = `${mode} · ${compactCommit(operatorStatus?.deploy?.commit)}`;
+  els.operatorGrid.innerHTML = cards
+    .map(
+      (card) => `<article class="${operatorCardClass(card.ok, card.warn)}">
+        <span>${card.label}</span>
+        <strong>${card.value}</strong>
+        <em>${card.detail}</em>
+      </article>`
+    )
+    .join("");
+  const primaryBlock = cards.find((card) => !card.ok && !card.warn) || cards.find((card) => !card.ok);
+  els.operatorRunbook.textContent = primaryBlock
+    ? `Next operator action: ${primaryBlock.detail}.`
+    : "Operator action: run the first-user rehearsal, keep caps small, and monitor the runtime log.";
+}
+
+async function loadOperatorStatus() {
+  try {
+    const response = await apiFetch("/api/operator", { cache: "no-store" });
+    if (!response.ok) throw new Error("operator status unavailable");
+    operatorStatus = await response.json();
+  } catch {
+    operatorStatus = null;
+  }
+  renderOperatorConsole(lastBackendSnapshot);
 }
 
 function auditLevelFromType(type) {
@@ -1798,6 +1921,7 @@ function updateLiveDesk(snapshot = null) {
   }
   renderReadinessChecklist(snapshot);
   renderActivationPath(snapshot);
+  renderOperatorConsole(snapshot);
   updateDecisionSurface(snapshot);
 }
 
@@ -4302,6 +4426,7 @@ initMarketMap();
 loadSelectableAssets();
 loadMarkets();
 loadMe();
+loadOperatorStatus();
 refreshBackend();
 renderForexSessions();
 renderChatMessages();
@@ -4309,6 +4434,7 @@ loadTradingViewSignals();
 loadCoinGlassContext();
 applyRememberedLogin();
 setInterval(loadMarkets, 5000);
+setInterval(loadOperatorStatus, 30000);
 setInterval(refreshBackend, 2500);
 setInterval(renderForexSessions, 1000);
 setInterval(loadTradingViewSignals, 10000);
