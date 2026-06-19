@@ -98,6 +98,9 @@ def test_user_store_saves_asset_and_free_access_settings() -> None:
             settings = store.save_subscription_plan(user.id, "free")
             assert settings.subscription_plan == "free"
             assert settings.subscription_status == "active"
+            settings = store.save_subscription_plan(user.id, "private", "trialing")
+            assert settings.subscription_plan == "private"
+            assert settings.subscription_status == "trialing"
     finally:
         _restore_key(old_key)
 

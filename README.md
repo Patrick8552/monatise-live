@@ -72,6 +72,31 @@ COINGLASS_EXCHANGE_LIST=Binance,OKX,Bybit
 
 CoinGlass is used for market data. Hyperliquid remains the execution and private sync adapter.
 
+Stripe gates the private billing plan through hosted Checkout. Add real Stripe
+values only in Render or a local `.env`, then point the Stripe webhook at
+`/api/stripe/webhook`:
+
+```bash
+STRIPE_SECRET_KEY=sk_live_...
+STRIPE_PRIVATE_PRICE_ID=price_...
+STRIPE_WEBHOOK_SECRET=whsec_...
+```
+
+Backpack is present as an exchange-aware scaffold for market data and ED25519
+private request signing:
+
+```bash
+MONATISE_EXCHANGE=hyperliquid
+BACKPACK_REST_BASE=https://api.backpack.exchange
+BACKPACK_API_KEY=...
+BACKPACK_SECRET_KEY=...
+BACKPACK_SYMBOL_MAP=BTC=BTC_USDC_PERP,ETH=ETH_USDC_PERP,SOL=SOL_USDC_PERP
+```
+
+Backpack live execution is intentionally disabled until account permissions,
+symbol mapping, fills, cancellation behavior, and risk handling are reviewed.
+Monatise will not route orders to Backpack from this scaffold.
+
 Chainlink or another oracle can be added as a signal validation guard: read the BTC/USD or ETH/USD feed from a configured RPC, compare it with the CoinGlass mark, check the feed timestamp, and hold or reduce confidence when the spread or freshness check fails. The oracle should verify signals; it should not replace CoinGlass candles or Hyperliquid execution.
 
 See [deploy/live-runbook.md](deploy/live-runbook.md) for the full runbook.

@@ -326,10 +326,13 @@ class UserStore:
             )
         return self.settings_for_user(user_id)
 
-    def save_subscription_plan(self, user_id: int, plan: str) -> UserSettings:
+    def save_subscription_plan(self, user_id: int, plan: str, status: str = "active") -> UserSettings:
         plan = plan.strip().lower()
-        if plan != "free":
+        status = status.strip().lower() or "active"
+        if plan not in {"free", "private"}:
             raise ValueError("unknown access plan")
+        if status not in {"active", "trialing", "past_due", "canceled", "inactive"}:
+            raise ValueError("unknown access status")
         settings = self.settings_for_user(user_id)
         with self._connect() as conn:
             conn.execute(
@@ -341,7 +344,7 @@ class UserStore:
                   subscription_status = excluded.subscription_status,
                   updated_at = excluded.updated_at
                 """,
-                (user_id, settings.selected_symbol, plan, "active", time.time()),
+                (user_id, settings.selected_symbol, plan, status, time.time()),
             )
         return self.settings_for_user(user_id)
 

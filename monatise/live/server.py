@@ -16,6 +16,14 @@ from monatise.analysis.fibonacci import analyze_fibonacci
 from monatise.analysis.fvg import analyze_fvg
 from monatise.adapters.coinglass import CoinGlassAdapter, CoinGlassPlanError
 from monatise.adapters.hyperliquid import HyperliquidAdapter
+from monatise.live.billing import (
+    PRIVATE_PLAN,
+    StripeBillingConfig,
+    StripeBillingError,
+    create_private_checkout_session,
+    private_plan_user_id_from_event,
+    verify_stripe_signature,
+)
 from monatise.live.config import LIVE_CONFIRMATION, RuntimeConfig
 from monatise.live.emailer import EmailDeliveryError, expose_dev_reset_code, send_password_reset_code, send_trading_alert_email
 from monatise.live.service import JsonEncoder, TradingService
@@ -245,6 +253,7 @@ def operator_status_payload(config: RuntimeConfig) -> dict:
         "mode": config.mode,
         "network": config.network,
         "executionMode": config.execution_mode,
+        "exchange": config.exchange,
         "publicUrl": os.getenv("MONATISE_PUBLIC_URL", ""),
         "deploy": {
             "commit": os.getenv("RENDER_GIT_COMMIT", os.getenv("MONATISE_GIT_COMMIT", "")),
@@ -258,6 +267,15 @@ def operator_status_payload(config: RuntimeConfig) -> dict:
             },
             "tradingView": {
                 "configured": bool(config.tradingview_webhook_token),
+            },
+            "stripe": {
+                "configured": StripeBillingConfig.from_env().checkout_configured,
+                "webhookConfigured": StripeBillingConfig.from_env().webhook_configured,
+            },
+            "backpack": {
+                "configured": bool(os.getenv("BACKPACK_API_KEY", "").strip() and os.getenv("BACKPACK_SECRET_KEY", "").strip()),
+                "restBase": os.getenv("BACKPACK_REST_BASE", "https://api.backpack.exchange"),
+                "executionEnabled": False,
             },
             "smtp": {
                 "configured": smtp_configured,
@@ -691,7 +709,8 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
-        if parsed.path != "/api/tradingview/webhook" and not self._valid_request_origin():
+        public_post_paths = {"/api/tradingview/webhook", "/api/stripe/webhook"}
+        if parsed.path not in public_post_paths and not self._valid_request_origin():
             self._error(403, "invalid request origin")
             return
         if self._rate_limited(parsed.path):
@@ -725,6 +744,31 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             if email_error:
                 response["emailError"] = email_error
             self._json(response)
+            return
+        if parsed.path == "/api/stripe/webhook":
+            billing = StripeBillingConfig.from_env()
+            if not billing.webhook_configured:
+                self._error(503, "Stripe webhook secret is not configured")
+                return
+            body = self._read_body()
+            signature = self.headers.get("Stripe-Signature", "")
+            if not verify_stripe_signature(body, signature, billing.webhook_secret):
+                self._error(401, "invalid Stripe signature")
+                return
+            try:
+                event = json.loads(body.decode("utf-8")) if body else {}
+            except json.JSONDecodeError:
+                self._error(400, "invalid Stripe event")
+                return
+            user_id = private_plan_user_id_from_event(event)
+            if user_id is not None:
+                try:
+                    self.store.save_subscription_plan(user_id, PRIVATE_PLAN, "active")
+                    self.tenants.reset_user(user_id)
+                except ValueError:
+                    self._error(400, "Stripe event references an invalid user")
+                    return
+            self._json({"received": True, "privatePlanActivated": user_id is not None})
             return
         if parsed.path == "/api/register":
             payload = self._read_json()
@@ -829,6 +873,21 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                 self.store.delete_session(token)
             self._clear_session_cookie()
             self._json({"authenticated": False})
+            return
+        if parsed.path == "/api/billing/checkout":
+            user = self._require_user()
+            if user is None:
+                return
+            billing = StripeBillingConfig.from_env()
+            try:
+                session = create_private_checkout_session(billing, user_id=user.id, email=user.username)
+            except StripeBillingError as error:
+                self._error(503, str(error))
+                return
+            except Exception as error:  # noqa: BLE001
+                self._error(502, f"Stripe Checkout request failed: {error}")
+                return
+            self._json({"id": session.get("id", ""), "url": session["url"]})
             return
         if parsed.path == "/api/credentials":
             user = self._require_user()

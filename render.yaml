@@ -29,6 +29,8 @@ services:
         value: BTC
       - key: MONATISE_DATA_FEED
         value: coinglass
+      - key: MONATISE_EXCHANGE
+        value: hyperliquid
       - key: COINGLASS_API_KEY
         sync: false
       - key: MONATISE_SMTP_HOST
@@ -53,6 +55,24 @@ services:
         value: true
       - key: MONATISE_TRADINGVIEW_WEBHOOK_TOKEN
         sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_PRIVATE_PRICE_ID
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: STRIPE_SUCCESS_URL
+        value: https://monatise-live.onrender.com/?billing=success
+      - key: STRIPE_CANCEL_URL
+        value: https://monatise-live.onrender.com/?billing=cancelled
+      - key: BACKPACK_REST_BASE
+        value: https://api.backpack.exchange
+      - key: BACKPACK_API_KEY
+        sync: false
+      - key: BACKPACK_SECRET_KEY
+        sync: false
+      - key: BACKPACK_SYMBOL_MAP
+        value: BTC=BTC_USDC_PERP,ETH=ETH_USDC_PERP,SOL=SOL_USDC_PERP
       - key: COINGLASS_EXCHANGE
         value: Binance
       - key: COINGLASS_EXCHANGE_LIST

@@ -22,6 +22,8 @@ const els = {
   backendStartButton: document.querySelector("#backendStartButton"),
   backendStatus: document.querySelector("#backendStatus"),
   backendStopButton: document.querySelector("#backendStopButton"),
+  billingCheckoutButton: document.querySelector("#billingCheckoutButton"),
+  billingStatus: document.querySelector("#billingStatus"),
   accountMetricLabel: document.querySelector("#accountMetricLabel"),
   activationList: document.querySelector("#activationList"),
   activationNext: document.querySelector("#activationNext"),
@@ -2765,6 +2767,15 @@ function renderAuth(me) {
   els.saveCredentialsButton.disabled = !loggedIn;
   els.backendStartButton.disabled = !loggedIn || !me.credentialsConfigured;
   els.backendStopButton.disabled = !loggedIn;
+  if (els.billingCheckoutButton) els.billingCheckoutButton.disabled = !loggedIn;
+  if (els.billingStatus) {
+    const plan = String(me.subscription?.plan || "free").toLowerCase();
+    els.billingStatus.textContent = loggedIn
+      ? plan === "private"
+        ? "Private billing is active on this profile."
+        : "Stripe Checkout can activate the private plan for this profile."
+      : "Login or request access before private billing.";
+  }
   els.rotateRecoveryCodeButton.disabled = true;
   els.recoveryCodeBox.hidden = true;
   renderRegistrationDesk(me);
@@ -2944,6 +2955,35 @@ async function saveCredentials() {
   await loadMe();
   addAuditEvent("profile saved", "Private sync saved", "sync details stored per user");
   refreshBackend();
+}
+
+async function startBillingCheckout() {
+  if (!currentUser.authenticated) {
+    if (els.billingStatus) els.billingStatus.textContent = "Login or request access before private billing.";
+    els.usernameInput.focus();
+    return;
+  }
+  if (els.billingCheckoutButton) {
+    els.billingCheckoutButton.disabled = true;
+    els.billingCheckoutButton.textContent = "Opening Checkout...";
+  }
+  if (els.billingStatus) els.billingStatus.textContent = "Preparing Stripe Checkout...";
+  try {
+    const response = await jsonPost("/api/billing/checkout");
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      if (els.billingStatus) els.billingStatus.textContent = payload.error || "Stripe Checkout is not ready.";
+      return;
+    }
+    window.location.href = payload.url;
+  } catch {
+    if (els.billingStatus) els.billingStatus.textContent = "Checkout request failed. Try again.";
+  } finally {
+    if (els.billingCheckoutButton) {
+      els.billingCheckoutButton.disabled = !currentUser.authenticated;
+      els.billingCheckoutButton.textContent = "Activate Private Billing";
+    }
+  }
 }
 
 async function finishOnboarding() {
@@ -4602,6 +4642,7 @@ els.logoutButton.addEventListener("click", async () => {
   renderAuth({ authenticated: false, credentialsConfigured: false });
 });
 els.saveCredentialsButton.addEventListener("click", saveCredentials);
+els.billingCheckoutButton?.addEventListener("click", startBillingCheckout);
 els.saveRulesButton.addEventListener("click", saveTradingRules);
 function previewTradingRules() {
   const nextRules = normalizedTradingRules({
