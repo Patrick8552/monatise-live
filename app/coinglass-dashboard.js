@@ -27,7 +27,21 @@ const ASSET_DEFINITIONS = [
   hyper: ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE"].includes(coin) ? coin : "",
   pair: `${coin}USDT`,
   tv: `BINANCE:${coin}USDT`
-}));
+})).concat([
+  { coin: "GOLD", hyper: "GOLD", pair: "XAUUSD", search: "GOLD XAU XAUUSD", tv: "OANDA:XAUUSD" },
+  { coin: "XAU", hyper: "GOLD", pair: "XAUUSD", search: "GOLD XAU XAUUSD", tv: "OANDA:XAUUSD" },
+  { coin: "XAG", hyper: "", pair: "XAGUSD", search: "SILVER XAG XAGUSD", tv: "OANDA:XAGUSD" },
+  { coin: "CL", hyper: "CL", pair: "USOIL", search: "WTI OIL CL USOIL", tv: "NYMEX:CL1!" },
+  { coin: "BRENTOIL", hyper: "BRENTOIL", pair: "UKOIL", search: "BRENT OIL UKOIL", tv: "TVC:UKOIL" },
+  { coin: "EURUSD", hyper: "", pair: "EURUSD", search: "EUR USD EURO DOLLAR", tv: "FX:EURUSD" },
+  { coin: "GBPUSD", hyper: "", pair: "GBPUSD", search: "GBP USD CABLE", tv: "FX:GBPUSD" },
+  { coin: "USDJPY", hyper: "", pair: "USDJPY", search: "USD JPY YEN", tv: "FX:USDJPY" },
+  { coin: "AUDUSD", hyper: "", pair: "AUDUSD", search: "AUD USD AUSSIE", tv: "FX:AUDUSD" },
+  { coin: "AUDJPY", hyper: "", pair: "AUDJPY", search: "AUD JPY", tv: "FX:AUDJPY" },
+  { coin: "EURGBP", hyper: "", pair: "EURGBP", search: "EUR GBP", tv: "FX:EURGBP" },
+  { coin: "EURJPY", hyper: "", pair: "EURJPY", search: "EUR JPY", tv: "FX:EURJPY" },
+  { coin: "NZDUSD", hyper: "", pair: "NZDUSD", search: "NZD USD KIWI", tv: "FX:NZDUSD" }
+]);
 const ASSETS = Object.fromEntries(ASSET_DEFINITIONS.map((asset) => [asset.coin, asset]));
 
 const els = {
@@ -1554,7 +1568,8 @@ function assetMatches(query) {
   return ASSET_DEFINITIONS.filter((asset) => (
     asset.coin.includes(clean) ||
     asset.pair.includes(clean) ||
-    asset.tv.toUpperCase().includes(clean)
+    asset.tv.toUpperCase().includes(clean) ||
+    String(asset.search || "").toUpperCase().includes(clean)
   )).slice(0, 24);
 }
 
@@ -1568,7 +1583,7 @@ function renderAssetSearch() {
           <small>${asset.pair}</small>
         </button>
       `).join("")
-    : `<button type="button" disabled><strong>No match</strong><small>Try BTC, SOL, PEPE</small></button>`;
+    : `<button type="button" disabled><strong>No match</strong><small>Try GOLD, XAU, EURUSD, BTC</small></button>`;
   els.assetSearchResults.classList.toggle("open", Boolean(els.assetSearchInput.value.trim()));
 }
 

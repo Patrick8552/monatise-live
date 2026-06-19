@@ -622,6 +622,9 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                 self._error(502, str(error))
             return
         if parsed.path == "/api/tradingview/signals":
+            if self._current_user() is None:
+                self._error(401, "login required for TradingView confluence")
+                return
             query = parse_qs(parsed.query)
             symbol = _normalize_alert_symbol(str(query.get("symbol", [""])[0]))
             with self.tradingview_lock:

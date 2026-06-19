@@ -1569,6 +1569,16 @@ function tradingViewStatusClass(classification = {}) {
 
 function renderTradingViewSignal() {
   if (!els.tradingViewSignalPanel) return;
+  if (!currentUser.authenticated) {
+    els.tradingViewSignalPanel.innerHTML = `
+      <div class="strategy-status wait">
+        <strong>TV LOCKED</strong>
+        <span>Private TradingView confluence</span>
+      </div>
+      <p>Request access or log in to view live TradingView alerts, 5m checks, and 15m confluence locks for ${assetLabel(selectedAsset)}.</p>
+    `;
+    return;
+  }
   const signal = latestTradingViewSignal;
   if (!signal) {
     els.tradingViewSignalPanel.innerHTML = `
@@ -1619,6 +1629,11 @@ function renderTradingViewSignal() {
 
 async function loadTradingViewSignals() {
   if (!els.tradingViewSignalPanel) return;
+  if (!currentUser.authenticated) {
+    latestTradingViewSignal = null;
+    renderTradingViewSignal();
+    return;
+  }
   try {
     const response = await apiFetch(`/api/tradingview/signals?symbol=${encodeURIComponent(selectedAsset)}`, { cache: "no-store" });
     if (!response.ok) throw new Error("TradingView bridge unavailable");
