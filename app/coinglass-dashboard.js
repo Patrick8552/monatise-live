@@ -332,6 +332,12 @@ function formatUsd(value, compact = false) {
   }).format(number);
 }
 
+function parseDisplayedNumber(text) {
+  const cleaned = String(text || "").replace(/[^0-9.-]/g, "");
+  const number = Number(cleaned);
+  return Number.isFinite(number) && number > 0 ? number : Number.NaN;
+}
+
 function positiveInputValue(input, fallback) {
   const value = Number(input?.value);
   return Number.isFinite(value) && value > 0 ? value : fallback;
@@ -934,7 +940,7 @@ function snapshotLockedSignal(candidate, setup, price) {
 }
 
 function lockedSignalResolution(signal, price, now = Date.now()) {
-  const mark = Number(price);
+  const mark = currentSignalMark(price);
   const target = Number(signal.target);
   const invalidation = Number(signal.invalidation);
   if (Number(signal.reassessAtMs) && now >= Number(signal.reassessAtMs)) {
@@ -946,33 +952,61 @@ function lockedSignalResolution(signal, price, now = Date.now()) {
   if (!Number.isFinite(mark)) return null;
   if (signal.action === "BUY") {
     if (Number.isFinite(target) && mark >= target) {
-      return { status: "target-hit", detail: `Target reached at ${formatUsd(target)}. Waiting for the next snapshot.` };
+      return { status: "target-hit", detail: `Target reached at ${formatUsd(target)} with mark at ${formatUsd(mark)}. Waiting for the next snapshot.` };
     }
-    if (Number.isFinite(invalidation) && mark <= invalidation) {
-      return { status: "invalidated", detail: `Invalidation accepted beyond ${formatUsd(invalidation)}. Waiting for the next snapshot.` };
+    if (isSignalInvalidated(signal.action, mark, invalidation)) {
+      return { status: "invalidated", detail: `BUY invalidation accepted below ${formatUsd(invalidation)} with mark at ${formatUsd(mark)}. Waiting for the next snapshot.` };
     }
   }
   if (signal.action === "SELL") {
     if (Number.isFinite(target) && mark <= target) {
-      return { status: "target-hit", detail: `Target reached at ${formatUsd(target)}. Waiting for the next snapshot.` };
+      return { status: "target-hit", detail: `Target reached at ${formatUsd(target)} with mark at ${formatUsd(mark)}. Waiting for the next snapshot.` };
     }
-    if (Number.isFinite(invalidation) && mark >= invalidation) {
-      return { status: "invalidated", detail: `Invalidation accepted beyond ${formatUsd(invalidation)}. Waiting for the next snapshot.` };
+    if (isSignalInvalidated(signal.action, mark, invalidation)) {
+      return { status: "invalidated", detail: `SELL invalidation accepted above ${formatUsd(invalidation)} with mark at ${formatUsd(mark)}. Waiting for the next snapshot.` };
     }
   }
   return null;
 }
 
-function hasStructuralInvalidation(signal, setup, price) {
+function currentSignalMark(price) {
+  const displayed = parseDisplayedNumber(els.assetPrice?.textContent);
+  if (Number.isFinite(displayed) && displayed > 0) return displayed;
   const mark = Number(price);
+  if (Number.isFinite(mark) && mark > 0) return mark;
+  const last = Number(state.lastPrice);
+  return Number.isFinite(last) && last > 0 ? last : Number.NaN;
+}
+
+function signalInvalidationTolerance(invalidation) {
+  const value = Math.abs(Number(invalidation));
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return Math.max(value * 0.00005, isXauAsset() ? 0.5 : 0);
+}
+
+function isSignalInvalidated(action, mark, invalidation) {
+  if (!Number.isFinite(mark) || !Number.isFinite(invalidation)) return false;
+  const tolerance = signalInvalidationTolerance(invalidation);
+  if (action === "BUY") return mark < invalidation - tolerance;
+  if (action === "SELL") return mark > invalidation + tolerance;
+  return false;
+}
+
+function invalidationInstruction(action, invalidation, plan = null) {
+  const detail = plan?.detail ? ` ${plan.detail}` : "";
+  if (action === "BUY") return `Invalidate only after acceptance below ${formatUsd(invalidation)}.${detail}`;
+  if (action === "SELL") return `Invalidate only after acceptance above ${formatUsd(invalidation)}.${detail}`;
+  return "VWAP and market structure are the wait-state guard rails.";
+}
+
+function hasStructuralInvalidation(signal, setup, price) {
+  const mark = currentSignalMark(price);
   const invalidation = Number(signal.invalidation);
   if (!Number.isFinite(mark) || !Number.isFinite(invalidation)) return false;
   const oppositeStrong =
     (signal.action === "BUY" && setup.direction === "SELL SETUP" && setup.score <= -3) ||
     (signal.action === "SELL" && setup.direction === "BUY SETUP" && setup.score >= 3);
-  const priceInvalidated =
-    (signal.action === "BUY" && mark <= invalidation) ||
-    (signal.action === "SELL" && mark >= invalidation);
+  const priceInvalidated = isSignalInvalidated(signal.action, mark, invalidation);
   return priceInvalidated && oppositeStrong;
 }
 
@@ -1004,13 +1038,20 @@ function intervalToMs(interval) {
   return amount * 24 * 60 * 60 * 1000;
 }
 
+function combinedIntervalsToMs(intervals) {
+  const total = intervals
+    .map((interval) => intervalToMs(interval))
+    .reduce((sum, duration) => sum + duration, 0);
+  return total > 0 ? total : FALLBACK_SNAPSHOT_LOCK_MS;
+}
+
 function selectedSnapshotInterval() {
   if (isXauAsset()) return `${XAU_PRIMARY_ANALYSIS_INTERVAL} + ${XAU_CONFIRMATION_INTERVAL}`;
   return els.intervalSelect?.value || DEFAULT_VIEW_INTERVAL;
 }
 
 function selectedSnapshotLockMs() {
-  if (isXauAsset()) return intervalToMs(XAU_PRIMARY_ANALYSIS_INTERVAL);
+  if (isXauAsset()) return combinedIntervalsToMs(XAU_ANALYSIS_INTERVALS);
   return intervalToMs(selectedSnapshotInterval());
 }
 
@@ -1033,6 +1074,79 @@ function plannedDashboardEntry(action, mark, vwap, buyGrid = [], sellGrid = []) 
   return candidates.sort((left, right) => Math.abs(left - mark) - Math.abs(right - mark))[0];
 }
 
+function averageTrueRange(rows) {
+  if (rows.length < 2) return 0;
+  const ranges = rows.slice(1).map((row, index) => {
+    const previousClose = rows[index].close;
+    return Math.max(row.high - row.low, Math.abs(row.high - previousClose), Math.abs(row.low - previousClose));
+  });
+  return average(ranges);
+}
+
+function lastRealLiquiditySweep(action, entry, rows = state.priceSeries) {
+  const numericEntry = Number(entry);
+  const recent = rows
+    .slice(-80)
+    .filter((row) => Number.isFinite(row.high) && Number.isFinite(row.low) && Number.isFinite(row.close));
+  if (!["BUY", "SELL"].includes(action) || !Number.isFinite(numericEntry) || numericEntry <= 0 || recent.length < 8) {
+    return Number.NaN;
+  }
+  const swings = [];
+  for (let i = 2; i < recent.length - 2; i += 1) {
+    const row = recent[i];
+    const isHigh = row.high > recent[i - 1].high && row.high > recent[i - 2].high && row.high >= recent[i + 1].high && row.high >= recent[i + 2].high;
+    const isLow = row.low < recent[i - 1].low && row.low < recent[i - 2].low && row.low <= recent[i + 1].low && row.low <= recent[i + 2].low;
+    if (isHigh) swings.push({ price: row.high, type: "high" });
+    if (isLow) swings.push({ price: row.low, type: "low" });
+  }
+  const side = action === "BUY" ? "low" : "high";
+  const structural = swings
+    .filter((swing) => swing.type === side)
+    .filter((swing) => action === "BUY" ? swing.price < numericEntry : swing.price > numericEntry)
+    .at(-1);
+  if (structural) return structural.price;
+  const lows = recent.map((row) => row.low);
+  const highs = recent.map((row) => row.high);
+  return action === "BUY" ? Math.min(...lows) : Math.max(...highs);
+}
+
+function dynamicInvalidationPlan(action, entry, mark) {
+  const numericEntry = Number(entry);
+  if (!["BUY", "SELL"].includes(action) || !Number.isFinite(numericEntry) || numericEntry <= 0) {
+    return { executable: false, invalidation: Number.NaN, detail: "No valid entry for dynamic invalidation." };
+  }
+  const rows = state.priceSeries.slice(-80);
+  const atr = averageTrueRange(rows.slice(-24));
+  const atrPct = Number.isFinite(atr) && atr > 0 ? (atr / numericEntry) * 100 : averageTrueRangePercent(rows.slice(-24));
+  const structuralLevel = lastRealLiquiditySweep(action, numericEntry, rows);
+  const structuralDistance = Number.isFinite(structuralLevel) ? Math.abs(numericEntry - structuralLevel) : 0;
+  const atrDistance = Number.isFinite(atr) && atr > 0 ? atr * 0.25 : numericEntry * 0.001;
+  const activeMarket = Math.abs(Number(state.market?.priceChange || 0)) > 0.8 || Math.abs(Number(state.market?.vwapDistance || 0)) > 1.2;
+  const spreadAllowance = Math.max(numericEntry * (isCommodityAsset() ? 0.00012 : 0.00008), Number.isFinite(atr) && atr > 0 ? atr * 0.06 : 0);
+  const baseBuffer = Math.max(numericEntry * 0.0008, atrDistance);
+  const volatileBuffer = Math.max(numericEntry * 0.0012, Number.isFinite(atr) && atr > 0 ? atr * 0.35 : 0);
+  const buffer = (activeMarket ? volatileBuffer : baseBuffer) + spreadAllowance;
+  const riskDistance = Math.max(structuralDistance + buffer, Number.isFinite(atr) && atr > 0 ? atr * 0.65 : numericEntry * 0.0035);
+  const maxReasonableRisk = numericEntry * (activeMarket || isCommodityAsset() ? 0.018 : 0.012);
+  const invalidation = action === "BUY" ? numericEntry - riskDistance : numericEntry + riskDistance;
+  const wide = riskDistance > numericEntry * 0.006 || riskDistance > Math.max(atr || 0, numericEntry * 0.001) * 1.8;
+  const detail = [
+    `Structural sweep ${Number.isFinite(structuralLevel) ? formatUsd(structuralLevel) : "unavailable"}`,
+    `ATR buffer ${formatUsd(buffer)}`,
+    wide ? "Use smaller size, wider stop, same account risk." : "ATR-based buffer, not fixed points."
+  ].join(" · ");
+  return {
+    atrPct,
+    buffer,
+    detail,
+    executable: Number.isFinite(invalidation) && invalidation > 0 && riskDistance <= maxReasonableRisk,
+    invalidation,
+    riskDistance,
+    structuralLevel,
+    wide
+  };
+}
+
 function buildGeneratedSignal(setup, price, vwap) {
   const setupAction = setup.direction === "BUY SETUP" ? "BUY" : setup.direction === "SELL SETUP" ? "SELL" : "WAIT";
   const atrPct = averageTrueRangePercent(state.priceSeries.slice(-24)) || 0.6;
@@ -1045,15 +1159,17 @@ function buildGeneratedSignal(setup, price, vwap) {
   const plannedEntry = plannedDashboardEntry(setupAction, mark, vwap, buyGrid, sellGrid);
   const action = setupAction === "WAIT" || !Number.isFinite(plannedEntry) ? "WAIT" : setupAction;
   const entry = action === "WAIT" ? null : plannedEntry;
-  const invalidation = action === "BUY"
-    ? entry * (1 - riskPct / 100)
-    : action === "SELL"
-      ? entry * (1 + riskPct / 100)
-      : Number.isFinite(vwap) ? vwap : mark;
+  const invalidationPlan = dynamicInvalidationPlan(action, entry, mark);
+  const actionBlocked = action !== "WAIT" && !invalidationPlan.executable;
+  const executableAction = actionBlocked ? "WAIT" : action;
+  const executableEntry = actionBlocked ? null : entry;
+  const invalidation = executableAction === "WAIT"
+    ? Number.isFinite(vwap) ? vwap : mark
+    : invalidationPlan.invalidation;
   const target = action === "BUY"
-    ? Math.max(entry * (1 + riskPct / 100), Number.isFinite(vwap) ? vwap : entry)
+    ? Math.max(entry + invalidationPlan.riskDistance * 1.35, Number.isFinite(vwap) ? vwap : entry)
     : action === "SELL"
-      ? Math.min(entry * (1 - riskPct / 100), Number.isFinite(vwap) ? vwap : entry)
+      ? Math.min(entry - invalidationPlan.riskDistance * 1.35, Number.isFinite(vwap) ? vwap : entry)
       : Number.isFinite(vwap) ? vwap : mark;
   const bestChecks = setup.checks
     .filter((check) => check.live || Math.abs(check.score) > 0)
@@ -1061,33 +1177,39 @@ function buildGeneratedSignal(setup, price, vwap) {
     .map((check) => `${check.name}: ${check.detail}`);
   return {
     asset: setup.asset,
-    action,
-    confidence: setup.confidence,
+    action: executableAction,
+    confidence: actionBlocked ? Math.min(setup.confidence, 25) : setup.confidence,
     score: setup.score,
     liveChecks: setup.liveChecks,
     checksTotal: setup.checks.length,
-    entry,
+    entry: executableEntry,
     invalidation,
-    target,
+    target: actionBlocked ? Number.isFinite(vwap) ? vwap : mark : target,
     buyGrid,
     sellGrid,
     buyGridText: formatGridLevels(buyGrid),
     sellGridText: formatGridLevels(sellGrid),
-    entryPlan: action === "WAIT"
+    entryPlan: executableAction === "WAIT"
       ? setupAction === "WAIT"
         ? "No entry until the framework score clears the setup threshold."
-        : `No ${setupAction} entry at mark. Wait for a pullback ${setupAction === "BUY" ? "below" : "above"} ${formatUsd(mark)}.`
-      : `${action} pullback entry ${formatUsd(entry)}; first target ${formatUsd(target)}.`,
-    invalidationPlan: action === "WAIT"
-      ? "VWAP and market structure are the wait-state guard rails."
-      : `Invalidate on acceptance beyond ${formatUsd(invalidation)}.`,
-    buyGridPlan: gridSidePlan("buy", action, setup.asset, buyGrid, setup.scaleAction),
-    sellGridPlan: gridSidePlan("sell", action, setup.asset, sellGrid, setup.scaleAction),
+        : actionBlocked
+          ? `No trade: dynamic stop is too wide for ${setup.asset}. Wait for a closer structural sweep or lower ATR.`
+          : `No ${setupAction} entry at mark. Wait for a pullback ${setupAction === "BUY" ? "below" : "above"} ${formatUsd(mark)}.`
+      : `${executableAction} pullback entry ${formatUsd(executableEntry)}; first target ${formatUsd(target)}.`,
+    invalidationPlan: executableAction === "WAIT"
+      ? actionBlocked
+        ? `${invalidationPlan.detail} Stop became unreasonable, so Monatise stays in NO TRADE.`
+        : "VWAP and market structure are the wait-state guard rails."
+      : invalidationInstruction(executableAction, invalidation, invalidationPlan),
+    buyGridPlan: gridSidePlan("buy", executableAction, setup.asset, buyGrid, setup.scaleAction),
+    sellGridPlan: gridSidePlan("sell", executableAction, setup.asset, sellGrid, setup.scaleAction),
     hedgeDirection: setup.hedgeDirection,
     hedgePlan: `${setup.gridPlan} ${setup.hedgePlan}`,
     gridHedge: `Buys ${formatGridLevels(buyGrid)}; sells ${formatGridLevels(sellGrid)}; ${setup.hedgeDirection}`,
     gridHedgePlan: `${setup.gridPlan} ${setup.hedgePlan}`,
-    thesis: `${setup.direction} · confidence ${setup.confidence}% · score ${setup.score >= 0 ? "+" : ""}${setup.score}`,
+    thesis: actionBlocked
+      ? `${setup.direction} blocked · dynamic stop too wide · score ${setup.score >= 0 ? "+" : ""}${setup.score}`
+      : `${setup.direction} · confidence ${setup.confidence}% · score ${setup.score >= 0 ? "+" : ""}${setup.score}`,
     evidence: bestChecks.length ? bestChecks.join(" · ") : "Framework checks are still warming up.",
     time: new Date().toLocaleTimeString()
   };
