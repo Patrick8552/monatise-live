@@ -2951,6 +2951,7 @@ function renderAuth(me) {
   selectedAsset = me.selectedSymbol || selectedAsset;
   applyTradingRules(me.tradingRules || tradingRules);
   const loggedIn = Boolean(me.authenticated);
+  document.body.classList.toggle("auth-required", !loggedIn);
   els.authStatus.textContent = loggedIn ? me.username : "No profile";
   els.subscriptionStatus.textContent = me.subscription
     ? "Private access"

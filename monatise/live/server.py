@@ -58,6 +58,18 @@ COINGLASS_PROXY_PATHS = {
     "/api/futures/price/history",
     "/api/index/fear-greed-history",
 }
+PRIVATE_GET_PATHS = {
+    "/api/markets",
+    "/api/assets",
+    "/api/candles",
+    "/api/analysis/fibonacci",
+    "/api/context/radar",
+    "/api/coinglass/context",
+}
+
+
+def requires_site_auth(path: str) -> bool:
+    return path in PRIVATE_GET_PATHS or path.startswith("/api/coinglass/proxy/")
 
 
 def _is_email(value: str) -> bool:
@@ -517,6 +529,10 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/operator":
             self._json(operator_status_payload(self.config))
             return
+        if requires_site_auth(parsed.path):
+            user = self._require_user()
+            if user is None:
+                return
         if parsed.path == "/api/markets":
             try:
                 self._json(self.market_feed.snapshot())
