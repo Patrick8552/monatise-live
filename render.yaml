@@ -8,6 +8,10 @@ services:
     dockerContext: .
     healthCheckPath: /api/health
     autoDeployTrigger: commit
+    disk:
+      name: monatise-auth-data
+      mountPath: /data
+      sizeGB: 1
     envVars:
       - key: MONATISE_MODE
         value: live
@@ -17,6 +21,8 @@ services:
         value: 0.0.0.0
       - key: MONATISE_PUBLIC_URL
         value: https://monatise-live.onrender.com
+      - key: MONATISE_AUTH_DB
+        value: /data/monatise-users.db
       - key: MONATISE_ENCRYPTION_KEY
         sync: false
       - key: MONATISE_SOLANA_RPC_URL
