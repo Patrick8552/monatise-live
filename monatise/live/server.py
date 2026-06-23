@@ -750,8 +750,19 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/me":
             user = self._current_user()
             if user is None:
-                self._json({"authenticated": False})
+                hint = self.store.login_hint_for_ip(self._client_ip())
+                self._json(
+                    {
+                        "authenticated": False,
+                        "rememberedLogin": {
+                            "username": hint.username if hint else "",
+                            "lastLoginAt": hint.last_login_at if hint else 0,
+                            "lastSeenAt": hint.last_seen_at if hint else 0,
+                        },
+                    }
+                )
                 return
+            self.store.touch_seen(user.id, user.username, self._client_ip())
             settings = self.store.settings_for_user(user.id)
             self._json(
                 {
@@ -856,6 +867,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             payload = self._read_json()
             try:
                 user = self.store.create_user(str(payload.get("username", "")), str(payload.get("password", "")))
+                self.store.record_login(user.id, user.username, self._client_ip())
                 self._set_session_cookie(self.store.create_session(user.id))
                 settings = self.store.settings_for_user(user.id)
                 self._json(
@@ -880,6 +892,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             if user is None:
                 self._error(401, "invalid username or password")
                 return
+            self.store.record_login(user.id, user.username, self._client_ip())
             self._set_session_cookie(self.store.create_session(user.id))
             settings = self.store.settings_for_user(user.id)
             self._json(
@@ -1167,8 +1180,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             "/api/tradingview/webhook": (120, 60),
         }
         limit, window = limits.get(path, (60, 60))
-        forwarded = self.headers.get("X-Forwarded-For", "")
-        client = forwarded.split(",", 1)[0].strip() or self.client_address[0]
+        client = self._client_ip()
         key = f"{client}:{path}"
         now = time.time()
         with self.rate_lock:
@@ -1179,6 +1191,10 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             attempts.append(now)
             self.rate_limits[key] = attempts
         return False
+
+    def _client_ip(self) -> str:
+        forwarded = self.headers.get("X-Forwarded-For", "")
+        return forwarded.split(",", 1)[0].strip() or self.client_address[0]
 
 
 def main() -> int:

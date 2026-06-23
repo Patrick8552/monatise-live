@@ -546,12 +546,16 @@ function loadRememberedLogin() {
   }
 }
 
-function applyRememberedLogin() {
+function applyRememberedLogin(serverRemembered = {}) {
   const remembered = loadRememberedLogin();
-  if (remembered.username && !els.usernameInput.value.trim()) {
-    els.usernameInput.value = remembered.username;
+  const username = remembered.username || serverRemembered.username || "";
+  if (username && !els.usernameInput.value.trim()) {
+    els.usernameInput.value = username;
   }
-  els.rememberLoginInput.checked = Boolean(remembered.username);
+  els.rememberLoginInput.checked = Boolean(remembered.username || serverRemembered.username);
+  if (!remembered.username && serverRemembered.username && els.credentialStatus) {
+    els.credentialStatus.textContent = "Profile remembered for this network. Enter your password to continue.";
+  }
 }
 
 function updateRememberedLogin(username) {
@@ -2961,6 +2965,7 @@ function renderAuth(me) {
       ? "Private sync saved for this signal profile."
       : "Private sync is optional. Save rules to keep this profile useful."
     : "Request access with an email to save preferences and receive reset codes.";
+  if (!loggedIn) applyRememberedLogin(me.rememberedLogin || {});
   els.logoutButton.disabled = !loggedIn;
   els.saveCredentialsButton.disabled = !loggedIn;
   els.backendStartButton.disabled = !loggedIn || !me.credentialsConfigured;

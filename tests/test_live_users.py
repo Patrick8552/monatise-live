@@ -35,6 +35,46 @@ def test_user_store_authenticates_and_loads_session_user() -> None:
         _restore_key(old_key)
 
 
+def test_user_store_remembers_last_profile_for_ip_without_password() -> None:
+    old_key = _with_key()
+    try:
+        with tempfile.NamedTemporaryFile() as db:
+            store = UserStore(db.name)
+            user = store.create_user("remember@example.com", "password123")
+
+            store.record_login(user.id, user.username, "203.0.113.10")
+            hint = store.login_hint_for_ip("203.0.113.10")
+
+            assert hint is not None
+            assert hint.username == "remember@example.com"
+            assert hint.last_login_at > 0
+            assert hint.last_seen_at > 0
+            assert store.login_hint_for_ip("203.0.113.11") is None
+    finally:
+        _restore_key(old_key)
+
+
+def test_user_store_updates_last_seen_for_login_hint() -> None:
+    old_key = _with_key()
+    try:
+        with tempfile.NamedTemporaryFile() as db:
+            store = UserStore(db.name)
+            user = store.create_user("seen@example.com", "password123")
+
+            store.record_login(user.id, user.username, "203.0.113.12")
+            original = store.login_hint_for_ip("203.0.113.12")
+            store.touch_seen(user.id, user.username, "203.0.113.12")
+            updated = store.login_hint_for_ip("203.0.113.12")
+
+            assert original is not None
+            assert updated is not None
+            assert updated.username == "seen@example.com"
+            assert updated.last_seen_at >= original.last_seen_at
+            assert updated.last_login_at == original.last_login_at
+    finally:
+        _restore_key(old_key)
+
+
 def test_user_store_resets_password_with_email_code() -> None:
     old_key = _with_key()
     try:

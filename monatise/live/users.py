@@ -33,6 +33,13 @@ class UserCredentials:
 
 
 @dataclass(frozen=True)
+class LoginHint:
+    username: str
+    last_login_at: float
+    last_seen_at: float
+
+
+@dataclass(frozen=True)
 class PasswordResetCode:
     user: User
     code: str
@@ -119,6 +126,60 @@ class UserStore:
         if not hmac.compare_digest(expected, row["password_hash"]):
             return None
         return User(id=int(row["id"]), username=str(row["username"]))
+
+    def record_login(self, user_id: int, username: str, ip_address: str) -> None:
+        ip_hash = self._hash_ip(ip_address)
+        if not ip_hash:
+            return
+        now = time.time()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                insert into login_hints(ip_hash, user_id, username, last_login_at, last_seen_at)
+                values (?, ?, ?, ?, ?)
+                on conflict(ip_hash) do update set
+                  user_id = excluded.user_id,
+                  username = excluded.username,
+                  last_login_at = excluded.last_login_at,
+                  last_seen_at = excluded.last_seen_at
+                """,
+                (ip_hash, user_id, username.strip().lower(), now, now),
+            )
+
+    def touch_seen(self, user_id: int, username: str, ip_address: str) -> None:
+        ip_hash = self._hash_ip(ip_address)
+        if not ip_hash:
+            return
+        now = time.time()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                insert into login_hints(ip_hash, user_id, username, last_login_at, last_seen_at)
+                values (?, ?, ?, ?, ?)
+                on conflict(ip_hash) do update set
+                  user_id = excluded.user_id,
+                  username = excluded.username,
+                  last_seen_at = excluded.last_seen_at
+                """,
+                (ip_hash, user_id, username.strip().lower(), now, now),
+            )
+
+    def login_hint_for_ip(self, ip_address: str) -> LoginHint | None:
+        ip_hash = self._hash_ip(ip_address)
+        if not ip_hash:
+            return None
+        with self._connect() as conn:
+            row = conn.execute(
+                "select username, last_login_at, last_seen_at from login_hints where ip_hash = ?",
+                (ip_hash,),
+            ).fetchone()
+        if row is None:
+            return None
+        return LoginHint(
+            username=str(row["username"]),
+            last_login_at=float(row["last_login_at"] or 0),
+            last_seen_at=float(row["last_seen_at"] or 0),
+        )
 
     def create_password_reset_code(self, username: str) -> PasswordResetCode | None:
         username = username.strip().lower()
@@ -457,6 +518,13 @@ class UserStore:
                   max_daily_loss_pct real not null default 0.05,
                   updated_at real not null
                 );
+                create table if not exists login_hints(
+                  ip_hash text primary key,
+                  user_id integer not null references users(id) on delete cascade,
+                  username text not null,
+                  last_login_at real not null,
+                  last_seen_at real not null
+                );
                 """
             )
             existing = {
@@ -486,3 +554,12 @@ class UserStore:
             raise ValueError("username must be at least 3 characters")
         if len(password) < 8:
             raise ValueError("password must be at least 8 characters")
+
+    @staticmethod
+    def _hash_ip(ip_address: str) -> str:
+        normalized = ip_address.strip()
+        if not normalized:
+            return ""
+        pepper = secret_value("MONATISE_LOGIN_HINT_PEPPER", "") or secret_value("MONATISE_ENCRYPTION_KEY", "")
+        pepper = pepper or "monatise-login-hint-development-pepper"
+        return hashlib.sha256(f"{pepper}:{normalized}".encode("utf-8")).hexdigest()
