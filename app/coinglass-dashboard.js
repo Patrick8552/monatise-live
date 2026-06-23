@@ -28,8 +28,8 @@ const ASSET_DEFINITIONS = [
   pair: `${coin}USDT`,
   tv: `BINANCE:${coin}USDT`
 })).concat([
-  { coin: "GOLD", hyper: "GOLD", pair: "XAUUSD", search: "GOLD XAU XAUUSD", tv: "OANDA:XAUUSD" },
-  { coin: "XAU", hyper: "GOLD", pair: "XAUUSD", search: "GOLD XAU XAUUSD", tv: "OANDA:XAUUSD" },
+  { coin: "GOLD", hyper: "GOLD", hyperAliases: ["GOLD", "xyz:GOLD"], pair: "XAUUSD", search: "GOLD XAU XAUUSD", tv: "OANDA:XAUUSD" },
+  { coin: "XAU", hyper: "GOLD", hyperAliases: ["GOLD", "xyz:GOLD"], pair: "XAUUSD", search: "GOLD XAU XAUUSD", tv: "OANDA:XAUUSD" },
   { coin: "XAG", hyper: "", pair: "XAGUSD", search: "SILVER XAG XAGUSD", tv: "OANDA:XAGUSD" },
   { coin: "CL", hyper: "CL", pair: "USOIL", search: "WTI OIL CL USOIL", tv: "NYMEX:CL1!" },
   { coin: "BRENTOIL", hyper: "BRENTOIL", pair: "UKOIL", search: "BRENT OIL UKOIL", tv: "TVC:UKOIL" },
@@ -1626,6 +1626,10 @@ function selectedPair() {
   return selectedAsset().pair;
 }
 
+function usesServerMarketCandles(asset = selectedAsset()) {
+  return ["GOLD", "XAU", "CL", "BRENTOIL"].includes(asset.coin);
+}
+
 function syncAssetLabels() {
   const asset = selectedAsset();
   els.dashboardTitle.textContent = `${asset.coin} Market Dashboard`;
@@ -1668,6 +1672,14 @@ function chooseAsset(coin) {
   if (els.assetSearchInput) els.assetSearchInput.value = "";
   els.assetSearchResults?.classList.remove("open");
   resetMarketContext();
+  state.lastPrice = null;
+  state.priceSeries = [];
+  els.assetPrice.textContent = "$--";
+  els.headerAssetPrice.textContent = "$--";
+  els.priceChange.textContent = "Loading";
+  els.priceChange.className = "";
+  els.headerPriceChange.textContent = "Loading";
+  els.headerPriceChange.className = "";
   setLockedSignal(null);
   state.realtime.lastSetup = null;
   state.realtime.lastEntrySignal = null;
@@ -1691,8 +1703,12 @@ function updateCoinGlassSourceStatus(message = "") {
       ? `Render provides the CoinGlass connection${state.operator?.integrations?.coinglass?.exchange ? ` via ${state.operator.integrations.coinglass.exchange}` : ""}. Local key override is optional.`
       : "CoinGlass local key is saved for this browser.")
     : "CoinGlass is not connected. Add a local key only if the server integration is unavailable.";
-  els.coinGlassPriceRef.textContent = `${asset.pair} · CoinGlass futures price history`;
-  els.coinGlassRouteRef.textContent = `/api/futures/price/history · exchange ${exchange} · analysis ${ANALYSIS_INTERVAL} · view ${viewInterval}`;
+  els.coinGlassPriceRef.textContent = usesServerMarketCandles(asset)
+    ? `${asset.tv} · Monatise market candles`
+    : `${asset.pair} · CoinGlass futures price history`;
+  els.coinGlassRouteRef.textContent = usesServerMarketCandles(asset)
+    ? `/api/candles · symbol ${asset.coin} · view ${viewInterval}`
+    : `/api/futures/price/history · exchange ${exchange} · analysis ${ANALYSIS_INTERVAL} · view ${viewInterval}`;
   els.openIntegrationsButton.textContent = serverReady ? "CoinGlass Connected" : localKey ? "Update Local Key" : "Add Local Key";
 }
 
@@ -1733,6 +1749,32 @@ function resetMarketContext() {
 }
 
 async function getPriceForAsset(asset, limit = "96") {
+  if (usesServerMarketCandles(asset)) {
+    const interval = els.intervalSelect.value || DEFAULT_VIEW_INTERVAL;
+    const params = new URLSearchParams({
+      symbol: asset.coin,
+      interval,
+      limit
+    });
+    const payload = await timedFetch(
+      `${asset.coin} market candles`,
+      "Monatise market feed",
+      `/api/candles?${params}`,
+      {}
+    );
+    const rows = (Array.isArray(payload.candles) ? payload.candles : []).map((row) => ({
+      time: Number(row.time ?? row.timestamp),
+      open: Number(row.open ?? row.close),
+      close: Number(row.close),
+      high: Number(row.high),
+      low: Number(row.low),
+      volume: Number(row.volume ?? 0)
+    })).filter((row) => Number.isFinite(row.close) && Number.isFinite(row.high) && Number.isFinite(row.low));
+    if (!rows.length) throw new Error(`${asset.coin} market feed returned no candle rows`);
+    rows.source = payload.source || "Monatise market feed";
+    rows.interval = payload.interval || interval;
+    return rows;
+  }
   const exchange = els.exchangeSelect.value;
   const interval = ANALYSIS_INTERVAL;
   requireCoinGlass(`${asset.coin} price history`);
@@ -1765,7 +1807,9 @@ async function getPrice() {
   const exchange = els.exchangeSelect.value;
   const interval = ANALYSIS_INTERVAL;
   const rows = await getPriceForAsset(asset);
-  els.priceSource.textContent = `CoinGlass futures price history · ${asset.pair} · ${exchange} · analysis ${interval} · view ${els.intervalSelect.value || DEFAULT_VIEW_INTERVAL}`;
+  els.priceSource.textContent = usesServerMarketCandles(asset)
+    ? `${rows.source || "Monatise market feed"} · ${asset.tv} · ${rows.interval || els.intervalSelect.value || DEFAULT_VIEW_INTERVAL} TradingView-aligned candles`
+    : `CoinGlass futures price history · ${asset.pair} · ${exchange} · analysis ${interval} · view ${els.intervalSelect.value || DEFAULT_VIEW_INTERVAL}`;
   return rows;
 }
 
@@ -1952,6 +1996,7 @@ async function getNews() {
 
 async function getHyperliquidContext() {
   const asset = selectedAsset();
+  const hyperNames = [asset.hyper, ...(asset.hyperAliases || [])].filter(Boolean);
   const payload = await timedFetch(
     `${asset.coin} Hyperliquid`,
     "Hyperliquid public",
@@ -1964,9 +2009,9 @@ async function getHyperliquidContext() {
   );
   const universe = payload?.[0]?.universe || [];
   const contexts = payload?.[1] || [];
-  const index = universe.findIndex((item) => item.name === asset.hyper);
+  const index = universe.findIndex((item) => hyperNames.includes(item.name));
   if (index < 0 || !contexts[index]) {
-    throw new Error(`${asset.hyper} not listed on Hyperliquid`);
+    throw new Error(`${hyperNames.join(" / ") || asset.coin} not listed on Hyperliquid`);
   }
   const ctx = contexts[index];
   return {
