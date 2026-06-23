@@ -1137,6 +1137,9 @@ function strategyHealth(mark, orders, snapshot = null) {
   const gridFloor = prices.length ? Math.min(...prices) : Number.NaN;
   const gridCeiling = prices.length ? Math.max(...prices) : Number.NaN;
   const invalidation = Number(fibAnalysis?.invalidation);
+  const missingInvalidationLevels = orderList.filter(
+    (order) => !isValidInvalidation(String(order.side || "").toLowerCase().startsWith("s") ? "sell" : "buy", Number(order.price), Number(order.invalidation))
+  );
   const sessionGuard = (snapshot?.sessionGuard?.active ? snapshot.sessionGuard : activeSessionGuard(selectedAsset)) || {};
   const indicatorAction = String(contextRadar?.instruction?.action || "normal");
   const fibOk = Boolean(fibAnalysis && !fibAnalysis.error && fibAnalysis.symbol === selectedAsset);
@@ -1150,6 +1153,7 @@ function strategyHealth(mark, orders, snapshot = null) {
   const blocked =
     !markOk ||
     !orderOk ||
+    missingInvalidationLevels.length > 0 ||
     structureBreak ||
     sessionGuard.active ||
     /max daily loss|exceeds|below minimum|shock|guard/i.test(riskStatus) ||
@@ -1163,6 +1167,7 @@ function strategyHealth(mark, orders, snapshot = null) {
   if (indicatorAction === "widen") warnings.push("context radar says widen buffer");
   if (sessionGuard.active) warnings.push(sessionGuard.message);
   if (!orderOk) warnings.push("no signal levels are available yet");
+  if (missingInvalidationLevels.length) warnings.push("grid levels need valid side-aware invalidation");
   else if (!balancedLevels) warnings.push("one-sided setup; use target and stop discipline");
   return {
     balancedLevels,
@@ -1173,6 +1178,7 @@ function strategyHealth(mark, orders, snapshot = null) {
     invalidation: Number.isFinite(invalidation) ? invalidation : gridFloor,
     largestNotional: notionals.length ? Math.max(...notionals) : 0,
     markOk,
+    missingInvalidationCount: missingInvalidationLevels.length,
     orderCount: orderList.length,
     sellCount: sellOrders.length,
     status: blocked ? "WAIT" : warnings.length ? "REVIEW" : "ALIGNED",
@@ -1190,14 +1196,16 @@ function setupGridOrders(mark, snapshot = null) {
   const quoteSize = Number(snapshot?.tradingRules?.orderQuoteSize ?? tradingRules.orderQuoteSize ?? els.quoteInput?.value ?? 0);
   const notional = Number.isFinite(quoteSize) && quoteSize > 0 ? quoteSize : 100;
   const candidates = [];
-  const addLevel = (side, price, levelId) => {
+  const addLevel = (side, price, levelId, options = {}) => {
     const numericPrice = Number(price);
     if (!Number.isFinite(numericPrice) || numericPrice <= 0) return;
     const duplicate = candidates.some((level) => Math.abs(level.price - numericPrice) / numericPrice < 0.0006);
     if (duplicate) return;
+    const invalidation = setupLevelInvalidation(side, numericPrice, options);
     candidates.push({
       level_id: levelId,
-      metadata: { source: "live-analysis" },
+      invalidation,
+      metadata: { source: "live-analysis", invalidationSource: options.invalidationSource || setupInvalidationSource(side, numericPrice, invalidation) },
       order_id: `setup-${selectedAsset}-${side}-${candidates.length + 1}`,
       price: numericPrice,
       quantity: notional / numericPrice,
@@ -1214,13 +1222,44 @@ function setupGridOrders(mark, snapshot = null) {
   });
   const nearestGap = fvgAnalysis?.nearest_gap;
   if (nearestGap) {
-    addLevel(String(nearestGap.direction || "").toLowerCase() === "bearish" ? "sell" : "buy", nearestGap.midpoint, "fvg-mid");
+    const gapSide = String(nearestGap.direction || "").toLowerCase() === "bearish" ? "sell" : "buy";
+    addLevel(gapSide, nearestGap.midpoint, "fvg-mid", {
+      invalidation: gapSide === "sell" ? nearestGap.high : nearestGap.low,
+      invalidationSource: "fvg"
+    });
   }
   addLevel("buy", fibAnalysis.grid_floor, "grid-floor");
   addLevel("sell", fibAnalysis.grid_ceiling, "grid-ceiling");
   return candidates
     .sort((a, b) => Math.abs(a.price - mark) - Math.abs(b.price - mark))
     .slice(0, 8);
+}
+
+function setupLevelInvalidation(side, price, options = {}) {
+  const explicit = Number(options.invalidation);
+  if (isValidInvalidation(side, price, explicit)) return explicit;
+
+  const fibInvalidation = Number(fibAnalysis?.invalidation);
+  if (isValidInvalidation(side, price, fibInvalidation)) return fibInvalidation;
+
+  const fallback = side === "sell" ? Number(fibAnalysis?.grid_ceiling) : Number(fibAnalysis?.grid_floor);
+  if (isValidInvalidation(side, price, fallback)) return fallback;
+
+  return null;
+}
+
+function setupInvalidationSource(side, price, invalidation) {
+  if (!Number.isFinite(Number(invalidation))) return "missing";
+  if (Math.abs(Number(invalidation) - Number(fibAnalysis?.invalidation)) / Number(price) < 0.0006) return "fib";
+  return side === "sell" ? "grid-ceiling" : "grid-floor";
+}
+
+function isValidInvalidation(side, price, invalidation) {
+  const numericPrice = Number(price);
+  const numericInvalidation = Number(invalidation);
+  if (!Number.isFinite(numericPrice) || numericPrice <= 0 || !Number.isFinite(numericInvalidation) || numericInvalidation <= 0) return false;
+  if (side === "sell") return numericInvalidation > numericPrice;
+  return numericInvalidation < numericPrice;
 }
 
 function setupWaitDetail(health, signal, timing) {
@@ -1430,9 +1469,15 @@ function tradingViewGridOrders(mark, snapshot = null) {
       if (seen.has(rounded)) return null;
       seen.add(rounded);
       const side = String(level.side || "").toLowerCase().startsWith("s") ? "sell" : "buy";
+      const invalidation = isValidInvalidation(side, price, level.invalidation)
+        ? Number(level.invalidation)
+        : isValidInvalidation(side, price, setup.stop)
+          ? setup.stop
+          : null;
       return {
         level_id: String(level.label || `tv-${index + 1}`).toLowerCase().replace(/\s+/g, "-"),
-        metadata: { source: "tradingview" },
+        invalidation,
+        metadata: { source: "tradingview", invalidationSource: invalidation ? "tv-stop" : "missing" },
         order_id: `tv-${selectedAsset}-${side}-${index + 1}`,
         price,
         quantity: notional / price,
@@ -4511,7 +4556,7 @@ function renderOpenOrders(orders, options = {}) {
         .map(
           (order) => `<article class="order-row ${order.side} ${source}">
             <strong>${String(order.side).toUpperCase() === "BUY" ? "Support" : "Resistance"} ${money(order.price)}</strong>
-            <span>${order.metadata?.source === "tradingview" ? "TradingView level" : source === "setup" ? "draft grid" : `${Number(order.quantity || 0).toFixed(5)} ${order.symbol || selectedAsset}`}</span>
+            <span>${orderRowDetail(order, source)}</span>
           </article>`
         )
         .join("")
@@ -4525,6 +4570,18 @@ function renderOpenOrders(orders, options = {}) {
       }</p>`;
     }
   }
+}
+
+function orderRowDetail(order, source) {
+  const sourceLabel =
+    order.metadata?.source === "tradingview"
+      ? "TradingView level"
+      : source === "setup"
+        ? "draft grid"
+        : `${Number(order.quantity || 0).toFixed(5)} ${order.symbol || selectedAsset}`;
+  const invalidation = Number(order.invalidation);
+  if (!Number.isFinite(invalidation) || invalidation <= 0) return `${sourceLabel} · invalidation pending`;
+  return `${sourceLabel} · invalidates ${money(invalidation)}`;
 }
 
 async function refreshBackend() {
