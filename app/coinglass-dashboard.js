@@ -1128,19 +1128,28 @@ function dynamicInvalidationPlan(action, entry, mark) {
   const buffer = (activeMarket ? volatileBuffer : baseBuffer) + spreadAllowance;
   const riskDistance = Math.max(structuralDistance + buffer, Number.isFinite(atr) && atr > 0 ? atr * 0.65 : numericEntry * 0.0035);
   const maxReasonableRisk = numericEntry * (activeMarket || isCommodityAsset() ? 0.018 : 0.012);
+  const maxManeuverRisk = numericEntry * (activeMarket || isCommodityAsset() ? 0.028 : 0.02);
   const invalidation = action === "BUY" ? numericEntry - riskDistance : numericEntry + riskDistance;
   const wide = riskDistance > numericEntry * 0.006 || riskDistance > Math.max(atr || 0, numericEntry * 0.001) * 1.8;
+  const reducedSize = riskDistance > maxReasonableRisk && riskDistance <= maxManeuverRisk;
   const detail = [
     `Structural sweep ${Number.isFinite(structuralLevel) ? formatUsd(structuralLevel) : "unavailable"}`,
     `ATR buffer ${formatUsd(buffer)}`,
-    wide ? "Use small lot size, wider stop, same account risk." : "ATR-based buffer, not fixed points."
+    reducedSize
+      ? "Maneuver mode: use small lot size, wider stop, same account risk."
+      : wide
+        ? "Use small lot size, wider stop, same account risk."
+        : "ATR-based buffer, not fixed points."
   ].join(" · ");
   return {
     atrPct,
     buffer,
     detail,
-    executable: Number.isFinite(invalidation) && invalidation > 0 && riskDistance <= maxReasonableRisk,
+    executable: Number.isFinite(invalidation) && invalidation > 0 && riskDistance <= maxManeuverRisk,
     invalidation,
+    maxManeuverRisk,
+    maxReasonableRisk,
+    reducedSize,
     riskDistance,
     structuralLevel,
     wide
@@ -1178,7 +1187,11 @@ function buildGeneratedSignal(setup, price, vwap) {
   return {
     asset: setup.asset,
     action: executableAction,
-    confidence: actionBlocked ? Math.min(setup.confidence, 25) : setup.confidence,
+    confidence: actionBlocked
+      ? Math.min(setup.confidence, 25)
+      : invalidationPlan.reducedSize
+        ? Math.min(setup.confidence, 55)
+        : setup.confidence,
     score: setup.score,
     liveChecks: setup.liveChecks,
     checksTotal: setup.checks.length,
@@ -1195,7 +1208,9 @@ function buildGeneratedSignal(setup, price, vwap) {
         : actionBlocked
           ? `No trade: dynamic stop is too wide for ${setup.asset}. Use small lot size only if a later setup becomes tradable; otherwise wait for a closer structural sweep or lower ATR.`
           : `No ${setupAction} entry at mark. Wait for a pullback ${setupAction === "BUY" ? "below" : "above"} ${formatUsd(mark)}.`
-      : `${executableAction} pullback entry ${formatUsd(executableEntry)}; first target ${formatUsd(target)}.`,
+      : invalidationPlan.reducedSize
+        ? `${executableAction} maneuver entry ${formatUsd(executableEntry)}; use small lot size, keep the wider invalidation, and hold account risk constant. First target ${formatUsd(target)}.`
+        : `${executableAction} pullback entry ${formatUsd(executableEntry)}; first target ${formatUsd(target)}.`,
     invalidationPlan: executableAction === "WAIT"
       ? actionBlocked
         ? `${invalidationPlan.detail} Stop became unreasonable, so Monatise stays in NO TRADE. If the next valid setup still needs a wide stop, use small lot size.`
@@ -1209,6 +1224,8 @@ function buildGeneratedSignal(setup, price, vwap) {
     gridHedgePlan: `${setup.gridPlan} ${setup.hedgePlan}`,
     thesis: actionBlocked
       ? `${setup.direction} blocked · dynamic stop too wide · score ${setup.score >= 0 ? "+" : ""}${setup.score}`
+      : invalidationPlan.reducedSize
+        ? `${setup.direction} maneuver · small lot size · wider stop accepted · score ${setup.score >= 0 ? "+" : ""}${setup.score}`
       : `${setup.direction} · confidence ${setup.confidence}% · score ${setup.score >= 0 ? "+" : ""}${setup.score}`,
     evidence: bestChecks.length ? bestChecks.join(" · ") : "Framework checks are still warming up.",
     time: new Date().toLocaleTimeString()
