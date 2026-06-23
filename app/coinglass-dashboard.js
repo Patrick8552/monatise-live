@@ -1133,7 +1133,7 @@ function dynamicInvalidationPlan(action, entry, mark) {
   const detail = [
     `Structural sweep ${Number.isFinite(structuralLevel) ? formatUsd(structuralLevel) : "unavailable"}`,
     `ATR buffer ${formatUsd(buffer)}`,
-    wide ? "Use smaller size, wider stop, same account risk." : "ATR-based buffer, not fixed points."
+    wide ? "Use small lot size, wider stop, same account risk." : "ATR-based buffer, not fixed points."
   ].join(" · ");
   return {
     atrPct,
@@ -1193,12 +1193,12 @@ function buildGeneratedSignal(setup, price, vwap) {
       ? setupAction === "WAIT"
         ? "No entry until the framework score clears the setup threshold."
         : actionBlocked
-          ? `No trade: dynamic stop is too wide for ${setup.asset}. Wait for a closer structural sweep or lower ATR.`
+          ? `No trade: dynamic stop is too wide for ${setup.asset}. Use small lot size only if a later setup becomes tradable; otherwise wait for a closer structural sweep or lower ATR.`
           : `No ${setupAction} entry at mark. Wait for a pullback ${setupAction === "BUY" ? "below" : "above"} ${formatUsd(mark)}.`
       : `${executableAction} pullback entry ${formatUsd(executableEntry)}; first target ${formatUsd(target)}.`,
     invalidationPlan: executableAction === "WAIT"
       ? actionBlocked
-        ? `${invalidationPlan.detail} Stop became unreasonable, so Monatise stays in NO TRADE.`
+        ? `${invalidationPlan.detail} Stop became unreasonable, so Monatise stays in NO TRADE. If the next valid setup still needs a wide stop, use small lot size.`
         : "VWAP and market structure are the wait-state guard rails."
       : invalidationInstruction(executableAction, invalidation, invalidationPlan),
     buyGridPlan: gridSidePlan("buy", executableAction, setup.asset, buyGrid, setup.scaleAction),
