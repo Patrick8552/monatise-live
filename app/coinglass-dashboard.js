@@ -148,10 +148,10 @@ const els = {
   pricePanelTitle: document.querySelector("#pricePanelTitle"),
   priceCanvas: document.querySelector("#priceCanvas"),
   structureSummary: document.querySelector("#structureSummary"),
+  indicatorStack: document.querySelector("#indicatorStack"),
   tradingViewFrame: document.querySelector("#tradingViewFrame"),
   tradingViewLink: document.querySelector("#tradingViewLink"),
   tradingViewSource: document.querySelector("#tradingViewSource"),
-  tradingViewSignalPanel: document.querySelector("#tradingViewSignalPanel"),
   liqCanvas: document.querySelector("#liqCanvas"),
   fundingList: document.querySelector("#fundingList"),
   oiList: document.querySelector("#oiList"),
@@ -225,11 +225,6 @@ const state = {
     apiKey: localStorage.getItem(OPENAI_KEY_STORAGE) || "",
     model: localStorage.getItem(OPENAI_MODEL_STORAGE) || "gpt-5.5"
   },
-  tradingView: {
-    configured: false,
-    latestSignal: null,
-    error: ""
-  },
   monitor: {
     cursor: 0,
     lastRun: 0,
@@ -254,7 +249,10 @@ const state = {
     vwapScore: 0,
     vwapSignal: null,
     scaleAction: "wait",
-    pattern: null
+    pattern: null,
+    indicatorScore: 0,
+    indicatorSummary: "",
+    indicatorRows: []
   }
 };
 
@@ -1686,9 +1684,6 @@ function chooseAsset(coin) {
   els.priceChange.className = "";
   els.headerPriceChange.textContent = "Loading";
   els.headerPriceChange.className = "";
-  state.tradingView.latestSignal = null;
-  state.tradingView.error = "";
-  renderTradingViewSignal();
   setLockedSignal(null);
   state.realtime.lastSetup = null;
   state.realtime.lastEntrySignal = null;
@@ -1734,95 +1729,6 @@ function syncTradingView(asset = selectedAsset()) {
   }
 }
 
-function renderTradingViewSignal() {
-  if (!els.tradingViewSignalPanel) return;
-  const signal = state.tradingView.latestSignal;
-  if (state.tradingView.error) {
-    els.tradingViewSignalPanel.innerHTML = `
-      <div class="strategy-status wait">
-        <strong>TV WAIT</strong>
-        <span>TradingView indicator bridge</span>
-      </div>
-      <p>${escapeHtml(state.tradingView.error)}</p>
-    `;
-    return;
-  }
-  if (!signal) {
-    els.tradingViewSignalPanel.innerHTML = `
-      <div class="strategy-status wait">
-        <strong>TV WAIT</strong>
-        <span>TradingView indicator bridge</span>
-      </div>
-      <p>No TradingView alert received for ${selectedCoin()} yet.</p>
-    `;
-    return;
-  }
-  const classification = signal.classification || {};
-  const action = String(signal.action || "WAIT").toUpperCase();
-  const stateClass = action === "BUY" ? "buy" : action === "SELL" ? "sell" : "wait";
-  const age = Number.isFinite(Number(classification.ageSeconds))
-    ? `${Math.round(Number(classification.ageSeconds) / 60)}m old`
-    : "live alert";
-  const setup = signal.setup || {};
-  const levels = [
-    setup.entry ? `entry ${formatUsd(Number(setup.entry))}` : "",
-    setup.stop ? `invalidation ${formatUsd(Number(setup.stop))}` : "",
-    setup.targetOne ? `target ${formatUsd(Number(setup.targetOne))}` : ""
-  ].filter(Boolean).join(" · ");
-  els.tradingViewSignalPanel.innerHTML = `
-    <div class="strategy-status ${stateClass}">
-      <strong>TV ${escapeHtml(action)}</strong>
-      <span>${escapeHtml(classification.state || "received")} · ${escapeHtml(signal.indicator || "TradingView")}</span>
-    </div>
-    <div class="tradingview-signal-meta">
-      <span>${escapeHtml(signal.symbol || selectedCoin())}</span>
-      <span>${escapeHtml(signal.timeframe || els.intervalSelect.value || "live")}</span>
-      <span>${escapeHtml(age)}</span>
-      <span>confidence ${Number(signal.confidence || 0).toFixed(0)}%</span>
-    </div>
-    <p>${escapeHtml(setup.thesis || signal.message || levels || "TradingView alert received. Monatise is checking Hyperliquid market context before building the grid.")}</p>
-  `;
-}
-
-async function loadTradingViewSignals() {
-  if (!els.tradingViewSignalPanel) return null;
-  try {
-    const response = await fetch(`/api/tradingview/signals?symbol=${encodeURIComponent(selectedCoin())}`, { cache: "no-store" });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload.error || "TradingView bridge unavailable");
-    state.tradingView.configured = Boolean(payload.configured);
-    state.tradingView.latestSignal = payload.alerts?.[0] || null;
-    state.tradingView.error = payload.configured
-      ? ""
-      : "TradingView webhook token is not configured yet.";
-  } catch (error) {
-    state.tradingView.latestSignal = null;
-    state.tradingView.error = error.message || "TradingView bridge unavailable.";
-  }
-  renderTradingViewSignal();
-  return state.tradingView.latestSignal;
-}
-
-function tradingViewFrameworkContext() {
-  const signal = state.tradingView.latestSignal;
-  if (!signal) return { live: false, score: 0, detail: "waiting for TradingView alert" };
-  const classification = signal.classification || {};
-  const action = String(signal.action || "WAIT").toUpperCase();
-  const fresh = Boolean(classification.fresh);
-  const confidence = Number(signal.confidence || classification.confidence || 0);
-  if (!fresh) return { live: false, score: 0, detail: `${action} alert stale` };
-  const score = action === "BUY"
-    ? confidence >= 70 ? 2 : 1
-    : action === "SELL"
-      ? confidence >= 70 ? -2 : -1
-      : 0;
-  return {
-    live: action === "BUY" || action === "SELL",
-    score,
-    detail: `${signal.indicator || "TradingView"} ${action} ${confidence.toFixed(0)}% · ${classification.state || "fresh"}`
-  };
-}
-
 function resetMarketContext() {
   state.market = {
     priceChange: 0,
@@ -1842,7 +1748,10 @@ function resetMarketContext() {
     vwapScore: 0,
     vwapSignal: null,
     scaleAction: "wait",
-    pattern: null
+    pattern: null,
+    indicatorScore: 0,
+    indicatorSummary: "",
+    indicatorRows: []
   };
 }
 
@@ -2369,6 +2278,8 @@ function renderPrice(series) {
   const research = studyHistoricalPattern(series);
   renderResearch(research);
   const structure = analyzeMarketStructure(series, research);
+  const indicatorStack = analyzeIndicatorStack(series, research, structure);
+  renderIndicatorStack(indicatorStack);
   renderStructureSummary(structure);
   drawStructureChart(els.priceCanvas, series, structure, research);
 }
@@ -2458,7 +2369,9 @@ function renderResearch(research) {
   state.market.pattern = research.pattern;
   els.vwapMetric.textContent = `${research.vwapSignal} ${formatPercent(research.vwapDistance, 2)}`;
   els.vwapMetric.className = research.vwapScore > 0 ? "positive" : research.vwapScore < 0 ? "negative" : "";
-  els.researchSource.textContent = `CoinGlass history study · ${asset.coin} · ${ANALYSIS_INTERVAL} analysis candles`;
+  els.researchSource.textContent = usesServerMarketCandles(asset)
+    ? `Hyperliquid/Monatise indicator study · ${asset.coin} · ${els.intervalSelect.value || DEFAULT_VIEW_INTERVAL}`
+    : `CoinGlass history study · ${asset.coin} · ${ANALYSIS_INTERVAL} analysis candles`;
   els.researchPattern.textContent = research.pattern;
   els.historySignal.textContent = research.signal;
   els.historyStats.textContent = research.stats;
@@ -2516,6 +2429,82 @@ function averageTrueRangePercent(rows) {
   return average(ranges);
 }
 
+function clampScore(value, min = -3, max = 3) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 0;
+  return Math.max(min, Math.min(max, number));
+}
+
+function lastEma(values, period) {
+  const filtered = values.filter(Number.isFinite);
+  if (!filtered.length) return 0;
+  const multiplier = 2 / (period + 1);
+  return filtered.reduce((ema, value, index) => index === 0 ? value : (value - ema) * multiplier + ema, filtered[0]);
+}
+
+function nearestEqualLevel(levels, price, tolerancePct = 0.08) {
+  if (!Number.isFinite(price)) return null;
+  return levels
+    .filter((level) => Number.isFinite(level.price))
+    .map((level) => ({ ...level, distancePct: Math.abs(((price - level.price) / price) * 100) }))
+    .filter((level) => level.distancePct <= tolerancePct)
+    .sort((a, b) => a.distancePct - b.distancePct)[0] || null;
+}
+
+function candleWickProfile(row) {
+  if (!row) return { upperPct: 0, lowerPct: 0, bodyPct: 0 };
+  const range = Math.max(row.high - row.low, Math.abs(row.close) * 0.0001);
+  const upper = row.high - Math.max(row.open, row.close);
+  const lower = Math.min(row.open, row.close) - row.low;
+  const body = Math.abs(row.close - row.open);
+  return {
+    upperPct: (upper / range) * 100,
+    lowerPct: (lower / range) * 100,
+    bodyPct: (body / range) * 100
+  };
+}
+
+function volumeProfilePoc(rows, bins = 24) {
+  const pricedRows = rows.filter((row) => Number.isFinite(row.high) && Number.isFinite(row.low) && Number.isFinite(row.close));
+  if (!pricedRows.length) return null;
+  const high = Math.max(...pricedRows.map((row) => row.high));
+  const low = Math.min(...pricedRows.map((row) => row.low));
+  const range = Math.max(high - low, Math.abs(high) * 0.0001);
+  const buckets = Array.from({ length: bins }, (_, index) => ({
+    low: low + (range / bins) * index,
+    high: low + (range / bins) * (index + 1),
+    volume: 0
+  }));
+  pricedRows.forEach((row) => {
+    const typical = average([row.high, row.low, row.close].filter(Number.isFinite));
+    const index = Math.max(0, Math.min(bins - 1, Math.floor(((typical - low) / range) * bins)));
+    buckets[index].volume += Number.isFinite(row.volume) && row.volume > 0 ? row.volume : 1;
+  });
+  const poc = buckets.sort((a, b) => b.volume - a.volume)[0];
+  return {
+    price: average([poc.low, poc.high]),
+    high,
+    low
+  };
+}
+
+function aggregateCandles(rows, size = 4) {
+  const output = [];
+  for (let i = 0; i < rows.length; i += size) {
+    const chunk = rows.slice(i, i + size);
+    if (chunk.length < size) continue;
+    output.push({
+      time: chunk[0].time,
+      open: chunk[0].open,
+      close: chunk.at(-1).close,
+      high: Math.max(...chunk.map((row) => row.high)),
+      low: Math.min(...chunk.map((row) => row.low)),
+      volume: chunk.reduce((sum, row) => sum + (Number(row.volume) || 0), 0)
+    });
+  }
+  return output;
+}
+
 function analyzeMarketStructure(series, research) {
   const rows = series.slice(-80);
   const swings = [];
@@ -2570,6 +2559,154 @@ function analyzeMarketStructure(series, research) {
     marker,
     signal
   };
+}
+
+function analyzeIndicatorStack(series, research, structure) {
+  const rows = series.slice(-96);
+  const closes = rows.map((row) => row.close).filter(Number.isFinite);
+  const last = rows.at(-1);
+  if (!last || closes.length < 20) {
+    return {
+      score: 0,
+      summary: "waiting for enough GOLD candles",
+      rows: [{ name: "Indicator stack", signal: "WAIT", score: 0, detail: "Need at least 20 candles before building the native stack." }]
+    };
+  }
+
+  const recent = rows.slice(-24);
+  const emaFast = lastEma(closes.slice(-48), 21);
+  const emaSlow = lastEma(closes.slice(-80), 50);
+  const recentHigh = Math.max(...recent.map((row) => row.high));
+  const recentLow = Math.min(...recent.map((row) => row.low));
+  const range = Math.max(recentHigh - recentLow, Math.abs(last.close) * 0.0001);
+  const wick = candleWickProfile(last);
+  const highLevels = structure.swings.filter((swing) => swing.type === "high");
+  const lowLevels = structure.swings.filter((swing) => swing.type === "low");
+  const equalHigh = nearestEqualLevel(highLevels, last.close);
+  const equalLow = nearestEqualLevel(lowLevels, last.close);
+  const latestSwingHigh = highLevels.at(-1);
+  const latestSwingLow = lowLevels.at(-1);
+  const fib618 = recentHigh - range * 0.618;
+  const fib382 = recentHigh - range * 0.382;
+  const fibBias = last.close <= fib618 ? 1 : last.close >= fib382 ? -1 : 0;
+  const vwapScore = clampScore(research.vwapScore || 0, -1, 1);
+  const poc = volumeProfilePoc(rows);
+  const pocDistance = poc ? ((last.close - poc.price) / poc.price) * 100 : 0;
+  const htfRows = aggregateCandles(rows, 4);
+  const htfHigh = htfRows.length ? Math.max(...htfRows.slice(-12).map((row) => row.high)) : recentHigh;
+  const htfLow = htfRows.length ? Math.min(...htfRows.slice(-12).map((row) => row.low)) : recentLow;
+  const htfScore = last.close > htfHigh ? 1 : last.close < htfLow ? -1 : 0;
+  const trendScore = emaFast > emaSlow && last.close > emaFast ? 1 : emaFast < emaSlow && last.close < emaFast ? -1 : 0;
+  const historicalScore = clampScore(research.score, -1, 1);
+  const swingScore = latestSwingHigh && last.close > latestSwingHigh.price ? 1 : latestSwingLow && last.close < latestSwingLow.price ? -1 : 0;
+  const wickScore = wick.lowerPct >= 45 && last.close > last.open ? 1 : wick.upperPct >= 45 && last.close < last.open ? -1 : 0;
+  const equalScore = equalLow && !equalHigh ? 1 : equalHigh && !equalLow ? -1 : 0;
+  const grabScore = latestSwingLow && last.low < latestSwingLow.price && last.close > latestSwingLow.price
+    ? 1
+    : latestSwingHigh && last.high > latestSwingHigh.price && last.close < latestSwingHigh.price
+      ? -1
+      : 0;
+  const pivotScore = structure.marker?.side === "bullish" ? 1 : structure.marker?.side === "bearish" ? -1 : trendScore;
+  const volumeScore = poc ? (last.close > poc.price && Math.abs(pocDistance) <= 1.2 ? 1 : last.close < poc.price && Math.abs(pocDistance) <= 1.2 ? -1 : 0) : 0;
+  const luxProxyScore = clampScore(trendScore + vwapScore + grabScore + swingScore, -2, 2);
+  const stackRows = [
+    {
+      name: "LuxAlgo proxy",
+      signal: luxProxyScore > 0 ? "BUY CONFLUENCE" : luxProxyScore < 0 ? "SELL CONFLUENCE" : "WAIT",
+      score: luxProxyScore,
+      detail: "Proxy only: structure, VWAP, trend and liquidity confluence from native candles."
+    },
+    {
+      name: "Historical Colored",
+      signal: historicalScore > 0 ? "BULL HISTORY" : historicalScore < 0 ? "BEAR HISTORY" : "RANGE",
+      score: historicalScore,
+      detail: research.detail || research.stats || "Historical candle memory."
+    },
+    {
+      name: "Liquidity Swings",
+      signal: swingScore > 0 ? "HIGH BREAK" : swingScore < 0 ? "LOW BREAK" : "INSIDE SWINGS",
+      score: swingScore,
+      detail: `${structure.swings.length} recent swings · last high ${latestSwingHigh ? formatUsd(latestSwingHigh.price) : "--"} · last low ${latestSwingLow ? formatUsd(latestSwingLow.price) : "--"}`
+    },
+    {
+      name: "Wick Extremity",
+      signal: wickScore > 0 ? "BUY REJECTION" : wickScore < 0 ? "SELL REJECTION" : "NO EXTREME",
+      score: wickScore,
+      detail: `Upper wick ${wick.upperPct.toFixed(0)}% · lower wick ${wick.lowerPct.toFixed(0)}% · body ${wick.bodyPct.toFixed(0)}%`
+    },
+    {
+      name: "Equal Highs/Lows",
+      signal: equalScore > 0 ? "EQUAL LOW" : equalScore < 0 ? "EQUAL HIGH" : "NO NEAR LEVEL",
+      score: equalScore,
+      detail: equalHigh || equalLow ? `Nearest pool ${formatUsd((equalHigh || equalLow).price)} · ${formatPercent((equalHigh || equalLow).distancePct, 2)} away` : "No equal high/low within tolerance."
+    },
+    {
+      name: "Liquidity Grabs",
+      signal: grabScore > 0 ? "LOW SWEPT" : grabScore < 0 ? "HIGH SWEPT" : "NO SWEEP",
+      score: grabScore,
+      detail: "Detects a sweep through the latest swing that closes back inside the level."
+    },
+    {
+      name: "Dynamic Trend Pivot",
+      signal: pivotScore > 0 ? "BULL PIVOT" : pivotScore < 0 ? "BEAR PIVOT" : "NEUTRAL",
+      score: pivotScore,
+      detail: structure.marker ? `${structure.marker.type} ${structure.marker.side} at ${formatUsd(structure.marker.price)}` : `EMA21 ${formatUsd(emaFast)} · EMA50 ${formatUsd(emaSlow)}`
+    },
+    {
+      name: "Auto Fib Retracement",
+      signal: fibBias > 0 ? "DISCOUNT" : fibBias < 0 ? "PREMIUM" : "MID RANGE",
+      score: fibBias,
+      detail: `24-candle fib zone · 0.618 ${formatUsd(fib618)} · 0.382 ${formatUsd(fib382)}`
+    },
+    {
+      name: "Daily VWAP",
+      signal: vwapScore > 0 ? "ABOVE VWAP" : vwapScore < 0 ? "BELOW VWAP" : "AT VWAP",
+      score: vwapScore,
+      detail: `VWAP ${formatUsd(research.vwap)} · ${formatPercent(research.vwapDistance, 2)} distance`
+    },
+    {
+      name: "Volume Profile",
+      signal: volumeScore > 0 ? "ABOVE POC" : volumeScore < 0 ? "BELOW POC" : "AWAY FROM POC",
+      score: volumeScore,
+      detail: poc ? `Fixed range POC ${formatUsd(poc.price)} · ${formatPercent(pocDistance, 2)} from price` : "No volume profile sample."
+    },
+    {
+      name: "HTF Levels",
+      signal: htfScore > 0 ? "HTF BREAKOUT" : htfScore < 0 ? "HTF BREAKDOWN" : "HTF RANGE",
+      score: htfScore,
+      detail: `Aggregated high ${formatUsd(htfHigh)} · low ${formatUsd(htfLow)}`
+    }
+  ];
+  const rawScore = stackRows.reduce((sum, row) => sum + clampScore(row.score, -2, 2), 0);
+  const score = clampScore(rawScore, -3, 3);
+  const bias = score > 0 ? "BUY" : score < 0 ? "SELL" : "WAIT";
+  const aligned = stackRows.filter((row) => score > 0 ? row.score > 0 : score < 0 ? row.score < 0 : row.score === 0).length;
+  return {
+    score,
+    summary: `${bias} stack ${score >= 0 ? "+" : ""}${score} · ${aligned}/${stackRows.length} aligned`,
+    rows: stackRows
+  };
+}
+
+function renderIndicatorStack(stack) {
+  state.market.indicatorScore = stack.score;
+  state.market.indicatorSummary = stack.summary;
+  state.market.indicatorRows = stack.rows;
+  if (!els.indicatorStack) return;
+  els.indicatorStack.innerHTML = stack.rows.map((row) => {
+    const score = clampScore(row.score, -2, 2);
+    const className = score > 0 ? "positive" : score < 0 ? "negative" : "";
+    return `
+      <article class="indicator-row">
+        <div>
+          <span>${escapeHtml(row.name)}</span>
+          <strong class="${className}">${escapeHtml(row.signal)}</strong>
+        </div>
+        <b class="${className}">${score > 0 ? "+" : ""}${score}</b>
+        <small>${escapeHtml(row.detail)}</small>
+      </article>
+    `;
+  }).join("");
 }
 
 function renderStructureSummary(structure) {
@@ -2816,8 +2953,7 @@ function applyMonatiseFramework() {
   addCheck(checks, "Fear/greed", m.fearGreed, m.fearGreed > 72 ? -1 : m.fearGreed < 28 ? 1 : 0, m.fearGreed == null ? "waiting" : `${Math.round(m.fearGreed)}`);
   addCheck(checks, "VWAP", m.vwapSignal, m.vwapScore, m.vwapSignal ? `${m.vwapSignal} · ${formatPercent(m.vwapDistance, 2)} from VWAP` : "waiting");
   addCheck(checks, "History research", m.researchSignal, m.researchScore > 0 ? 1 : m.researchScore < 0 ? -1 : 0, m.researchSignal ? `${m.researchSignal} · ${m.scaleAction}` : "waiting");
-  const tvContext = tradingViewFrameworkContext();
-  addCheck(checks, "TradingView", tvContext.live ? tvContext.detail : null, tvContext.score, tvContext.detail);
+  addCheck(checks, "Indicator stack", m.indicatorSummary, clampScore(m.indicatorScore || 0), m.indicatorSummary || "waiting");
 
   const liveChecks = checks.filter((check) => check.live).length;
   const score = checks.reduce((sum, check) => sum + check.score, 0);
@@ -2825,7 +2961,7 @@ function applyMonatiseFramework() {
   const confidence = Math.min(100, Math.round((Math.abs(score) / 6) * 100 + liveChecks * 5));
   const hedge = hedgeFromCoinGlass({ direction, score, confidence, market: m });
 
-  els.frameworkSource.textContent = `${asset.coin} selected · TradingView alerts + market candles + CoinGlass/Hyperliquid context`;
+  els.frameworkSource.textContent = `${asset.coin} selected · Native indicator stack + market candles + CoinGlass/Hyperliquid context`;
   els.setupDirection.textContent = direction;
   els.setupDirection.className = direction.includes("BUY") ? "positive" : direction.includes("SELL") ? "negative" : "";
   els.setupConfidence.textContent = `confidence ${confidence}%`;
@@ -3365,7 +3501,6 @@ async function refreshDashboard() {
   }
 
   const jobs = [
-    loadTradingViewSignals(),
     getFunding().then(renderFunding).catch(renderFundingLocked),
     getOpenInterest().then(renderOpenInterest).catch(renderOpenInterestLocked),
     getLiquidations().then(renderLiquidations).catch(renderLiquidationsLocked),

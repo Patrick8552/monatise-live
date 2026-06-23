@@ -284,6 +284,7 @@
                 <small id="frameworkBias">No confirmed bias yet.</small>
               </div>
             </div>
+            <div id="indicatorStack" class="indicator-stack" aria-label="Gold indicator stack"></div>
           </article>
 
           <article class="panel research-panel wide">
@@ -345,13 +346,6 @@
               <a id="tradingViewLink" class="ghost-link" href="https://www.tradingview.com/chart/?symbol=BINANCE:BTCUSDT" target="_blank" rel="noreferrer">Open TradingView</a>
             </div>
             <iframe id="tradingViewFrame" title="TradingView chart" loading="lazy"></iframe>
-            <div id="tradingViewSignalPanel" class="tradingview-signal-panel" aria-label="TradingView indicator signal">
-              <div class="strategy-status wait">
-                <strong>TV WAIT</strong>
-                <span>TradingView indicator bridge</span>
-              </div>
-              <p>No TradingView alert received for this asset yet.</p>
-            </div>
           </article>
 
           <article class="panel">
@@ -512,6 +506,6 @@
     </div>
     <script src="https://cdn.ably.com/lib/ably.min-2.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="./coinglass-dashboard.js?v=20260623-tv-gold-bridge"></script>
+    <script src="./coinglass-dashboard.js?v=20260623-native-gold-indicators"></script>
   </body>
 </html>

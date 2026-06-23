@@ -509,59 +509,41 @@ select {
   background: #0e151e;
 }
 
-.tradingview-signal-panel {
+.indicator-stack {
   display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
   margin-top: 12px;
-  padding: 14px;
+}
+
+.indicator-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: center;
+  min-height: 82px;
+  padding: 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #0f1620;
 }
 
-.tradingview-signal-panel p {
-  margin: 0;
+.indicator-row span {
   color: var(--muted);
-  line-height: 1.5;
-}
-
-.strategy-status {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.strategy-status strong {
-  color: var(--text);
-}
-
-.strategy-status span,
-.tradingview-signal-meta span {
-  color: var(--muted);
-  font-size: 0.78rem;
+  font-size: 0.72rem;
   text-transform: uppercase;
 }
 
-.strategy-status.buy strong {
-  color: var(--green);
+.indicator-row strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 1rem;
 }
 
-.strategy-status.sell strong {
-  color: var(--red);
-}
-
-.tradingview-signal-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.tradingview-signal-meta span {
-  padding: 7px 9px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.03);
+.indicator-row small {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  line-height: 1.4;
 }
 
 .wide {
@@ -1211,6 +1193,7 @@ canvas {
   .trader-metrics,
   .setup-grid,
   .research-grid,
+  .indicator-stack,
   .voice-grid,
   .voice-output,
   .copilot-grid,
