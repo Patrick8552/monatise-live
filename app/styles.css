@@ -601,6 +601,7 @@ label .range-readout {
   grid-template-areas:
     "account trade risk"
     "markets markets markets"
+    "about about about"
     "activity activity activity";
   grid-template-columns: minmax(270px, 320px) minmax(0, 1fr) minmax(310px, 370px);
   margin: 0 auto;
@@ -625,6 +626,10 @@ label .range-readout {
 
 #activity {
   grid-area: activity;
+}
+
+#about {
+  grid-area: about;
 }
 
 .desk-section {
@@ -3547,6 +3552,93 @@ button:disabled {
   line-height: 1.35;
 }
 
+.about-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.about-lede,
+.about-thesis {
+  display: grid;
+  gap: 10px;
+}
+
+.about-lede > span,
+.about-thesis > span,
+.about-principles span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.about-lede h3 {
+  font-size: 1.35rem;
+  line-height: 1.12;
+}
+
+.about-lede p,
+.about-thesis p {
+  color: var(--muted);
+  font-size: 0.92rem;
+  font-weight: 750;
+  line-height: 1.58;
+}
+
+.about-thesis,
+.about-principles {
+  grid-column: 1 / -1;
+}
+
+.about-thesis {
+  background:
+    linear-gradient(135deg, rgba(17, 24, 23, 0.98), rgba(22, 40, 38, 0.95)),
+    var(--terminal);
+  border-color: rgba(0, 184, 217, 0.28);
+}
+
+.about-thesis p {
+  color: rgba(249, 255, 251, 0.84);
+  font-size: 1.04rem;
+  font-weight: 850;
+}
+
+.about-principles {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.about-principles article {
+  background: rgba(255, 255, 255, 0.58);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--terminal);
+  border-radius: 6px;
+  display: grid;
+  gap: 8px;
+  min-height: 128px;
+  padding: 13px;
+}
+
+.about-principles article:nth-child(2) {
+  border-left-color: var(--accent);
+}
+
+.about-principles article:nth-child(3) {
+  border-left-color: var(--buy);
+}
+
+.about-principles article:nth-child(4) {
+  border-left-color: var(--cyan);
+}
+
+.about-principles strong {
+  font-size: 0.9rem;
+  line-height: 1.42;
+}
+
 .plan-grid strong {
   font-size: 0.95rem;
 }
@@ -3586,6 +3678,7 @@ button:disabled {
       "trade risk"
       "markets markets"
       "account account"
+      "about about"
       "activity activity";
     grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
   }
@@ -3605,6 +3698,10 @@ button:disabled {
   }
 
   .activity-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .about-principles {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -3638,6 +3735,7 @@ button:disabled {
       "risk"
       "markets"
       "account"
+      "about"
       "activity";
   }
 
@@ -3678,6 +3776,11 @@ button:disabled {
   }
 
   .onboarding-ledger {
+    grid-template-columns: 1fr;
+  }
+
+  .about-grid,
+  .about-principles {
     grid-template-columns: 1fr;
   }
 
