@@ -14,6 +14,9 @@ const TRADER_ACCOUNT_STORAGE = "monatise-trader-account-size";
 const TRADER_RISK_STORAGE = "monatise-trader-risk-pct";
 const LOCKED_SIGNAL_STORAGE = "monatise-locked-signal";
 const ANALYSIS_INTERVAL = "30m";
+const XAU_ANALYSIS_INTERVALS = ["15m", "5m"];
+const XAU_PRIMARY_ANALYSIS_INTERVAL = "15m";
+const XAU_CONFIRMATION_INTERVAL = "5m";
 const DEFAULT_VIEW_INTERVAL = "1h";
 const ASSET_DEFINITIONS = [
   "BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "ADA", "AVAX", "LINK", "TRX", "TON", "DOT", "BCH", "LTC", "UNI", "NEAR",
@@ -252,7 +255,8 @@ const state = {
     pattern: null,
     indicatorScore: 0,
     indicatorSummary: "",
-    indicatorRows: []
+    indicatorRows: [],
+    analysisFrame: ""
   }
 };
 
@@ -864,8 +868,13 @@ function snapshotLockedSignal(candidate, setup, price) {
   const now = Date.now();
   const locked = state.lockedSignal;
   const sameAsset = locked && locked.asset === candidate.asset;
-  const stillLocked = sameAsset && now < locked.reassessAtMs;
-  const resolution = sameAsset ? lockedSignalResolution(locked, price, now) : null;
+  const snapshotInterval = selectedSnapshotInterval();
+  const sameSnapshotFrame = sameAsset && locked.snapshotInterval === snapshotInterval;
+  const stillLocked = sameSnapshotFrame && now < locked.reassessAtMs;
+  if (sameAsset && !sameSnapshotFrame) {
+    setLockedSignal(null);
+  }
+  const resolution = stillLocked ? lockedSignalResolution(locked, price, now) : null;
   const invalidated = stillLocked && (resolution?.status === "invalidated" || hasStructuralInvalidation(locked, setup, price));
 
   if (resolution || invalidated) {
@@ -904,7 +913,6 @@ function snapshotLockedSignal(candidate, setup, price) {
   }
 
   const snapshotAtMs = now;
-  const snapshotInterval = selectedSnapshotInterval();
   const snapshotDurationMs = selectedSnapshotLockMs();
   const reassessAtMs = now + snapshotDurationMs;
   const fresh = {
@@ -997,10 +1005,12 @@ function intervalToMs(interval) {
 }
 
 function selectedSnapshotInterval() {
+  if (isXauAsset()) return `${XAU_PRIMARY_ANALYSIS_INTERVAL} + ${XAU_CONFIRMATION_INTERVAL}`;
   return els.intervalSelect?.value || DEFAULT_VIEW_INTERVAL;
 }
 
 function selectedSnapshotLockMs() {
+  if (isXauAsset()) return intervalToMs(XAU_PRIMARY_ANALYSIS_INTERVAL);
   return intervalToMs(selectedSnapshotInterval());
 }
 
@@ -1630,6 +1640,10 @@ function selectedPair() {
   return selectedAsset().pair;
 }
 
+function isXauAsset(asset = selectedAsset()) {
+  return ["GOLD", "XAU"].includes(asset.coin);
+}
+
 function usesServerMarketCandles(asset = selectedAsset()) {
   return ["GOLD", "XAU", "CL", "BRENTOIL"].includes(asset.coin);
 }
@@ -1711,7 +1725,7 @@ function updateCoinGlassSourceStatus(message = "") {
     ? `${asset.tv} · Monatise market candles`
     : `${asset.pair} · CoinGlass futures price history`;
   els.coinGlassRouteRef.textContent = usesServerMarketCandles(asset)
-    ? `/api/candles · symbol ${asset.coin} · view ${viewInterval}`
+    ? `/api/candles · symbol ${asset.coin} · ${isXauAsset(asset) ? `analysis ${XAU_ANALYSIS_INTERVALS.join(" + ")}` : `view ${viewInterval}`}`
     : `/api/futures/price/history · exchange ${exchange} · analysis ${ANALYSIS_INTERVAL} · view ${viewInterval}`;
   els.openIntegrationsButton.textContent = serverReady ? "CoinGlass Connected" : localKey ? "Update Local Key" : "Add Local Key";
 }
@@ -1751,36 +1765,57 @@ function resetMarketContext() {
     pattern: null,
     indicatorScore: 0,
     indicatorSummary: "",
-    indicatorRows: []
+    indicatorRows: [],
+    analysisFrame: ""
   };
+}
+
+async function fetchServerMarketCandles(asset, interval, limit = "96") {
+  const params = new URLSearchParams({
+    symbol: asset.coin,
+    interval,
+    limit
+  });
+  const payload = await timedFetch(
+    `${asset.coin} ${interval} market candles`,
+    "Monatise market feed",
+    `/api/candles?${params}`,
+    {}
+  );
+  const rows = (Array.isArray(payload.candles) ? payload.candles : []).map((row) => ({
+    time: Number(row.time ?? row.timestamp),
+    open: Number(row.open ?? row.close),
+    close: Number(row.close),
+    high: Number(row.high),
+    low: Number(row.low),
+    volume: Number(row.volume ?? 0)
+  })).filter((row) => Number.isFinite(row.close) && Number.isFinite(row.high) && Number.isFinite(row.low));
+  if (!rows.length) throw new Error(`${asset.coin} ${interval} market feed returned no candle rows`);
+  rows.source = payload.source || "Monatise market feed";
+  rows.interval = payload.interval || interval;
+  return rows;
 }
 
 async function getPriceForAsset(asset, limit = "96") {
   if (usesServerMarketCandles(asset)) {
-    const interval = els.intervalSelect.value || DEFAULT_VIEW_INTERVAL;
-    const params = new URLSearchParams({
-      symbol: asset.coin,
-      interval,
-      limit
-    });
-    const payload = await timedFetch(
-      `${asset.coin} market candles`,
-      "Monatise market feed",
-      `/api/candles?${params}`,
-      {}
-    );
-    const rows = (Array.isArray(payload.candles) ? payload.candles : []).map((row) => ({
-      time: Number(row.time ?? row.timestamp),
-      open: Number(row.open ?? row.close),
-      close: Number(row.close),
-      high: Number(row.high),
-      low: Number(row.low),
-      volume: Number(row.volume ?? 0)
-    })).filter((row) => Number.isFinite(row.close) && Number.isFinite(row.high) && Number.isFinite(row.low));
-    if (!rows.length) throw new Error(`${asset.coin} market feed returned no candle rows`);
-    rows.source = payload.source || "Monatise market feed";
-    rows.interval = payload.interval || interval;
-    return rows;
+    if (isXauAsset(asset)) {
+      const [primaryRows, confirmationRows] = await Promise.all([
+        fetchServerMarketCandles(asset, XAU_PRIMARY_ANALYSIS_INTERVAL, limit),
+        fetchServerMarketCandles(asset, XAU_CONFIRMATION_INTERVAL, "180")
+      ]);
+      primaryRows.multiTimeframe = {
+        primary: XAU_PRIMARY_ANALYSIS_INTERVAL,
+        confirmation: XAU_CONFIRMATION_INTERVAL,
+        series: {
+          [XAU_PRIMARY_ANALYSIS_INTERVAL]: primaryRows,
+          [XAU_CONFIRMATION_INTERVAL]: confirmationRows
+        }
+      };
+      primaryRows.source = primaryRows.source || confirmationRows.source || "Monatise market feed";
+      primaryRows.interval = `${XAU_PRIMARY_ANALYSIS_INTERVAL} + ${XAU_CONFIRMATION_INTERVAL}`;
+      return primaryRows;
+    }
+    return fetchServerMarketCandles(asset, els.intervalSelect.value || DEFAULT_VIEW_INTERVAL, limit);
   }
   const exchange = els.exchangeSelect.value;
   const interval = ANALYSIS_INTERVAL;
@@ -1815,7 +1850,7 @@ async function getPrice() {
   const interval = ANALYSIS_INTERVAL;
   const rows = await getPriceForAsset(asset);
   els.priceSource.textContent = usesServerMarketCandles(asset)
-    ? `${rows.source || "Monatise market feed"} · ${asset.tv} · ${rows.interval || els.intervalSelect.value || DEFAULT_VIEW_INTERVAL} TradingView-aligned candles`
+    ? `${rows.source || "Monatise market feed"} · ${asset.tv} · ${isXauAsset(asset) ? "15m structure + 5m execution candles" : `${rows.interval || els.intervalSelect.value || DEFAULT_VIEW_INTERVAL} TradingView-aligned candles`}`
     : `CoinGlass futures price history · ${asset.pair} · ${exchange} · analysis ${interval} · view ${els.intervalSelect.value || DEFAULT_VIEW_INTERVAL}`;
   return rows;
 }
@@ -2262,6 +2297,10 @@ function summarizeLiquidationPayload(payload) {
 
 function renderPrice(series) {
   const asset = selectedAsset();
+  if (isXauAsset(asset) && series.multiTimeframe) {
+    renderXauMultiTimeframePrice(series, asset);
+    return;
+  }
   state.priceSeries = series;
   const last = series.at(-1);
   const previous = series.at(-2);
@@ -2282,6 +2321,128 @@ function renderPrice(series) {
   renderIndicatorStack(indicatorStack);
   renderStructureSummary(structure);
   drawStructureChart(els.priceCanvas, series, structure, research);
+}
+
+function latestCandle(series) {
+  return Array.isArray(series) ? series.at(-1) : null;
+}
+
+function scoreDirection(score) {
+  const value = Number(score);
+  if (value > 0) return 1;
+  if (value < 0) return -1;
+  return 0;
+}
+
+function signalFromScore(score) {
+  const direction = scoreDirection(score);
+  return direction > 0 ? "BUY" : direction < 0 ? "SELL" : "WAIT";
+}
+
+function finiteScore(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function mergeXauIndicatorStack(primaryStack, confirmationStack, primaryResearch, confirmationResearch) {
+  const primaryDirection = scoreDirection(finiteScore(primaryStack.score) || finiteScore(primaryResearch.score));
+  const confirmationDirection = scoreDirection(finiteScore(confirmationStack.score) || finiteScore(confirmationResearch.score));
+  const aligned = primaryDirection !== 0 && primaryDirection === confirmationDirection;
+  const conflict = primaryDirection !== 0 && confirmationDirection !== 0 && primaryDirection !== confirmationDirection;
+  const rawScore = finiteScore(primaryStack.score) + finiteScore(confirmationStack.score) + (aligned ? primaryDirection : conflict ? -primaryDirection : 0);
+  const score = clampScore(rawScore, -3, 3);
+  const bias = signalFromScore(score);
+  const rows = [
+    {
+      name: `${XAU_PRIMARY_ANALYSIS_INTERVAL} structure`,
+      signal: signalFromScore(primaryStack.score),
+      score: clampScore(primaryStack.score, -2, 2),
+      detail: `${primaryStack.summary} · ${primaryResearch.signal} · ${primaryResearch.vwapSignal}`
+    },
+    {
+      name: `${XAU_CONFIRMATION_INTERVAL} execution`,
+      signal: signalFromScore(confirmationStack.score),
+      score: clampScore(confirmationStack.score, -2, 2),
+      detail: `${confirmationStack.summary} · ${confirmationResearch.signal} · ${confirmationResearch.vwapSignal}`
+    },
+    {
+      name: "15m/5m alignment",
+      signal: aligned ? `${bias} ALIGNED` : conflict ? "CONFLICT" : "WAIT",
+      score: aligned ? primaryDirection : conflict ? -primaryDirection : 0,
+      detail: aligned ? "5m confirms the 15m XAU/USD setup." : conflict ? "5m is fighting the 15m structure; reduce conviction." : "One timeframe is neutral."
+    },
+    ...primaryStack.rows.slice(0, 4).map((row) => ({ ...row, name: `15m ${row.name}` })),
+    ...confirmationStack.rows.slice(0, 4).map((row) => ({ ...row, name: `5m ${row.name}` }))
+  ];
+  return {
+    score,
+    summary: `XAU/USD 15m + 5m ${bias} stack ${score >= 0 ? "+" : ""}${score}`,
+    rows
+  };
+}
+
+function renderXauMultiTimeframePrice(series, asset) {
+  const frames = series.multiTimeframe.series || {};
+  const primarySeries = frames[XAU_PRIMARY_ANALYSIS_INTERVAL] || series;
+  const confirmationSeries = frames[XAU_CONFIRMATION_INTERVAL] || [];
+  state.priceSeries = primarySeries;
+
+  const primaryLast = latestCandle(primarySeries);
+  const confirmationLast = latestCandle(confirmationSeries);
+  const last = confirmationLast || primaryLast;
+  const previous = confirmationSeries.at(-2) || primarySeries.at(-2);
+  if (!last) return;
+
+  state.lastPrice = last.close;
+  const change = previous ? ((last.close - previous.close) / previous.close) * 100 : 0;
+  state.market.priceChange = change;
+  state.market.analysisFrame = `${XAU_PRIMARY_ANALYSIS_INTERVAL} + ${XAU_CONFIRMATION_INTERVAL}`;
+  updateTopPrice(last.close, `${change >= 0 ? "Up" : "Down"} ${formatPercent(change, 2)} on ${XAU_CONFIRMATION_INTERVAL}`);
+  els.priceChange.textContent = `${change >= 0 ? "Up" : "Down"} ${formatPercent(change, 2)} ${XAU_CONFIRMATION_INTERVAL} candle`;
+  els.priceChange.className = change >= 0 ? "positive" : "negative";
+  els.headerPriceChange.className = change >= 0 ? "positive" : "negative";
+  els.pricePulse.textContent = "live";
+  updateCoinGlassSourceStatus(`XAU/USD setup uses ${primarySeries.length} ${XAU_PRIMARY_ANALYSIS_INTERVAL} candles and ${confirmationSeries.length} ${XAU_CONFIRMATION_INTERVAL} candles.`);
+
+  const primaryResearch = studyHistoricalPattern(primarySeries);
+  const confirmationResearch = studyHistoricalPattern(confirmationSeries.length ? confirmationSeries : primarySeries);
+  renderResearch(primaryResearch);
+
+  const primaryStructure = analyzeMarketStructure(primarySeries, primaryResearch);
+  const confirmationStructure = analyzeMarketStructure(confirmationSeries.length ? confirmationSeries : primarySeries, confirmationResearch);
+  const primaryStack = analyzeIndicatorStack(primarySeries, primaryResearch, primaryStructure);
+  const confirmationStack = analyzeIndicatorStack(confirmationSeries.length ? confirmationSeries : primarySeries, confirmationResearch, confirmationStructure);
+  const mergedStack = mergeXauIndicatorStack(primaryStack, confirmationStack, primaryResearch, confirmationResearch);
+
+  const researchScore = clampScore(finiteScore(primaryResearch.score) + finiteScore(confirmationResearch.score), -3, 3);
+  const vwapScore = clampScore(finiteScore(primaryResearch.vwapScore) + finiteScore(confirmationResearch.vwapScore), -1, 1);
+  state.market.researchSignal = `${primaryResearch.signal} / ${confirmationResearch.signal}`;
+  state.market.researchScore = researchScore;
+  state.market.vwap = primaryResearch.vwap;
+  state.market.vwapDistance = primaryResearch.vwapDistance;
+  state.market.vwapScore = vwapScore;
+  state.market.vwapSignal = vwapScore > 0 ? "above VWAP" : vwapScore < 0 ? "below VWAP" : "near VWAP";
+  state.market.scaleAction = primaryResearch.action !== "wait" ? primaryResearch.action : confirmationResearch.action;
+  state.market.pattern = `${primaryResearch.pattern} + ${confirmationResearch.pattern}`;
+
+  els.researchSource.textContent = `XAU/USD setup study · ${XAU_PRIMARY_ANALYSIS_INTERVAL} structure + ${XAU_CONFIRMATION_INTERVAL} execution`;
+  els.researchPattern.textContent = state.market.pattern;
+  els.historySignal.textContent = state.market.researchSignal;
+  els.historyStats.textContent = `${XAU_PRIMARY_ANALYSIS_INTERVAL}: ${primaryResearch.stats} · ${XAU_CONFIRMATION_INTERVAL}: ${confirmationResearch.stats}`;
+  els.vwapMetric.textContent = `${state.market.vwapSignal} ${formatPercent(primaryResearch.vwapDistance, 2)} / ${formatPercent(confirmationResearch.vwapDistance, 2)}`;
+  els.vwapMetric.className = vwapScore > 0 ? "positive" : vwapScore < 0 ? "negative" : "";
+  els.vwapSignal.textContent = state.market.vwapSignal;
+  els.vwapSignal.className = els.vwapMetric.className;
+  els.vwapDetail.textContent = `15m VWAP ${formatUsd(primaryResearch.vwap)} · 5m VWAP ${formatUsd(confirmationResearch.vwap)} · setup requires both frames.`;
+  els.scaleAction.textContent = state.market.scaleAction;
+  els.scaleAction.className = state.market.scaleAction === "average down" || state.market.scaleAction === "average up" ? "positive" : state.market.scaleAction === "scale out" ? "negative" : "";
+  els.scalePlan.textContent = `Use 15m for direction and invalidation; use 5m for entry timing and pullback confirmation. ${primaryResearch.plan}`;
+  els.patternMemory.textContent = `${XAU_PRIMARY_ANALYSIS_INTERVAL} ${primaryResearch.memory} · ${XAU_CONFIRMATION_INTERVAL} ${confirmationResearch.memory}`;
+  els.patternDetail.textContent = `${XAU_PRIMARY_ANALYSIS_INTERVAL}: ${primaryResearch.detail} · ${XAU_CONFIRMATION_INTERVAL}: ${confirmationResearch.detail}`;
+
+  renderIndicatorStack(mergedStack);
+  renderStructureSummary(primaryStructure);
+  drawStructureChart(els.priceCanvas, primarySeries, primaryStructure, primaryResearch);
 }
 
 function studyHistoricalPattern(series) {
@@ -2954,6 +3115,9 @@ function applyMonatiseFramework() {
   addCheck(checks, "VWAP", m.vwapSignal, m.vwapScore, m.vwapSignal ? `${m.vwapSignal} · ${formatPercent(m.vwapDistance, 2)} from VWAP` : "waiting");
   addCheck(checks, "History research", m.researchSignal, m.researchScore > 0 ? 1 : m.researchScore < 0 ? -1 : 0, m.researchSignal ? `${m.researchSignal} · ${m.scaleAction}` : "waiting");
   addCheck(checks, "Indicator stack", m.indicatorSummary, clampScore(m.indicatorScore || 0), m.indicatorSummary || "waiting");
+  if (isXauAsset(asset)) {
+    addCheck(checks, "XAU timeframe", m.analysisFrame, m.analysisFrame === `${XAU_PRIMARY_ANALYSIS_INTERVAL} + ${XAU_CONFIRMATION_INTERVAL}` ? 1 : 0, m.analysisFrame ? `${m.analysisFrame} setup analysis` : "waiting for 15m + 5m");
+  }
 
   const liveChecks = checks.filter((check) => check.live).length;
   const score = checks.reduce((sum, check) => sum + check.score, 0);
@@ -2961,7 +3125,9 @@ function applyMonatiseFramework() {
   const confidence = Math.min(100, Math.round((Math.abs(score) / 6) * 100 + liveChecks * 5));
   const hedge = hedgeFromCoinGlass({ direction, score, confidence, market: m });
 
-  els.frameworkSource.textContent = `${asset.coin} selected · Native indicator stack + market candles + CoinGlass/Hyperliquid context`;
+  els.frameworkSource.textContent = isXauAsset(asset)
+    ? `${asset.coin} selected · XAU/USD ${XAU_PRIMARY_ANALYSIS_INTERVAL} structure + ${XAU_CONFIRMATION_INTERVAL} execution + CoinGlass/Hyperliquid context`
+    : `${asset.coin} selected · Native indicator stack + market candles + CoinGlass/Hyperliquid context`;
   els.setupDirection.textContent = direction;
   els.setupDirection.className = direction.includes("BUY") ? "positive" : direction.includes("SELL") ? "negative" : "";
   els.setupConfidence.textContent = `confidence ${confidence}%`;
