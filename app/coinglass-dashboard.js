@@ -1068,6 +1068,33 @@ function formatGridLevels(levels) {
   return levels.map((level) => formatUsd(level)).join(" / ");
 }
 
+function setupGridLevelsText(signal) {
+  if (signal.action === "BUY") return formatGridLevels(signal.buyGrid);
+  if (signal.action === "SELL") return formatGridLevels(signal.sellGrid);
+  return "--";
+}
+
+function setupGridPlan(signal) {
+  const levels = setupGridLevelsText(signal);
+  if (signal.action === "BUY") {
+    return `BUY grid ${levels}. All buys are wrong only if ${formatUsd(signal.invalidation)} breaks.`;
+  }
+  if (signal.action === "SELL") {
+    return `SELL grid ${levels}. All sells are wrong only if ${formatUsd(signal.invalidation)} breaks.`;
+  }
+  return signal.entryPlan;
+}
+
+function setupInvalidationPlan(signal) {
+  if (signal.action === "BUY") {
+    return `One overall invalidation for the setup: the buy idea is wrong only below ${formatUsd(signal.invalidation)}.`;
+  }
+  if (signal.action === "SELL") {
+    return `One overall invalidation for the setup: the sell idea is wrong only above ${formatUsd(signal.invalidation)}.`;
+  }
+  return "VWAP and market structure are the wait-state guard rails.";
+}
+
 function gridSidePlan(side, action, asset, levels, scaleAction) {
   const levelText = formatGridLevels(levels);
   if (action === "WAIT") {
@@ -1139,12 +1166,10 @@ function renderGeneratedSignal(signal) {
   els.signalAction.textContent = signal.action;
   els.signalAction.className = signal.action === "BUY" ? "positive" : signal.action === "SELL" ? "negative" : "";
   els.signalThesis.textContent = signal.thesis;
-  els.signalEntry.textContent = signal.action === "WAIT" ? "--" : formatUsd(signal.entry);
-  els.signalEntryPlan.textContent = signal.action === "WAIT"
-    ? signal.entryPlan
-    : `${signal.entryPlan} Grid: buys ${signal.buyGridText}; sells ${signal.sellGridText}.`;
+  els.signalEntry.textContent = signal.action === "WAIT" ? "--" : `${signal.action} grid`;
+  els.signalEntryPlan.textContent = setupGridPlan(signal);
   els.signalInvalidation.textContent = signal.action === "WAIT" ? "VWAP / structure" : formatUsd(signal.invalidation);
-  els.signalInvalidationPlan.textContent = signal.invalidationPlan;
+  els.signalInvalidationPlan.textContent = setupInvalidationPlan(signal);
   els.signalGridHedge.textContent = signal.action === "WAIT" ? "--" : formatUsd(signal.target);
   els.signalGridHedgePlan.textContent = signal.action === "WAIT"
     ? "No target until a BUY or SELL snapshot is active."
@@ -1163,7 +1188,7 @@ function renderSignalLog() {
     <div class="signal-row">
       <strong class="${signal.action === "BUY" ? "positive" : signal.action === "SELL" ? "negative" : ""}">${signal.action}</strong>
       <span>${signal.asset} · ${signal.snapshotTime || signal.time}</span>
-      <small>${signal.thesis} · entry ${formatUsd(signal.entry)} · invalidation ${signal.action === "WAIT" ? "VWAP / structure" : formatUsd(signal.invalidation)} · target ${formatUsd(signal.target)} · ${signal.hedgeDirection}</small>
+      <small>${signal.thesis} · ${signal.action === "WAIT" ? "setup grid waiting" : `${signal.action} grid ${setupGridLevelsText(signal)}`} · invalidation ${signal.action === "WAIT" ? "VWAP / structure" : formatUsd(signal.invalidation)} · target ${formatUsd(signal.target)} · ${signal.hedgeDirection}</small>
     </div>
   `).join("");
 }
@@ -1185,7 +1210,9 @@ function currentSetupSnapshot() {
     price: els.assetPrice.textContent,
     signalAction: els.signalAction.textContent,
     signalEntry: els.signalEntry.textContent,
+    signalEntryPlan: els.signalEntryPlan.textContent,
     signalInvalidation: els.signalInvalidation.textContent,
+    signalInvalidationPlan: els.signalInvalidationPlan.textContent,
     signalTarget: els.signalGridHedge.textContent,
     signalState: els.signalState.textContent,
     signalTiming: els.signalTimestamp.textContent,
@@ -1217,7 +1244,7 @@ function answerVoiceQuestion(question) {
     return `${s.asset} hedge is ${s.hedge}. ${s.hedgePlan} The current setup is ${s.direction} with ${s.confidence}.`;
   }
   if (q.includes("grid") || q.includes("entry") || q.includes("buy") || q.includes("sell")) {
-    return `${s.asset} is showing ${s.direction}. Grid instruction: ${s.grid}. ${s.gridPlan} VWAP is ${s.vwap}, and the framework has ${s.checks} live checks.`;
+    return `${s.asset} is showing ${s.direction}. ${s.signalEntryPlan} ${s.signalInvalidationPlan} VWAP is ${s.vwap}, and the framework has ${s.checks} live checks.`;
   }
   if (q.includes("vwap")) {
     return `${s.asset} VWAP read is ${s.vwap}. VWAP position is ${s.vwapSignal}. That is being combined with research, funding, open interest, and liquidations before Monatise labels the setup.`;
@@ -1253,7 +1280,7 @@ function localCopilotAnswer(question) {
   const isActive = ["BUY", "SELL"].includes(s.signalAction);
   const personalPrefix = `${s.asset} personal read: ${isActive ? `${s.signalAction} snapshot is active` : `${s.direction} is not an active entry yet`}.`;
   const levels = isActive
-    ? `Entry ${s.signalEntry}, invalidation ${s.signalInvalidation}, target ${s.signalTarget}.`
+    ? `${s.signalEntry}: ${s.signalEntryPlan} Invalidation ${s.signalInvalidation}; target ${s.signalTarget}.`
     : `No locked entry/target yet. Wait for an active BUY or SELL snapshot; current guard rail is ${s.signalInvalidation}.`;
 
   if (q.includes("should i") || q.includes("can i") || q.includes("enter") || q.includes("buy now") || q.includes("sell now")) {
