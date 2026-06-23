@@ -595,12 +595,24 @@
               </label>
               <label class="remember-login">
                 <input id="rememberLoginInput" type="checkbox" />
-                <span>Remember this email</span>
+                <span>Remember this device and email</span>
               </label>
               <div class="button-row">
                 <button id="loginButton" class="primary" type="submit">Login</button>
+                <button id="emailLoginCodeButton" type="button">Email Code</button>
                 <button id="registerButton" type="button">Request Access</button>
                 <button id="forgotPasswordButton" type="button">Forgot Password</button>
+              </div>
+              <div id="loginCodePanel" class="recovery-panel" hidden>
+                <label>
+                  Login code
+                  <input id="loginCodeInput" type="text" autocomplete="one-time-code" inputmode="numeric" placeholder="6-digit code" />
+                </label>
+                <div class="button-row">
+                  <button id="completeLoginCodeButton" class="primary" type="button">Login With Code</button>
+                  <button id="cancelLoginCodeButton" type="button">Cancel</button>
+                </div>
+                <p id="loginCodeStatus">Enter your email, then request a one-time login code.</p>
               </div>
               <div id="recoveryPanel" class="recovery-panel" hidden>
                 <label>
@@ -740,6 +752,6 @@
     </main>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="./app.js?v=20260623-login-memory"></script>
+    <script src="./app.js?v=20260623-remember-device"></script>
   </body>
 </html>

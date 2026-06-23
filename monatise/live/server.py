@@ -25,9 +25,9 @@ from monatise.live.billing import (
     verify_stripe_signature,
 )
 from monatise.live.config import LIVE_CONFIRMATION, RuntimeConfig
-from monatise.live.emailer import EmailDeliveryError, expose_dev_reset_code, send_password_reset_code, send_trading_alert_email
+from monatise.live.emailer import EmailDeliveryError, expose_dev_reset_code, send_login_code, send_password_reset_code, send_trading_alert_email
 from monatise.live.service import JsonEncoder, TradingService
-from monatise.live.users import User, UserCredentials, UserStore, encryption_key_configured
+from monatise.live.users import REMEMBERED_SESSION_SECONDS, SESSION_SECONDS, User, UserCredentials, UserStore, encryption_key_configured
 
 COMMODITY_WATCHLIST = ("GOLD", "XAG", "CL", "BRENTOIL", "USOIL")
 FOREX_WATCHLIST = ("EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "AUDJPY", "EURGBP", "EURJPY", "NZDUSD")
@@ -868,7 +868,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             try:
                 user = self.store.create_user(str(payload.get("username", "")), str(payload.get("password", "")))
                 self.store.record_login(user.id, user.username, self._client_ip())
-                self._set_session_cookie(self.store.create_session(user.id))
+                self._create_login_session(user.id, remember_device=bool(payload.get("rememberDevice")))
                 settings = self.store.settings_for_user(user.id)
                 self._json(
                     {
@@ -893,7 +893,49 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                 self._error(401, "invalid username or password")
                 return
             self.store.record_login(user.id, user.username, self._client_ip())
-            self._set_session_cookie(self.store.create_session(user.id))
+            self._create_login_session(user.id, remember_device=bool(payload.get("rememberDevice")))
+            settings = self.store.settings_for_user(user.id)
+            self._json(
+                {
+                    "authenticated": True,
+                    "username": user.username,
+                    "credentialsConfigured": self.store.has_credentials(user.id),
+                    "selectedSymbol": settings.selected_symbol,
+                    "subscription": {
+                        "plan": settings.subscription_plan,
+                        "status": settings.subscription_status,
+                    },
+                    "tradingRules": settings_payload(settings),
+                }
+            )
+            return
+        if parsed.path == "/api/login-code/request":
+            payload = self._read_json()
+            username = str(payload.get("username", "")).strip().lower()
+            if not _is_email(username):
+                self._error(400, "enter the email used for this profile")
+                return
+            code = self.store.create_login_code(username)
+            response = {"message": "If that email exists, a login code has been sent."}
+            if code is not None:
+                try:
+                    send_login_code(code.user.username, code.code)
+                except EmailDeliveryError as error:
+                    if not expose_dev_reset_code():
+                        self._error(503, str(error))
+                        return
+                if expose_dev_reset_code():
+                    response["devLoginCode"] = code.code
+            self._json(response)
+            return
+        if parsed.path == "/api/login-code/complete":
+            payload = self._read_json()
+            user = self.store.authenticate_login_code(str(payload.get("username", "")), str(payload.get("loginCode", "")))
+            if user is None:
+                self._error(400, "login code is invalid or expired")
+                return
+            self.store.record_login(user.id, user.username, self._client_ip())
+            self._create_login_session(user.id, remember_device=bool(payload.get("rememberDevice")))
             settings = self.store.settings_for_user(user.id)
             self._json(
                 {
@@ -943,7 +985,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                 self._error(400, "reset code is invalid or expired")
                 return
             self.tenants.reset_user(user.id)
-            self._set_session_cookie(self.store.create_session(user.id))
+            self._create_login_session(user.id, remember_device=True)
             settings = self.store.settings_for_user(user.id)
             self._json(
                 {
@@ -1095,9 +1137,13 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                 return value
         return ""
 
-    def _set_session_cookie(self, token: str) -> None:
+    def _create_login_session(self, user_id: int, *, remember_device: bool = False) -> None:
+        max_age = REMEMBERED_SESSION_SECONDS if remember_device else SESSION_SECONDS
+        self._set_session_cookie(self.store.create_session(user_id, ttl_seconds=max_age), max_age=max_age)
+
+    def _set_session_cookie(self, token: str, *, max_age: int = SESSION_SECONDS) -> None:
         self._pending_cookie = (
-            f"monatise_session={token}; Path=/; Max-Age=1209600; SameSite=Lax; HttpOnly{self._secure_cookie_suffix()}"
+            f"monatise_session={token}; Path=/; Max-Age={int(max_age)}; SameSite=Lax; HttpOnly{self._secure_cookie_suffix()}"
         )
 
     def _clear_session_cookie(self) -> None:
@@ -1170,6 +1216,8 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
     def _rate_limited(self, path: str) -> bool:
         limits = {
             "/api/login": (10, 60),
+            "/api/login-code/request": (4, 60),
+            "/api/login-code/complete": (8, 60),
             "/api/register": (6, 60),
             "/api/password-reset/request": (4, 60),
             "/api/password-reset/complete": (8, 60),

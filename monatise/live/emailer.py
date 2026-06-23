@@ -46,6 +46,26 @@ def send_password_reset_code(to_email: str, code: str, *, expires_minutes: int =
     send_email(message)
 
 
+def send_login_code(to_email: str, code: str, *, expires_minutes: int = 10) -> None:
+    message = EmailMessage()
+    message["From"] = smtp_settings().sender
+    message["To"] = to_email
+    message["Subject"] = "Your Monatise login code"
+    message.set_content(
+        "\n".join(
+            [
+                "Use this one-time code to log in to Monatise:",
+                "",
+                code,
+                "",
+                f"This code expires in {expires_minutes} minutes.",
+                "If you did not request this, you can ignore this email.",
+            ]
+        )
+    )
+    send_email(message)
+
+
 def send_trading_alert_email(alert: dict) -> int:
     recipients = _alert_recipients()
     if not recipients:

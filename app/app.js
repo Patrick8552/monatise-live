@@ -78,6 +78,12 @@ const els = {
   liveNetworkBadge: document.querySelector("#liveNetworkBadge"),
   loginGate: document.querySelector("#loginGate"),
   loginButton: document.querySelector("#loginButton"),
+  emailLoginCodeButton: document.querySelector("#emailLoginCodeButton"),
+  loginCodePanel: document.querySelector("#loginCodePanel"),
+  loginCodeInput: document.querySelector("#loginCodeInput"),
+  completeLoginCodeButton: document.querySelector("#completeLoginCodeButton"),
+  cancelLoginCodeButton: document.querySelector("#cancelLoginCodeButton"),
+  loginCodeStatus: document.querySelector("#loginCodeStatus"),
   logoutButton: document.querySelector("#logoutButton"),
   market3dMeta: document.querySelector("#market3dMeta"),
   markPrice: document.querySelector("#markPrice"),
@@ -2964,12 +2970,15 @@ function renderAuth(me) {
     ? me.credentialsConfigured
       ? "Private sync saved for this signal profile."
       : "Private sync is optional. Save rules to keep this profile useful."
-    : "Request access with an email to save preferences and receive reset codes.";
+    : "Request access with an email to save preferences. Monatise remembers the device, not your password.";
   if (!loggedIn) applyRememberedLogin(me.rememberedLogin || {});
   els.logoutButton.disabled = !loggedIn;
   els.saveCredentialsButton.disabled = !loggedIn;
   els.backendStartButton.disabled = !loggedIn || !me.credentialsConfigured;
   els.backendStopButton.disabled = !loggedIn;
+  els.emailLoginCodeButton.disabled = loggedIn;
+  els.completeLoginCodeButton.disabled = loggedIn;
+  if (loggedIn) els.loginCodePanel.hidden = true;
   if (els.billingCheckoutButton) els.billingCheckoutButton.disabled = !loggedIn;
   if (els.billingStatus) {
     const plan = String(me.subscription?.plan || "free").toLowerCase();
@@ -3000,6 +3009,7 @@ function revealRecoveryCode(code) {
 
 async function showRecoveryPanel(show = true) {
   els.recoveryPanel.hidden = !show;
+  if (show) els.loginCodePanel.hidden = true;
   if (show) {
     const username = els.usernameInput.value.trim();
     if (!isEmailUsername(username)) {
@@ -3026,6 +3036,18 @@ async function showRecoveryPanel(show = true) {
   } else {
     els.recoveryCodeInput.value = "";
     els.newPasswordInput.value = "";
+  }
+}
+
+function showLoginCodePanel(show = true, message = "") {
+  els.loginCodePanel.hidden = !show;
+  if (show) {
+    els.recoveryPanel.hidden = true;
+    els.loginCodeStatus.textContent = message || "Enter the code emailed to this profile. Monatise will not store your password.";
+    els.loginCodeInput.focus();
+  } else {
+    els.loginCodeInput.value = "";
+    els.loginCodeStatus.textContent = "Enter your email, then request a one-time login code.";
   }
 }
 
@@ -3068,7 +3090,7 @@ async function loginOrRegister(path) {
   actionButton.textContent = isRegister ? "Requesting..." : "Logging in...";
   setAuthStatus(isRegister ? "Requesting access..." : "Logging in...");
   try {
-    const response = await jsonPost(path, { username, password });
+    const response = await jsonPost(path, { username, password, rememberDevice: els.rememberLoginInput.checked });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       setAuthStatus(payload.error || "Auth failed");
@@ -3092,6 +3114,79 @@ async function loginOrRegister(path) {
   } finally {
     actionButton.disabled = false;
     actionButton.textContent = isRegister ? "Request Access" : "Login";
+  }
+}
+
+async function requestLoginCode() {
+  const username = els.usernameInput.value.trim();
+  if (!isEmailUsername(username)) {
+    setAuthStatus("Email required");
+    els.credentialStatus.textContent = "Enter the email used for this profile.";
+    els.usernameInput.focus();
+    return;
+  }
+  els.emailLoginCodeButton.disabled = true;
+  els.emailLoginCodeButton.textContent = "Sending...";
+  setAuthStatus("Sending code...");
+  try {
+    const response = await jsonPost("/api/login-code/request", { username });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      setAuthStatus(payload.error || "Code failed");
+      els.credentialStatus.textContent = payload.error || "Could not send login code.";
+      return;
+    }
+    const message = payload.devLoginCode
+      ? `Development login code: ${payload.devLoginCode}`
+      : payload.message || "If that email exists, a login code has been sent.";
+    setAuthStatus("Code sent");
+    els.credentialStatus.textContent = "Use the email code to login on this device. Passwords are not stored or autofilled by Monatise.";
+    showLoginCodePanel(true, message);
+  } catch {
+    setAuthStatus("Code request failed");
+    els.credentialStatus.textContent = "Network request failed. Try again.";
+  } finally {
+    els.emailLoginCodeButton.disabled = Boolean(currentUser.authenticated);
+    els.emailLoginCodeButton.textContent = "Email Code";
+  }
+}
+
+async function completeLoginCode() {
+  const username = els.usernameInput.value.trim();
+  const loginCode = els.loginCodeInput.value.trim();
+  if (!isEmailUsername(username)) {
+    els.loginCodeStatus.textContent = "Enter the email used for this profile.";
+    els.usernameInput.focus();
+    return;
+  }
+  if (!loginCode) {
+    els.loginCodeStatus.textContent = "Enter the login code sent to your email.";
+    els.loginCodeInput.focus();
+    return;
+  }
+  els.completeLoginCodeButton.disabled = true;
+  els.completeLoginCodeButton.textContent = "Logging in...";
+  try {
+    const response = await jsonPost("/api/login-code/complete", {
+      username,
+      loginCode,
+      rememberDevice: els.rememberLoginInput.checked
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      els.loginCodeStatus.textContent = payload.error || "Login code failed.";
+      return;
+    }
+    updateRememberedLogin(payload.username || username);
+    showLoginCodePanel(false);
+    renderAuth(payload);
+    addAuditEvent("email code login", "User logged in with one-time code", payload.username || username);
+    refreshBackend();
+  } catch {
+    els.loginCodeStatus.textContent = "Network request failed. Try again.";
+  } finally {
+    els.completeLoginCodeButton.disabled = Boolean(currentUser.authenticated);
+    els.completeLoginCodeButton.textContent = "Login With Code";
   }
 }
 
@@ -4855,6 +4950,9 @@ els.registerButton.addEventListener("click", () => {
   loginOrRegister("/api/register");
 });
 els.forgotPasswordButton.addEventListener("click", () => showRecoveryPanel(true));
+els.emailLoginCodeButton.addEventListener("click", requestLoginCode);
+els.completeLoginCodeButton.addEventListener("click", completeLoginCode);
+els.cancelLoginCodeButton.addEventListener("click", () => showLoginCodePanel(false));
 els.cancelRecoveryButton.addEventListener("click", () => showRecoveryPanel(false));
 els.resetPasswordButton.addEventListener("click", resetForgottenPassword);
 els.rotateRecoveryCodeButton.addEventListener("click", rotateRecoveryCode);
@@ -4887,6 +4985,12 @@ els.passwordToggle.addEventListener("click", () => {
       resetForgottenPassword();
     }
   });
+});
+els.loginCodeInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    completeLoginCode();
+  }
 });
 els.logoutButton.addEventListener("click", async () => {
   await jsonPost("/api/logout");

@@ -110,6 +110,36 @@ def test_user_store_rejects_wrong_password_reset_code() -> None:
         _restore_key(old_key)
 
 
+def test_user_store_authenticates_login_code_once() -> None:
+    old_key = _with_key()
+    try:
+        with tempfile.NamedTemporaryFile() as db:
+            store = UserStore(db.name)
+            user = store.create_user("code-user@example.com", "password123")
+            login_code = store.create_login_code(user.username)
+
+            assert login_code is not None
+            assert login_code.user == user
+            assert store.authenticate_login_code("code-user@example.com", "wrong") is None
+            assert store.authenticate_login_code("code-user@example.com", login_code.code) == user
+            assert store.authenticate_login_code("code-user@example.com", login_code.code) is None
+            assert store.authenticate("code-user@example.com", "password123") == user
+    finally:
+        _restore_key(old_key)
+
+
+def test_user_store_returns_no_login_code_for_unknown_email() -> None:
+    old_key = _with_key()
+    try:
+        with tempfile.NamedTemporaryFile() as db:
+            store = UserStore(db.name)
+
+            assert store.create_login_code("missing@example.com") is None
+            assert store.authenticate_login_code("missing@example.com", "123456") is None
+    finally:
+        _restore_key(old_key)
+
+
 def test_user_store_encrypts_credentials_per_user() -> None:
     old_key = _with_key()
     try:

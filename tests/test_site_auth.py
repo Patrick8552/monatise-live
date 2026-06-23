@@ -21,6 +21,8 @@ def test_auth_bootstrap_routes_remain_public() -> None:
         "/api/me",
         "/api/login",
         "/api/register",
+        "/api/login-code/request",
+        "/api/login-code/complete",
         "/api/password-reset/request",
         "/api/tradingview/webhook",
     ):

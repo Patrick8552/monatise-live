@@ -16,7 +16,9 @@ from monatise.live.secrets import secret_value
 
 
 SESSION_SECONDS = 60 * 60 * 24 * 14
+REMEMBERED_SESSION_SECONDS = 60 * 60 * 24 * 90
 PASSWORD_RESET_CODE_SECONDS = 60 * 10
+LOGIN_CODE_SECONDS = 60 * 10
 COINGLASS_STARTUP_INTERVALS = {"30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "1w"}
 
 
@@ -41,6 +43,13 @@ class LoginHint:
 
 @dataclass(frozen=True)
 class PasswordResetCode:
+    user: User
+    code: str
+    expires_at: float
+
+
+@dataclass(frozen=True)
+class LoginCode:
     user: User
     code: str
     expires_at: float
@@ -204,6 +213,53 @@ class UserStore:
             expires_at=expires_at,
         )
 
+    def create_login_code(self, username: str) -> LoginCode | None:
+        username = username.strip().lower()
+        with self._connect() as conn:
+            row = conn.execute("select id, username from users where username = ?", (username,)).fetchone()
+            if row is None:
+                return None
+            code = f"{secrets.randbelow(1_000_000):06d}"
+            salt, digest = _hash_password(code)
+            expires_at = time.time() + LOGIN_CODE_SECONDS
+            conn.execute("delete from login_codes where user_id = ?", (int(row["id"]),))
+            conn.execute(
+                """
+                insert into login_codes(user_id, code_salt, code_hash, expires_at, created_at)
+                values (?, ?, ?, ?, ?)
+                """,
+                (int(row["id"]), salt, digest, expires_at, time.time()),
+            )
+        return LoginCode(
+            user=User(id=int(row["id"]), username=str(row["username"])),
+            code=code,
+            expires_at=expires_at,
+        )
+
+    def authenticate_login_code(self, username: str, code: str) -> User | None:
+        username = username.strip().lower()
+        now = time.time()
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                select users.id, users.username, login_codes.code_salt, login_codes.code_hash,
+                       login_codes.expires_at
+                from users
+                join login_codes on login_codes.user_id = users.id
+                where users.username = ?
+                """,
+                (username,),
+            ).fetchone()
+            conn.execute("delete from login_codes where expires_at < ?", (now,))
+            if row is None or float(row["expires_at"]) < now:
+                return None
+            _, expected = _hash_password(code.strip(), row["code_salt"])
+            if not hmac.compare_digest(expected, row["code_hash"]):
+                return None
+            user_id = int(row["id"])
+            conn.execute("delete from login_codes where user_id = ?", (user_id,))
+        return User(id=user_id, username=str(row["username"]))
+
     def reset_password_with_code(self, username: str, code: str, new_password: str) -> User | None:
         username = username.strip().lower()
         self._validate_username_password(username, new_password)
@@ -235,12 +291,13 @@ class UserStore:
             conn.execute("delete from sessions where user_id = ?", (user_id,))
         return User(id=user_id, username=str(row["username"]))
 
-    def create_session(self, user_id: int) -> str:
+    def create_session(self, user_id: int, ttl_seconds: int = SESSION_SECONDS) -> str:
         token = secrets.token_urlsafe(32)
+        ttl_seconds = max(60, int(ttl_seconds))
         with self._connect() as conn:
             conn.execute(
                 "insert into sessions(token, user_id, expires_at) values (?, ?, ?)",
-                (token, user_id, time.time() + SESSION_SECONDS),
+                (token, user_id, time.time() + ttl_seconds),
             )
         return token
 
@@ -488,6 +545,13 @@ class UserStore:
                   expires_at real not null
                 );
                 create table if not exists password_resets(
+                  user_id integer primary key references users(id) on delete cascade,
+                  code_salt text not null,
+                  code_hash text not null,
+                  expires_at real not null,
+                  created_at real not null
+                );
+                create table if not exists login_codes(
                   user_id integer primary key references users(id) on delete cascade,
                   code_salt text not null,
                   code_hash text not null,
