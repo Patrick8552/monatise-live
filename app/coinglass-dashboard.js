@@ -252,7 +252,7 @@ const state = {
   }
 };
 
-const SIGNAL_SNAPSHOT_LOCK_MS = 30 * 60 * 1000;
+const FALLBACK_SNAPSHOT_LOCK_MS = 30 * 60 * 1000;
 
 function readLockedSignal() {
   try {
@@ -840,7 +840,8 @@ function publishGeneratedSignal(setup) {
   const signal = snapshotLockedSignal(candidate, setup, price);
   renderGeneratedSignal(signal);
 
-  const signature = `${signal.asset}:${signal.action}:${Math.round(signal.entry || 0)}:${signal.score}:${Math.floor(signal.snapshotAtMs / SIGNAL_SNAPSHOT_LOCK_MS)}`;
+  const snapshotDurationMs = Number(signal.snapshotDurationMs) || selectedSnapshotLockMs();
+  const signature = `${signal.asset}:${signal.action}:${Math.round(signal.entry || 0)}:${signal.score}:${Math.floor(signal.snapshotAtMs / snapshotDurationMs)}`;
   if (state.signals[0]?.signature !== signature) {
     state.signals.unshift({ ...signal, signature });
     state.signals = state.signals.slice(0, 8);
@@ -899,18 +900,22 @@ function snapshotLockedSignal(candidate, setup, price) {
   }
 
   const snapshotAtMs = now;
-  const reassessAtMs = now + SIGNAL_SNAPSHOT_LOCK_MS;
+  const snapshotInterval = selectedSnapshotInterval();
+  const snapshotDurationMs = selectedSnapshotLockMs();
+  const reassessAtMs = now + snapshotDurationMs;
   const fresh = {
     ...candidate,
     snapshotAtMs,
     reassessAtMs,
+    snapshotDurationMs,
+    snapshotInterval,
     snapshotTime: formatClock(snapshotAtMs),
     reassessTime: formatClock(reassessAtMs),
     status: candidate.action === "WAIT" ? "watch" : "active",
     stateLabel: candidate.action === "WAIT" ? "watch signal" : "active snapshot",
     thesis: candidate.action === "WAIT"
       ? candidate.thesis
-      : `At ${formatClock(snapshotAtMs)}, probability favored ${candidate.action === "BUY" ? "buyers" : "sellers"}. Entry, invalidation, and targets are locked until ${formatClock(reassessAtMs)}.`
+      : `At ${formatClock(snapshotAtMs)}, probability favored ${candidate.action === "BUY" ? "buyers" : "sellers"}. Grid, invalidation, and target are locked on the ${snapshotInterval} snapshot until ${formatClock(reassessAtMs)}.`
   };
   setLockedSignal(fresh.action === "WAIT" ? null : fresh);
   return fresh;
@@ -960,7 +965,8 @@ function hasStructuralInvalidation(signal, setup, price) {
 }
 
 function snapshotThesis(locked, candidate) {
-  const base = `At ${locked.snapshotTime}, probability favored ${locked.action === "BUY" ? "buyers" : "sellers"}. Entry, invalidation, and targets stay fixed until ${locked.reassessTime}.`;
+  const interval = locked.snapshotInterval ? ` on the ${locked.snapshotInterval} snapshot` : "";
+  const base = `At ${locked.snapshotTime}, probability favored ${locked.action === "BUY" ? "buyers" : "sellers"}${interval}. Grid, invalidation, and target stay fixed until ${locked.reassessTime}.`;
   if (candidate.action === "WAIT") {
     return `${base} Live framework moved to WAIT, but the active snapshot remains in force until target, invalidation, or expiry.`;
   }
@@ -972,6 +978,26 @@ function snapshotThesis(locked, candidate) {
 
 function formatClock(timestamp) {
   return new Date(timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function intervalToMs(interval) {
+  const value = String(interval || "").trim().toLowerCase();
+  const match = value.match(/^(\d+)(m|h|d)$/);
+  if (!match) return FALLBACK_SNAPSHOT_LOCK_MS;
+  const amount = Number(match[1]);
+  const unit = match[2];
+  if (!Number.isFinite(amount) || amount <= 0) return FALLBACK_SNAPSHOT_LOCK_MS;
+  if (unit === "m") return amount * 60 * 1000;
+  if (unit === "h") return amount * 60 * 60 * 1000;
+  return amount * 24 * 60 * 60 * 1000;
+}
+
+function selectedSnapshotInterval() {
+  return els.intervalSelect?.value || DEFAULT_VIEW_INTERVAL;
+}
+
+function selectedSnapshotLockMs() {
+  return intervalToMs(selectedSnapshotInterval());
 }
 
 function isDashboardPullbackEntry(action, entry, mark) {
@@ -1068,19 +1094,17 @@ function formatGridLevels(levels) {
   return levels.map((level) => formatUsd(level)).join(" / ");
 }
 
-function setupGridLevelsText(signal) {
-  if (signal.action === "BUY") return formatGridLevels(signal.buyGrid);
-  if (signal.action === "SELL") return formatGridLevels(signal.sellGrid);
-  return "--";
+function twoSidedGridLevelsText(signal) {
+  return `BUY ${formatGridLevels(signal.buyGrid)}; SELL ${formatGridLevels(signal.sellGrid)}`;
 }
 
 function setupGridPlan(signal) {
-  const levels = setupGridLevelsText(signal);
+  const levels = twoSidedGridLevelsText(signal);
   if (signal.action === "BUY") {
-    return `BUY grid ${levels}. All buys are wrong only if ${formatUsd(signal.invalidation)} breaks.`;
+    return `${levels}. Active BUY idea is wrong only if ${formatUsd(signal.invalidation)} breaks.`;
   }
   if (signal.action === "SELL") {
-    return `SELL grid ${levels}. All sells are wrong only if ${formatUsd(signal.invalidation)} breaks.`;
+    return `${levels}. Active SELL idea is wrong only if ${formatUsd(signal.invalidation)} breaks.`;
   }
   return signal.entryPlan;
 }
@@ -1166,7 +1190,7 @@ function renderGeneratedSignal(signal) {
   els.signalAction.textContent = signal.action;
   els.signalAction.className = signal.action === "BUY" ? "positive" : signal.action === "SELL" ? "negative" : "";
   els.signalThesis.textContent = signal.thesis;
-  els.signalEntry.textContent = signal.action === "WAIT" ? "--" : `${signal.action} grid`;
+  els.signalEntry.textContent = signal.action === "WAIT" ? "--" : "BUY / SELL grid";
   els.signalEntryPlan.textContent = setupGridPlan(signal);
   els.signalInvalidation.textContent = signal.action === "WAIT" ? "VWAP / structure" : formatUsd(signal.invalidation);
   els.signalInvalidationPlan.textContent = setupInvalidationPlan(signal);
@@ -1188,7 +1212,7 @@ function renderSignalLog() {
     <div class="signal-row">
       <strong class="${signal.action === "BUY" ? "positive" : signal.action === "SELL" ? "negative" : ""}">${signal.action}</strong>
       <span>${signal.asset} · ${signal.snapshotTime || signal.time}</span>
-      <small>${signal.thesis} · ${signal.action === "WAIT" ? "setup grid waiting" : `${signal.action} grid ${setupGridLevelsText(signal)}`} · invalidation ${signal.action === "WAIT" ? "VWAP / structure" : formatUsd(signal.invalidation)} · target ${formatUsd(signal.target)} · ${signal.hedgeDirection}</small>
+      <small>${signal.thesis} · ${signal.action === "WAIT" ? "setup grid waiting" : twoSidedGridLevelsText(signal)} · invalidation ${signal.action === "WAIT" ? "VWAP / structure" : formatUsd(signal.invalidation)} · target ${formatUsd(signal.target)} · ${signal.hedgeDirection}</small>
     </div>
   `).join("");
 }
