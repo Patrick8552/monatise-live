@@ -1260,14 +1260,23 @@ function boundedRiskDistance(entry, baseStop, atr, symbol = selectedAsset) {
   return Math.max(minRisk, Math.min(maxRisk, rawRisk, Math.max(minRisk, atrRisk)));
 }
 
+function isPullbackEntry(direction, entry, mark) {
+  const numericMark = Number(mark);
+  const numericEntry = Number(entry);
+  if (!Number.isFinite(numericMark) || numericMark <= 0 || !Number.isFinite(numericEntry) || numericEntry <= 0) return false;
+  if (direction === "LONG") return numericEntry < numericMark;
+  if (direction === "SHORT") return numericEntry > numericMark;
+  return false;
+}
+
 function plannedEntry(direction, mark, nearest, gapMidpoint) {
   const stableGap = Number.isFinite(gapMidpoint) && gapMidpoint > 0 ? gapMidpoint : Number.NaN;
   const stableNearest = Number.isFinite(nearest) && nearest > 0 ? nearest : Number.NaN;
   if (direction === "LONG" || direction === "SHORT") {
-    if (Number.isFinite(stableGap)) return stableGap;
-    if (Number.isFinite(stableNearest)) return stableNearest;
+    if (isPullbackEntry(direction, stableGap, mark)) return stableGap;
+    if (isPullbackEntry(direction, stableNearest, mark)) return stableNearest;
   }
-  return Number.isFinite(mark) ? mark : 0;
+  return Number.NaN;
 }
 
 function targetWithMinimumReward(direction, entry, rawTarget, riskDistance, rewardMultiple = 1.35) {
@@ -1298,17 +1307,9 @@ function buildEntryLadder(direction, mark, planned, riskDistance, targetOne, sym
   const risk = Number.isFinite(Number(riskDistance)) && Number(riskDistance) > 0 ? Number(riskDistance) : fallbackRisk;
   const entries = [
     {
-      key: "fast",
-      label: "Fast Entry",
-      note: "no pullback; take profit early",
-      price: numericMark,
-      reward: 0.75,
-      stopRisk: 0.45
-    },
-    {
       key: "planned",
       label: "Planned Entry",
-      note: "best balance",
+      note: "pullback zone",
       price: numericPlanned,
       reward: 1.35,
       stopRisk: 0.75
@@ -1320,6 +1321,14 @@ function buildEntryLadder(direction, mark, planned, riskDistance, targetOne, sym
       price: numericPlanned + directionSign * risk * 0.35,
       reward: 1.05,
       stopRisk: 0.65
+    },
+    {
+      key: "deep",
+      label: "Deep Pullback",
+      note: "smaller size",
+      price: numericPlanned - directionSign * risk * 0.35,
+      reward: 1.65,
+      stopRisk: 0.85
     }
   ];
   return entries.map((entry) => {
@@ -1521,7 +1530,27 @@ function tradingViewPrimarySignal(health, mark) {
   const setup = tradingViewSetup(signal);
   const direction = action === "BUY" ? "LONG" : "SHORT";
   const price = tradingViewSignalPrice(signal) || Number(mark);
-  const entry = setup.entry || price;
+  const entry = Number(setup.entry);
+  const confidence = Math.max(50, Math.min(95, Number(signal.confidence || 70)));
+  const route = signal.classification?.route || "TradingView primary signal feed";
+  if (!isPullbackEntry(direction, entry, price)) {
+    return {
+      confidence: Math.min(confidence, 49),
+      direction: "WAIT",
+      entry: null,
+      entryLevels: [],
+      stop: null,
+      targetOne: null,
+      targetTwo: null,
+      thesis: `${route}. ${signal.indicator || "TradingView"} ${action} is waiting because the alert did not provide a valid pullback entry ${direction === "SHORT" ? "above" : "below"} the live price.`,
+      tradingViewConfluence: {
+        detail: "TradingView alert is primary, but entry must be a pullback level.",
+        status: "waiting"
+      },
+      tradingViewHedge: signal.hedge || null,
+      trigger: `Wait for a pullback entry ${direction === "SHORT" ? "above" : "below"} ${money(price)}`
+    };
+  }
   const fallbackRisk = Number.isFinite(price) && price > 0 ? price * setupRiskPct(selectedAsset) * 0.55 : 0;
   const stop =
     setup.stop ||
@@ -1533,14 +1562,12 @@ function tradingViewPrimarySignal(health, mark) {
   const targetTwo =
     setup.targetTwo ||
     (direction === "SHORT" ? targetOne - Math.max(riskDistance, 1) : targetOne + Math.max(riskDistance, 1));
-  const confidence = Math.max(50, Math.min(95, Number(signal.confidence || 70)));
   const trigger =
     setup.trigger ||
     (direction === "LONG"
       ? `TradingView BUY holds above ${money(entry)}`
       : `TradingView SELL rejects below ${money(entry)}`);
   const entryLevels = buildEntryLadder(direction, price, entry, Math.max(riskDistance, fallbackRisk || 1), targetOne, selectedAsset);
-  const route = signal.classification?.route || "TradingView primary signal feed";
   return {
     confidence,
     direction,
@@ -1592,9 +1619,13 @@ function signalFromHealth(health, mark) {
     (Number.isFinite(takeProfit) && takeProfit < mark);
   const draftDirection = supportOnly ? "LONG" : resistanceOnly ? "SHORT" : "";
   const hardBlocked = (health.blocked || action === "halt" || action === "pause") && !draftDirection;
-  const direction = hardBlocked ? "WAIT" : draftDirection || (bullish && !bearish ? "LONG" : bearish && !bullish ? "SHORT" : "WATCH");
-  const executable = ["LONG", "SHORT"].includes(direction);
-  const entry = executable ? plannedEntry(direction, mark, nearest, gapMidpoint) : mark;
+  const candidateDirection = hardBlocked ? "WAIT" : draftDirection || (bullish && !bearish ? "LONG" : bearish && !bullish ? "SHORT" : "WATCH");
+  const candidateExecutable = ["LONG", "SHORT"].includes(candidateDirection);
+  const pullbackEntry = candidateExecutable ? plannedEntry(candidateDirection, mark, nearest, gapMidpoint) : Number.NaN;
+  const pullbackBlocked = candidateExecutable && !Number.isFinite(pullbackEntry);
+  const direction = pullbackBlocked ? "WAIT" : candidateDirection;
+  const executable = candidateExecutable && !pullbackBlocked;
+  const entry = executable ? pullbackEntry : mark;
   const rawTargetOne = Number.isFinite(takeProfit) && takeProfit > 0 ? takeProfit : direction === "SHORT" ? health.gridFloor : health.gridCeiling;
   const baseStop = Number.isFinite(invalidation) && invalidation > 0 ? invalidation : direction === "SHORT" ? health.gridCeiling : health.gridFloor;
   const riskDistance = executable ? boundedRiskDistance(entry, baseStop, atr) : 0;
@@ -1621,7 +1652,9 @@ function signalFromHealth(health, mark) {
         ? Math.max(25, Math.min(49, rawConfidence))
         : Math.max(50, Math.min(95, rawConfidence));
   const trigger =
-    direction === "LONG"
+    pullbackBlocked
+      ? `Wait for a pullback entry ${candidateDirection === "SHORT" ? "above" : "below"} ${money(mark)}`
+      : direction === "LONG"
       ? `${entry <= mark ? "Pullback hold near" : "Break and hold above"} ${money(entry)}`
       : direction === "SHORT"
         ? `${entry >= mark ? "Pullback reject near" : "Reject below"} ${money(entry)}`
@@ -1640,7 +1673,9 @@ function signalFromHealth(health, mark) {
         ? (Number.isFinite(targetOne) ? targetOne : entry) - Math.max(buffer, 1)
         : (Number.isFinite(targetOne) ? targetOne : entry) + Math.max(buffer, 1),
     thesis:
-      direction === "WAIT"
+      pullbackBlocked
+        ? `${signalLabel(candidateDirection)} is not executable yet because no valid pullback entry is available. Wait for price to return to a Fibonacci or FVG level before planning risk.`
+        : direction === "WAIT"
         ? "No usable signal while quality gates are blocked."
         : direction === "WATCH"
           ? `Market structure is mixed; keep it as a watchlist idea until confirmation improves. ${tvConfluence.detail}`.trim()
