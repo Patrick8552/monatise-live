@@ -509,6 +509,61 @@ select {
   background: #0e151e;
 }
 
+.tradingview-signal-panel {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #0f1620;
+}
+
+.tradingview-signal-panel p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.strategy-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.strategy-status strong {
+  color: var(--text);
+}
+
+.strategy-status span,
+.tradingview-signal-meta span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+}
+
+.strategy-status.buy strong {
+  color: var(--green);
+}
+
+.strategy-status.sell strong {
+  color: var(--red);
+}
+
+.tradingview-signal-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tradingview-signal-meta span {
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
 .wide {
   grid-column: span 2;
 }

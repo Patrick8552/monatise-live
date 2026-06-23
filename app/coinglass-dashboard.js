@@ -151,6 +151,7 @@ const els = {
   tradingViewFrame: document.querySelector("#tradingViewFrame"),
   tradingViewLink: document.querySelector("#tradingViewLink"),
   tradingViewSource: document.querySelector("#tradingViewSource"),
+  tradingViewSignalPanel: document.querySelector("#tradingViewSignalPanel"),
   liqCanvas: document.querySelector("#liqCanvas"),
   fundingList: document.querySelector("#fundingList"),
   oiList: document.querySelector("#oiList"),
@@ -223,6 +224,11 @@ const state = {
   copilot: {
     apiKey: localStorage.getItem(OPENAI_KEY_STORAGE) || "",
     model: localStorage.getItem(OPENAI_MODEL_STORAGE) || "gpt-5.5"
+  },
+  tradingView: {
+    configured: false,
+    latestSignal: null,
+    error: ""
   },
   monitor: {
     cursor: 0,
@@ -1680,6 +1686,9 @@ function chooseAsset(coin) {
   els.priceChange.className = "";
   els.headerPriceChange.textContent = "Loading";
   els.headerPriceChange.className = "";
+  state.tradingView.latestSignal = null;
+  state.tradingView.error = "";
+  renderTradingViewSignal();
   setLockedSignal(null);
   state.realtime.lastSetup = null;
   state.realtime.lastEntrySignal = null;
@@ -1723,6 +1732,95 @@ function syncTradingView(asset = selectedAsset()) {
   if (els.tradingViewFrame.src !== embedUrl) {
     els.tradingViewFrame.src = embedUrl;
   }
+}
+
+function renderTradingViewSignal() {
+  if (!els.tradingViewSignalPanel) return;
+  const signal = state.tradingView.latestSignal;
+  if (state.tradingView.error) {
+    els.tradingViewSignalPanel.innerHTML = `
+      <div class="strategy-status wait">
+        <strong>TV WAIT</strong>
+        <span>TradingView indicator bridge</span>
+      </div>
+      <p>${escapeHtml(state.tradingView.error)}</p>
+    `;
+    return;
+  }
+  if (!signal) {
+    els.tradingViewSignalPanel.innerHTML = `
+      <div class="strategy-status wait">
+        <strong>TV WAIT</strong>
+        <span>TradingView indicator bridge</span>
+      </div>
+      <p>No TradingView alert received for ${selectedCoin()} yet.</p>
+    `;
+    return;
+  }
+  const classification = signal.classification || {};
+  const action = String(signal.action || "WAIT").toUpperCase();
+  const stateClass = action === "BUY" ? "buy" : action === "SELL" ? "sell" : "wait";
+  const age = Number.isFinite(Number(classification.ageSeconds))
+    ? `${Math.round(Number(classification.ageSeconds) / 60)}m old`
+    : "live alert";
+  const setup = signal.setup || {};
+  const levels = [
+    setup.entry ? `entry ${formatUsd(Number(setup.entry))}` : "",
+    setup.stop ? `invalidation ${formatUsd(Number(setup.stop))}` : "",
+    setup.targetOne ? `target ${formatUsd(Number(setup.targetOne))}` : ""
+  ].filter(Boolean).join(" · ");
+  els.tradingViewSignalPanel.innerHTML = `
+    <div class="strategy-status ${stateClass}">
+      <strong>TV ${escapeHtml(action)}</strong>
+      <span>${escapeHtml(classification.state || "received")} · ${escapeHtml(signal.indicator || "TradingView")}</span>
+    </div>
+    <div class="tradingview-signal-meta">
+      <span>${escapeHtml(signal.symbol || selectedCoin())}</span>
+      <span>${escapeHtml(signal.timeframe || els.intervalSelect.value || "live")}</span>
+      <span>${escapeHtml(age)}</span>
+      <span>confidence ${Number(signal.confidence || 0).toFixed(0)}%</span>
+    </div>
+    <p>${escapeHtml(setup.thesis || signal.message || levels || "TradingView alert received. Monatise is checking Hyperliquid market context before building the grid.")}</p>
+  `;
+}
+
+async function loadTradingViewSignals() {
+  if (!els.tradingViewSignalPanel) return null;
+  try {
+    const response = await fetch(`/api/tradingview/signals?symbol=${encodeURIComponent(selectedCoin())}`, { cache: "no-store" });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || "TradingView bridge unavailable");
+    state.tradingView.configured = Boolean(payload.configured);
+    state.tradingView.latestSignal = payload.alerts?.[0] || null;
+    state.tradingView.error = payload.configured
+      ? ""
+      : "TradingView webhook token is not configured yet.";
+  } catch (error) {
+    state.tradingView.latestSignal = null;
+    state.tradingView.error = error.message || "TradingView bridge unavailable.";
+  }
+  renderTradingViewSignal();
+  return state.tradingView.latestSignal;
+}
+
+function tradingViewFrameworkContext() {
+  const signal = state.tradingView.latestSignal;
+  if (!signal) return { live: false, score: 0, detail: "waiting for TradingView alert" };
+  const classification = signal.classification || {};
+  const action = String(signal.action || "WAIT").toUpperCase();
+  const fresh = Boolean(classification.fresh);
+  const confidence = Number(signal.confidence || classification.confidence || 0);
+  if (!fresh) return { live: false, score: 0, detail: `${action} alert stale` };
+  const score = action === "BUY"
+    ? confidence >= 70 ? 2 : 1
+    : action === "SELL"
+      ? confidence >= 70 ? -2 : -1
+      : 0;
+  return {
+    live: action === "BUY" || action === "SELL",
+    score,
+    detail: `${signal.indicator || "TradingView"} ${action} ${confidence.toFixed(0)}% · ${classification.state || "fresh"}`
+  };
 }
 
 function resetMarketContext() {
@@ -2718,6 +2816,8 @@ function applyMonatiseFramework() {
   addCheck(checks, "Fear/greed", m.fearGreed, m.fearGreed > 72 ? -1 : m.fearGreed < 28 ? 1 : 0, m.fearGreed == null ? "waiting" : `${Math.round(m.fearGreed)}`);
   addCheck(checks, "VWAP", m.vwapSignal, m.vwapScore, m.vwapSignal ? `${m.vwapSignal} · ${formatPercent(m.vwapDistance, 2)} from VWAP` : "waiting");
   addCheck(checks, "History research", m.researchSignal, m.researchScore > 0 ? 1 : m.researchScore < 0 ? -1 : 0, m.researchSignal ? `${m.researchSignal} · ${m.scaleAction}` : "waiting");
+  const tvContext = tradingViewFrameworkContext();
+  addCheck(checks, "TradingView", tvContext.live ? tvContext.detail : null, tvContext.score, tvContext.detail);
 
   const liveChecks = checks.filter((check) => check.live).length;
   const score = checks.reduce((sum, check) => sum + check.score, 0);
@@ -2725,7 +2825,7 @@ function applyMonatiseFramework() {
   const confidence = Math.min(100, Math.round((Math.abs(score) / 6) * 100 + liveChecks * 5));
   const hedge = hedgeFromCoinGlass({ direction, score, confidence, market: m });
 
-  els.frameworkSource.textContent = `${asset.coin} selected · CoinGlass primary data + Hyperliquid fallback for funding/OI`;
+  els.frameworkSource.textContent = `${asset.coin} selected · TradingView alerts + market candles + CoinGlass/Hyperliquid context`;
   els.setupDirection.textContent = direction;
   els.setupDirection.className = direction.includes("BUY") ? "positive" : direction.includes("SELL") ? "negative" : "";
   els.setupConfidence.textContent = `confidence ${confidence}%`;
@@ -3265,6 +3365,7 @@ async function refreshDashboard() {
   }
 
   const jobs = [
+    loadTradingViewSignals(),
     getFunding().then(renderFunding).catch(renderFundingLocked),
     getOpenInterest().then(renderOpenInterest).catch(renderOpenInterestLocked),
     getLiquidations().then(renderLiquidations).catch(renderLiquidationsLocked),
