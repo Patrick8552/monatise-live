@@ -455,6 +455,21 @@ def settings_payload(settings) -> dict:  # noqa: ANN001
     }
 
 
+def user_payload(user: User, settings, store: UserStore) -> dict:  # noqa: ANN001
+    return {
+        "authenticated": True,
+        "username": user.username,
+        "clientName": settings.client_name,
+        "credentialsConfigured": store.has_credentials(user.id),
+        "selectedSymbol": settings.selected_symbol,
+        "subscription": {
+            "plan": settings.subscription_plan,
+            "status": settings.subscription_status,
+        },
+        "tradingRules": settings_payload(settings),
+    }
+
+
 class MarketFeed:
     def __init__(self, config: RuntimeConfig) -> None:
         self.config = config
@@ -764,19 +779,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                 return
             self.store.touch_seen(user.id, user.username, self._client_ip())
             settings = self.store.settings_for_user(user.id)
-            self._json(
-                {
-                    "authenticated": True,
-                    "username": user.username,
-                    "credentialsConfigured": self.store.has_credentials(user.id),
-                    "selectedSymbol": settings.selected_symbol,
-                    "subscription": {
-                        "plan": settings.subscription_plan,
-                        "status": settings.subscription_status,
-                    },
-                    "tradingRules": settings_payload(settings),
-                }
-            )
+            self._json(user_payload(user, settings, self.store))
             return
         if parsed.path == "/api/status":
             user = self._require_user()
@@ -867,22 +870,14 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             payload = self._read_json()
             try:
                 user = self.store.create_user(str(payload.get("username", "")), str(payload.get("password", "")))
+                client_name = str(payload.get("clientName", "")).strip()
+                if client_name:
+                    settings = self.store.save_client_name(user.id, client_name)
+                else:
+                    settings = self.store.settings_for_user(user.id)
                 self.store.record_login(user.id, user.username, self._client_ip())
                 self._create_login_session(user.id, remember_device=bool(payload.get("rememberDevice")))
-                settings = self.store.settings_for_user(user.id)
-                self._json(
-                    {
-                        "authenticated": True,
-                        "username": user.username,
-                        "credentialsConfigured": False,
-                        "selectedSymbol": settings.selected_symbol,
-                        "subscription": {
-                            "plan": settings.subscription_plan,
-                            "status": settings.subscription_status,
-                        },
-                        "tradingRules": settings_payload(settings),
-                    }
-                )
+                self._json(user_payload(user, settings, self.store))
             except ValueError as error:
                 self._error(400, str(error))
             return
@@ -895,19 +890,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             self.store.record_login(user.id, user.username, self._client_ip())
             self._create_login_session(user.id, remember_device=bool(payload.get("rememberDevice")))
             settings = self.store.settings_for_user(user.id)
-            self._json(
-                {
-                    "authenticated": True,
-                    "username": user.username,
-                    "credentialsConfigured": self.store.has_credentials(user.id),
-                    "selectedSymbol": settings.selected_symbol,
-                    "subscription": {
-                        "plan": settings.subscription_plan,
-                        "status": settings.subscription_status,
-                    },
-                    "tradingRules": settings_payload(settings),
-                }
-            )
+            self._json(user_payload(user, settings, self.store))
             return
         if parsed.path == "/api/login-code/request":
             payload = self._read_json()
@@ -937,19 +920,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             self.store.record_login(user.id, user.username, self._client_ip())
             self._create_login_session(user.id, remember_device=bool(payload.get("rememberDevice")))
             settings = self.store.settings_for_user(user.id)
-            self._json(
-                {
-                    "authenticated": True,
-                    "username": user.username,
-                    "credentialsConfigured": self.store.has_credentials(user.id),
-                    "selectedSymbol": settings.selected_symbol,
-                    "subscription": {
-                        "plan": settings.subscription_plan,
-                        "status": settings.subscription_status,
-                    },
-                    "tradingRules": settings_payload(settings),
-                }
-            )
+            self._json(user_payload(user, settings, self.store))
             return
         if parsed.path == "/api/password-reset/request":
             payload = self._read_json()
@@ -987,19 +958,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             self.tenants.reset_user(user.id)
             self._create_login_session(user.id, remember_device=True)
             settings = self.store.settings_for_user(user.id)
-            self._json(
-                {
-                    "authenticated": True,
-                    "username": user.username,
-                    "credentialsConfigured": self.store.has_credentials(user.id),
-                    "selectedSymbol": settings.selected_symbol,
-                    "subscription": {
-                        "plan": settings.subscription_plan,
-                        "status": settings.subscription_status,
-                    },
-                    "tradingRules": settings_payload(settings),
-                }
-            )
+            self._json(user_payload(user, settings, self.store))
             return
         if parsed.path == "/api/password-recovery-code":
             self._error(410, "saved recovery codes have been replaced by email reset codes")
@@ -1041,6 +1000,17 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                 )
                 self.tenants.reset_user(user.id)
                 self._json({"credentialsConfigured": True})
+            except ValueError as error:
+                self._error(400, str(error))
+            return
+        if parsed.path == "/api/profile":
+            user = self._require_user()
+            if user is None:
+                return
+            payload = self._read_json()
+            try:
+                settings = self.store.save_client_name(user.id, str(payload.get("clientName", "")))
+                self._json(user_payload(user, settings, self.store))
             except ValueError as error:
                 self._error(400, str(error))
             return

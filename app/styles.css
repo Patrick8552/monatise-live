@@ -281,7 +281,7 @@ body.auth-required .ops-ribbon,
 body.auth-required .desk-jump-nav,
 body.auth-required .command-strip,
 body.auth-required .wealth-command,
-body.auth-required .desk-section:not(#account) {
+body.auth-required .desk-section:not(#account):not(#about) {
   display: none;
 }
 
@@ -291,6 +291,11 @@ body.auth-required .desk-sections {
 
 body.auth-required #account {
   display: block;
+}
+
+body.auth-required #about {
+  display: block;
+  margin-top: 14px;
 }
 
 body[data-theme="dark"] .desk-jump-nav a,

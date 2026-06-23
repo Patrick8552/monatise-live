@@ -57,6 +57,7 @@ class LoginCode:
 
 @dataclass(frozen=True)
 class UserSettings:
+    client_name: str = ""
     selected_symbol: str = "BTC"
     subscription_plan: str = "free"
     subscription_status: str = "active"
@@ -345,6 +346,33 @@ class UserStore:
                 (user_id, account_address, encrypted_secret, time.time()),
             )
 
+    def save_client_name(self, user_id: int, client_name: str) -> UserSettings:
+        settings = self.settings_for_user(user_id)
+        clean_name = " ".join(client_name.strip().split())
+        if len(clean_name) < 2:
+            raise ValueError("profile name must be at least 2 characters")
+        if len(clean_name) > 80:
+            raise ValueError("profile name must be 80 characters or fewer")
+        with self._connect() as conn:
+            conn.execute(
+                """
+                insert into user_settings(user_id, client_name, selected_symbol, subscription_plan, subscription_status, updated_at)
+                values (?, ?, ?, ?, ?, ?)
+                on conflict(user_id) do update set
+                  client_name = excluded.client_name,
+                  updated_at = excluded.updated_at
+                """,
+                (
+                    user_id,
+                    clean_name,
+                    settings.selected_symbol,
+                    settings.subscription_plan,
+                    settings.subscription_status,
+                    time.time(),
+                ),
+            )
+        return self.settings_for_user(user_id)
+
     def save_selected_symbol(self, user_id: int, symbol: str) -> UserSettings:
         settings = self.settings_for_user(user_id)
         selected_symbol = symbol.strip().upper()
@@ -470,7 +498,7 @@ class UserStore:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                select selected_symbol, subscription_plan, subscription_status,
+                select client_name, selected_symbol, subscription_plan, subscription_status,
                        chart_interval, signal_session_window, leverage, order_quote_size, max_order_notional, max_total_notional,
                        max_position_value, session_guard_minutes, stale_grid_cancel, london_commodity_only,
                        max_daily_loss_pct
@@ -488,6 +516,7 @@ class UserStore:
             max_total_notional = 5000.0
             max_position_value = 5000.0
         return UserSettings(
+            client_name=str(row["client_name"] or ""),
             selected_symbol=str(row["selected_symbol"]),
             subscription_plan=str(row["subscription_plan"]),
             subscription_status=str(row["subscription_status"]),
@@ -566,6 +595,7 @@ class UserStore:
                 );
                 create table if not exists user_settings(
                   user_id integer primary key references users(id) on delete cascade,
+                  client_name text not null default '',
                   selected_symbol text not null,
                   subscription_plan text not null,
                   subscription_status text not null,
@@ -596,6 +626,7 @@ class UserStore:
                 for row in conn.execute("pragma table_info(user_settings)").fetchall()
             }
             migrations = {
+                "client_name": "alter table user_settings add column client_name text not null default ''",
                 "chart_interval": "alter table user_settings add column chart_interval text not null default '1h'",
                 "signal_session_window": "alter table user_settings add column signal_session_window text not null default 'london_new_york'",
                 "leverage": "alter table user_settings add column leverage real not null default 10",

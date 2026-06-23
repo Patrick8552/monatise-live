@@ -175,6 +175,36 @@ def test_user_store_saves_asset_and_free_access_settings() -> None:
         _restore_key(old_key)
 
 
+def test_user_store_saves_profile_name_across_settings_updates() -> None:
+    old_key = _with_key()
+    try:
+        with tempfile.NamedTemporaryFile() as db:
+            store = UserStore(db.name)
+            user = store.create_user("named-trader@example.com", "password123")
+
+            settings = store.save_client_name(user.id, "  Ada   Desk  ")
+            assert settings.client_name == "Ada Desk"
+
+            settings = store.save_selected_symbol(user.id, "gold")
+            assert settings.selected_symbol == "GOLD"
+            assert settings.client_name == "Ada Desk"
+
+            settings = store.save_trading_rules(
+                user.id,
+                chart_interval="1h",
+                london_commodity_only=True,
+                max_daily_loss_pct=0.05,
+                session_guard_minutes=60,
+                stale_grid_cancel=True,
+            )
+            assert settings.client_name == "Ada Desk"
+
+            settings = store.save_subscription_plan(user.id, "private", "active")
+            assert settings.client_name == "Ada Desk"
+    finally:
+        _restore_key(old_key)
+
+
 def test_user_store_saves_startup_plan_trading_rules_on_free_access() -> None:
     old_key = _with_key()
     try:

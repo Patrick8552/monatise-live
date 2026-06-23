@@ -239,6 +239,7 @@ let selectedLanguage = localStorage.getItem(preferenceKeys.language) || "en";
 
 const languageCopy = {
   en: {
+    about: "About",
     activity: "Activity",
     activation: "Activation",
     aiChat: "AI Chat",
@@ -266,6 +267,7 @@ const languageCopy = {
     workspace: "Workspace"
   },
   fr: {
+    about: "A propos",
     activity: "Activite",
     activation: "Activation",
     aiChat: "Chat IA",
@@ -293,6 +295,7 @@ const languageCopy = {
     workspace: "Espace"
   },
   es: {
+    about: "Acerca",
     activity: "Actividad",
     activation: "Activacion",
     aiChat: "Chat IA",
@@ -320,6 +323,7 @@ const languageCopy = {
     workspace: "Espacio"
   },
   pt: {
+    about: "Sobre",
     activity: "Atividade",
     activation: "Ativacao",
     aiChat: "Chat IA",
@@ -379,7 +383,7 @@ function applyLanguagePreference(language = selectedLanguage) {
   if (nav[1]) nav[1].textContent = t("dashboard");
   if (els.installAppButton) els.installAppButton.textContent = t("installApp");
   const jumps = document.querySelectorAll(".desk-jump-nav a");
-  [t("signalBuilder"), t("cioBrief"), "Quality Gate", t("activation"), t("operator"), t("marketIntel"), t("hedgeLayer"), t("aiChat"), t("privateAccess"), t("activity")].forEach((label, index) => {
+  [t("signalBuilder"), t("cioBrief"), "Quality Gate", t("activation"), t("operator"), t("marketIntel"), t("hedgeLayer"), t("aiChat"), t("privateAccess"), t("about"), t("activity")].forEach((label, index) => {
     if (jumps[index]) jumps[index].textContent = label;
   });
   const ops = document.querySelectorAll(".ops-ribbon article span");
@@ -540,6 +544,18 @@ function saveClientProfile(username) {
   return profile;
 }
 
+async function saveProfileDetails() {
+  const clientName = els.clientNameInput.value.trim();
+  const response = await jsonPost("/api/profile", { clientName });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error || "Could not save profile details");
+  }
+  saveClientProfile(payload.username || currentUser.username);
+  renderAuth(payload);
+  return payload;
+}
+
 function rememberedLoginKey() {
   return "monatiseRememberedLogin:v1";
 }
@@ -596,10 +612,12 @@ function renderRegistrationDesk(me = currentUser) {
   els.registrationDesk.hidden = !loggedIn;
   if (!loggedIn) return;
   const profile = loadClientProfile(me.username);
-  if (profile.clientName && !els.clientNameInput.value.trim()) {
+  if (me.clientName && els.clientNameInput.value.trim() !== me.clientName) {
+    els.clientNameInput.value = me.clientName;
+  } else if (profile.clientName && !els.clientNameInput.value.trim()) {
     els.clientNameInput.value = profile.clientName;
   }
-  const clientName = els.clientNameInput.value.trim() || profile.clientName || "Client";
+  const clientName = els.clientNameInput.value.trim() || me.clientName || profile.clientName || "Client";
   const syncReady = Boolean(me.credentialsConfigured);
   const planText = "Private access";
   els.onboardingContact.textContent = `${clientName} / ${me.username}`;
@@ -3090,7 +3108,12 @@ async function loginOrRegister(path) {
   actionButton.textContent = isRegister ? "Requesting..." : "Logging in...";
   setAuthStatus(isRegister ? "Requesting access..." : "Logging in...");
   try {
-    const response = await jsonPost(path, { username, password, rememberDevice: els.rememberLoginInput.checked });
+    const response = await jsonPost(path, {
+      username,
+      password,
+      rememberDevice: els.rememberLoginInput.checked,
+      clientName: isRegister ? els.clientNameInput.value.trim() : undefined
+    });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       setAuthStatus(payload.error || "Auth failed");
@@ -3294,7 +3317,12 @@ async function finishOnboarding() {
     els.clientNameInput.focus();
     return;
   }
-  saveClientProfile(currentUser.username);
+  try {
+    await saveProfileDetails();
+  } catch (error) {
+    els.credentialStatus.textContent = error.message || "Could not save profile details.";
+    return;
+  }
   const syncAddress = els.accountAddressInput.value.trim();
   const syncKey = els.secretKeyInput.value.trim();
   if ((syncAddress || syncKey) && (!syncAddress || !syncKey)) {
@@ -3307,7 +3335,7 @@ async function finishOnboarding() {
     await saveCredentials();
   }
   await saveTradingRules();
-  renderRegistrationDesk();
+  renderRegistrationDesk(currentUser);
   els.credentialStatus.textContent = "Signal profile saved. Private access is active.";
 }
 
