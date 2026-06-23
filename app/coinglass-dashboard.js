@@ -974,25 +974,47 @@ function formatClock(timestamp) {
   return new Date(timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+function isDashboardPullbackEntry(action, entry, mark) {
+  const numericEntry = Number(entry);
+  const numericMark = Number(mark);
+  if (!Number.isFinite(numericEntry) || numericEntry <= 0 || !Number.isFinite(numericMark) || numericMark <= 0) return false;
+  if (action === "BUY") return numericEntry < numericMark;
+  if (action === "SELL") return numericEntry > numericMark;
+  return false;
+}
+
+function plannedDashboardEntry(action, mark, vwap, buyGrid = [], sellGrid = []) {
+  if (!["BUY", "SELL"].includes(action)) return Number.NaN;
+  const candidates = [
+    Number(vwap),
+    ...(action === "BUY" ? buyGrid : sellGrid).map((level) => Number(level))
+  ].filter((level) => isDashboardPullbackEntry(action, level, mark));
+  if (!candidates.length) return Number.NaN;
+  return candidates.sort((left, right) => Math.abs(left - mark) - Math.abs(right - mark))[0];
+}
+
 function buildGeneratedSignal(setup, price, vwap) {
-  const action = setup.direction === "BUY SETUP" ? "BUY" : setup.direction === "SELL SETUP" ? "SELL" : "WAIT";
+  const setupAction = setup.direction === "BUY SETUP" ? "BUY" : setup.direction === "SELL SETUP" ? "SELL" : "WAIT";
   const atrPct = averageTrueRangePercent(state.priceSeries.slice(-24)) || 0.6;
   const riskPct = Math.max(0.35, Math.min(1.6, atrPct * 1.15));
   const spacingPct = Math.max(0.12, Math.min(0.55, riskPct / 3));
-  const entry = Number.isFinite(price) ? price : state.lastPrice;
-  const anchor = Number.isFinite(vwap) ? (entry + vwap) / 2 : entry;
-  const buyGrid = buildGridLevels(anchor, "buy", spacingPct, action);
-  const sellGrid = buildGridLevels(anchor, "sell", spacingPct, action);
+  const mark = Number.isFinite(price) ? price : state.lastPrice;
+  const anchor = Number.isFinite(vwap) && vwap > 0 ? vwap : mark;
+  const buyGrid = buildGridLevels(anchor, "buy", spacingPct, setupAction);
+  const sellGrid = buildGridLevels(anchor, "sell", spacingPct, setupAction);
+  const plannedEntry = plannedDashboardEntry(setupAction, mark, vwap, buyGrid, sellGrid);
+  const action = setupAction === "WAIT" || !Number.isFinite(plannedEntry) ? "WAIT" : setupAction;
+  const entry = action === "WAIT" ? null : plannedEntry;
   const invalidation = action === "BUY"
     ? entry * (1 - riskPct / 100)
     : action === "SELL"
       ? entry * (1 + riskPct / 100)
-      : Number.isFinite(vwap) ? vwap : entry;
+      : Number.isFinite(vwap) ? vwap : mark;
   const target = action === "BUY"
     ? Math.max(entry * (1 + riskPct / 100), Number.isFinite(vwap) ? vwap : entry)
     : action === "SELL"
       ? Math.min(entry * (1 - riskPct / 100), Number.isFinite(vwap) ? vwap : entry)
-      : Number.isFinite(vwap) ? vwap : entry;
+      : Number.isFinite(vwap) ? vwap : mark;
   const bestChecks = setup.checks
     .filter((check) => check.live || Math.abs(check.score) > 0)
     .slice(0, 4)
@@ -1012,8 +1034,10 @@ function buildGeneratedSignal(setup, price, vwap) {
     buyGridText: formatGridLevels(buyGrid),
     sellGridText: formatGridLevels(sellGrid),
     entryPlan: action === "WAIT"
-      ? "No entry until the framework score clears the setup threshold."
-      : `${action} near ${formatUsd(entry)}; first target ${formatUsd(target)}.`,
+      ? setupAction === "WAIT"
+        ? "No entry until the framework score clears the setup threshold."
+        : `No ${setupAction} entry at mark. Wait for a pullback ${setupAction === "BUY" ? "below" : "above"} ${formatUsd(mark)}.`
+      : `${action} pullback entry ${formatUsd(entry)}; first target ${formatUsd(target)}.`,
     invalidationPlan: action === "WAIT"
       ? "VWAP and market structure are the wait-state guard rails."
       : `Invalidate on acceptance beyond ${formatUsd(invalidation)}.`,

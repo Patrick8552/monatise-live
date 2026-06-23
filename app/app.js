@@ -1680,7 +1680,7 @@ function signalFromHealth(health, mark) {
   const pullbackBlocked = candidateExecutable && !Number.isFinite(pullbackEntry);
   const direction = pullbackBlocked ? "WAIT" : candidateDirection;
   const executable = candidateExecutable && !pullbackBlocked;
-  const entry = executable ? pullbackEntry : mark;
+  const entry = executable ? pullbackEntry : null;
   const rawTargetOne = Number.isFinite(takeProfit) && takeProfit > 0 ? takeProfit : direction === "SHORT" ? health.gridFloor : health.gridCeiling;
   const baseStop = Number.isFinite(invalidation) && invalidation > 0 ? invalidation : direction === "SHORT" ? health.gridCeiling : health.gridFloor;
   const riskDistance = executable ? boundedRiskDistance(entry, baseStop, atr) : 0;
