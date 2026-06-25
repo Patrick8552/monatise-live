@@ -2976,10 +2976,49 @@ function hasLivePlan() {
   return true;
 }
 
+function applySelectedAsset(symbol, options = {}) {
+  const nextSymbol = String(symbol || "").trim().toUpperCase();
+  if (!nextSymbol) return false;
+  if (nextSymbol === selectedAsset) {
+    syncSelectedAsset();
+    if (options.load && (options.force || candleSource.symbol !== nextSymbol || candleSource.type !== "live")) {
+      loadLiveCandles({ force: true, limit: 120, symbol: nextSymbol }).catch(() => {});
+    }
+    return false;
+  }
+  selectedAsset = nextSymbol;
+  fibAnalysis = null;
+  fvgAnalysis = null;
+  contextRadar = null;
+  coinGlassContext = null;
+  lastSignalCandidate = null;
+  lastTicketHealth = null;
+  latestTradingViewSignal = null;
+  latestTradingViewSignalSignature = "";
+  fibLastSymbol = "";
+  contextLastSymbol = "";
+  coinGlassLastSymbol = "";
+  candleLoadSequence += 1;
+  candleLoading = false;
+  candleLoadingSymbol = "";
+  candleSource = { interval: "sample", symbol: nextSymbol, type: "sample" };
+  syncSelectedAsset();
+  renderTradingViewChart();
+  renderCoinGlassServices();
+  if (options.render !== false) rebuildFromInputs();
+  if (options.load !== false) {
+    loadLiveCandles({ force: true, limit: 120, symbol: nextSymbol }).catch(() => {});
+    loadFibonacciAnalysis({ force: true });
+    loadContextRadar({ force: true });
+    loadCoinGlassContext({ force: true });
+  }
+  return true;
+}
+
 function renderAuth(me) {
   currentUser = me;
-  selectedAsset = me.selectedSymbol || selectedAsset;
   applyTradingRules(me.tradingRules || tradingRules);
+  const changedAsset = applySelectedAsset(me.selectedSymbol, { load: Boolean(me.authenticated) });
   const loggedIn = Boolean(me.authenticated);
   document.body.classList.toggle("auth-required", !loggedIn);
   els.authStatus.textContent = loggedIn ? me.username : "No profile";
@@ -3016,7 +3055,7 @@ function renderAuth(me) {
     els.backendStatus.textContent = "Login required";
   }
   updateLiveDesk();
-  syncSelectedAsset();
+  if (!changedAsset) syncSelectedAsset();
   updateDecisionSurface(lastBackendSnapshot);
 }
 
@@ -3863,27 +3902,7 @@ function renderAssetGroups() {
 
 async function saveSelectedAsset(symbol) {
   const previous = selectedAsset;
-  selectedAsset = symbol;
-  fibAnalysis = null;
-  fvgAnalysis = null;
-  contextRadar = null;
-  coinGlassContext = null;
-  lastSignalCandidate = null;
-  lastTicketHealth = null;
-  latestTradingViewSignal = null;
-  latestTradingViewSignalSignature = "";
-  fibLastSymbol = "";
-  contextLastSymbol = "";
-  coinGlassLastSymbol = "";
-  candleSource = { interval: "sample", symbol, type: "sample" };
-  syncSelectedAsset();
-  renderTradingViewChart();
-  renderCoinGlassServices();
-  rebuildFromInputs();
-  loadLiveCandles({ limit: 120, symbol }).catch(() => {});
-  loadFibonacciAnalysis({ force: true });
-  loadContextRadar({ force: true });
-  loadCoinGlassContext({ force: true });
+  applySelectedAsset(symbol, { force: true, load: true });
   if (!currentUser.authenticated) {
     addAuditEvent("asset changed", "Signal asset changed", `${previous} -> ${selectedAsset}`);
     render();
@@ -4601,7 +4620,7 @@ function renderBackend(snapshot) {
   els.riskStatus.textContent = snapshot.riskStatus || "ready";
   els.runState.textContent = snapshot.running ? "Backend running" : "Backend ready";
   updateLiveDesk(snapshot);
-  selectedAsset = snapshot.symbol || selectedAsset;
+  applySelectedAsset(snapshot.symbol, { load: false, render: false });
   const tvMark = tradingViewSignalPrice();
   if (snapshot.markPrice) {
     els.markPrice.textContent = money(tvMark || snapshot.markPrice);
