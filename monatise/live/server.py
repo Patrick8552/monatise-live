@@ -415,7 +415,7 @@ def operator_status_payload(config: RuntimeConfig) -> dict:
 def _market_data_adapter(config: RuntimeConfig, symbol: str):  # noqa: ANN202
     coin = symbol.split("-", 1)[0].upper()
     if coin in {"GOLD", "XAU", "CL", "BRENTOIL"}:
-        return HyperliquidAdapter(config), "Hyperliquid builder market fallback"
+        return HyperliquidAdapter(config), "Hyperliquid builder market"
     return CoinGlassAdapter(config), "CoinGlass futures price history"
 
 

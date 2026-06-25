@@ -1,12 +1,12 @@
-const CACHE_NAME = "monatise-shell-20260625-signal-state";
+const CACHE_NAME = "monatise-shell-20260625-hyperliquid-xau";
 const SHELL_ASSETS = [
   "./",
   "./index.html",
   "./cg.html",
   "./dashboard/",
   "./coinglass-dashboard.html?v=20260617-trader-mode",
-  "./styles.css?v=20260625-signal-state",
-  "./app.js?v=20260625-signal-state",
+  "./styles.css?v=20260625-hyperliquid-xau",
+  "./app.js?v=20260625-hyperliquid-xau",
   "./coinglass-dashboard.css?v=20260617-trader-mode",
   "./coinglass-dashboard.js?v=20260617-trader-mode",
   "./manifest.webmanifest?v=20260616-dashboard-install",

@@ -29,6 +29,14 @@ def test_hyperliquid_candle_snapshot_uses_builder_coin_alias() -> None:
     assert adapter.info.payload["payload"]["req"]["interval"] == "1h"
 
 
+def test_hyperliquid_gold_aliases_use_builder_gold_market() -> None:
+    adapter = HyperliquidAdapter.__new__(HyperliquidAdapter)
+
+    assert adapter._coin("GOLD") == "xyz:GOLD"
+    assert adapter._coin("XAU") == "xyz:GOLD"
+    assert adapter._coin("xyz:GOLD") == "xyz:GOLD"
+
+
 def test_parse_candle_and_interval_validation() -> None:
     candle = _parse_candle({"T": 123, "o": "10", "h": "12", "l": "9", "c": "11", "v": "2"})
 

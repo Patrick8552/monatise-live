@@ -203,6 +203,8 @@ let coinGlassLastLoadedAt = 0;
 let coinGlassLastSymbol = "";
 let candleSource = { interval: "sample", symbol: "BTC", type: "sample" };
 let candleLoading = false;
+let candleLoadingSymbol = "";
+let candleLoadSequence = 0;
 let initialLiveCandlesLoaded = false;
 let liveEquityCurve = [];
 let localAuditEvents = [];
@@ -411,7 +413,7 @@ const assetMetadata = {
   EURJPY: { name: "EUR/JPY", route: "TradingView forex watch" },
   EURUSD: { name: "EUR/USD", route: "TradingView forex watch" },
   GBPUSD: { name: "GBP/USD", route: "TradingView forex watch" },
-  GOLD: { name: "Gold", route: "TradingView OANDA:XAUUSD primary signal feed" },
+  GOLD: { name: "Gold", route: "Hyperliquid xyz:GOLD builder perp" },
   HYPE: { name: "Hyperliquid", route: "Core Hyperliquid perp" },
   NDX: { name: "Nasdaq 100", route: "TradingView index watch" },
   NASDAQ: { name: "Nasdaq Composite", route: "TradingView index watch" },
@@ -4318,11 +4320,14 @@ function candlesToCsv(candles) {
 }
 
 async function loadLiveCandles(options = {}) {
-  if (candleLoading && !options.force) return;
   const symbol = options.symbol || selectedAsset;
+  if (candleLoading && !options.force && symbol === candleLoadingSymbol) return;
   const interval = options.interval || tradingRules.chartInterval;
   const limit = options.limit || 120;
+  const requestId = candleLoadSequence + 1;
+  candleLoadSequence = requestId;
   candleLoading = true;
+  candleLoadingSymbol = symbol;
   try {
     const response = await apiFetch(
       `/api/candles?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${encodeURIComponent(limit)}`,
@@ -4332,14 +4337,20 @@ async function loadLiveCandles(options = {}) {
     if (!response.ok) throw new Error(payload.error || "live candles unavailable");
     const candles = Array.isArray(payload.candles) ? payload.candles : [];
     if (!candles.length) throw new Error("no candles returned");
+    if (requestId !== candleLoadSequence || symbol !== selectedAsset) return;
     candleCsvBuffer = candlesToCsv(candles);
     candleSource = { interval: payload.interval || interval, symbol: payload.symbol || symbol, type: "live" };
     rebuildFromInputs();
   } catch (error) {
-    candleSource = { interval: "sample", symbol: selectedAsset, type: "sample" };
+    if (requestId === candleLoadSequence && symbol === selectedAsset) {
+      candleSource = { interval: "sample", symbol, type: "sample" };
+    }
     void error;
   } finally {
-    candleLoading = false;
+    if (requestId === candleLoadSequence) {
+      candleLoading = false;
+      candleLoadingSymbol = "";
+    }
   }
 }
 
