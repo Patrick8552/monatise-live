@@ -7,6 +7,12 @@ const source = fs.readFileSync(new URL("../app/app.js", import.meta.url), "utf8"
 assert.ok(!source.includes("selectedAsset = snapshot.symbol"), "backend status must not overwrite the selected chart asset");
 assert.ok(!source.includes("selectedAsset = selectableAssets"), "market refresh must not directly overwrite selected asset");
 assert.ok(!source.includes("selectedAsset = markets"), "market refresh must not directly overwrite selected asset");
+assert.ok(source.includes("function structuredSignalFromHealth"), "signals must be gated by candle/structure signature");
+assert.ok(!source.includes("createdAt: new Date().toISOString(),"), "signal createdAt must not reset on render refresh");
+assert.ok(
+  source.includes("lastStructuredSignalCreatedAt = new Date().toISOString();"),
+  "new signal timestamps should only be created with a fresh structure signature"
+);
 
 function extractFunction(name) {
   const start = source.indexOf(`function ${name}(`);

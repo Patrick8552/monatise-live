@@ -210,6 +210,9 @@ let liveEquityCurve = [];
 let localAuditEvents = [];
 let lastTicketHealth = null;
 let lastSignalCandidate = null;
+let lastSignalStructureSignature = "";
+let lastStructuredSignal = null;
+let lastStructuredSignalCreatedAt = "";
 let lastTicketSnapshot = null;
 let pendingArmReview = false;
 let deferredInstallPrompt = null;
@@ -1766,6 +1769,82 @@ function signalLabel(direction) {
   return direction;
 }
 
+function latestClosedCandle() {
+  const candles = Array.isArray(state?.candles) ? state.candles : [];
+  if (!candles.length) return null;
+  if (candleSource.type === "live") {
+    return candles[Math.max(0, candles.length - 1)];
+  }
+  const activeIndex = Number.isFinite(state?.activeIndex) ? state.activeIndex : candles.length - 1;
+  return candles[Math.max(0, Math.min(candles.length - 1, activeIndex))];
+}
+
+function roundedSignatureNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Number(number.toFixed(8)) : null;
+}
+
+function signalStructureSignature() {
+  const candle = latestClosedCandle() || {};
+  const nearestFib = fibAnalysis?.nearest_level || {};
+  const takeProfit = fibAnalysis?.take_profit || {};
+  const nearestGap = fvgAnalysis?.nearest_gap || {};
+  const indicator = contextRadar?.indicator || {};
+  const instruction = contextRadar?.instruction || {};
+  return JSON.stringify({
+    asset: selectedAsset,
+    candle: {
+      close: roundedSignatureNumber(candle.close),
+      high: roundedSignatureNumber(candle.high),
+      low: roundedSignatureNumber(candle.low),
+      open: roundedSignatureNumber(candle.open),
+      timestamp: candle.timestamp || ""
+    },
+    candleSource: {
+      interval: candleSource.interval,
+      symbol: candleSource.symbol,
+      type: candleSource.type
+    },
+    context: {
+      action: instruction.action || "",
+      atr: roundedSignatureNumber(indicator.atr),
+      rsi: roundedSignatureNumber(indicator.rsi),
+      trend: indicator.trend || ""
+    },
+    fib: {
+      candleCount: fibAnalysis?.candle_count || 0,
+      gridCeiling: roundedSignatureNumber(fibAnalysis?.grid_ceiling),
+      gridFloor: roundedSignatureNumber(fibAnalysis?.grid_floor),
+      invalidation: roundedSignatureNumber(fibAnalysis?.invalidation),
+      nearest: roundedSignatureNumber(nearestFib.price),
+      takeProfit: roundedSignatureNumber(takeProfit.price),
+      trend: fibAnalysis?.trend || ""
+    },
+    fvg: {
+      bias: fvgAnalysis?.bias || "",
+      direction: nearestGap.direction || "",
+      midpoint: roundedSignatureNumber(nearestGap.midpoint)
+    },
+    interval: tradingRules.chartInterval
+  });
+}
+
+function structuredSignalFromHealth(health, mark) {
+  const signature = signalStructureSignature();
+  if (lastStructuredSignal && signature === lastSignalStructureSignature) {
+    return lastStructuredSignal;
+  }
+  const signal = signalFromHealth(health, mark);
+  lastSignalStructureSignature = signature;
+  lastStructuredSignalCreatedAt = new Date().toISOString();
+  lastStructuredSignal = {
+    ...signal,
+    createdAt: lastStructuredSignalCreatedAt,
+    structureSignature: signature
+  };
+  return lastStructuredSignal;
+}
+
 function hasExecutableSignalLevels(signal) {
   const direction = String(signal?.direction || "");
   const entry = Number(signal?.entry);
@@ -1900,7 +1979,7 @@ function renderStrategyReadout(orders, options = {}) {
           ? "Backend signal state"
           : "Signal preview";
   const warningText = health.warnings.length ? health.warnings.join(" · ") : "structure, context, session, and doctrine are aligned";
-  const signal = signalFromHealth(health, mark);
+  const signal = structuredSignalFromHealth(health, mark);
   const timing = signalTiming(selectedAsset);
   const thesis = setupWaitDetail(health, signal, timing);
   const timingPrimary = timing.active
@@ -1958,7 +2037,7 @@ function renderExecutionTicket(orders = [], options = {}) {
   const capital = Number.isFinite(accountValue) && accountValue > 0 ? accountValue : inputCapital;
   const drawdownPct = Number(snapshot?.risk?.max_daily_loss_pct ?? tradingRules.maxDailyLossPct ?? 0.05);
   const exposurePct = capital > 0 ? openExposure / capital : 0;
-  const signal = options.signal || signalFromHealth(health, mark);
+  const signal = options.signal || structuredSignalFromHealth(health, mark);
   const timing = signalTiming(selectedAsset);
   const thesis = setupWaitDetail(health, signal, timing);
   const fastEntry = signal.entryLevels?.find((level) => level.key === "fast");
@@ -2007,7 +2086,7 @@ function renderExecutionTicket(orders = [], options = {}) {
   renderHedgeLayer(signal, sizing, { blocks, health });
   lastSignalCandidate = {
     confidence: signal.confidence,
-    createdAt: new Date().toISOString(),
+    createdAt: signal.createdAt || lastStructuredSignalCreatedAt || "",
     direction: signal.direction,
     entry: signal.entry,
     entryLevels: signal.entryLevels || [],
@@ -2992,6 +3071,9 @@ function applySelectedAsset(symbol, options = {}) {
   contextRadar = null;
   coinGlassContext = null;
   lastSignalCandidate = null;
+  lastSignalStructureSignature = "";
+  lastStructuredSignal = null;
+  lastStructuredSignalCreatedAt = "";
   lastTicketHealth = null;
   latestTradingViewSignal = null;
   latestTradingViewSignalSignature = "";
@@ -4373,6 +4455,13 @@ async function loadLiveCandles(options = {}) {
   }
 }
 
+async function refreshClosedStructure() {
+  if (!selectedAsset || !currentUser.authenticated) return;
+  await loadLiveCandles({ force: true, limit: 120, symbol: selectedAsset });
+  loadFibonacciAnalysis({ force: true });
+  loadContextRadar({ force: true });
+}
+
 function scaleCandlesToSelectedAsset(candles) {
   if (candleSource.type === "live" && candleSource.symbol === selectedAsset) {
     return candles;
@@ -5123,3 +5212,4 @@ setInterval(refreshBackend, 2500);
 setInterval(renderForexSessions, 1000);
 setInterval(loadTradingViewSignals, 10000);
 setInterval(loadCoinGlassContext, 60000);
+setInterval(() => refreshClosedStructure().catch(() => {}), 60000);
