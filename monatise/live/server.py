@@ -47,6 +47,7 @@ TRADINGVIEW_ACTIONS = {
 }
 TRADINGVIEW_FRESH_SECONDS = 5 * 60
 TRADINGVIEW_SNAPSHOT_LOCK_SECONDS = 15 * 60
+TRADINGVIEW_ALERT_LIMIT = 50
 COINGLASS_PROXY_BASE = "https://open-api-v4.coinglass.com"
 COINGLASS_PROXY_PATHS = {
     "/api/article/list",
@@ -66,6 +67,36 @@ PRIVATE_GET_PATHS = {
     "/api/context/radar",
     "/api/coinglass/context",
 }
+
+
+def tradingview_alert_store_path() -> Path:
+    configured = os.getenv("MONATISE_TRADINGVIEW_ALERT_STORE", "").strip()
+    if configured:
+        return Path(configured)
+    data_dir = Path(os.getenv("MONATISE_DATA_DIR", "/data" if Path("/data").exists() else "work"))
+    return data_dir / "tradingview-alerts.json"
+
+
+def load_tradingview_alerts(path: Path | None = None) -> list[dict]:
+    alert_path = path or tradingview_alert_store_path()
+    try:
+        payload = json.loads(alert_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return []
+    alerts = payload.get("alerts") if isinstance(payload, dict) else payload
+    if not isinstance(alerts, list):
+        return []
+    return [alert for alert in alerts if isinstance(alert, dict)][:TRADINGVIEW_ALERT_LIMIT]
+
+
+def save_tradingview_alerts(alerts: list[dict], path: Path | None = None) -> None:
+    alert_path = path or tradingview_alert_store_path()
+    try:
+        alert_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {"alerts": alerts[:TRADINGVIEW_ALERT_LIMIT], "updatedAt": time.time()}
+        alert_path.write_text(json.dumps(payload, cls=JsonEncoder), encoding="utf-8")
+    except OSError:
+        return
 
 
 def requires_site_auth(path: str) -> bool:
@@ -97,6 +128,10 @@ def _normalize_alert_symbol(value: str) -> str:
     }
     if symbol in aliases:
         return aliases[symbol]
+    crypto_bases = {"BTC", "ETH", "SOL", "HYPE", "BNB", "XRP", "DOGE"}
+    for quote in ("USDT", "USDC", "USD"):
+        if symbol.endswith(quote) and symbol[: -len(quote)] in crypto_bases:
+            return symbol[: -len(quote)]
     if len(symbol) == 6 and symbol[:3].isalpha() and symbol[3:].isalpha():
         return symbol
     return symbol[:16]
@@ -531,6 +566,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
     rate_limits: dict[str, list[float]] = {}
     rate_lock = threading.Lock()
     tradingview_alerts: list[dict] = []
+    tradingview_alert_store: Path | None = None
     tradingview_lock = threading.Lock()
 
     def __init__(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
@@ -829,7 +865,8 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             alert = normalize_tradingview_alert(payload)
             enriched_alert = enrich_tradingview_alert(alert)
             with self.tradingview_lock:
-                type(self).tradingview_alerts = [alert, *type(self).tradingview_alerts[:49]]
+                type(self).tradingview_alerts = [alert, *type(self).tradingview_alerts[: TRADINGVIEW_ALERT_LIMIT - 1]]
+                save_tradingview_alerts(type(self).tradingview_alerts, type(self).tradingview_alert_store)
             email_recipients = 0
             email_error = ""
             try:
@@ -1232,6 +1269,8 @@ def main() -> int:
     Handler.market_feed = market_feed
     Handler.config = config
     Handler.app_dir = app_dir
+    Handler.tradingview_alert_store = tradingview_alert_store_path()
+    Handler.tradingview_alerts = load_tradingview_alerts(Handler.tradingview_alert_store)
 
     port = int(os.getenv("MONATISE_PORT", os.getenv("PORT", "4174")))
     host = os.getenv("MONATISE_HOST", "127.0.0.1")

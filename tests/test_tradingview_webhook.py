@@ -1,7 +1,14 @@
 import os
 
 from monatise.live.config import LIVE_CONFIRMATION, RuntimeConfig
-from monatise.live.server import classify_tradingview_alert, enrich_tradingview_alert, normalize_tradingview_alert, operator_status_payload
+from monatise.live.server import (
+    classify_tradingview_alert,
+    enrich_tradingview_alert,
+    load_tradingview_alerts,
+    normalize_tradingview_alert,
+    operator_status_payload,
+    save_tradingview_alerts,
+)
 
 
 def test_tradingview_alert_normalizes_json_payload() -> None:
@@ -144,6 +151,20 @@ def test_tradingview_alert_preserves_setup_grid_and_hedge_fields() -> None:
     assert alert["grid"][0] == {"label": "entry", "price": 4160.0, "side": "sell"}
     assert alert["hedge"]["side"] == "LONG"
     assert alert["hedge"]["ratio"] == 35
+
+
+def test_tradingview_alert_store_survives_restart(tmp_path) -> None:
+    store_path = tmp_path / "tradingview-alerts.json"
+    alerts = [
+        normalize_tradingview_alert({"symbol": "OANDA:XAUUSD", "action": "SELL", "price": "4162.45"}),
+        normalize_tradingview_alert({"symbol": "BINANCE:BTCUSDT", "action": "BUY", "price": "64200"}),
+    ]
+
+    save_tradingview_alerts(alerts, store_path)
+    loaded = load_tradingview_alerts(store_path)
+
+    assert [alert["symbol"] for alert in loaded] == ["GOLD", "BTC"]
+    assert loaded[0]["priceValue"] == 4162.45
 
 
 def test_tradingview_alert_classification_flags_conflict_and_stale() -> None:

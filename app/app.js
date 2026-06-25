@@ -1563,7 +1563,7 @@ function goldIndicatorConfluence(signal = latestTradingViewSignal) {
 }
 
 function tradingViewConfluence(direction) {
-  const signal = latestTradingViewSignal;
+  const signal = activeTradingViewSignal(2 * 60 * 60 * 1000);
   if (!signal) return { boost: 0, detail: "", status: "none" };
   const action = String(signal.action || "WAIT").toUpperCase();
   const confidence = Math.max(0, Math.min(100, Number(signal.confidence || 0)));
@@ -1806,7 +1806,7 @@ function renderTradingViewSignal() {
     `;
     return;
   }
-  const signal = latestTradingViewSignal;
+  const signal = activeTradingViewSignal(2 * 60 * 60 * 1000);
   if (!signal) {
     els.tradingViewSignalPanel.innerHTML = `
       <div class="strategy-status wait">
@@ -3866,6 +3866,13 @@ async function saveSelectedAsset(symbol) {
   fvgAnalysis = null;
   contextRadar = null;
   coinGlassContext = null;
+  lastSignalCandidate = null;
+  lastTicketHealth = null;
+  latestTradingViewSignal = null;
+  latestTradingViewSignalSignature = "";
+  fibLastSymbol = "";
+  contextLastSymbol = "";
+  coinGlassLastSymbol = "";
   candleSource = { interval: "sample", symbol, type: "sample" };
   syncSelectedAsset();
   renderTradingViewChart();
