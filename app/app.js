@@ -3433,9 +3433,9 @@ async function loadMarkets() {
     marketGroups = payload.groups || {};
     renderAssetOptions();
     if (!selectableAssets.some((asset) => asset.symbol === selectedAsset) && selectableAssets[0]) {
-      selectedAsset = selectableAssets[0].symbol;
+      applySelectedAsset(selectableAssets[0].symbol, { load: false, render: false });
     } else if (!markets.some((asset) => asset.symbol === selectedAsset) && markets[0] && !selectableAssets.length) {
-      selectedAsset = markets[0].symbol;
+      applySelectedAsset(markets[0].symbol, { load: false, render: false });
     }
     syncSelectedAsset();
     loadFibonacciAnalysis();
@@ -4620,7 +4620,6 @@ function renderBackend(snapshot) {
   els.riskStatus.textContent = snapshot.riskStatus || "ready";
   els.runState.textContent = snapshot.running ? "Backend running" : "Backend ready";
   updateLiveDesk(snapshot);
-  applySelectedAsset(snapshot.symbol, { load: false, render: false });
   const tvMark = tradingViewSignalPrice();
   if (snapshot.markPrice) {
     els.markPrice.textContent = money(tvMark || snapshot.markPrice);

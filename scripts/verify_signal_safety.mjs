@@ -4,6 +4,10 @@ import vm from "node:vm";
 
 const source = fs.readFileSync(new URL("../app/app.js", import.meta.url), "utf8");
 
+assert.ok(!source.includes("selectedAsset = snapshot.symbol"), "backend status must not overwrite the selected chart asset");
+assert.ok(!source.includes("selectedAsset = selectableAssets"), "market refresh must not directly overwrite selected asset");
+assert.ok(!source.includes("selectedAsset = markets"), "market refresh must not directly overwrite selected asset");
+
 function extractFunction(name) {
   const start = source.indexOf(`function ${name}(`);
   assert.notEqual(start, -1, `missing function ${name}`);
