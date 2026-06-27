@@ -965,6 +965,73 @@ function candleTime(candle) {
   return Number.isFinite(time) ? time : 0;
 }
 
+function candleTouchesLevel(candle, level) {
+  const high = Number(candle?.high);
+  const low = Number(candle?.low);
+  const price = Number(level);
+  return Number.isFinite(high) && Number.isFinite(low) && Number.isFinite(price) && low <= price && high >= price;
+}
+
+function journalTimeLabel(value) {
+  const time = new Date(value || 0).getTime();
+  return Number.isFinite(time) && time > 0 ? new Date(time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+}
+
+function journalElapsedLabel(start, end) {
+  const startTime = new Date(start || 0).getTime();
+  const endTime = new Date(end || 0).getTime();
+  if (!Number.isFinite(startTime) || !Number.isFinite(endTime) || endTime <= startTime) return "";
+  const minutes = Math.round((endTime - startTime) / 60000);
+  if (minutes < 90) return `${minutes}m`;
+  const hours = minutes / 60;
+  return hours < 36 ? `${hours.toFixed(hours < 10 ? 1 : 0)}h` : `${Math.round(hours / 24)}d`;
+}
+
+function journalLifecycle(entry = {}) {
+  const events = [{ label: "Issued", state: "done", value: journalTimeLabel(entry.createdAt) }];
+  if (entry.triggeredAt) {
+    events.push({ label: "Entry", state: "done", value: journalTimeLabel(entry.triggeredAt) });
+  } else if (entry.status === "INVALID") {
+    events.push({ label: "Entry", state: "missed", value: "not filled" });
+  } else {
+    events.push({ label: "Entry", state: "pending", value: money(entry.entry) });
+  }
+
+  if (entry.targetOneHitAt) {
+    events.push({ label: "TP1", state: "done", value: journalTimeLabel(entry.targetOneHitAt) });
+  } else if (entry.stoppedAt) {
+    events.push({ label: "TP1", state: "missed", value: money(entry.targetOne) });
+  } else {
+    events.push({ label: "TP1", state: "pending", value: money(entry.targetOne) });
+  }
+
+  if (entry.stoppedAt) {
+    events.push({ label: entry.triggeredAt ? "Stop" : "Invalid", state: "missed", value: journalTimeLabel(entry.stoppedAt) });
+  } else if (entry.status === "INVALID") {
+    events.push({ label: "Invalid", state: "missed", value: journalTimeLabel(entry.invalidatedAt || entry.resolvedAt) });
+  } else {
+    events.push({ label: "Stop", state: "pending", value: money(entry.stop) });
+  }
+  return events;
+}
+
+function journalSetupScore(entry = {}) {
+  const confidence = Number(entry.confidence || 0);
+  const grid = entry.trendGrid || {};
+  const longScore = Number(grid.longScore);
+  const shortScore = Number(grid.shortScore);
+  const directionalScore =
+    entry.direction === "LONG" && Number.isFinite(longScore)
+      ? longScore
+      : entry.direction === "SHORT" && Number.isFinite(shortScore)
+        ? shortScore
+        : null;
+  if (confidence >= 75 && Number(directionalScore) >= 4) return "A";
+  if (confidence >= 62 || Number(directionalScore) >= 3) return "B";
+  if (confidence >= 50 || Number(directionalScore) >= 2) return "C";
+  return "Watch";
+}
+
 function gradeSignalEntry(entry, candles = state?.candles || []) {
   if (terminalSignalStatus(entry.status)) return entry;
   if (!["LONG", "SHORT"].includes(entry.direction)) {
@@ -980,37 +1047,55 @@ function gradeSignalEntry(entry, candles = state?.candles || []) {
     .sort((left, right) => candleTime(left) - candleTime(right));
   let triggeredAt = entry.triggeredAt || "";
   for (const candle of laterCandles) {
-    const high = Number(candle.high);
-    const low = Number(candle.low);
     const time = candle.timestamp;
+    const entryTouched = candleTouchesLevel(candle, entry.entry);
+    const stopTouched = candleTouchesLevel(candle, entry.stop);
+    const targetTouched = candleTouchesLevel(candle, entry.targetOne);
     if (!triggeredAt) {
-      const triggered = entry.direction === "LONG" ? high >= entry.entry : low <= entry.entry;
-      if (triggered) triggeredAt = time;
+      if (stopTouched && !entryTouched) {
+        return {
+          ...entry,
+          invalidatedAt: time,
+          resolvedAt: time,
+          status: "INVALID",
+          outcomeDetail: `Invalidation touched ${money(entry.stop)} before the planned entry filled.`
+        };
+      }
+      if (stopTouched && entryTouched) {
+        return {
+          ...entry,
+          invalidatedAt: time,
+          resolvedAt: time,
+          status: "INVALID",
+          outcomeDetail: "Entry and invalidation were inside the same candle before a confirmed fill; marked invalid."
+        };
+      }
+      if (entryTouched) triggeredAt = time;
     }
     if (!triggeredAt) continue;
     if (entry.direction === "LONG") {
-      const stopHit = low <= entry.stop;
-      const targetHit = high >= entry.targetOne;
+      const stopHit = stopTouched;
+      const targetHit = targetTouched;
       if (stopHit && targetHit) {
-        return { ...entry, triggeredAt, resolvedAt: time, status: "LOSS", outcomeDetail: `Stop and Target 1 were both inside the same candle; marked loss because exact intrabar order is unknown.` };
+        return { ...entry, triggeredAt, stoppedAt: time, resolvedAt: time, status: "LOSS", outcomeDetail: `Stop and Target 1 were both inside the same candle; marked loss because exact intrabar order is unknown.` };
       }
       if (stopHit) {
-        return { ...entry, triggeredAt, resolvedAt: time, status: "LOSS", outcomeDetail: `Stop hit at ${money(entry.stop)} before target.` };
+        return { ...entry, triggeredAt, stoppedAt: time, resolvedAt: time, status: "LOSS", outcomeDetail: `Stop hit at ${money(entry.stop)} before target.` };
       }
       if (targetHit) {
-        return { ...entry, triggeredAt, resolvedAt: time, status: "WIN", outcomeDetail: `Target 1 hit at ${money(entry.targetOne)}.` };
+        return { ...entry, triggeredAt, targetOneHitAt: time, resolvedAt: time, status: "WIN", outcomeDetail: `Target 1 hit at ${money(entry.targetOne)}.` };
       }
     } else {
-      const stopHit = high >= entry.stop;
-      const targetHit = low <= entry.targetOne;
+      const stopHit = stopTouched;
+      const targetHit = targetTouched;
       if (stopHit && targetHit) {
-        return { ...entry, triggeredAt, resolvedAt: time, status: "LOSS", outcomeDetail: `Stop and Target 1 were both inside the same candle; marked loss because exact intrabar order is unknown.` };
+        return { ...entry, triggeredAt, stoppedAt: time, resolvedAt: time, status: "LOSS", outcomeDetail: `Stop and Target 1 were both inside the same candle; marked loss because exact intrabar order is unknown.` };
       }
       if (stopHit) {
-        return { ...entry, triggeredAt, resolvedAt: time, status: "LOSS", outcomeDetail: `Stop hit at ${money(entry.stop)} before target.` };
+        return { ...entry, triggeredAt, stoppedAt: time, resolvedAt: time, status: "LOSS", outcomeDetail: `Stop hit at ${money(entry.stop)} before target.` };
       }
       if (targetHit) {
-        return { ...entry, triggeredAt, resolvedAt: time, status: "WIN", outcomeDetail: `Target 1 hit at ${money(entry.targetOne)}.` };
+        return { ...entry, triggeredAt, targetOneHitAt: time, resolvedAt: time, status: "WIN", outcomeDetail: `Target 1 hit at ${money(entry.targetOne)}.` };
       }
     }
   }
@@ -1053,17 +1138,24 @@ function renderSignalJournal(entries = loadSignalJournal()) {
         .slice(-12)
         .reverse()
         .map(
-          (entry) => `<article class="${outcomeClass(entry.status)}">
+          (entry) => {
+            const lifecycle = journalLifecycle(entry)
+              .map((event) => `<span class="${event.state}">${event.label}<strong>${event.value || "--"}</strong></span>`)
+              .join("");
+            const elapsed = journalElapsedLabel(entry.triggeredAt || entry.createdAt, entry.resolvedAt || entry.targetOneHitAt || entry.stoppedAt);
+            return `<article class="${outcomeClass(entry.status)}">
             <span>${new Date(entry.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · ${entry.symbol} · ${entry.interval}</span>
-            <strong>${entry.direction} · ${entry.status}</strong>
+            <strong>${entry.direction} · ${entry.status} · Grade ${entry.setupGrade || journalSetupScore(entry)}</strong>
             <em>Entry ${money(entry.entry)} · Target ${money(entry.targetOne)} · Stop ${money(entry.stop)}</em>
+            <div class="journal-path">${lifecycle}</div>
             ${
               Number(entry.suggestedLot) > 0
                 ? `<em>Lot ${formatLotSize(entry.suggestedLot)} · Stop risk ${money(entry.stopLossAmount)} · T1 ${money(entry.targetOneProfit)}</em>`
                 : ""
             }
-            <small>${entry.outcomeDetail || "Waiting for later candles."}</small>
-          </article>`
+            <small>${entry.outcomeDetail || "Waiting for later candles."}${elapsed ? ` · ${elapsed}` : ""}</small>
+          </article>`;
+          }
         )
         .join("")
     : '<article class="pending"><span>No saved signals</span><strong>Review a signal to start tracking</strong><em>Outcomes update from later candles.</em></article>';
@@ -1074,6 +1166,7 @@ function saveReviewedSignal() {
   const entry = gradeSignalEntry({
     ...lastSignalCandidate,
     id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    setupGrade: journalSetupScore(lastSignalCandidate),
     status: lastSignalCandidate.direction === "WATCH" ? "WATCH" : "PENDING",
     outcomeDetail: lastSignalCandidate.direction === "WATCH" ? "Watchlist idea saved; no executable trigger." : "Waiting for later candles."
   });

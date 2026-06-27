@@ -2639,6 +2639,44 @@ canvas {
   overflow-wrap: anywhere;
 }
 
+.journal-path {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.journal-path span {
+  background: rgba(54, 95, 107, 0.08);
+  border: 1px solid rgba(54, 95, 107, 0.16);
+  border-radius: 6px;
+  color: var(--muted);
+  display: grid;
+  font-size: 0.62rem;
+  font-weight: 900;
+  gap: 2px;
+  min-height: 43px;
+  padding: 7px;
+  text-transform: uppercase;
+}
+
+.journal-path span.done {
+  border-color: rgba(0, 168, 120, 0.28);
+  color: var(--buy);
+}
+
+.journal-path span.missed {
+  border-color: rgba(214, 75, 75, 0.3);
+  color: var(--danger);
+}
+
+.journal-path strong {
+  color: var(--ink);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+  text-transform: none;
+}
+
 .open-order-book {
   display: grid;
   gap: 7px;

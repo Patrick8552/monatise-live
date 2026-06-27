@@ -1,12 +1,12 @@
-const CACHE_NAME = "monatise-shell-20260627-trend-grid-generation";
+const CACHE_NAME = "monatise-shell-20260627-signal-journal";
 const SHELL_ASSETS = [
   "./",
   "./index.html",
   "./cg.html",
   "./dashboard/",
   "./coinglass-dashboard.html?v=20260617-trader-mode",
-  "./styles.css?v=20260627-trend-grid-generation",
-  "./app.js?v=20260627-trend-grid-generation",
+  "./styles.css?v=20260627-signal-journal",
+  "./app.js?v=20260627-signal-journal",
   "./coinglass-dashboard.css?v=20260617-trader-mode",
   "./coinglass-dashboard.js?v=20260617-trader-mode",
   "./manifest.webmanifest?v=20260616-dashboard-install",

@@ -23,6 +23,10 @@ assert.ok(source.includes("function stopLossModel"), "signals must preserve the 
 assert.ok(source.includes("function trendGridSummary"), "signals must explain the trend-based grid shape");
 assert.ok(source.includes("function trendGridPlan"), "signal generation must use an explicit trend-grid plan");
 assert.ok(source.includes("const gridPlan = trendGridPlan"), "native signals must be generated from the trend-grid plan");
+assert.ok(source.includes("function candleTouchesLevel"), "journal tracking must require candles to touch entry/target/stop levels");
+assert.ok(source.includes("Invalidation touched"), "journal tracking must flag invalidation before entry as invalid, not a loss");
+assert.ok(source.includes("function journalLifecycle"), "journal entries must expose issued, entry, TP1, and stop/invalidation stages");
+assert.ok(source.includes("setupGrade: journalSetupScore"), "saved signals must carry a trust grade for later review");
 
 function extractFunction(name) {
   const start = source.indexOf(`function ${name}(`);
@@ -60,6 +64,7 @@ const context = vm.createContext({
 [
   "terminalSignalStatus",
   "candleTime",
+  "candleTouchesLevel",
   "setupRiskPct",
   "setupMinRiskPct",
   "boundedRiskDistance",
@@ -143,7 +148,7 @@ assert.ok(sizing.notional > 0, "sizing should produce notional for executable si
 assert.ok(sizing.stopLoss <= 25.000001, "sizing should respect alert risk budget");
 assert.ok(sizing.quantityLabel.includes("lot"), "sizing should be displayed in forex lots");
 
-const ambiguous = context.gradeSignalEntry(
+const ambiguousBeforeEntry = context.gradeSignalEntry(
   {
     createdAt: "2026-06-15T10:00:00Z",
     direction: "LONG",
@@ -155,8 +160,27 @@ const ambiguous = context.gradeSignalEntry(
   },
   [{ timestamp: "2026-06-15T10:05:00Z", high: 103, low: 97 }]
 );
-assert.equal(ambiguous.status, "LOSS");
-assert.match(ambiguous.outcomeDetail, /same candle/);
+assert.equal(ambiguousBeforeEntry.status, "INVALID");
+assert.match(ambiguousBeforeEntry.outcomeDetail, /same candle/);
+
+const triggeredThenStopped = context.gradeSignalEntry(
+  {
+    createdAt: "2026-06-15T10:00:00Z",
+    direction: "LONG",
+    entry: 100,
+    expiresAt: "2026-06-15T10:30:00Z",
+    status: "PENDING",
+    stop: 98,
+    targetOne: 102
+  },
+  [
+    { timestamp: "2026-06-15T10:05:00Z", high: 100.5, low: 99.5 },
+    { timestamp: "2026-06-15T10:10:00Z", high: 100.2, low: 97.8 }
+  ]
+);
+assert.equal(triggeredThenStopped.status, "LOSS");
+assert.ok(triggeredThenStopped.triggeredAt, "journal should remember when entry triggered");
+assert.ok(triggeredThenStopped.stoppedAt, "journal should remember when stop hit after entry");
 
 assert.equal(
   context.signalHasExecutablePlan({ direction: "LONG", entry: 100, stop: 99, targetOne: 102 }),
