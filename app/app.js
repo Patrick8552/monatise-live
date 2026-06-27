@@ -1459,7 +1459,66 @@ function signalTrustSummary(signal = {}, health = {}, timing = signalTiming(sele
   const cautions = compactList([...(signal.cautions || []), ...(health.warnings || [])], "No active cautions.");
   const blocks = compactList([...(health.blockReasons || [])], "No hard blocks.");
   const timingText = timing?.detail ? `${timing.status}: ${timing.detail}` : timing?.status || "timing pending";
-  return `Drivers: ${drivers}. ${stopLossSummary(signal)} ${trendGridSummary(signal, health)} Cautions: ${cautions}. Hard blocks: ${blocks}. Timing: ${timingText}.`;
+  const quiverText = quiverTrustText(signal.quiverContext);
+  return `Drivers: ${drivers}. ${stopLossSummary(signal)} ${trendGridSummary(signal, health)} ${quiverText} Cautions: ${cautions}. Hard blocks: ${blocks}. Timing: ${timingText}.`;
+}
+
+function quiverSignalContext(direction = "WAIT", context = quiverContext, symbol = selectedAsset) {
+  if (!isQuiverAsset(symbol)) return { boost: 0, cautions: [], reasons: [], status: "not-applicable" };
+  if (!context || context.error || context.reason) {
+    return {
+      boost: 0,
+      cautions: ["Quiver context unavailable for stock/ETF analysis"],
+      reasons: [],
+      status: "missing"
+    };
+  }
+  const summary = context.summary || {};
+  const bias = String(summary.bias || "neutral").toLowerCase();
+  const score = Math.max(0, Math.min(10, Number(summary.score || 0)));
+  const drivers = Array.isArray(summary.drivers) ? summary.drivers.filter(Boolean) : [];
+  const driverText = compactList(drivers.slice(0, 2), summary.detail || "Quiver alternative data checked");
+  if (bias === "supportive" && direction === "LONG") {
+    return {
+      boost: Math.min(6, 2 + Math.round(score / 2)),
+      cautions: [],
+      reasons: [`Quiver supportive context: ${driverText}`],
+      score,
+      status: "supportive"
+    };
+  }
+  if (bias === "supportive" && direction === "SHORT") {
+    return {
+      boost: -Math.min(8, 3 + Math.round(score / 2)),
+      cautions: [`Quiver supportive context conflicts with short setup: ${driverText}`],
+      reasons: [],
+      score,
+      status: "conflict"
+    };
+  }
+  if (bias === "watch" && ["LONG", "SHORT"].includes(direction)) {
+    return {
+      boost: 1,
+      cautions: [],
+      reasons: [`Quiver watch context: ${driverText}`],
+      score,
+      status: "watch"
+    };
+  }
+  return {
+    boost: 0,
+    cautions: ["Quiver context is neutral or has no fresh rows"],
+    reasons: [],
+    score,
+    status: "neutral"
+  };
+}
+
+function quiverTrustText(context = null) {
+  if (!context || context.status === "not-applicable") return "";
+  if (context.status === "missing") return "Quiver: unavailable for this stock/ETF signal.";
+  const score = Number.isFinite(Number(context.score)) ? ` score ${Number(context.score).toFixed(0)}/10` : "";
+  return `Quiver: ${context.status || "checked"}${score}.`;
 }
 
 function setupRiskPct(symbol = selectedAsset) {
@@ -1910,14 +1969,16 @@ function tradingViewPrimarySignal(health, mark) {
   const confidence = Math.max(50, Math.min(95, Number(signal.confidence || 70)));
   const route = signal.classification?.route || "TradingView primary signal feed";
   const profile = assetSignalProfile(selectedAsset);
+  const quiver = quiverSignalContext(direction);
   const reasons = [
     `${route}`,
     `${signal.indicator || "TradingView"} ${action} ${confidence.toFixed(0)}%`,
-    `${profile.className} lens: ${profile.lens}`
+    `${profile.className} lens: ${profile.lens}`,
+    ...quiver.reasons
   ];
   if (!isPullbackEntry(direction, entry, price)) {
     return {
-      cautions: ["alert did not provide a valid pullback entry"],
+      cautions: ["alert did not provide a valid pullback entry", ...quiver.cautions],
       confidence: Math.min(confidence, 49),
       direction: "WAIT",
       entry: null,
@@ -1926,6 +1987,7 @@ function tradingViewPrimarySignal(health, mark) {
       targetOne: null,
       targetTwo: null,
       reasons,
+      quiverContext: quiver,
       thesis: `${route}. ${signal.indicator || "TradingView"} ${action} is waiting because the alert did not provide a valid pullback entry ${direction === "SHORT" ? "above" : "below"} the live price.`,
       tradingViewConfluence: {
         detail: "TradingView alert is primary, but entry must be a pullback level.",
@@ -1961,9 +2023,10 @@ function tradingViewPrimarySignal(health, mark) {
     selectedAsset,
     setup.stop ? "TradingView supplied stop" : "TradingView fallback risk band"
   );
+  const adjustedConfidence = Math.max(50, Math.min(95, confidence + quiver.boost));
   return {
-    cautions: health.warnings || [],
-    confidence,
+    cautions: [...(health.warnings || []), ...quiver.cautions],
+    confidence: adjustedConfidence,
     direction,
     entry,
     entryLevels,
@@ -1972,6 +2035,7 @@ function tradingViewPrimarySignal(health, mark) {
     targetOne,
     targetTwo,
     reasons,
+    quiverContext: quiver,
     thesis:
       setup.thesis ||
       `${route}. ${signal.indicator || "TradingView"} ${action} ${confidence.toFixed(0)}% is controlling the displayed setup, grid, and hedge.`,
@@ -2027,6 +2091,8 @@ function signalFromHealth(health, mark) {
   reasons.push(...gridPlan.drivers);
   reasons.push(`trend grid score LONG ${gridPlan.longScore} / SHORT ${gridPlan.shortScore}`);
   const direction = gridPlan.direction;
+  const quiver = quiverSignalContext(direction);
+  reasons.push(...quiver.reasons);
   const executable = gridPlan.executable;
   const entry = executable ? gridPlan.entry : null;
   const rawTargetOne = gridPlan.targetReference;
@@ -2049,9 +2115,9 @@ function signalFromHealth(health, mark) {
     (direction === "LONG" && gapDirection === "bullish") || (direction === "SHORT" && gapDirection === "bearish") ? 6 : 0;
   const tvConfluence = tradingViewConfluence(direction);
   if (tvConfluence.detail) reasons.push(tvConfluence.detail);
-  const cautions = [...(health.warnings || [])];
+  const cautions = [...(health.warnings || []), ...quiver.cautions];
   if (gridPlan.pullbackBlocked) cautions.unshift("trend grid has no valid pullback/rejection entry yet");
-  const rawConfidence = confidenceBase + fvgBoost + tvConfluence.boost - contextPenalty - warningPenalty;
+  const rawConfidence = confidenceBase + fvgBoost + tvConfluence.boost + quiver.boost - contextPenalty - warningPenalty;
   const confidence =
     direction === "WAIT"
       ? Math.max(5, Math.min(25, rawConfidence))
@@ -2081,6 +2147,7 @@ function signalFromHealth(health, mark) {
         : direction === "SHORT"
         ? (Number.isFinite(targetOne) ? targetOne : entry) - Math.max(buffer, 1)
         : (Number.isFinite(targetOne) ? targetOne : entry) + Math.max(buffer, 1),
+    quiverContext: quiver,
     reasons,
     trendGrid: {
       edge: gridPlan.edge,
@@ -2443,6 +2510,7 @@ function renderExecutionTicket(orders = [], options = {}) {
     suggestedLot: sizing.quantity,
     suggestedMargin: sizing.marginRequired,
     suggestedNotional: sizing.notional,
+    quiverContext: signal.quiverContext || null,
     targetOneProfit: sizing.targetOneProfit,
     targetTwoProfit: sizing.targetTwoProfit,
     stopLossAmount: sizing.stopLoss,
@@ -2637,7 +2705,7 @@ function answerSignalChat(prompt) {
 
   if (/confidence|signal|setup|explain|status|now/.test(lower)) {
     return active
-      ? `${direction} setup on ${assetLabel(context.asset || selectedAsset)} with ${signal.confidence}% confidence. ${signal.thesis || ""} ${trust} ${coinGlassSummaryText()} Trigger: ${signal.trigger}. ${ladder}`
+      ? `${direction} setup on ${assetLabel(context.asset || selectedAsset)} with ${signal.confidence}% confidence. ${signal.thesis || ""} ${trust} ${coinGlassSummaryText()} ${quiverSummaryText()} Trigger: ${signal.trigger}. ${ladder}`
       : `${context.status}: ${context.note || signal.thesis || "No executable setup yet."} ${trust}`;
   }
 

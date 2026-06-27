@@ -27,6 +27,9 @@ assert.ok(source.includes("function candleTouchesLevel"), "journal tracking must
 assert.ok(source.includes("Invalidation touched"), "journal tracking must flag invalidation before entry as invalid, not a loss");
 assert.ok(source.includes("function journalLifecycle"), "journal entries must expose issued, entry, TP1, and stop/invalidation stages");
 assert.ok(source.includes("setupGrade: journalSetupScore"), "saved signals must carry a trust grade for later review");
+assert.ok(source.includes("function quiverSignalContext"), "Quiver must be modeled as a stock/ETF signal context layer");
+assert.ok(source.includes("quiver.boost"), "Quiver context should influence confidence without controlling signal geometry");
+assert.ok(source.includes("quiverContext: signal.quiverContext || null"), "saved signals must preserve Quiver context for journaling");
 
 function extractFunction(name) {
   const start = source.indexOf(`function ${name}(`);
