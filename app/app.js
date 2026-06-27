@@ -659,6 +659,21 @@ function readinessBlocks(snapshot = null) {
   return readinessItems(snapshot).filter((item) => !item.ok && item.severity === "block");
 }
 
+function signalSafetyBlocks(snapshot = null) {
+  const nonSignalLabels = new Set(["User session", "Private sync", "Signal access"]);
+  return readinessBlocks(snapshot).filter((item) => !nonSignalLabels.has(item.label));
+}
+
+function signalHasExecutablePlan(signal) {
+  if (!["LONG", "SHORT"].includes(signal?.direction)) return false;
+  const entry = Number(signal.entry);
+  const stop = Number(signal.stop);
+  const target = Number(signal.targetOne);
+  if (![entry, stop, target].every((value) => Number.isFinite(value) && value > 0)) return false;
+  if (signal.direction === "LONG") return stop < entry && target > entry;
+  return stop > entry && target < entry;
+}
+
 function activationStepClass(step) {
   if (step.done) return "done";
   if (step.current) return "current";
@@ -2041,11 +2056,13 @@ function renderExecutionTicket(orders = [], options = {}) {
   const timing = signalTiming(selectedAsset);
   const thesis = setupWaitDetail(health, signal, timing);
   const fastEntry = signal.entryLevels?.find((level) => level.key === "fast");
-  const canReview = !health.blocked && blocks.length === 0 && ["LONG", "SHORT"].includes(signal.direction);
-  const canDraft = !health.blocked && ["LONG", "SHORT"].includes(signal.direction);
+  const safetyBlocks = signalSafetyBlocks(snapshot);
+  const canReview = !health.blocked && safetyBlocks.length === 0 && signalHasExecutablePlan(signal);
+  const canTrack = canReview && Boolean(currentUser.authenticated);
+  const canDraft = !health.blocked && signalHasExecutablePlan(signal);
   const sizing = tradeSizingFromSignal(signal, capital, drawdownPct);
   const mode = String(snapshot?.mode || (backendOnline ? "backend" : "preview")).toUpperCase();
-  els.ticketStatus.textContent = canDraft ? `${signalLabel(signal.direction)} draft` : `${blocks.length || health.warnings.length || 1} block`;
+  els.ticketStatus.textContent = canReview ? `${signalLabel(signal.direction)} review ready` : canDraft ? `${signalLabel(signal.direction)} draft` : `${safetyBlocks.length || health.warnings.length || 1} block`;
   els.ticketAsset.textContent = assetLabel(selectedAsset);
   els.ticketCapital.textContent = money(capital);
   els.ticketExposure.textContent = `${money(openExposure)} (${(exposurePct * 100).toFixed(2)}%)`;
@@ -2082,7 +2099,7 @@ function renderExecutionTicket(orders = [], options = {}) {
     </div>
     ${renderEntryLadder(signal.entryLevels)}
   `;
-  const primaryBlock = blocks[0]?.detail || health.warnings[0] || "all visible checks clear";
+  const primaryBlock = safetyBlocks[0]?.detail || health.warnings[0] || "all visible checks clear";
   renderHedgeLayer(signal, sizing, { blocks, health });
   lastSignalCandidate = {
     confidence: signal.confidence,
@@ -2113,8 +2130,10 @@ function renderExecutionTicket(orders = [], options = {}) {
   lastTicketSnapshot = {
     asset: selectedAsset,
     blocks,
+    safetyBlocks,
     canDraft,
     canReview,
+    canTrack,
     health,
     mark,
     mode,
@@ -2126,14 +2145,14 @@ function renderExecutionTicket(orders = [], options = {}) {
     timing
   };
   els.ticketNote.textContent = canReview
-    ? `${signal.trigger}. ${fastEntry ? `Fast entry ${money(fastEntry.price)} aims for early TP ${money(fastEntry.earlyTarget)}. ` : ""}Planned entry ${money(signal.entry)}, target ${money(signal.targetOne)}, stop ${money(signal.stop)}. Suggested lot ${sizing.quantityLabel}; estimated stop loss ${money(sizing.stopLoss)}, Target 1 profit ${money(sizing.targetOneProfit)}. Signal expires ${formatSignalTime(timing.expiresAt)}.`
+    ? `${signal.trigger}. ${fastEntry ? `Fast entry ${money(fastEntry.price)} aims for early TP ${money(fastEntry.earlyTarget)}. ` : ""}Planned entry ${money(signal.entry)}, target ${money(signal.targetOne)}, stop ${money(signal.stop)}. Suggested lot ${sizing.quantityLabel}; estimated stop loss ${money(sizing.stopLoss)}, Target 1 profit ${money(sizing.targetOneProfit)}. ${canTrack ? `Signal expires ${formatSignalTime(timing.expiresAt)}.` : "Login to save and track this structurally valid setup."}`
     : canDraft
       ? `${signal.trigger}. Draft ${signalLabel(signal.direction).toLowerCase()}: ${fastEntry ? `fast entry ${money(fastEntry.price)} to TP ${money(fastEntry.earlyTarget)}; ` : ""}planned entry ${money(signal.entry)}, target ${money(signal.targetOne)}, stop ${money(signal.stop)}. Tracking blocked: ${primaryBlock}.`
     : timing.opensAt
       ? `${thesis} Next usable time ${formatSignalTime(timing.opensAt)}.`
       : thesis;
   els.armStrategyButton.disabled = false;
-  els.armStrategyButton.textContent = canReview ? "Save & Track Signal" : canDraft ? "Login To Track" : "Show Blocks";
+  els.armStrategyButton.textContent = canTrack ? "Save & Track Signal" : canReview ? "Login To Track" : "Show Blocks";
   refreshChatOpening();
   updateDecisionSurface(snapshot);
   renderWealthCommand(snapshot);
@@ -5056,11 +5075,18 @@ document.querySelectorAll("[data-chat-prompt]").forEach((button) => {
 });
 els.armStrategyButton.addEventListener("click", () => {
   pendingArmReview = true;
-  const blocks = readinessBlocks(lastBackendSnapshot);
+  const blocks = signalSafetyBlocks(lastBackendSnapshot);
   const warnings = lastTicketHealth?.warnings || [];
-  if (blocks.length || lastTicketHealth?.blocked) {
+  const signalReady = lastTicketSnapshot?.canReview && signalHasExecutablePlan(lastSignalCandidate);
+  if (blocks.length || lastTicketHealth?.blocked || !signalReady) {
     addAuditEvent("signal blocked", "Signal review found blockers", blocks[0]?.detail || warnings[0] || "readiness not clear");
     document.querySelector("#risk")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    pendingArmReview = false;
+    return;
+  }
+  if (!currentUser.authenticated) {
+    addAuditEvent("login needed", "Signal is structurally valid", "Login to save and track this setup.");
+    document.querySelector("#account")?.scrollIntoView({ behavior: "smooth", block: "start" });
     pendingArmReview = false;
     return;
   }

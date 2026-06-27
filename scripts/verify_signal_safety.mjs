@@ -13,6 +13,9 @@ assert.ok(
   source.includes("lastStructuredSignalCreatedAt = new Date().toISOString();"),
   "new signal timestamps should only be created with a fresh structure signature"
 );
+assert.ok(source.includes("function signalSafetyBlocks"), "signal safety blocks must be separate from tracking/login blocks");
+assert.ok(source.includes("\"User session\", \"Private sync\", \"Signal access\""), "login/access gates must not suppress structurally valid signals");
+assert.ok(source.includes("const canTrack = canReview && Boolean(currentUser.authenticated);"), "tracking permission must stay separate from signal review readiness");
 
 function extractFunction(name) {
   const start = source.indexOf(`function ${name}(`);
@@ -54,6 +57,7 @@ const context = vm.createContext({
   "plannedEntry",
   "targetWithMinimumReward",
   "buildEntryLadder",
+  "signalHasExecutablePlan",
   "money",
   "formatLotSize",
   "forexLotLabel",
@@ -121,5 +125,26 @@ const ambiguous = context.gradeSignalEntry(
 );
 assert.equal(ambiguous.status, "LOSS");
 assert.match(ambiguous.outcomeDetail, /same candle/);
+
+assert.equal(
+  context.signalHasExecutablePlan({ direction: "LONG", entry: 100, stop: 99, targetOne: 102 }),
+  true,
+  "long signal with valid geometry should be reviewable"
+);
+assert.equal(
+  context.signalHasExecutablePlan({ direction: "LONG", entry: 100, stop: 101, targetOne: 102 }),
+  false,
+  "long signal with stop above entry must not be reviewable"
+);
+assert.equal(
+  context.signalHasExecutablePlan({ direction: "SHORT", entry: 100, stop: 101, targetOne: 98 }),
+  true,
+  "short signal with valid geometry should be reviewable"
+);
+assert.equal(
+  context.signalHasExecutablePlan({ direction: "SHORT", entry: 100, stop: 99, targetOne: 98 }),
+  false,
+  "short signal with stop below entry must not be reviewable"
+);
 
 console.log("signal safety checks passed");
