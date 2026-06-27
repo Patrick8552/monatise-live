@@ -1436,14 +1436,18 @@ function stopLossSummary(signal = {}) {
 function trendGridSummary(signal = {}, health = {}) {
   const direction = signal.direction;
   const levelCount = Array.isArray(signal.entryLevels) ? signal.entryLevels.length : 0;
+  const score =
+    signal.trendGrid && Number.isFinite(Number(signal.trendGrid.longScore)) && Number.isFinite(Number(signal.trendGrid.shortScore))
+      ? ` Score LONG ${signal.trendGrid.longScore} / SHORT ${signal.trendGrid.shortScore}.`
+      : "";
   if (direction === "LONG") {
-    return `Trend grid: LONG pullback grid with entries below/near mark, stop below entry, and targets above entry (${levelCount} entry lanes).`;
+    return `Trend grid: LONG pullback grid with entries below/near mark, stop below entry, and targets above entry (${levelCount} entry lanes).${score}`;
   }
   if (direction === "SHORT") {
-    return `Trend grid: SHORT rejection grid with entries above/near mark, stop above entry, and targets below entry (${levelCount} entry lanes).`;
+    return `Trend grid: SHORT rejection grid with entries above/near mark, stop above entry, and targets below entry (${levelCount} entry lanes).${score}`;
   }
   if (health?.blocked) return "Trend grid: paused because hard blocks are active.";
-  return "Trend grid: waiting for directional agreement before arranging entries, stop, and targets.";
+  return `Trend grid: waiting for directional agreement before arranging entries, stop, and targets.${score}`;
 }
 
 function isPullbackEntry(direction, entry, mark) {
@@ -1463,6 +1467,81 @@ function plannedEntry(direction, mark, nearest, gapMidpoint) {
     if (isPullbackEntry(direction, stableNearest, mark)) return stableNearest;
   }
   return Number.NaN;
+}
+
+function trendGridPlan({
+  action = "normal",
+  gapDirection = "",
+  gapMidpoint = Number.NaN,
+  health = {},
+  invalidation = Number.NaN,
+  mark = Number.NaN,
+  nearest = Number.NaN,
+  resistanceOnly = false,
+  rsi = 50,
+  supportOnly = false,
+  takeProfit = Number.NaN,
+  trend = "flat"
+} = {}) {
+  const lowerTrend = String(trend || "flat").toLowerCase();
+  const lowerAction = String(action || "normal").toLowerCase();
+  const lowerGap = String(gapDirection || "").toLowerCase();
+  const drivers = [];
+  let longScore = 0;
+  let shortScore = 0;
+
+  const add = (side, score, reason) => {
+    if (side === "LONG") longScore += score;
+    if (side === "SHORT") shortScore += score;
+    if (reason) drivers.push(reason);
+  };
+
+  if (supportOnly) add("LONG", 4, "support-only grid gives long priority");
+  if (resistanceOnly) add("SHORT", 4, "resistance-only grid gives short priority");
+  if (lowerTrend.includes("up")) add("LONG", 2, "uptrend favors pullback bids");
+  if (lowerTrend.includes("down")) add("SHORT", 2, "downtrend favors rejection offers");
+  if (Number.isFinite(rsi) && rsi >= 55) add("LONG", 1, `RSI ${rsi.toFixed(1)} supports upside momentum`);
+  if (Number.isFinite(rsi) && rsi <= 45) add("SHORT", 1, `RSI ${rsi.toFixed(1)} supports downside momentum`);
+  if (lowerGap === "bullish") add("LONG", 2, "bullish FVG creates a long pullback lane");
+  if (lowerGap === "bearish") add("SHORT", 2, "bearish FVG creates a short rejection lane");
+  if (Number.isFinite(takeProfit) && Number.isFinite(mark) && takeProfit > mark) add("LONG", 1, "target reference sits above mark");
+  if (Number.isFinite(takeProfit) && Number.isFinite(mark) && takeProfit < mark) add("SHORT", 1, "target reference sits below mark");
+
+  const forcedDirection = supportOnly ? "LONG" : resistanceOnly ? "SHORT" : "";
+  const hardBlocked = (health.blocked || lowerAction === "halt" || lowerAction === "pause") && !forcedDirection;
+  const scoreEdge = longScore - shortScore;
+  const candidateDirection = hardBlocked
+    ? "WAIT"
+    : forcedDirection || (scoreEdge >= 2 ? "LONG" : scoreEdge <= -2 ? "SHORT" : "WATCH");
+  const candidateExecutable = ["LONG", "SHORT"].includes(candidateDirection);
+  const entry = candidateExecutable ? plannedEntry(candidateDirection, mark, nearest, gapMidpoint) : Number.NaN;
+  const pullbackBlocked = candidateExecutable && !Number.isFinite(entry);
+  const direction = pullbackBlocked ? "WAIT" : candidateDirection;
+  const targetReference =
+    Number.isFinite(takeProfit) && takeProfit > 0
+      ? takeProfit
+      : direction === "SHORT"
+        ? health.gridFloor
+        : health.gridCeiling;
+  const baseStop =
+    Number.isFinite(invalidation) && invalidation > 0
+      ? invalidation
+      : direction === "SHORT"
+        ? health.gridCeiling
+        : health.gridFloor;
+
+  return {
+    baseStop,
+    direction,
+    drivers,
+    edge: scoreEdge,
+    entry,
+    executable: candidateExecutable && !pullbackBlocked,
+    longScore,
+    pullbackBlocked,
+    shortScore,
+    targetReference
+  };
 }
 
 function targetWithMinimumReward(direction, entry, rawTarget, riskDistance, rewardMultiple = 1.35) {
@@ -1826,29 +1905,27 @@ function signalFromHealth(health, mark) {
   if (resistanceOnly) reasons.push("resistance-only grid");
   if (Number.isFinite(takeProfit) && takeProfit > 0) reasons.push(`target reference ${money(takeProfit)}`);
   reasons.push(`${profile.className} lens: ${profile.lens}`);
-  const bullish =
-    trend.includes("up") ||
-    rsi >= 55 ||
-    gapDirection === "bullish" ||
-    supportOnly ||
-    (Number.isFinite(takeProfit) && takeProfit > mark);
-  const bearish =
-    trend.includes("down") ||
-    rsi <= 45 ||
-    gapDirection === "bearish" ||
-    resistanceOnly ||
-    (Number.isFinite(takeProfit) && takeProfit < mark);
-  const draftDirection = supportOnly ? "LONG" : resistanceOnly ? "SHORT" : "";
-  const hardBlocked = (health.blocked || action === "halt" || action === "pause") && !draftDirection;
-  const candidateDirection = hardBlocked ? "WAIT" : draftDirection || (bullish && !bearish ? "LONG" : bearish && !bullish ? "SHORT" : "WATCH");
-  const candidateExecutable = ["LONG", "SHORT"].includes(candidateDirection);
-  const pullbackEntry = candidateExecutable ? plannedEntry(candidateDirection, mark, nearest, gapMidpoint) : Number.NaN;
-  const pullbackBlocked = candidateExecutable && !Number.isFinite(pullbackEntry);
-  const direction = pullbackBlocked ? "WAIT" : candidateDirection;
-  const executable = candidateExecutable && !pullbackBlocked;
-  const entry = executable ? pullbackEntry : null;
-  const rawTargetOne = Number.isFinite(takeProfit) && takeProfit > 0 ? takeProfit : direction === "SHORT" ? health.gridFloor : health.gridCeiling;
-  const baseStop = Number.isFinite(invalidation) && invalidation > 0 ? invalidation : direction === "SHORT" ? health.gridCeiling : health.gridFloor;
+  const gridPlan = trendGridPlan({
+    action,
+    gapDirection,
+    gapMidpoint,
+    health,
+    invalidation,
+    mark,
+    nearest,
+    resistanceOnly,
+    rsi,
+    supportOnly,
+    takeProfit,
+    trend
+  });
+  reasons.push(...gridPlan.drivers);
+  reasons.push(`trend grid score LONG ${gridPlan.longScore} / SHORT ${gridPlan.shortScore}`);
+  const direction = gridPlan.direction;
+  const executable = gridPlan.executable;
+  const entry = executable ? gridPlan.entry : null;
+  const rawTargetOne = gridPlan.targetReference;
+  const baseStop = gridPlan.baseStop;
   const riskDistance = executable ? boundedRiskDistance(entry, baseStop, atr) : 0;
   const stop =
     direction === "SHORT"
@@ -1868,7 +1945,7 @@ function signalFromHealth(health, mark) {
   const tvConfluence = tradingViewConfluence(direction);
   if (tvConfluence.detail) reasons.push(tvConfluence.detail);
   const cautions = [...(health.warnings || [])];
-  if (pullbackBlocked) cautions.unshift("no valid pullback entry yet");
+  if (gridPlan.pullbackBlocked) cautions.unshift("trend grid has no valid pullback/rejection entry yet");
   const rawConfidence = confidenceBase + fvgBoost + tvConfluence.boost - contextPenalty - warningPenalty;
   const confidence =
     direction === "WAIT"
@@ -1877,8 +1954,8 @@ function signalFromHealth(health, mark) {
         ? Math.max(25, Math.min(49, rawConfidence))
         : Math.max(50, Math.min(95, rawConfidence));
   const trigger =
-    pullbackBlocked
-      ? `Wait for a pullback entry ${candidateDirection === "SHORT" ? "above" : "below"} ${money(mark)}`
+    gridPlan.pullbackBlocked
+      ? `Wait for a trend-grid entry ${gridPlan.edge < 0 ? "above" : "below"} ${money(mark)}`
       : direction === "LONG"
       ? `${entry <= mark ? "Pullback hold near" : "Break and hold above"} ${money(entry)}`
       : direction === "SHORT"
@@ -1900,9 +1977,14 @@ function signalFromHealth(health, mark) {
         ? (Number.isFinite(targetOne) ? targetOne : entry) - Math.max(buffer, 1)
         : (Number.isFinite(targetOne) ? targetOne : entry) + Math.max(buffer, 1),
     reasons,
+    trendGrid: {
+      edge: gridPlan.edge,
+      longScore: gridPlan.longScore,
+      shortScore: gridPlan.shortScore
+    },
     thesis:
-      pullbackBlocked
-        ? `${signalLabel(candidateDirection)} is not executable yet because no valid pullback entry is available. Wait for price to return to a Fibonacci or FVG level before planning risk.`
+      gridPlan.pullbackBlocked
+        ? `${signalLabel(gridPlan.edge < 0 ? "SHORT" : "LONG")} is not executable yet because the trend grid has no valid pullback/rejection entry. Wait for price to return to a Fibonacci or FVG level before planning risk.`
       : direction === "WAIT"
         ? `No usable signal while quality gates are blocked: ${compactList(health.blockReasons || [], "waiting for cleaner structure")}.`
         : direction === "WATCH"
@@ -2265,6 +2347,7 @@ function renderExecutionTicket(orders = [], options = {}) {
     targetOne: signal.targetOne,
     targetTwo: signal.targetTwo,
     thesis,
+    trendGrid: signal.trendGrid || null,
     trustSummary,
     timing: timing.status,
     trigger: signal.trigger

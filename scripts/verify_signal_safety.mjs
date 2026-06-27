@@ -21,6 +21,8 @@ assert.ok(source.includes("function signalTrustSummary"), "signals must expose a
 assert.ok(source.includes("signal.reasons"), "signal explanations must carry named evidence drivers");
 assert.ok(source.includes("function stopLossModel"), "signals must preserve the stop-loss calculation model");
 assert.ok(source.includes("function trendGridSummary"), "signals must explain the trend-based grid shape");
+assert.ok(source.includes("function trendGridPlan"), "signal generation must use an explicit trend-grid plan");
+assert.ok(source.includes("const gridPlan = trendGridPlan"), "native signals must be generated from the trend-grid plan");
 
 function extractFunction(name) {
   const start = source.indexOf(`function ${name}(`);
@@ -64,6 +66,8 @@ const context = vm.createContext({
   "stopLossModel",
   "stopLossSummary",
   "trendGridSummary",
+  "isPullbackEntry",
+  "trendGridPlan",
   "plannedEntry",
   "targetWithMinimumReward",
   "buildEntryLadder",
@@ -120,6 +124,19 @@ const goldStop = context.stopLossModel("LONG", 4155, 4140, 10, 8, "GOLD");
 assert.ok(goldStop.stop === 4147, "long stop model should place stop below entry by risk distance");
 assert.match(context.stopLossSummary({ entry: 4155, stop: 4147, stopModel: goldStop }), /Stop model/);
 assert.match(context.trendGridSummary({ direction: "LONG", entryLevels: [1, 2, 3] }, {}), /LONG pullback grid/);
+const longGrid = context.trendGridPlan({
+  gapDirection: "bullish",
+  gapMidpoint: 99,
+  health: { blocked: false, gridCeiling: 104, gridFloor: 96 },
+  invalidation: 95,
+  mark: 100,
+  nearest: 98,
+  rsi: 58,
+  takeProfit: 104,
+  trend: "up"
+});
+assert.equal(longGrid.direction, "LONG", "bullish trend-grid evidence should generate a long plan");
+assert.equal(longGrid.entry, 99, "long trend grid should prefer valid pullback FVG midpoint");
 
 const sizing = context.tradeSizingFromSignal(longSignal, 10000, 0.05);
 assert.ok(sizing.notional > 0, "sizing should produce notional for executable signal");
