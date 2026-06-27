@@ -1198,27 +1198,25 @@ function strategyHealth(mark, orders, snapshot = null) {
   const riskStatus = String(snapshot?.riskStatus || els.riskStatus?.textContent || "");
   const structureBreak = markOk && Number.isFinite(invalidation) && mark < invalidation;
   const outsideGrid = markOk && Number.isFinite(gridFloor) && Number.isFinite(gridCeiling) && (mark < gridFloor || mark > gridCeiling);
-  const blocked =
-    !markOk ||
-    !orderOk ||
-    missingInvalidationLevels.length > 0 ||
-    structureBreak ||
-    sessionGuard.active ||
-    /max daily loss|exceeds|below minimum|shock|guard/i.test(riskStatus) ||
-    indicatorAction === "halt";
+  const blockReasons = [];
+  if (!markOk) blockReasons.push("waiting for live market mark");
+  if (!orderOk) blockReasons.push("no signal levels are available yet");
+  if (missingInvalidationLevels.length) blockReasons.push("grid levels need valid side-aware invalidation");
+  if (structureBreak) blockReasons.push("price broke structure; stop fresh signals");
+  if (sessionGuard.active) blockReasons.push(sessionGuard.message || "session guard is active");
+  if (/max daily loss|exceeds|below minimum|shock|guard/i.test(riskStatus)) blockReasons.push(riskStatus);
+  if (indicatorAction === "halt") blockReasons.push("context radar says halt");
+  const blocked = blockReasons.length > 0;
   const warnings = [];
-  if (structureBreak) warnings.push("price broke structure; stop fresh signals");
   if (outsideGrid) warnings.push("mark is outside the planned signal range");
   if (!fibOk) warnings.push("live Fibonacci candles pending");
   if (!fvgOk) warnings.push("live FVG candles pending");
   if (indicatorAction === "reduce") warnings.push("context radar says reduce size");
   if (indicatorAction === "widen") warnings.push("context radar says widen buffer");
-  if (sessionGuard.active) warnings.push(sessionGuard.message);
-  if (!orderOk) warnings.push("no signal levels are available yet");
-  if (missingInvalidationLevels.length) warnings.push("grid levels need valid side-aware invalidation");
   else if (!balancedLevels) warnings.push("one-sided setup; use target and stop discipline");
   return {
     balancedLevels,
+    blockReasons,
     blocked,
     buyCount: buyOrders.length,
     gridCeiling,
@@ -1318,8 +1316,45 @@ function setupWaitDetail(health, signal, timing) {
   if (!health.orderCount) return "Waiting for live setup-grid levels from Fibonacci/FVG analysis.";
   if (health.structureBreak) return "Price broke invalidation; wait for a fresh structure reset.";
   if (timing.blocked) return `${timing.detail} The grid remains visible for planning.`;
+  if (health.blockReasons?.length) return `Waiting for hard block to clear: ${health.blockReasons[0]}.`;
   if (health.warnings.length) return `Waiting for confirmation: ${health.warnings[0]}.`;
   return "Waiting for a clean trigger close before turning the setup into an entry.";
+}
+
+function assetSignalProfile(symbol = selectedAsset) {
+  const asset = String(symbol || "").toUpperCase();
+  if (forexPairs.includes(asset)) {
+    return {
+      className: "forex",
+      lens: "session timing, pullback discipline, and pair-specific invalidation",
+      primaryFeed: "TradingView forex watch"
+    };
+  }
+  if (commoditySymbols.includes(asset) || ["GOLD", "XAG", "USOIL"].includes(asset)) {
+    return {
+      className: "commodity",
+      lens: "London liquidity, wick rejection, and commodity volatility bands",
+      primaryFeed: asset === "GOLD" ? "Gold TradingView/Hyperliquid builder read" : "commodity watch"
+    };
+  }
+  return {
+    className: "crypto",
+    lens: "Hyperliquid mark, FVG/Fibonacci structure, funding, OI, and liquidation context",
+    primaryFeed: "Hyperliquid/CoinGlass crypto read"
+  };
+}
+
+function compactList(items = [], fallback = "No confirmed drivers yet.") {
+  const clean = items.map((item) => String(item || "").trim()).filter(Boolean);
+  return clean.length ? clean.join(" · ") : fallback;
+}
+
+function signalTrustSummary(signal = {}, health = {}, timing = signalTiming(selectedAsset)) {
+  const drivers = compactList(signal.reasons || []);
+  const cautions = compactList([...(signal.cautions || []), ...(health.warnings || [])], "No active cautions.");
+  const blocks = compactList([...(health.blockReasons || [])], "No hard blocks.");
+  const timingText = timing?.detail ? `${timing.status}: ${timing.detail}` : timing?.status || "timing pending";
+  return `Drivers: ${drivers}. Cautions: ${cautions}. Hard blocks: ${blocks}. Timing: ${timingText}.`;
 }
 
 function setupRiskPct(symbol = selectedAsset) {
@@ -1626,8 +1661,15 @@ function tradingViewPrimarySignal(health, mark) {
   const entry = Number(setup.entry);
   const confidence = Math.max(50, Math.min(95, Number(signal.confidence || 70)));
   const route = signal.classification?.route || "TradingView primary signal feed";
+  const profile = assetSignalProfile(selectedAsset);
+  const reasons = [
+    `${route}`,
+    `${signal.indicator || "TradingView"} ${action} ${confidence.toFixed(0)}%`,
+    `${profile.className} lens: ${profile.lens}`
+  ];
   if (!isPullbackEntry(direction, entry, price)) {
     return {
+      cautions: ["alert did not provide a valid pullback entry"],
       confidence: Math.min(confidence, 49),
       direction: "WAIT",
       entry: null,
@@ -1635,6 +1677,7 @@ function tradingViewPrimarySignal(health, mark) {
       stop: null,
       targetOne: null,
       targetTwo: null,
+      reasons,
       thesis: `${route}. ${signal.indicator || "TradingView"} ${action} is waiting because the alert did not provide a valid pullback entry ${direction === "SHORT" ? "above" : "below"} the live price.`,
       tradingViewConfluence: {
         detail: "TradingView alert is primary, but entry must be a pullback level.",
@@ -1662,6 +1705,7 @@ function tradingViewPrimarySignal(health, mark) {
       : `TradingView SELL rejects below ${money(entry)}`);
   const entryLevels = buildEntryLadder(direction, price, entry, Math.max(riskDistance, fallbackRisk || 1), targetOne, selectedAsset);
   return {
+    cautions: health.warnings || [],
     confidence,
     direction,
     entry,
@@ -1669,6 +1713,7 @@ function tradingViewPrimarySignal(health, mark) {
     stop,
     targetOne,
     targetTwo,
+    reasons,
     thesis:
       setup.thesis ||
       `${route}. ${signal.indicator || "TradingView"} ${action} ${confidence.toFixed(0)}% is controlling the displayed setup, grid, and hedge.`,
@@ -1698,6 +1743,15 @@ function signalFromHealth(health, mark) {
   const hasSellSetup = Number(health.sellCount || 0) > 0;
   const supportOnly = hasBuySetup && !hasSellSetup;
   const resistanceOnly = hasSellSetup && !hasBuySetup;
+  const profile = assetSignalProfile(selectedAsset);
+  const reasons = [];
+  if (trend && trend !== "flat") reasons.push(`structure trend ${trend}`);
+  if (Number.isFinite(rsi) && (rsi >= 55 || rsi <= 45)) reasons.push(`RSI ${rsi.toFixed(1)}`);
+  if (gapDirection) reasons.push(`${gapDirection} FVG nearest`);
+  if (supportOnly) reasons.push("support-only grid");
+  if (resistanceOnly) reasons.push("resistance-only grid");
+  if (Number.isFinite(takeProfit) && takeProfit > 0) reasons.push(`target reference ${money(takeProfit)}`);
+  reasons.push(`${profile.className} lens: ${profile.lens}`);
   const bullish =
     trend.includes("up") ||
     rsi >= 55 ||
@@ -1737,6 +1791,9 @@ function signalFromHealth(health, mark) {
   const fvgBoost =
     (direction === "LONG" && gapDirection === "bullish") || (direction === "SHORT" && gapDirection === "bearish") ? 6 : 0;
   const tvConfluence = tradingViewConfluence(direction);
+  if (tvConfluence.detail) reasons.push(tvConfluence.detail);
+  const cautions = [...(health.warnings || [])];
+  if (pullbackBlocked) cautions.unshift("no valid pullback entry yet");
   const rawConfidence = confidenceBase + fvgBoost + tvConfluence.boost - contextPenalty - warningPenalty;
   const confidence =
     direction === "WAIT"
@@ -1753,6 +1810,7 @@ function signalFromHealth(health, mark) {
         ? `${entry >= mark ? "Pullback reject near" : "Reject below"} ${money(entry)}`
         : `Wait for a clean close around ${money(mark)}`;
   return {
+    cautions,
     confidence,
     direction,
     entry: executable && Number.isFinite(entry) ? entry : null,
@@ -1765,14 +1823,15 @@ function signalFromHealth(health, mark) {
         : direction === "SHORT"
         ? (Number.isFinite(targetOne) ? targetOne : entry) - Math.max(buffer, 1)
         : (Number.isFinite(targetOne) ? targetOne : entry) + Math.max(buffer, 1),
+    reasons,
     thesis:
       pullbackBlocked
         ? `${signalLabel(candidateDirection)} is not executable yet because no valid pullback entry is available. Wait for price to return to a Fibonacci or FVG level before planning risk.`
-        : direction === "WAIT"
-        ? "No usable signal while quality gates are blocked."
+      : direction === "WAIT"
+        ? `No usable signal while quality gates are blocked: ${compactList(health.blockReasons || [], "waiting for cleaner structure")}.`
         : direction === "WATCH"
-          ? `Market structure is mixed; keep it as a watchlist idea until confirmation improves. ${tvConfluence.detail}`.trim()
-          : `${signalLabel(direction)} from ${trend || "mixed"} structure with ${gapDirection || "no active"} FVG confluence and ${action} context. ${tvConfluence.detail}`.trim(),
+          ? `Market structure is mixed; keep it as a watchlist idea until confirmation improves. ${compactList(reasons)}`
+          : `${signalLabel(direction)} because ${compactList(reasons)}. Context action: ${action}.`.trim(),
     tradingViewConfluence: tvConfluence,
     trigger
   };
@@ -1997,6 +2056,7 @@ function renderStrategyReadout(orders, options = {}) {
   const signal = structuredSignalFromHealth(health, mark);
   const timing = signalTiming(selectedAsset);
   const thesis = setupWaitDetail(health, signal, timing);
+  const trustSummary = signalTrustSummary(signal, health, timing);
   const timingPrimary = timing.active
     ? `Valid until ${formatSignalTime(timing.expiresAt)}`
     : timing.blocked
@@ -2021,6 +2081,8 @@ function renderStrategyReadout(orders, options = {}) {
         Number.isFinite(health.gridCeiling) ? money(health.gridCeiling) : "pending"
       }</strong></span>
       <span>TradingView <strong>${signal.tradingViewConfluence?.status || "none"}</strong></span>
+      <span>Evidence <strong>${compactList(signal.reasons || [], "building")}</strong></span>
+      <span>Cautions <strong>${compactList([...(signal.cautions || []), ...health.warnings], "clear")}</strong></span>
       <span>Timing <strong>${timing.status}</strong></span>
       <span>Signal ${timing.active ? "expires" : "works"} <strong>${timing.active ? formatSignalTime(timing.expiresAt) : formatSignalTime(timing.opensAt)}</strong></span>
       <span>Doctrine <strong>invalidation required</strong></span>
@@ -2031,6 +2093,7 @@ function renderStrategyReadout(orders, options = {}) {
       <span>${timing.detail} Best window: ${timing.windowLabel}.</span>
     </div>
     <p>${warningText}</p>
+    <p>${trustSummary}</p>
   `;
   renderExecutionTicket(orders, { ...options, health, mark, signal });
 }
@@ -2055,6 +2118,7 @@ function renderExecutionTicket(orders = [], options = {}) {
   const signal = options.signal || structuredSignalFromHealth(health, mark);
   const timing = signalTiming(selectedAsset);
   const thesis = setupWaitDetail(health, signal, timing);
+  const trustSummary = signalTrustSummary(signal, health, timing);
   const fastEntry = signal.entryLevels?.find((level) => level.key === "fast");
   const safetyBlocks = signalSafetyBlocks(snapshot);
   const canReview = !health.blocked && safetyBlocks.length === 0 && signalHasExecutablePlan(signal);
@@ -2124,6 +2188,7 @@ function renderExecutionTicket(orders = [], options = {}) {
     targetOne: signal.targetOne,
     targetTwo: signal.targetTwo,
     thesis,
+    trustSummary,
     timing: timing.status,
     trigger: signal.trigger
   };
@@ -2142,12 +2207,13 @@ function renderExecutionTicket(orders = [], options = {}) {
     signal,
     sizing,
     thesis,
+    trustSummary,
     timing
   };
   els.ticketNote.textContent = canReview
-    ? `${signal.trigger}. ${fastEntry ? `Fast entry ${money(fastEntry.price)} aims for early TP ${money(fastEntry.earlyTarget)}. ` : ""}Planned entry ${money(signal.entry)}, target ${money(signal.targetOne)}, stop ${money(signal.stop)}. Suggested lot ${sizing.quantityLabel}; estimated stop loss ${money(sizing.stopLoss)}, Target 1 profit ${money(sizing.targetOneProfit)}. ${canTrack ? `Signal expires ${formatSignalTime(timing.expiresAt)}.` : "Login to save and track this structurally valid setup."}`
+    ? `${signal.trigger}. ${fastEntry ? `Fast entry ${money(fastEntry.price)} aims for early TP ${money(fastEntry.earlyTarget)}. ` : ""}Planned entry ${money(signal.entry)}, target ${money(signal.targetOne)}, stop ${money(signal.stop)}. Suggested lot ${sizing.quantityLabel}; estimated stop loss ${money(sizing.stopLoss)}, Target 1 profit ${money(sizing.targetOneProfit)}. ${trustSummary} ${canTrack ? `Signal expires ${formatSignalTime(timing.expiresAt)}.` : "Login to save and track this structurally valid setup."}`
     : canDraft
-      ? `${signal.trigger}. Draft ${signalLabel(signal.direction).toLowerCase()}: ${fastEntry ? `fast entry ${money(fastEntry.price)} to TP ${money(fastEntry.earlyTarget)}; ` : ""}planned entry ${money(signal.entry)}, target ${money(signal.targetOne)}, stop ${money(signal.stop)}. Tracking blocked: ${primaryBlock}.`
+      ? `${signal.trigger}. Draft ${signalLabel(signal.direction).toLowerCase()}: ${fastEntry ? `fast entry ${money(fastEntry.price)} to TP ${money(fastEntry.earlyTarget)}; ` : ""}planned entry ${money(signal.entry)}, target ${money(signal.targetOne)}, stop ${money(signal.stop)}. ${trustSummary} Tracking blocked: ${primaryBlock}.`
     : timing.opensAt
       ? `${thesis} Next usable time ${formatSignalTime(timing.opensAt)}.`
       : thesis;
@@ -2243,6 +2309,7 @@ function answerSignalChat(prompt) {
   const ladder = entryLadderSummary(signal.entryLevels || []);
   const active = ["LONG", "SHORT"].includes(signal.direction);
   const blockText = context.primaryBlock || context.blocks?.[0]?.detail || context.health?.warnings?.[0] || "No hard block is visible.";
+  const trust = context.trustSummary || signalTrustSummary(signal, context.health || {}, context.timing);
   const wealth = lastBackendSnapshot?.wealthCommand || localWealthCommand();
 
   if (!question) return "Ask me about entry, TP, stop, lot size, confidence, or why the signal is waiting.";
@@ -2256,13 +2323,13 @@ function answerSignalChat(prompt) {
   }
 
   if (/next action|what should i do next|do next|action/.test(lower)) {
-    return wealth.action || (active ? `Review ${direction} invalidation and keep risk inside the configured drawdown cap.` : "Wait for a directional setup and a clear quality gate.");
+    return wealth.action || (active ? `Review ${direction} invalidation and keep risk inside the configured drawdown cap. ${trust}` : `Wait for a directional setup and a clear quality gate. ${trust}`);
   }
 
   if (/wait|waiting|block|why|stuck/.test(lower)) {
     return active
-      ? `${direction} is forming, but tracking may still be blocked by: ${blockText}. ${context.timing?.detail || ""}`
-      : `${context.note || "The app is waiting for a cleaner setup."} Main reason: ${blockText}`;
+      ? `${direction} is forming. ${trust} Tracking may still be blocked by: ${blockText}.`
+      : `${context.note || "The app is waiting for a cleaner setup."} Main reason: ${blockText}. ${trust}`;
   }
 
   if (/entry|enter|ladder|fast|planned|confirm|pullback/.test(lower)) {
@@ -2301,8 +2368,8 @@ function answerSignalChat(prompt) {
 
   if (/confidence|signal|setup|explain|status|now/.test(lower)) {
     return active
-      ? `${direction} setup on ${assetLabel(context.asset || selectedAsset)} with ${signal.confidence}% confidence. ${signal.thesis || ""} ${coinGlassSummaryText()} Trigger: ${signal.trigger}. ${ladder}`
-      : `${context.status}: ${context.note || signal.thesis || "No executable setup yet."}`;
+      ? `${direction} setup on ${assetLabel(context.asset || selectedAsset)} with ${signal.confidence}% confidence. ${signal.thesis || ""} ${trust} ${coinGlassSummaryText()} Trigger: ${signal.trigger}. ${ladder}`
+      : `${context.status}: ${context.note || signal.thesis || "No executable setup yet."} ${trust}`;
   }
 
   return active

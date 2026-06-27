@@ -16,6 +16,9 @@ assert.ok(
 assert.ok(source.includes("function signalSafetyBlocks"), "signal safety blocks must be separate from tracking/login blocks");
 assert.ok(source.includes("\"User session\", \"Private sync\", \"Signal access\""), "login/access gates must not suppress structurally valid signals");
 assert.ok(source.includes("const canTrack = canReview && Boolean(currentUser.authenticated);"), "tracking permission must stay separate from signal review readiness");
+assert.ok(source.includes("blockReasons"), "hard signal blocks must be listed separately from cautions");
+assert.ok(source.includes("function signalTrustSummary"), "signals must expose a trust summary with drivers, cautions, blocks, and timing");
+assert.ok(source.includes("signal.reasons"), "signal explanations must carry named evidence drivers");
 
 function extractFunction(name) {
   const start = source.indexOf(`function ${name}(`);
