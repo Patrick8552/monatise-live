@@ -5,6 +5,7 @@ import os
 from dataclasses import dataclass
 from typing import Any
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 
@@ -45,12 +46,12 @@ class QuiverAdapter:
             return unavailable_context(ticker, "Quiver context is for single stocks and ETFs")
 
         datasets = {
-            "congress": self._optional_get(f"/beta/live/congresstrading/{ticker}"),
-            "insider": self._optional_get(f"/beta/live/insiders/{ticker}"),
-            "governmentContracts": self._optional_get(f"/beta/live/govcontracts/{ticker}"),
-            "lobbying": self._optional_get(f"/beta/live/lobbying/{ticker}"),
-            "offExchange": self._optional_get(f"/beta/live/offexchange/{ticker}"),
-            "news": self._optional_get(f"/beta/live/news/{ticker}"),
+            "congress": self._optional_get(f"/beta/historical/congresstrading/{ticker}"),
+            "insider": self._optional_get("/beta/live/insiders", {"ticker": ticker, "page_size": 20}),
+            "governmentContracts": self._optional_get(f"/beta/historical/govcontracts/{ticker}"),
+            "lobbying": self._optional_get(f"/beta/historical/lobbying/{ticker}", {"page_size": 20}),
+            "offExchange": self._optional_get(f"/beta/historical/offexchange/{ticker}"),
+            "news": self._optional_get("/beta/live/quivernews", {"ticker": ticker, "page_size": 20}),
         }
         summary = summarize_quiver_context(ticker, datasets)
         return {
@@ -62,9 +63,9 @@ class QuiverAdapter:
             "summary": summary,
         }
 
-    def _optional_get(self, path: str) -> list[dict]:
+    def _optional_get(self, path: str, query: dict[str, Any] | None = None) -> list[dict]:
         try:
-            payload = self._get(path)
+            payload = self._get(path, query)
         except QuiverAdapterError:
             return []
         if isinstance(payload, list):
@@ -76,8 +77,10 @@ class QuiverAdapter:
             return [payload]
         return []
 
-    def _get(self, path: str) -> Any:
+    def _get(self, path: str, query: dict[str, Any] | None = None) -> Any:
         url = f"{self.base_url}{path}"
+        if query:
+            url = f"{url}?{urlencode(query)}"
         request = Request(
             url,
             headers={

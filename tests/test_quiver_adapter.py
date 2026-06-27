@@ -25,8 +25,11 @@ def test_quiver_symbol_normalization_keeps_stock_and_etf_symbols() -> None:
 
 
 def test_quiver_context_summarizes_mocked_dataset_rows(monkeypatch) -> None:  # noqa: ANN001
+    requested_urls = []
+
     def fake_urlopen(request, timeout=8):  # noqa: ANN001, ARG001
         url = request.full_url
+        requested_urls.append(url)
         if "congresstrading" in url:
             return FakeResponse([{"Ticker": "NVDA", "Transaction": "Purchase"}])
         if "insiders" in url:
@@ -46,6 +49,11 @@ def test_quiver_context_summarizes_mocked_dataset_rows(monkeypatch) -> None:  # 
     assert context["summary"]["score"] >= 4
     assert len(context["datasets"]["insider"]) == 2
     assert "secret" not in str(context)
+    assert any("/beta/historical/congresstrading/NVDA" in url for url in requested_urls)
+    assert any("/beta/live/insiders?ticker=NVDA" in url for url in requested_urls)
+    assert any("/beta/historical/govcontracts/NVDA" in url for url in requested_urls)
+    assert any("/beta/historical/offexchange/NVDA" in url for url in requested_urls)
+    assert any("/beta/live/quivernews?ticker=NVDA" in url for url in requested_urls)
 
 
 def test_quiver_context_degrades_when_key_missing() -> None:
