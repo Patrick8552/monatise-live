@@ -212,6 +212,7 @@ def test_operator_status_reports_non_secret_integration_state() -> None:
         key: os.environ.get(key)
         for key in [
             "COINGLASS_API_KEY",
+            "QUIVER_API_KEY",
             "MONATISE_SMTP_PROVIDER",
             "MONATISE_SMTP_FROM",
             "MONATISE_SMTP_PASSWORD",
@@ -220,6 +221,7 @@ def test_operator_status_reports_non_secret_integration_state() -> None:
         ]
     }
     os.environ["COINGLASS_API_KEY"] = "cg_secret"
+    os.environ["QUIVER_API_KEY"] = "quiver_secret"
     os.environ["MONATISE_SMTP_PROVIDER"] = "resend"
     os.environ["MONATISE_SMTP_FROM"] = "Monatise <no-reply@example.com>"
     os.environ["MONATISE_SMTP_PASSWORD"] = "smtp_secret"
@@ -246,9 +248,11 @@ def test_operator_status_reports_non_secret_integration_state() -> None:
     assert payload["deploy"]["commit"] == "abcdef123456"
     assert payload["integrations"]["coinglass"]["configured"] is True
     assert payload["integrations"]["tradingView"]["configured"] is True
+    assert payload["integrations"]["quiver"]["configured"] is True
     assert payload["integrations"]["smtp"]["configured"] is True
     assert payload["integrations"]["smtp"]["alertsConfigured"] is True
     assert payload["riskCaps"]["allowLiveOrders"] is True
     assert "cg_secret" not in str(payload)
+    assert "quiver_secret" not in str(payload)
     assert "smtp_secret" not in str(payload)
     assert "tv_secret" not in str(payload)

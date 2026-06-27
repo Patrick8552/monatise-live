@@ -16,6 +16,7 @@ from monatise.analysis.fibonacci import analyze_fibonacci
 from monatise.analysis.fvg import analyze_fvg
 from monatise.adapters.coinglass import CoinGlassAdapter, CoinGlassPlanError
 from monatise.adapters.hyperliquid import HyperliquidAdapter
+from monatise.adapters.quiver import QuiverAdapter, normalize_quiver_symbol
 from monatise.live.billing import (
     PRIVATE_PLAN,
     StripeBillingConfig,
@@ -66,6 +67,7 @@ PRIVATE_GET_PATHS = {
     "/api/analysis/fibonacci",
     "/api/context/radar",
     "/api/coinglass/context",
+    "/api/quiver/context",
 }
 
 
@@ -380,6 +382,10 @@ def operator_status_payload(config: RuntimeConfig) -> dict:
             },
             "tradingView": {
                 "configured": bool(config.tradingview_webhook_token),
+            },
+            "quiver": {
+                "configured": bool(os.getenv("QUIVER_API_KEY", "").strip()),
+                "role": "stock and ETF alternative-data context",
             },
             "stripe": {
                 "configured": StripeBillingConfig.from_env().checkout_configured,
@@ -769,6 +775,18 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                         "liquidations": liquidations,
                     }
                 )
+            except Exception as error:  # noqa: BLE001
+                self._error(502, str(error))
+            return
+        if parsed.path == "/api/quiver/context":
+            if self._current_user() is None:
+                self._error(401, "login required for Quiver context")
+                return
+            query = parse_qs(parsed.query)
+            symbol = normalize_quiver_symbol(str(query.get("symbol", [self.config.symbol])[0]))
+            try:
+                adapter = QuiverAdapter.from_env()
+                self._json(adapter.context(symbol))
             except Exception as error:  # noqa: BLE001
                 self._error(502, str(error))
             return

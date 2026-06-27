@@ -110,6 +110,7 @@ const els = {
   passwordInput: document.querySelector("#passwordInput"),
   passwordToggle: document.querySelector("#passwordToggle"),
   quoteInput: document.querySelector("#quoteInput"),
+  quiverContext: document.querySelector("#quiverContext"),
   readinessChecklist: document.querySelector("#readinessChecklist"),
   riskBudgetMetric: document.querySelector("#riskBudgetMetric"),
   exchangeOrderMetric: document.querySelector("#exchangeOrderMetric"),
@@ -201,6 +202,10 @@ let coinGlassContext = null;
 let coinGlassLoading = false;
 let coinGlassLastLoadedAt = 0;
 let coinGlassLastSymbol = "";
+let quiverContext = null;
+let quiverLoading = false;
+let quiverLastLoadedAt = 0;
+let quiverLastSymbol = "";
 let candleSource = { interval: "sample", symbol: "BTC", type: "sample" };
 let candleLoading = false;
 let candleLoadingSymbol = "";
@@ -812,6 +817,13 @@ function operatorCards(status = operatorStatus, snapshot = lastBackendSnapshot) 
       label: "TradingView",
       ok: Boolean(integrations.tradingView?.configured),
       value: integrations.tradingView?.configured ? "ready" : "missing"
+    },
+    {
+      detail: integrations.quiver?.configured ? integrations.quiver.role || "stock and ETF alternative data" : "set QUIVER_API_KEY",
+      label: "Quiver",
+      ok: Boolean(integrations.quiver?.configured),
+      warn: !isQuiverAsset(selectedAsset),
+      value: integrations.quiver?.configured ? "ready" : "optional"
     },
     {
       detail: integrations.smtp?.configured
@@ -3423,6 +3435,7 @@ function applySelectedAsset(symbol, options = {}) {
   fibLastSymbol = "";
   contextLastSymbol = "";
   coinGlassLastSymbol = "";
+  quiverLastSymbol = "";
   candleLoadSequence += 1;
   candleLoading = false;
   candleLoadingSymbol = "";
@@ -3430,12 +3443,14 @@ function applySelectedAsset(symbol, options = {}) {
   syncSelectedAsset();
   renderTradingViewChart();
   renderCoinGlassServices();
+  renderQuiverContext();
   if (options.render !== false) rebuildFromInputs();
   if (options.load !== false) {
     loadLiveCandles({ force: true, limit: 120, symbol: nextSymbol }).catch(() => {});
     loadFibonacciAnalysis({ force: true });
     loadContextRadar({ force: true });
     loadCoinGlassContext({ force: true });
+    loadQuiverContext({ force: true });
   }
   return true;
 }
@@ -4143,6 +4158,83 @@ function coinGlassSummaryText() {
   return `CoinGlass ${coinGlassContext.symbol || selectedAsset}: funding ${fundingLabel(coinGlassContext.fundingRate)}, open interest ${openInterestLabel(coinGlassContext.openInterest)}, liquidations ${liquidationLabel(coinGlassContext.liquidations)}, fear/greed ${fearGreedLabel(coinGlassContext.fearGreed)}${unavailable ? `. Plan or permission gaps: ${unavailable}` : ""}.`;
 }
 
+function isQuiverAsset(symbol = selectedAsset) {
+  return ["AAPL", "TSLA", "NVDA", "QQQ", "SPY"].includes(String(symbol || "").toUpperCase());
+}
+
+function quiverSummaryText() {
+  if (!isQuiverAsset()) return "Quiver context applies to single-stock and ETF watch assets.";
+  if (!quiverContext || quiverContext.error) return "Quiver context is not available yet.";
+  const summary = quiverContext.summary || {};
+  return summary.detail || `Quiver ${quiverContext.symbol || selectedAsset}: ${summary.bias || "neutral"} alternative-data context.`;
+}
+
+function renderQuiverContext() {
+  if (!els.quiverContext) return;
+  if (!isQuiverAsset(selectedAsset)) {
+    els.quiverContext.innerHTML = `
+      <div class="context-head">
+        <strong>Quiver Context</strong>
+        <span>${assetLabel(selectedAsset)} · not a Quiver stock/ETF lens</span>
+      </div>
+      <div class="context-action neutral">
+        <strong>Standby</strong>
+        <span>Use Quiver on AAPL, TSLA, NVDA, QQQ, or SPY.</span>
+      </div>
+    `;
+    return;
+  }
+  if (!quiverContext) {
+    els.quiverContext.innerHTML = `
+      <div class="context-head">
+        <strong>Quiver Context</strong>
+        <span>${assetLabel(selectedAsset)} · waiting</span>
+      </div>
+      <div class="context-action neutral">
+        <strong>Loading</strong>
+        <span>Alternative-data context is being checked.</span>
+      </div>
+    `;
+    return;
+  }
+  if (quiverContext.error || quiverContext.reason) {
+    const reason = quiverContext.error || quiverContext.reason || "Quiver unavailable";
+    els.quiverContext.innerHTML = `
+      <div class="context-head">
+        <strong>Quiver Context</strong>
+        <span>${assetLabel(selectedAsset)} · unavailable</span>
+      </div>
+      <div class="context-action watch">
+        <strong>Optional</strong>
+        <span>${escapeHtml(reason)}</span>
+      </div>
+    `;
+    return;
+  }
+  const summary = quiverContext.summary || {};
+  const drivers = Array.isArray(summary.drivers) && summary.drivers.length ? summary.drivers : ["No fresh Quiver rows returned"];
+  const datasets = quiverContext.datasets || {};
+  const bias = String(summary.bias || "neutral").toLowerCase();
+  els.quiverContext.innerHTML = `
+    <div class="context-head">
+      <strong>Quiver Context</strong>
+      <span>${quiverContext.symbol || selectedAsset} · ${quiverContext.source || "Quiver"}</span>
+    </div>
+    <div class="context-action ${["supportive", "watch"].includes(bias) ? bias : "neutral"}">
+      <strong>${bias}</strong>
+      <span>Alt-data score ${Number(summary.score || 0).toFixed(0)}/10</span>
+    </div>
+    <div class="context-metrics">
+      <span>Congress <strong>${(datasets.congress || []).length}</strong></span>
+      <span>Insider <strong>${(datasets.insider || []).length}</strong></span>
+      <span>Contracts <strong>${(datasets.governmentContracts || []).length}</strong></span>
+      <span>Dark Pool <strong>${(datasets.offExchange || []).length}</strong></span>
+      <span>News <strong>${(datasets.news || []).length}</strong></span>
+    </div>
+    <div class="quiver-drivers">${drivers.slice(0, 4).map((driver) => `<span>${escapeHtml(driver)}</span>`).join("")}</div>
+  `;
+}
+
 function renderCoinGlassServices() {
   if (!els.coinglassServices) return;
   if (!coinGlassContext) {
@@ -4168,6 +4260,36 @@ function renderCoinGlassServices() {
   renderResearchSystem();
 }
 
+async function loadQuiverContext(options = {}) {
+  if (quiverLoading && !options.force) return;
+  const now = Date.now();
+  if (!isQuiverAsset(selectedAsset)) {
+    quiverContext = null;
+    quiverLastSymbol = selectedAsset;
+    renderQuiverContext();
+    return;
+  }
+  if (!options.force && quiverLastSymbol === selectedAsset && now - quiverLastLoadedAt < 120_000) return;
+  quiverLoading = true;
+  const requestSymbol = selectedAsset;
+  try {
+    const response = await apiFetch(`/api/quiver/context?symbol=${encodeURIComponent(requestSymbol)}`, { cache: "no-store" });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || "Quiver context unavailable");
+    if (requestSymbol !== selectedAsset) return;
+    quiverContext = payload;
+  } catch (error) {
+    if (requestSymbol !== selectedAsset) return;
+    quiverContext = { error: error.message || "Quiver context unavailable", symbol: requestSymbol };
+  } finally {
+    quiverLoading = false;
+    quiverLastLoadedAt = now;
+    quiverLastSymbol = requestSymbol;
+    renderQuiverContext();
+    renderResearchSystem();
+  }
+}
+
 function renderResearchSystem() {
   if (!els.researchStats) return;
   const signal = lastSignalCandidate || {};
@@ -4185,7 +4307,7 @@ function renderResearchSystem() {
     <article><span>Average Move</span><strong>+${move.toFixed(1)}%</strong></article>
     <article><span>Inputs</span><strong>OI · Funding · Liquidations · CHoCH</strong></article>
   `;
-  els.researchNarrative.textContent = `Research mode compares the current setup against prior cases where open interest expanded, funding skewed, liquidity was swept, and structure confirmed on the lower timeframe. ${coinGlassSummaryText()}`;
+  els.researchNarrative.textContent = `Research mode compares the current setup against prior cases where open interest expanded, funding skewed, liquidity was swept, and structure confirmed on the lower timeframe. ${coinGlassSummaryText()} ${quiverSummaryText()}`;
 }
 
 async function loadCoinGlassContext(options = {}) {
@@ -4230,6 +4352,7 @@ function renderMarkets() {
   updateMarketMap();
   renderTradingViewChart();
   renderCoinGlassServices();
+  renderQuiverContext();
 }
 
 function radarSection(title, items, limit = 18) {
@@ -5115,6 +5238,7 @@ function renderBackend(snapshot) {
   renderTradingViewChart();
   renderCoinGlassServices();
   loadCoinGlassContext();
+  loadQuiverContext();
   if (Array.isArray(snapshot.fills)) {
     els.fillCount.textContent = `${snapshot.fills.length} signals`;
     const fills = snapshot.fills.slice(-20).reverse();
@@ -5555,6 +5679,7 @@ renderForexSessions();
 renderChatMessages();
 loadTradingViewSignals();
 loadCoinGlassContext();
+loadQuiverContext();
 applyRememberedLogin();
 setInterval(loadMarkets, 5000);
 setInterval(loadOperatorStatus, 30000);
@@ -5562,4 +5687,5 @@ setInterval(refreshBackend, 2500);
 setInterval(renderForexSessions, 1000);
 setInterval(loadTradingViewSignals, 10000);
 setInterval(loadCoinGlassContext, 60000);
+setInterval(loadQuiverContext, 120000);
 setInterval(() => refreshClosedStructure().catch(() => {}), 60000);

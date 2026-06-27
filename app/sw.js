@@ -1,12 +1,12 @@
-const CACHE_NAME = "monatise-shell-20260627-signal-journal";
+const CACHE_NAME = "monatise-shell-20260627-quiver-context";
 const SHELL_ASSETS = [
   "./",
   "./index.html",
   "./cg.html",
   "./dashboard/",
   "./coinglass-dashboard.html?v=20260617-trader-mode",
-  "./styles.css?v=20260627-signal-journal",
-  "./app.js?v=20260627-signal-journal",
+  "./styles.css?v=20260627-quiver-context",
+  "./app.js?v=20260627-quiver-context",
   "./coinglass-dashboard.css?v=20260617-trader-mode",
   "./coinglass-dashboard.js?v=20260617-trader-mode",
   "./manifest.webmanifest?v=20260616-dashboard-install",

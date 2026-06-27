@@ -99,6 +99,13 @@ Monatise will not route orders to Backpack from this scaffold.
 
 Chainlink or another oracle can be added as a signal validation guard: read the BTC/USD or ETH/USD feed from a configured RPC, compare it with the CoinGlass mark, check the feed timestamp, and hold or reduce confidence when the spread or freshness check fails. The oracle should verify signals; it should not replace CoinGlass candles or Hyperliquid execution.
 
+Quiver Quantitative can be enabled as an optional stock/ETF alternative-data
+context layer. Set `QUIVER_API_KEY` in Render to let Monatise show Congress,
+insider, government contract, lobbying, off-exchange, and Quiver news context
+for watch assets such as `AAPL`, `TSLA`, `NVDA`, `QQQ`, and `SPY`. Quiver does
+not place orders and does not override signal geometry, stops, or execution
+gates.
+
 See [deploy/live-runbook.md](deploy/live-runbook.md) for the full runbook.
 
 ## Render Hosting
