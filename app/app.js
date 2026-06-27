@@ -1354,7 +1354,7 @@ function signalTrustSummary(signal = {}, health = {}, timing = signalTiming(sele
   const cautions = compactList([...(signal.cautions || []), ...(health.warnings || [])], "No active cautions.");
   const blocks = compactList([...(health.blockReasons || [])], "No hard blocks.");
   const timingText = timing?.detail ? `${timing.status}: ${timing.detail}` : timing?.status || "timing pending";
-  return `Drivers: ${drivers}. Cautions: ${cautions}. Hard blocks: ${blocks}. Timing: ${timingText}.`;
+  return `Drivers: ${drivers}. ${stopLossSummary(signal)} ${trendGridSummary(signal, health)} Cautions: ${cautions}. Hard blocks: ${blocks}. Timing: ${timingText}.`;
 }
 
 function setupRiskPct(symbol = selectedAsset) {
@@ -1380,6 +1380,70 @@ function boundedRiskDistance(entry, baseStop, atr, symbol = selectedAsset) {
   const structureRisk = Math.abs(numericEntry - Number(baseStop));
   const rawRisk = Number.isFinite(structureRisk) && structureRisk > 0 ? structureRisk : atrRisk;
   return Math.max(minRisk, Math.min(maxRisk, rawRisk, Math.max(minRisk, atrRisk)));
+}
+
+function stopLossModel(direction, entry, baseStop, atr, riskDistance, symbol = selectedAsset, source = "") {
+  const numericEntry = Number(entry);
+  const numericRisk = Number(riskDistance);
+  if (!["LONG", "SHORT"].includes(direction) || !Number.isFinite(numericEntry) || numericEntry <= 0 || !Number.isFinite(numericRisk) || numericRisk <= 0) {
+    return null;
+  }
+  const minRisk = numericEntry * setupMinRiskPct(symbol);
+  const maxRisk = numericEntry * setupRiskPct(symbol);
+  const structureRisk = Math.abs(numericEntry - Number(baseStop));
+  const atrRisk = Number.isFinite(Number(atr)) && Number(atr) > 0 ? Number(atr) * 0.65 : Number.NaN;
+  const stop = direction === "SHORT" ? numericEntry + numericRisk : numericEntry - numericRisk;
+  let resolvedSource = source;
+  if (!resolvedSource) {
+    resolvedSource =
+      Number.isFinite(structureRisk) && structureRisk > 0
+        ? "structure invalidation"
+        : Number.isFinite(atrRisk)
+          ? "ATR fallback"
+          : "asset risk band";
+  }
+  return {
+    atrRisk,
+    baseStop: Number.isFinite(Number(baseStop)) ? Number(baseStop) : null,
+    maxRisk,
+    minRisk,
+    riskDistance: numericRisk,
+    riskPct: numericRisk / numericEntry,
+    source: resolvedSource,
+    stop,
+    structureRisk: Number.isFinite(structureRisk) ? structureRisk : null,
+    symbol
+  };
+}
+
+function stopLossSummary(signal = {}) {
+  const model = signal.stopModel || null;
+  const entry = Number(signal.entry);
+  const stop = Number(signal.stop);
+  if (!model && (!Number.isFinite(entry) || !Number.isFinite(stop) || entry <= 0 || stop <= 0)) {
+    return "Stop model: pending until entry and invalidation are defined.";
+  }
+  const riskDistance = model ? Number(model.riskDistance) : Math.abs(entry - stop);
+  const riskPct = model ? Number(model.riskPct) : riskDistance / entry;
+  const band =
+    model && Number.isFinite(model.minRisk) && Number.isFinite(model.maxRisk)
+      ? ` band ${money(model.minRisk)}-${money(model.maxRisk)}`
+      : "";
+  const source = model?.source || "entry-to-stop distance";
+  return `Stop model: ${source}; stop ${money(model?.stop ?? stop)}, distance ${money(riskDistance)} (${(riskPct * 100).toFixed(2)}%)${band}.`;
+}
+
+function trendGridSummary(signal = {}, health = {}) {
+  const direction = signal.direction;
+  const levelCount = Array.isArray(signal.entryLevels) ? signal.entryLevels.length : 0;
+  if (direction === "LONG") {
+    return `Trend grid: LONG pullback grid with entries below/near mark, stop below entry, and targets above entry (${levelCount} entry lanes).`;
+  }
+  if (direction === "SHORT") {
+    return `Trend grid: SHORT rejection grid with entries above/near mark, stop above entry, and targets below entry (${levelCount} entry lanes).`;
+  }
+  if (health?.blocked) return "Trend grid: paused because hard blocks are active.";
+  return "Trend grid: waiting for directional agreement before arranging entries, stop, and targets.";
 }
 
 function isPullbackEntry(direction, entry, mark) {
@@ -1704,6 +1768,15 @@ function tradingViewPrimarySignal(health, mark) {
       ? `TradingView BUY holds above ${money(entry)}`
       : `TradingView SELL rejects below ${money(entry)}`);
   const entryLevels = buildEntryLadder(direction, price, entry, Math.max(riskDistance, fallbackRisk || 1), targetOne, selectedAsset);
+  const stopModel = stopLossModel(
+    direction,
+    entry,
+    setup.stop || stop,
+    fallbackRisk / 0.65,
+    riskDistance,
+    selectedAsset,
+    setup.stop ? "TradingView supplied stop" : "TradingView fallback risk band"
+  );
   return {
     cautions: health.warnings || [],
     confidence,
@@ -1711,6 +1784,7 @@ function tradingViewPrimarySignal(health, mark) {
     entry,
     entryLevels,
     stop,
+    stopModel,
     targetOne,
     targetTwo,
     reasons,
@@ -1785,6 +1859,7 @@ function signalFromHealth(health, mark) {
   const targetOne = executable ? targetWithMinimumReward(direction, entry, rawTargetOne, riskDistance) : mark;
   const buffer = riskDistance > 0 ? riskDistance : Number.isFinite(atr) && atr > 0 ? atr : Math.abs(mark - Number(nearest || mark));
   const entryLevels = executable ? buildEntryLadder(direction, mark, entry, riskDistance, targetOne, selectedAsset) : [];
+  const stopModel = executable ? stopLossModel(direction, entry, baseStop, atr, riskDistance, selectedAsset) : null;
   const confidenceBase = 42 + (health.status === "ALIGNED" ? 28 : health.status === "REVIEW" ? 14 : 0);
   const contextPenalty = action === "reduce" ? 10 : action === "widen" ? 6 : action === "halt" || action === "pause" ? 24 : 0;
   const warningPenalty = Math.min(24, health.warnings.length * 6);
@@ -1816,6 +1891,7 @@ function signalFromHealth(health, mark) {
     entry: executable && Number.isFinite(entry) ? entry : null,
     entryLevels,
     stop: executable && Number.isFinite(stop) ? stop : null,
+    stopModel,
     targetOne: executable && Number.isFinite(targetOne) ? targetOne : null,
     targetTwo:
       !executable
@@ -2184,6 +2260,7 @@ function renderExecutionTicket(orders = [], options = {}) {
     targetTwoProfit: sizing.targetTwoProfit,
     stopLossAmount: sizing.stopLoss,
     stop: signal.stop,
+    stopModel: signal.stopModel || null,
     symbol: selectedAsset,
     targetOne: signal.targetOne,
     targetTwo: signal.targetTwo,
@@ -2334,14 +2411,18 @@ function answerSignalChat(prompt) {
 
   if (/entry|enter|ladder|fast|planned|confirm|pullback/.test(lower)) {
     return active
-      ? `${direction} entry plan: ${ladder}. Fast entry is for early partial profit; planned entry is the balanced setup; confirm entry waits for break/reject confirmation.`
+      ? `${direction} entry plan: ${ladder}. ${trendGridSummary(signal, context.health || {})} Fast entry is for early partial profit; planned entry is the balanced setup; confirm entry waits for break/reject confirmation.`
       : `No executable entry yet. ${context.note || "Wait for the setup to turn into LONG or SHORT."}`;
   }
 
   if (/stop|loss|risk|lot|size|margin|drawdown/.test(lower)) {
     return active
-      ? `Risk plan: suggested ${sizing.quantityLabel}, notional ${money(sizing.notional)}, margin ${money(sizing.marginRequired)}, stop loss estimate ${money(sizing.stopLoss)} at stop ${money(signal.stop)}. Keep the stop-loss amount inside your alert risk size.`
+      ? `Risk plan: ${stopLossSummary(signal)} Suggested ${sizing.quantityLabel}, notional ${money(sizing.notional)}, margin ${money(sizing.marginRequired)}, stop loss estimate ${money(sizing.stopLoss)}. Keep the stop-loss amount inside your alert risk size.`
       : `Risk stays pending until there is a LONG or SHORT. Current state: ${context.status}. ${context.note}`;
+  }
+
+  if (/trend.?grid|grid|trend based|trend-based/.test(lower)) {
+    return `${trendGridSummary(signal, context.health || {})} ${active ? `Entry ${money(signal.entry)}, stop ${money(signal.stop)}, TP1 ${money(signal.targetOne)}.` : context.note || "No active trend grid yet."}`;
   }
 
   if (/hedge|offset|protect|insurance|opposite/.test(lower)) {

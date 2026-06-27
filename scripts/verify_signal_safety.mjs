@@ -19,11 +19,15 @@ assert.ok(source.includes("const canTrack = canReview && Boolean(currentUser.aut
 assert.ok(source.includes("blockReasons"), "hard signal blocks must be listed separately from cautions");
 assert.ok(source.includes("function signalTrustSummary"), "signals must expose a trust summary with drivers, cautions, blocks, and timing");
 assert.ok(source.includes("signal.reasons"), "signal explanations must carry named evidence drivers");
+assert.ok(source.includes("function stopLossModel"), "signals must preserve the stop-loss calculation model");
+assert.ok(source.includes("function trendGridSummary"), "signals must explain the trend-based grid shape");
 
 function extractFunction(name) {
   const start = source.indexOf(`function ${name}(`);
   assert.notEqual(start, -1, `missing function ${name}`);
-  const bodyStart = source.indexOf("{", start);
+  const signatureEnd = source.indexOf(") {", start);
+  assert.notEqual(signatureEnd, -1, `missing function body for ${name}`);
+  const bodyStart = source.indexOf("{", signatureEnd);
   let depth = 0;
   for (let index = bodyStart; index < source.length; index += 1) {
     const char = source[index];
@@ -57,6 +61,9 @@ const context = vm.createContext({
   "setupRiskPct",
   "setupMinRiskPct",
   "boundedRiskDistance",
+  "stopLossModel",
+  "stopLossSummary",
+  "trendGridSummary",
   "plannedEntry",
   "targetWithMinimumReward",
   "buildEntryLadder",
@@ -108,6 +115,11 @@ ladderShort.forEach((level) => {
 
 const forexRisk = context.boundedRiskDistance(1.085, 1.075, 0.001, "EURUSD");
 assert.ok(forexRisk > 0 && forexRisk < 0.002, "forex risk must stay price-scale aware");
+
+const goldStop = context.stopLossModel("LONG", 4155, 4140, 10, 8, "GOLD");
+assert.ok(goldStop.stop === 4147, "long stop model should place stop below entry by risk distance");
+assert.match(context.stopLossSummary({ entry: 4155, stop: 4147, stopModel: goldStop }), /Stop model/);
+assert.match(context.trendGridSummary({ direction: "LONG", entryLevels: [1, 2, 3] }, {}), /LONG pullback grid/);
 
 const sizing = context.tradeSizingFromSignal(longSignal, 10000, 0.05);
 assert.ok(sizing.notional > 0, "sizing should produce notional for executable signal");
