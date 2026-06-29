@@ -1,4 +1,4 @@
-const CACHE_NAME = "monatise-shell-20260629-missing-features";
+const CACHE_NAME = "monatise-shell-20260629-visible-trainer";
 const SHELL_ASSETS = [
   "./",
   "./index.html",
@@ -6,10 +6,10 @@ const SHELL_ASSETS = [
   "./dashboard/",
   "./game.html",
   "./coinglass-dashboard.html?v=20260617-trader-mode",
-  "./styles.css?v=20260629-missing-features",
-  "./app.js?v=20260629-missing-features",
-  "./spotify.js?v=20260629-missing-features",
-  "./game.js?v=20260629-missing-features",
+  "./styles.css?v=20260629-visible-trainer",
+  "./app.js?v=20260629-visible-trainer",
+  "./spotify.js?v=20260629-visible-trainer",
+  "./game.js?v=20260629-visible-trainer",
   "./assets/payout-clients.svg",
   "./coinglass-dashboard.css?v=20260617-trader-mode",
   "./coinglass-dashboard.js?v=20260617-trader-mode",
