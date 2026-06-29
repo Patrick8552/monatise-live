@@ -1,12 +1,16 @@
-const CACHE_NAME = "monatise-shell-20260627-quiver-context";
+const CACHE_NAME = "monatise-shell-20260629-missing-features";
 const SHELL_ASSETS = [
   "./",
   "./index.html",
   "./cg.html",
   "./dashboard/",
+  "./game.html",
   "./coinglass-dashboard.html?v=20260617-trader-mode",
-  "./styles.css?v=20260627-quiver-context",
-  "./app.js?v=20260627-quiver-context",
+  "./styles.css?v=20260629-missing-features",
+  "./app.js?v=20260629-missing-features",
+  "./spotify.js?v=20260629-missing-features",
+  "./game.js?v=20260629-missing-features",
+  "./assets/payout-clients.svg",
   "./coinglass-dashboard.css?v=20260617-trader-mode",
   "./coinglass-dashboard.js?v=20260617-trader-mode",
   "./manifest.webmanifest?v=20260616-dashboard-install",

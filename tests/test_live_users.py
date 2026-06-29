@@ -205,6 +205,27 @@ def test_user_store_saves_profile_name_across_settings_updates() -> None:
         _restore_key(old_key)
 
 
+def test_user_store_saves_spotify_playlist_across_settings_updates() -> None:
+    old_key = _with_key()
+    try:
+        with tempfile.NamedTemporaryFile() as db:
+            store = UserStore(db.name)
+            user = store.create_user("playlist-trader@example.com", "password123")
+
+            settings = store.save_spotify_playlist(user.id, "https://open.spotify.com/playlist/37i9dQZF1DX0XUsuxWHRQd")
+            assert settings.spotify_playlist_url == "https://open.spotify.com/playlist/37i9dQZF1DX0XUsuxWHRQd"
+            assert settings.spotify_playlist_embed_url == "https://open.spotify.com/embed/playlist/37i9dQZF1DX0XUsuxWHRQd"
+
+            settings = store.save_selected_symbol(user.id, "eth")
+            assert settings.spotify_playlist_embed_url.endswith("/37i9dQZF1DX0XUsuxWHRQd")
+
+            settings = store.save_spotify_playlist(user.id, "")
+            assert settings.spotify_playlist_url == ""
+            assert settings.spotify_playlist_embed_url == ""
+    finally:
+        _restore_key(old_key)
+
+
 def test_user_store_saves_startup_plan_trading_rules_on_free_access() -> None:
     old_key = _with_key()
     try:

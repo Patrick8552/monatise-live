@@ -503,6 +503,8 @@ def user_payload(user: User, settings, store: UserStore) -> dict:  # noqa: ANN00
         "clientName": settings.client_name,
         "credentialsConfigured": store.has_credentials(user.id),
         "selectedSymbol": settings.selected_symbol,
+        "spotifyPlaylistUrl": settings.spotify_playlist_url,
+        "spotifyPlaylistEmbedUrl": settings.spotify_playlist_embed_url,
         "subscription": {
             "plan": settings.subscription_plan,
             "status": settings.subscription_status,
@@ -1069,6 +1071,17 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             except ValueError as error:
                 self._error(400, str(error))
             return
+        if parsed.path == "/api/spotify-playlist":
+            user = self._require_user()
+            if user is None:
+                return
+            payload = self._read_json()
+            try:
+                settings = self.store.save_spotify_playlist(user.id, str(payload.get("spotifyPlaylistUrl", "")))
+                self._json(user_payload(user, settings, self.store))
+            except ValueError as error:
+                self._error(400, str(error))
+            return
         if parsed.path == "/api/settings":
             user = self._require_user()
             if user is None:
@@ -1193,7 +1206,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             "img-src 'self' data:; "
             "connect-src 'self' https://open-api-v4.coinglass.com https://api.binance.com https://api.hyperliquid.xyz https://api.alternative.me https://postgresql.org https://www.postgresql.org https://rest.ably.io https://realtime.ably.io wss://realtime.ably.io wss://*.ably.io https://api.elevenlabs.io https://api.openai.com; "
             "media-src 'self' blob: data:; "
-            "frame-src 'self' https://s.tradingview.com https://www.tradingview.com; "
+            "frame-src 'self' https://s.tradingview.com https://www.tradingview.com https://open.spotify.com; "
             "frame-ancestors 'none'; "
             "base-uri 'self'; "
             "form-action 'self' https://checkout.stripe.com https://api.flutterwave.com https://*.flutterwave.com",

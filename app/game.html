@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#101820" />
+    <title>Monatise Gold Signal Trainer</title>
+    <link rel="icon" href="./icon-lotus.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="./styles.css?v=20260629-missing-features" />
+  </head>
+  <body>
+    <main class="shell game-shell">
+      <header class="topbar">
+        <div class="brand-lockup">
+          <img class="brand-logo" src="./icon-lotus.svg" alt="Monatise lotus logo" />
+          <div>
+            <p class="eyebrow">XAUUSD training</p>
+            <h1>Gold Signal Trainer</h1>
+          </div>
+        </div>
+        <nav class="desk-nav" aria-label="trainer navigation">
+          <a href="./index.html">Signal Console</a>
+          <a href="./dashboard/">Market Dashboard</a>
+        </nav>
+      </header>
+
+      <section class="desk-section">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Decision drills</p>
+            <h2>Practice long, short, and skip decisions around gold structure and news risk.</h2>
+          </div>
+        </div>
+
+        <section class="game-board" aria-label="Gold signal trainer">
+          <div class="game-stage">
+            <canvas id="trainerCanvas" width="980" height="520" aria-label="XAUUSD scenario chart"></canvas>
+          </div>
+
+          <aside class="game-panel">
+            <div class="game-stat-grid">
+              <div><span>Score</span><strong id="scoreValue">0</strong></div>
+              <div><span>Streak</span><strong id="streakValue">0</strong></div>
+              <div><span>Discipline</span><strong id="disciplineValue">100%</strong></div>
+              <div><span>Round</span><strong id="roundValue">1/10</strong></div>
+            </div>
+
+            <div class="scenario-card">
+              <span id="sessionValue">London/New York</span>
+              <strong id="scenarioTitle">Loading setup</strong>
+              <p id="scenarioMeta">Broker time aligned · XAUUSD</p>
+            </div>
+
+            <div class="decision-buttons" aria-label="Decision">
+              <button type="button" data-decision="long">Long</button>
+              <button type="button" data-decision="short">Short</button>
+              <button type="button" data-decision="skip">Skip</button>
+            </div>
+
+            <div class="spotify-panel game-feedback" id="feedbackBox">
+              <strong>Awaiting decision</strong>
+              <p>Round starts on the current XAUUSD structure.</p>
+            </div>
+
+            <button type="button" id="nextRoundButton">Next setup</button>
+            <section id="spotifyPanel" class="spotify-panel" aria-label="Connected Spotify playlist"></section>
+          </aside>
+        </section>
+      </section>
+    </main>
+    <script src="./spotify.js?v=20260629-missing-features"></script>
+    <script src="./game.js?v=20260629-missing-features"></script>
+  </body>
+</html>

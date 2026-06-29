@@ -11,7 +11,7 @@
     <link rel="manifest" href="./manifest.webmanifest?v=20260616-dashboard-install" />
     <link rel="icon" href="./icon-lotus.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./icon-lotus.svg" />
-    <link rel="stylesheet" href="./styles.css?v=20260627-quiver-context" />
+    <link rel="stylesheet" href="./styles.css?v=20260629-missing-features" />
   </head>
   <body class="auth-required">
     <main class="shell">
@@ -85,6 +85,7 @@
         <a href="#account">Private Access</a>
         <a href="#about">About</a>
         <a href="#activity">Activity</a>
+        <a href="./game.html">Trainer</a>
       </nav>
 
       <section class="command-strip" aria-label="live decision surface">
@@ -677,6 +678,12 @@
                 <input id="secretKeyInput" type="password" autocomplete="off" />
               </label>
               <button id="saveCredentialsButton" type="button">Save Sync Details</button>
+              <label>
+                Spotify playlist
+                <input id="spotifyPlaylistInput" type="url" inputmode="url" autocomplete="off" placeholder="https://open.spotify.com/playlist/..." />
+              </label>
+              <button id="saveSpotifyButton" type="button">Save Playlist</button>
+              <section id="spotifyPanel" class="spotify-panel" aria-label="Connected Spotify playlist"></section>
               <p id="credentialStatus">This desk is selective. Profiles save preferences per user; private sync stays optional.</p>
             </form>
 
@@ -701,7 +708,12 @@
               </div>
               <div class="button-row">
                 <button id="billingCheckoutButton" class="primary" type="button">Activate Private Billing</button>
+                <a class="button-link" href="./game.html">Gold Trainer</a>
               </div>
+              <figure class="payout-showcase">
+                <img src="./assets/payout-clients.svg" alt="Illustration of approved Monatise clients with payout-ready account status and signal journal access" />
+                <figcaption>Client payout flow for approved accounts, shown as a product illustration rather than verified earning proof.</figcaption>
+              </figure>
               <p id="billingStatus">Private billing opens only for logged-in profiles when Stripe is configured.</p>
               <p>Monatise does not custody funds or store raw passwords. Your browser can save passwords, while Monatise keeps only the secure session and profile settings.</p>
             </section>
@@ -742,6 +754,15 @@
                 Monatise does not ask, “Where will price go next in one big move?” It asks, “Where can liquidity be
                 placed so repeated market movement generates harvestable flow while risk stays defined?”
               </p>
+            </section>
+
+            <section class="panel trainer-callout">
+              <div>
+                <span>Training path</span>
+                <h3>Practice the XAUUSD discipline loop before live decisions.</h3>
+                <p>The trainer turns news filters, invalidation, and London/New York timing into quick signal drills.</p>
+              </div>
+              <a class="button-link" href="./game.html">Open Gold Trainer</a>
             </section>
 
             <section class="panel about-principles">
@@ -862,6 +883,7 @@
     </main>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="./app.js?v=20260627-quiver-context"></script>
+    <script src="./spotify.js?v=20260629-missing-features"></script>
+    <script src="./app.js?v=20260629-missing-features"></script>
   </body>
 </html>

@@ -9,6 +9,7 @@ import sqlite3
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
 
 from cryptography.fernet import Fernet, InvalidToken
 
@@ -59,6 +60,8 @@ class LoginCode:
 class UserSettings:
     client_name: str = ""
     selected_symbol: str = "BTC"
+    spotify_playlist_url: str = ""
+    spotify_playlist_embed_url: str = ""
     subscription_plan: str = "free"
     subscription_status: str = "active"
     chart_interval: str = "1h"
@@ -100,6 +103,24 @@ def _fernet_key() -> bytes:
 
 def encryption_key_configured() -> bool:
     return bool(secret_value("MONATISE_ENCRYPTION_KEY", ""))
+
+
+def _spotify_playlist_urls(value: str) -> tuple[str, str]:
+    raw = value.strip()
+    if not raw:
+        return "", ""
+    playlist_id = ""
+    if raw.startswith("spotify:playlist:"):
+        playlist_id = raw.removeprefix("spotify:playlist:").split("?", 1)[0].strip()
+    else:
+        parsed = urlparse(raw)
+        parts = [part for part in parsed.path.split("/") if part]
+        if parsed.netloc.lower() not in {"open.spotify.com", "www.open.spotify.com"} or len(parts) < 2 or parts[0] != "playlist":
+            raise ValueError("enter a valid Spotify playlist URL or URI")
+        playlist_id = parts[1].split("?", 1)[0].strip()
+    if not playlist_id or not all(character.isalnum() for character in playlist_id):
+        raise ValueError("enter a valid Spotify playlist URL or URI")
+    return f"https://open.spotify.com/playlist/{playlist_id}", f"https://open.spotify.com/embed/playlist/{playlist_id}"
 
 
 class UserStore:
@@ -391,6 +412,35 @@ class UserStore:
             )
         return self.settings_for_user(user_id)
 
+    def save_spotify_playlist(self, user_id: int, playlist_url: str) -> UserSettings:
+        settings = self.settings_for_user(user_id)
+        clean_url, embed_url = _spotify_playlist_urls(playlist_url)
+        with self._connect() as conn:
+            conn.execute(
+                """
+                insert into user_settings(
+                  user_id, client_name, selected_symbol, spotify_playlist_url, spotify_playlist_embed_url,
+                  subscription_plan, subscription_status, updated_at
+                )
+                values (?, ?, ?, ?, ?, ?, ?, ?)
+                on conflict(user_id) do update set
+                  spotify_playlist_url = excluded.spotify_playlist_url,
+                  spotify_playlist_embed_url = excluded.spotify_playlist_embed_url,
+                  updated_at = excluded.updated_at
+                """,
+                (
+                    user_id,
+                    settings.client_name,
+                    settings.selected_symbol,
+                    clean_url,
+                    embed_url,
+                    settings.subscription_plan,
+                    settings.subscription_status,
+                    time.time(),
+                ),
+            )
+        return self.settings_for_user(user_id)
+
     def save_trading_rules(
         self,
         user_id: int,
@@ -498,7 +548,8 @@ class UserStore:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                select client_name, selected_symbol, subscription_plan, subscription_status,
+                select client_name, selected_symbol, spotify_playlist_url, spotify_playlist_embed_url,
+                       subscription_plan, subscription_status,
                        chart_interval, signal_session_window, leverage, order_quote_size, max_order_notional, max_total_notional,
                        max_position_value, session_guard_minutes, stale_grid_cancel, london_commodity_only,
                        max_daily_loss_pct
@@ -518,6 +569,8 @@ class UserStore:
         return UserSettings(
             client_name=str(row["client_name"] or ""),
             selected_symbol=str(row["selected_symbol"]),
+            spotify_playlist_url=str(row["spotify_playlist_url"] or ""),
+            spotify_playlist_embed_url=str(row["spotify_playlist_embed_url"] or ""),
             subscription_plan=str(row["subscription_plan"]),
             subscription_status=str(row["subscription_status"]),
             chart_interval=str(row["chart_interval"] if row["chart_interval"] in COINGLASS_STARTUP_INTERVALS else "1h"),
@@ -597,6 +650,8 @@ class UserStore:
                   user_id integer primary key references users(id) on delete cascade,
                   client_name text not null default '',
                   selected_symbol text not null,
+                  spotify_playlist_url text not null default '',
+                  spotify_playlist_embed_url text not null default '',
                   subscription_plan text not null,
                   subscription_status text not null,
                   chart_interval text not null default '1h',
@@ -627,6 +682,8 @@ class UserStore:
             }
             migrations = {
                 "client_name": "alter table user_settings add column client_name text not null default ''",
+                "spotify_playlist_url": "alter table user_settings add column spotify_playlist_url text not null default ''",
+                "spotify_playlist_embed_url": "alter table user_settings add column spotify_playlist_embed_url text not null default ''",
                 "chart_interval": "alter table user_settings add column chart_interval text not null default '1h'",
                 "signal_session_window": "alter table user_settings add column signal_session_window text not null default 'london_new_york'",
                 "leverage": "alter table user_settings add column leverage real not null default 10",

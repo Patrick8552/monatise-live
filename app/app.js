@@ -144,9 +144,12 @@ const els = {
   secretKeyInput: document.querySelector("#secretKeyInput"),
   signalJournal: document.querySelector("#signalJournal"),
   signalWindowSelect: document.querySelector("#signalWindowSelect"),
+  saveSpotifyButton: document.querySelector("#saveSpotifyButton"),
   runtimeLog: document.querySelector("#runtimeLog"),
   spacingInput: document.querySelector("#spacingInput"),
   spacingValue: document.querySelector("#spacingValue"),
+  spotifyPanel: document.querySelector("#spotifyPanel"),
+  spotifyPlaylistInput: document.querySelector("#spotifyPlaylistInput"),
   stepButton: document.querySelector("#stepButton"),
   staleGridCancelInput: document.querySelector("#staleGridCancelInput"),
   strategyReadout: document.querySelector("#strategyReadout"),
@@ -3541,6 +3544,12 @@ function renderAuth(me) {
   if (!loggedIn) applyRememberedLogin(me.rememberedLogin || {});
   els.logoutButton.disabled = !loggedIn;
   els.saveCredentialsButton.disabled = !loggedIn;
+  if (els.saveSpotifyButton) els.saveSpotifyButton.disabled = !loggedIn;
+  if (els.spotifyPlaylistInput) {
+    els.spotifyPlaylistInput.disabled = !loggedIn;
+    els.spotifyPlaylistInput.value = loggedIn ? me.spotifyPlaylistUrl || "" : "";
+  }
+  window.MonatiseSpotify?.renderSpotifyPanel(loggedIn ? me : null, els.spotifyPanel);
   els.backendStartButton.disabled = !loggedIn || !me.credentialsConfigured;
   els.backendStopButton.disabled = !loggedIn;
   els.emailLoginCodeButton.disabled = loggedIn;
@@ -3825,6 +3834,40 @@ async function saveCredentials() {
   await loadMe();
   addAuditEvent("profile saved", "Private sync saved", "sync details stored per user");
   refreshBackend();
+}
+
+async function saveSpotifyPlaylist() {
+  if (!currentUser.authenticated) {
+    els.credentialStatus.textContent = "Login before saving a trading playlist.";
+    els.usernameInput.focus();
+    return;
+  }
+  if (els.saveSpotifyButton) {
+    els.saveSpotifyButton.disabled = true;
+    els.saveSpotifyButton.textContent = "Saving...";
+  }
+  try {
+    const response = await jsonPost("/api/spotify-playlist", {
+      spotifyPlaylistUrl: els.spotifyPlaylistInput?.value.trim() || ""
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      els.credentialStatus.textContent = payload.error || "Could not save Spotify playlist.";
+      return;
+    }
+    currentUser = payload;
+    if (els.spotifyPlaylistInput) els.spotifyPlaylistInput.value = payload.spotifyPlaylistUrl || "";
+    window.MonatiseSpotify?.renderSpotifyPanel(payload, els.spotifyPanel);
+    els.credentialStatus.textContent = payload.spotifyPlaylistUrl ? "Spotify playlist saved for this profile." : "Spotify playlist removed.";
+    addAuditEvent("playlist saved", "Trading playlist updated", payload.spotifyPlaylistUrl ? "spotify connected" : "spotify cleared");
+  } catch {
+    els.credentialStatus.textContent = "Playlist request failed. Try again.";
+  } finally {
+    if (els.saveSpotifyButton) {
+      els.saveSpotifyButton.disabled = !currentUser.authenticated;
+      els.saveSpotifyButton.textContent = "Save Playlist";
+    }
+  }
 }
 
 async function startBillingCheckout() {
@@ -5693,6 +5736,7 @@ els.logoutButton.addEventListener("click", async () => {
   renderAuth({ authenticated: false, credentialsConfigured: false });
 });
 els.saveCredentialsButton.addEventListener("click", saveCredentials);
+els.saveSpotifyButton?.addEventListener("click", saveSpotifyPlaylist);
 els.billingCheckoutButton?.addEventListener("click", startBillingCheckout);
 els.saveRulesButton.addEventListener("click", saveTradingRules);
 function previewTradingRules() {
