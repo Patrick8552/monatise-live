@@ -100,7 +100,7 @@ def save_tradingview_alerts(alerts: list[dict], path: Path | None = None) -> Non
 
 
 def requires_site_auth(path: str) -> bool:
-    return path in PRIVATE_GET_PATHS or path.startswith("/api/coinglass/proxy/")
+    return path in PRIVATE_GET_PATHS
 
 
 def _is_email(value: str) -> bool:

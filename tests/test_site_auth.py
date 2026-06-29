@@ -10,7 +10,6 @@ def test_market_data_routes_require_site_authentication() -> None:
         "/api/context/radar",
         "/api/coinglass/context",
         "/api/quiver/context",
-        "/api/coinglass/proxy/api/futures/open-interest/exchange-list",
     ):
         assert requires_site_auth(path)
 
@@ -26,5 +25,7 @@ def test_auth_bootstrap_routes_remain_public() -> None:
         "/api/login-code/complete",
         "/api/password-reset/request",
         "/api/tradingview/webhook",
+        "/api/coinglass/proxy/api/futures/open-interest/exchange-list",
+        "/api/coinglass/proxy/api/futures/price/history",
     ):
         assert not requires_site_auth(path)
