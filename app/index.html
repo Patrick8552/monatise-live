@@ -11,7 +11,7 @@
     <link rel="manifest" href="./manifest.webmanifest?v=20260616-dashboard-install" />
     <link rel="icon" href="./icon-lotus.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./icon-lotus.svg" />
-    <link rel="stylesheet" href="./styles.css?v=20260629-request-access-fix" />
+    <link rel="stylesheet" href="./styles.css?v=20260629-crypto-trainer" />
   </head>
   <body class="auth-required">
     <main class="shell">
@@ -26,6 +26,7 @@
         <nav class="desk-nav" aria-label="primary navigation">
           <a href="./index.html" aria-current="page">Signal Console</a>
           <a href="./dashboard/">Market Dashboard</a>
+          <a href="./game.html">Crypto Trainer</a>
           <button id="installAppButton" type="button" hidden>Install App</button>
         </nav>
         <div class="desk-preferences" aria-label="console preferences">
@@ -80,6 +81,7 @@
         <a href="#activation">Activation</a>
         <a href="#operator">Operator</a>
         <a href="#markets">Market Intel</a>
+        <a href="#trainer">Crypto Trainer</a>
         <a href="#hedge">Hedge Layer</a>
         <a href="#chat">AI Chat</a>
         <a href="#account">Private Access</a>
@@ -561,6 +563,31 @@
           </section>
         </section>
 
+        <section id="trainer" class="desk-section trainer-section">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Crypto trainer</p>
+              <h2>Practice Long, Short, and Wait decisions with CoinGlass and Hyperliquid context.</h2>
+            </div>
+            <a class="button-link" href="./game.html">Open Trainer</a>
+          </div>
+
+          <div class="setup-library-grid crypto-trainer-preview">
+            <article>
+              <span>Assets</span>
+              <strong>BTC, ETH, SOL, HYPE, BNB, XRP, and DOGE scenario drills.</strong>
+            </article>
+            <article>
+              <span>Context</span>
+              <strong>Funding, open interest, liquidations, VWAP, and live-mark discipline.</strong>
+            </article>
+            <article>
+              <span>Decision</span>
+              <strong>Choose Long, Short, or Wait. The trainer rewards patience when context is mixed.</strong>
+            </article>
+          </div>
+        </section>
+
         <section id="account" class="desk-section">
           <div class="section-head">
             <div>
@@ -866,6 +893,6 @@
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="./spotify.js?v=20260629-request-access-fix"></script>
-    <script src="./app.js?v=20260629-request-access-fix"></script>
+    <script src="./app.js?v=20260629-crypto-trainer"></script>
   </body>
 </html>

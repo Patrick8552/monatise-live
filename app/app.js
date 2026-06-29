@@ -393,6 +393,7 @@ function applyLanguagePreference(language = selectedLanguage) {
   const nav = document.querySelectorAll(".desk-nav a");
   if (nav[0]) nav[0].textContent = t("signalConsole");
   if (nav[1]) nav[1].textContent = t("dashboard");
+  if (nav[2]) nav[2].textContent = "Crypto Trainer";
   if (els.installAppButton) els.installAppButton.textContent = t("installApp");
   const jumps = document.querySelectorAll(".desk-jump-nav a");
   [
@@ -402,6 +403,7 @@ function applyLanguagePreference(language = selectedLanguage) {
     t("activation"),
     t("operator"),
     t("marketIntel"),
+    "Crypto Trainer",
     t("hedgeLayer"),
     t("aiChat"),
     t("privateAccess"),

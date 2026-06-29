@@ -1,13 +1,15 @@
-const CACHE_NAME = "monatise-shell-20260629-request-access-fix";
+const CACHE_NAME = "monatise-shell-20260629-crypto-trainer";
 const SHELL_ASSETS = [
   "./",
   "./index.html",
   "./cg.html",
   "./dashboard/",
+  "./game.html",
   "./coinglass-dashboard.html?v=20260617-trader-mode",
-  "./styles.css?v=20260629-request-access-fix",
-  "./app.js?v=20260629-request-access-fix",
+  "./styles.css?v=20260629-crypto-trainer",
+  "./app.js?v=20260629-crypto-trainer",
   "./spotify.js?v=20260629-request-access-fix",
+  "./game.js?v=20260629-crypto-trainer",
   "./assets/payout-clients.svg",
   "./coinglass-dashboard.css?v=20260617-trader-mode",
   "./coinglass-dashboard.js?v=20260617-trader-mode",

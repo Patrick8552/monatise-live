@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#101820" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Monatise" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <title>Monatise Crypto Trainer</title>
+    <link rel="manifest" href="./manifest.webmanifest?v=20260616-dashboard-install" />
+    <link rel="icon" href="./icon-lotus.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./icon-lotus.svg" />
+    <link rel="stylesheet" href="./styles.css?v=20260629-crypto-trainer" />
+  </head>
+  <body>
+    <main class="shell game-shell">
+      <header class="topbar page-topbar">
+        <div class="brand-lockup">
+          <img class="brand-logo" src="./icon-lotus.svg" alt="Monatise lotus logo" />
+          <div>
+            <p class="eyebrow">Crypto decision trainer</p>
+            <h1>Monatise Trainer</h1>
+          </div>
+        </div>
+        <nav class="desk-nav" aria-label="primary navigation">
+          <a href="./index.html">Signal Console</a>
+          <a href="./dashboard/">Market Dashboard</a>
+          <a href="./game.html" aria-current="page">Crypto Trainer</a>
+        </nav>
+      </header>
+
+      <section id="cryptoTrainerApp" class="game-board crypto-trainer-board" aria-label="Crypto signal trainer">
+        <div class="game-stage crypto-trainer-stage">
+          <canvas id="trainerCanvas" width="980" height="520" aria-label="Crypto scenario chart"></canvas>
+        </div>
+
+        <aside class="game-panel">
+          <div class="game-stat-grid">
+            <div><span>Score</span><strong id="scoreValue">0</strong></div>
+            <div><span>Streak</span><strong id="streakValue">0</strong></div>
+            <div><span>Discipline</span><strong id="disciplineValue">100%</strong></div>
+            <div><span>Round</span><strong id="roundValue">1/12</strong></div>
+          </div>
+
+          <div class="scenario-card">
+            <span id="sessionValue">Crypto London/New York</span>
+            <strong id="scenarioTitle">Loading scenario</strong>
+            <p id="scenarioMeta">BTC · CoinGlass + Hyperliquid context</p>
+          </div>
+
+          <div class="crypto-context-grid" aria-label="scenario context">
+            <article>
+              <span>Funding</span>
+              <strong id="fundingValue">--</strong>
+            </article>
+            <article>
+              <span>Open Interest</span>
+              <strong id="oiValue">--</strong>
+            </article>
+            <article>
+              <span>Liquidations</span>
+              <strong id="liqValue">--</strong>
+            </article>
+            <article>
+              <span>VWAP</span>
+              <strong id="vwapValue">--</strong>
+            </article>
+          </div>
+
+          <div class="decision-buttons" aria-label="Decision">
+            <button type="button" data-decision="long">Long</button>
+            <button type="button" data-decision="short">Short</button>
+            <button type="button" data-decision="wait">Wait</button>
+          </div>
+
+          <div class="spotify-panel game-feedback" id="feedbackBox">
+            <strong>Awaiting decision</strong>
+            <p>Read the crypto context, then choose Long, Short, or Wait.</p>
+          </div>
+
+          <button type="button" id="nextRoundButton" class="primary">Next scenario</button>
+          <div class="game-links">
+            <a class="button-link" href="./index.html#trade">Open Signal Builder</a>
+            <a class="button-link" href="./coinglass-dashboard.html">Open Crypto Dashboard</a>
+          </div>
+        </aside>
+      </section>
+    </main>
+
+    <script src="./game.js?v=20260629-crypto-trainer"></script>
+  </body>
+</html>
