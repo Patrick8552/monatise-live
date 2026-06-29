@@ -1,15 +1,19 @@
-const canvas = document.querySelector("#trainerCanvas");
+const root = document.querySelector("#goldTrainerApp") || document;
+const canvas = root.querySelector("#trainerCanvas");
+if (!canvas) {
+  throw new Error("Gold trainer canvas not found");
+}
 const context = canvas.getContext("2d");
-const scoreValue = document.querySelector("#scoreValue");
-const streakValue = document.querySelector("#streakValue");
-const disciplineValue = document.querySelector("#disciplineValue");
-const roundValue = document.querySelector("#roundValue");
-const sessionValue = document.querySelector("#sessionValue");
-const scenarioTitle = document.querySelector("#scenarioTitle");
-const scenarioMeta = document.querySelector("#scenarioMeta");
-const feedbackBox = document.querySelector("#feedbackBox");
-const nextRoundButton = document.querySelector("#nextRoundButton");
-const decisionButtons = document.querySelectorAll("[data-decision]");
+const scoreValue = root.querySelector("#scoreValue");
+const streakValue = root.querySelector("#streakValue");
+const disciplineValue = root.querySelector("#disciplineValue");
+const roundValue = root.querySelector("#roundValue");
+const sessionValue = root.querySelector("#sessionValue");
+const scenarioTitle = root.querySelector("#scenarioTitle");
+const scenarioMeta = root.querySelector("#scenarioMeta");
+const feedbackBox = root.querySelector("#feedbackBox");
+const nextRoundButton = root.querySelector("#nextRoundButton");
+const decisionButtons = root.querySelectorAll("[data-decision]");
 
 const scenarios = [
   {
@@ -299,4 +303,4 @@ decisionButtons.forEach((button) => {
 nextRoundButton.addEventListener("click", nextRound);
 
 renderRound();
-window.MonatiseSpotify?.loadSpotifyForSession();
+window.MonatiseSpotify?.loadSpotifyForSession(root.querySelector("#trainerSpotifyPanel"));

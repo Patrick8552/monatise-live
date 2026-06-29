@@ -396,7 +396,21 @@ function applyLanguagePreference(language = selectedLanguage) {
   if (nav[1]) nav[1].textContent = t("dashboard");
   if (els.installAppButton) els.installAppButton.textContent = t("installApp");
   const jumps = document.querySelectorAll(".desk-jump-nav a");
-  [t("signalBuilder"), t("cioBrief"), "Quality Gate", t("activation"), t("operator"), t("marketIntel"), t("hedgeLayer"), t("aiChat"), t("privateAccess"), t("about"), t("activity")].forEach((label, index) => {
+  [
+    t("signalBuilder"),
+    t("cioBrief"),
+    "Quality Gate",
+    t("activation"),
+    t("operator"),
+    t("marketIntel"),
+    "Gold Trainer",
+    "Setups",
+    t("hedgeLayer"),
+    t("aiChat"),
+    t("privateAccess"),
+    t("about"),
+    t("activity")
+  ].forEach((label, index) => {
     if (jumps[index]) jumps[index].textContent = label;
   });
   const ops = document.querySelectorAll(".ops-ribbon article span");

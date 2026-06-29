@@ -11,7 +11,7 @@
     <link rel="manifest" href="./manifest.webmanifest?v=20260616-dashboard-install" />
     <link rel="icon" href="./icon-lotus.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./icon-lotus.svg" />
-    <link rel="stylesheet" href="./styles.css?v=20260629-visible-trainer" />
+    <link rel="stylesheet" href="./styles.css?v=20260629-integrated-setups" />
   </head>
   <body class="auth-required">
     <main class="shell">
@@ -81,6 +81,8 @@
         <a href="#activation">Activation</a>
         <a href="#operator">Operator</a>
         <a href="#markets">Market Intel</a>
+        <a href="#trainer">Gold Trainer</a>
+        <a href="#setup-library">Setups</a>
         <a href="#hedge">Hedge Layer</a>
         <a href="#chat">AI Chat</a>
         <a href="#account">Private Access</a>
@@ -570,6 +572,87 @@
           </section>
         </section>
 
+        <section id="trainer" class="desk-section trainer-section">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Gold signal trainer</p>
+              <h2>Practice the XAUUSD discipline loop inside the Monatise desk.</h2>
+            </div>
+            <a class="button-link" href="./game.html">Full Screen</a>
+          </div>
+
+          <section id="goldTrainerApp" class="game-board" aria-label="Gold signal trainer">
+            <div class="game-stage">
+              <canvas id="trainerCanvas" width="980" height="520" aria-label="XAUUSD scenario chart"></canvas>
+            </div>
+
+            <aside class="game-panel">
+              <div class="game-stat-grid">
+                <div><span>Score</span><strong id="scoreValue">0</strong></div>
+                <div><span>Streak</span><strong id="streakValue">0</strong></div>
+                <div><span>Discipline</span><strong id="disciplineValue">100%</strong></div>
+                <div><span>Round</span><strong id="roundValue">1/10</strong></div>
+              </div>
+
+              <div class="scenario-card">
+                <span id="sessionValue">London/New York</span>
+                <strong id="scenarioTitle">Loading setup</strong>
+                <p id="scenarioMeta">Broker time aligned · XAUUSD</p>
+              </div>
+
+              <div class="decision-buttons" aria-label="Decision">
+                <button type="button" data-decision="long">Long</button>
+                <button type="button" data-decision="short">Short</button>
+                <button type="button" data-decision="skip">Skip</button>
+              </div>
+
+              <div class="spotify-panel game-feedback" id="feedbackBox">
+                <strong>Awaiting decision</strong>
+                <p>Round starts on the current XAUUSD structure.</p>
+              </div>
+
+              <button type="button" id="nextRoundButton">Next setup</button>
+              <section id="trainerSpotifyPanel" class="spotify-panel" aria-label="Connected Spotify playlist"></section>
+            </aside>
+          </section>
+        </section>
+
+        <section id="setup-library" class="desk-section setup-library-section">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Setup library</p>
+              <h2>Imported desk modules are now part of the main Monatise workflow.</h2>
+            </div>
+          </div>
+
+          <div class="setup-library-grid">
+            <article>
+              <span>Gold path</span>
+              <strong>London-only XAU/USD drills, 15m structure, 5m confirmation, and skip discipline.</strong>
+            </article>
+            <article>
+              <span>News guard</span>
+              <strong>CPI, FOMC, PPI, NFP, and session risk windows block weak signal decisions.</strong>
+            </article>
+            <article>
+              <span>Signal journal</span>
+              <strong>Saved setups track issue, entry, TP1, stop, expiry, and setup grade.</strong>
+            </article>
+            <article>
+              <span>Spotify desk</span>
+              <strong>Profile playlists carry into training and live desk routines.</strong>
+            </article>
+            <article>
+              <span>Payout readiness</span>
+              <strong>Approved-client flow is visible from private access and connected to the desk story.</strong>
+            </article>
+            <article>
+              <span>Operator checks</span>
+              <strong>Provider status keeps CoinGlass, SMTP, TradingView, Quiver, and billing readiness visible.</strong>
+            </article>
+          </div>
+        </section>
+
         <section id="account" class="desk-section">
           <div class="section-head">
             <div>
@@ -884,7 +967,8 @@
     </main>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="./spotify.js?v=20260629-visible-trainer"></script>
-    <script src="./app.js?v=20260629-visible-trainer"></script>
+    <script src="./spotify.js?v=20260629-integrated-setups"></script>
+    <script src="./game.js?v=20260629-integrated-setups"></script>
+    <script src="./app.js?v=20260629-integrated-setups"></script>
   </body>
 </html>

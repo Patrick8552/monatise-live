@@ -36,8 +36,7 @@
     `;
   }
 
-  async function loadSpotifyForSession() {
-    const target = document.querySelector("#spotifyPanel");
+  async function loadSpotifyForSession(target = document.querySelector("#spotifyPanel")) {
     if (!target) return;
     try {
       const response = await fetch("/api/me", { credentials: "same-origin", cache: "no-store" });
