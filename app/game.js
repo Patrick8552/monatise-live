@@ -1,3 +1,4 @@
+(() => {
 const root = document.querySelector("#goldTrainerApp") || document;
 const canvas = root.querySelector("#trainerCanvas");
 if (!canvas) {
@@ -304,3 +305,4 @@ nextRoundButton.addEventListener("click", nextRound);
 
 renderRound();
 window.MonatiseSpotify?.loadSpotifyForSession(root.querySelector("#trainerSpotifyPanel"));
+})();
