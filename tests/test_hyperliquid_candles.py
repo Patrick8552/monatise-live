@@ -14,27 +14,26 @@ class FakeInfo:
         ]
 
 
-def test_hyperliquid_candle_snapshot_uses_builder_coin_alias() -> None:
+def test_hyperliquid_candle_snapshot_uses_requested_crypto_coin() -> None:
     adapter = HyperliquidAdapter.__new__(HyperliquidAdapter)
     adapter.config = RuntimeConfig(network="mainnet")
     adapter.info = FakeInfo()
 
-    candles = adapter.candles("CL", 2, interval="1h")
+    candles = adapter.candles("BTC", 2, interval="1h")
 
     assert len(candles) == 2
     assert candles[-1].close == 107
     assert adapter.info.payload["path"] == "/info"
     assert adapter.info.payload["payload"]["type"] == "candleSnapshot"
-    assert adapter.info.payload["payload"]["req"]["coin"] == "xyz:CL"
+    assert adapter.info.payload["payload"]["req"]["coin"] == "BTC"
     assert adapter.info.payload["payload"]["req"]["interval"] == "1h"
 
 
-def test_hyperliquid_gold_aliases_use_builder_gold_market() -> None:
+def test_hyperliquid_builder_aliases_removed_from_live_coin_mapping() -> None:
     adapter = HyperliquidAdapter.__new__(HyperliquidAdapter)
 
-    assert adapter._coin("GOLD") == "xyz:GOLD"
-    assert adapter._coin("XAU") == "xyz:GOLD"
-    assert adapter._coin("xyz:GOLD") == "xyz:GOLD"
+    assert adapter._coin("BTC") == "BTC"
+    assert adapter._coin("xyz:BTC") == "xyz:BTC"
 
 
 def test_parse_candle_and_interval_validation() -> None:

@@ -30,8 +30,6 @@ from monatise.live.emailer import EmailDeliveryError, expose_dev_reset_code, sen
 from monatise.live.service import JsonEncoder, TradingService
 from monatise.live.users import REMEMBERED_SESSION_SECONDS, SESSION_SECONDS, User, UserCredentials, UserStore, encryption_key_configured
 
-COMMODITY_WATCHLIST = ("GOLD", "XAG", "CL", "BRENTOIL", "USOIL")
-FOREX_WATCHLIST = ("EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "AUDJPY", "EURGBP", "EURJPY", "NZDUSD")
 STOCK_WATCHLIST = ("SPX", "NDX", "NASDAQ", "QQQ", "SPY", "AAPL", "TSLA", "NVDA")
 TRADINGVIEW_ACTIONS = {
     "BUY": "BUY",
@@ -115,27 +113,13 @@ def _normalize_alert_symbol(value: str) -> str:
     if ":" in raw:
         raw = raw.rsplit(":", 1)[-1]
     symbol = "".join(character for character in raw if character.isalnum())
-    aliases = {
-        "XAUUSD": "GOLD",
-        "GOLD": "GOLD",
-        "GC1": "GOLD",
-        "GC": "GOLD",
-        "XAGUSD": "XAG",
-        "SILVER": "XAG",
-        "SI1": "XAG",
-        "USOIL": "CL",
-        "WTICOUSD": "CL",
-        "UKOIL": "BRENTOIL",
-        "IXIC": "NASDAQ",
-    }
+    aliases = {"IXIC": "NASDAQ"}
     if symbol in aliases:
         return aliases[symbol]
     crypto_bases = {"BTC", "ETH", "SOL", "HYPE", "BNB", "XRP", "DOGE"}
     for quote in ("USDT", "USDC", "USD"):
         if symbol.endswith(quote) and symbol[: -len(quote)] in crypto_bases:
             return symbol[: -len(quote)]
-    if len(symbol) == 6 and symbol[:3].isalpha() and symbol[3:].isalpha():
-        return symbol
     return symbol[:16]
 
 
@@ -144,10 +128,6 @@ def _normalize_alert_action(value: str) -> str:
 
 
 def _tradingview_route(symbol: str) -> str:
-    if symbol in COMMODITY_WATCHLIST:
-        return "metals and commodities primary signal feed"
-    if symbol in FOREX_WATCHLIST:
-        return "forex primary signal feed"
     if symbol in STOCK_WATCHLIST:
         return "stocks and indices primary signal feed"
     return "crypto confluence feed"
@@ -420,8 +400,6 @@ def operator_status_payload(config: RuntimeConfig) -> dict:
 
 def _market_data_adapter(config: RuntimeConfig, symbol: str):  # noqa: ANN202
     coin = symbol.split("-", 1)[0].upper()
-    if coin in {"GOLD", "XAU", "CL", "BRENTOIL"}:
-        return HyperliquidAdapter(config), "Hyperliquid builder market"
     return CoinGlassAdapter(config), "CoinGlass futures price history"
 
 
@@ -463,7 +441,7 @@ class TenantServices:
                 max_order_notional=settings.max_order_notional,
                 max_total_notional=settings.max_total_notional,
                 max_position_value=settings.max_position_value,
-                london_commodity_only=settings.london_commodity_only,
+                london_commodity_only=False,
                 max_daily_loss_pct=settings.max_daily_loss_pct,
                 secret_key=credentials.secret_key,
                 session_guard_minutes=settings.session_guard_minutes,
@@ -489,7 +467,7 @@ def settings_payload(settings) -> dict:  # noqa: ANN001
         "maxOrderNotional": settings.max_order_notional,
         "maxTotalNotional": settings.max_total_notional,
         "maxPositionValue": settings.max_position_value,
-        "londonCommodityOnly": settings.london_commodity_only,
+        "londonCommodityOnly": False,
         "maxDailyLossPct": settings.max_daily_loss_pct,
         "sessionGuardMinutes": settings.session_guard_minutes,
         "staleGridCancel": settings.stale_grid_cancel,
@@ -535,11 +513,6 @@ class MarketFeed:
                     if symbol in self._all_prices
                 }
                 self._updated_at = now
-            builder = [
-                {"symbol": coin, "price": price, "tradable": True}
-                for coin, price in sorted(self._all_prices.items())
-                if ":" in coin
-            ][:18]
             return {
                 "assets": [
                     {"symbol": symbol, "price": self._prices.get(symbol)}
@@ -550,9 +523,7 @@ class MarketFeed:
                         {"symbol": symbol, "price": self._prices.get(symbol), "tradable": symbol in self._prices}
                         for symbol in self.config.assets
                     ],
-                    "builder": builder,
-                    "commodities": self._watchlist(COMMODITY_WATCHLIST),
-                    "forex": self._watchlist(FOREX_WATCHLIST),
+                    "builder": [],
                     "stocks": self._watchlist(STOCK_WATCHLIST),
                 },
                 "updatedAt": self._updated_at,
@@ -1113,7 +1084,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                     user.id,
                     chart_interval=str(payload.get("chartInterval", "")),
                     signal_session_window=str(payload.get("signalSessionWindow", "london_new_york")),
-                    london_commodity_only=bool(payload.get("londonCommodityOnly", True)),
+                    london_commodity_only=False,
                     max_daily_loss_pct=float(payload.get("maxDailyLossPct", 0.05)),
                     session_guard_minutes=int(payload.get("sessionGuardMinutes", 60)),
                     stale_grid_cancel=bool(payload.get("staleGridCancel", True)),

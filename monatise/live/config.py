@@ -36,7 +36,7 @@ class RuntimeConfig:
     session_guard_minutes: int = 60
     chart_interval: str = "1h"
     signal_session_window: str = "london_new_york"
-    london_commodity_only: bool = True
+    london_commodity_only: bool = False
     stale_grid_cancel: bool = True
     allow_live_orders: bool = False
     live_confirmation: str = ""
@@ -44,7 +44,7 @@ class RuntimeConfig:
     secret_key: str = ""
     data_feed: str = "coinglass"
     exchange: str = "hyperliquid"
-    assets: tuple[str, ...] = ("BTC", "ETH", "SOL", "HYPE", "BNB", "XRP", "DOGE", "GOLD", "CL", "BRENTOIL")
+    assets: tuple[str, ...] = ("BTC", "ETH", "SOL", "HYPE", "BNB", "XRP", "DOGE")
     builder_dexes: tuple[str, ...] = ("xyz",)
     tradingview_webhook_token: str = ""
 
@@ -81,7 +81,7 @@ class RuntimeConfig:
             session_guard_minutes=int(os.getenv("MONATISE_SESSION_GUARD_MINUTES", "60")),
             chart_interval=os.getenv("MONATISE_CHART_INTERVAL", "1h"),
             signal_session_window=os.getenv("MONATISE_SIGNAL_SESSION_WINDOW", "london_new_york"),
-            london_commodity_only=os.getenv("MONATISE_LONDON_COMMODITY_ONLY", "true").lower() == "true",
+            london_commodity_only=False,
             stale_grid_cancel=os.getenv("MONATISE_STALE_GRID_CANCEL", "true").lower() == "true",
             allow_live_orders=os.getenv("MONATISE_ALLOW_LIVE_ORDERS", "false").lower() == "true",
             live_confirmation=secret_value("MONATISE_LIVE_CONFIRMATION", ""),
@@ -99,7 +99,7 @@ class RuntimeConfig:
             exchange=os.getenv("MONATISE_EXCHANGE", "hyperliquid").lower(),
             assets=tuple(
                 asset.strip().upper()
-                for asset in os.getenv("MONATISE_ASSETS", "BTC,ETH,SOL,HYPE,BNB,XRP,DOGE,GOLD,CL,BRENTOIL").split(",")
+                for asset in os.getenv("MONATISE_ASSETS", "BTC,ETH,SOL,HYPE,BNB,XRP,DOGE").split(",")
                 if asset.strip()
             ),
             builder_dexes=tuple(

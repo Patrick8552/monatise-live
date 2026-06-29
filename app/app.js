@@ -61,7 +61,6 @@ const els = {
   fillCount: document.querySelector("#fillCount"),
   fillTape: document.querySelector("#fillTape"),
   fibAnalysis: document.querySelector("#fibAnalysis"),
-  forexSessions: document.querySelector("#forexSessions"),
   harvestMetric: document.querySelector("#harvestMetric"),
   hedgeNote: document.querySelector("#hedgeNote"),
   hedgeStatus: document.querySelector("#hedgeStatus"),
@@ -403,8 +402,6 @@ function applyLanguagePreference(language = selectedLanguage) {
     t("activation"),
     t("operator"),
     t("marketIntel"),
-    "Gold Trainer",
-    "Setups",
     t("hedgeLayer"),
     t("aiChat"),
     t("privateAccess"),
@@ -426,63 +423,37 @@ function applyLanguagePreference(language = selectedLanguage) {
 
 const assetMetadata = {
   AAPL: { name: "Apple", route: "TradingView stock watch" },
-  AUDJPY: { name: "AUD/JPY", route: "TradingView forex watch" },
-  AUDUSD: { name: "AUD/USD", route: "TradingView forex watch" },
   BNB: { name: "BNB", route: "Core Hyperliquid perp" },
-  BRENTOIL: { name: "Brent Oil", route: "Hyperliquid xyz:BRENTOIL builder perp" },
   BTC: { name: "Bitcoin", route: "Core Hyperliquid perp" },
-  CL: { name: "WTI Crude Oil", route: "Hyperliquid xyz:CL builder perp" },
   DOGE: { name: "Dogecoin", route: "Core Hyperliquid perp" },
   ETH: { name: "Ethereum", route: "Core Hyperliquid perp" },
-  EURGBP: { name: "EUR/GBP", route: "TradingView forex watch" },
-  EURJPY: { name: "EUR/JPY", route: "TradingView forex watch" },
-  EURUSD: { name: "EUR/USD", route: "TradingView forex watch" },
-  GBPUSD: { name: "GBP/USD", route: "TradingView forex watch" },
-  GOLD: { name: "Gold", route: "Hyperliquid xyz:GOLD builder perp" },
   HYPE: { name: "Hyperliquid", route: "Core Hyperliquid perp" },
   NDX: { name: "Nasdaq 100", route: "TradingView index watch" },
   NASDAQ: { name: "Nasdaq Composite", route: "TradingView index watch" },
   NVDA: { name: "NVIDIA", route: "TradingView stock watch" },
-  NZDUSD: { name: "NZD/USD", route: "TradingView forex watch" },
   QQQ: { name: "Invesco QQQ", route: "TradingView ETF watch" },
   SOL: { name: "Solana", route: "Core Hyperliquid perp" },
   SPX: { name: "S&P 500", route: "TradingView index watch" },
   SPY: { name: "SPDR S&P 500 ETF", route: "TradingView ETF watch" },
   TSLA: { name: "Tesla", route: "TradingView stock watch" },
-  USDJPY: { name: "USD/JPY", route: "TradingView forex watch" },
-  USOIL: { name: "US Oil", route: "TradingView commodity watch" },
-  XAG: { name: "Silver", route: "TradingView metals watch" },
   XRP: { name: "XRP", route: "Core Hyperliquid perp" }
 };
 
 const tradingViewSymbols = {
   AAPL: "NASDAQ:AAPL",
-  AUDJPY: "FX:AUDJPY",
-  AUDUSD: "FX:AUDUSD",
   BNB: "BINANCE:BNBUSDT",
-  BRENTOIL: "TVC:UKOIL",
   BTC: "BINANCE:BTCUSDT",
-  CL: "NYMEX:CL1!",
   DOGE: "BINANCE:DOGEUSDT",
   ETH: "BINANCE:ETHUSDT",
-  EURGBP: "FX:EURGBP",
-  EURJPY: "FX:EURJPY",
-  EURUSD: "FX:EURUSD",
-  GBPUSD: "FX:GBPUSD",
-  GOLD: "OANDA:XAUUSD",
   HYPE: "CRYPTO:HYPEUSD",
   NDX: "TVC:NDX",
   NASDAQ: "TVC:IXIC",
   NVDA: "NASDAQ:NVDA",
-  NZDUSD: "FX:NZDUSD",
   QQQ: "NASDAQ:QQQ",
   SOL: "BINANCE:SOLUSDT",
   SPX: "TVC:SPX",
   SPY: "AMEX:SPY",
   TSLA: "NASDAQ:TSLA",
-  USDJPY: "FX:USDJPY",
-  USOIL: "TVC:USOIL",
-  XAG: "OANDA:XAGUSD",
   XRP: "BINANCE:XRPUSDT"
 };
 
@@ -498,14 +469,7 @@ const tradingViewIntervals = {
   "1w": "W"
 };
 
-const forexSessions = [
-  { closeHour: 6, name: "Sydney", openHour: 21, pairs: ["AUDUSD", "NZDUSD", "AUDJPY"] },
-  { closeHour: 9, name: "Tokyo", openHour: 0, pairs: ["USDJPY", "AUDJPY", "EURJPY"] },
-  { closeHour: 16, name: "London", openHour: 7, pairs: ["EURUSD", "GBPUSD", "EURGBP"] },
-  { closeHour: 21, name: "New York", openHour: 12, pairs: ["EURUSD", "GBPUSD", "USDJPY"] }
-];
-const forexPairs = Array.from(new Set(forexSessions.flatMap((session) => session.pairs)));
-const commoditySymbols = ["GOLD", "CL", "BRENTOIL"];
+const commoditySymbols = [];
 const economicBlackoutMinutes = 60;
 const economicReleases = [
   { code: "CPI", name: "Consumer Price Index", releaseTime: "2026-01-13T13:30:00Z" },
@@ -652,10 +616,6 @@ function renderRegistrationDesk(me = currentUser) {
   els.onboardingAccount.textContent = syncReady ? "Saved" : "Optional";
   els.onboardingPlan.textContent = planText;
   els.onboardingStatus.textContent = loggedIn && hasLivePlan() ? "Profile ready" : "Pending save";
-}
-
-function normalizeForexSymbol(symbol) {
-  return String(symbol || "").replace(/[-/]/g, "").toUpperCase();
 }
 
 function setGate(element, label, status, className = "") {
@@ -1444,21 +1404,6 @@ function setupWaitDetail(health, signal, timing) {
 }
 
 function assetSignalProfile(symbol = selectedAsset) {
-  const asset = String(symbol || "").toUpperCase();
-  if (forexPairs.includes(asset)) {
-    return {
-      className: "forex",
-      lens: "session timing, pullback discipline, and pair-specific invalidation",
-      primaryFeed: "TradingView forex watch"
-    };
-  }
-  if (commoditySymbols.includes(asset) || ["GOLD", "XAG", "USOIL"].includes(asset)) {
-    return {
-      className: "commodity",
-      lens: "London liquidity, wick rejection, and commodity volatility bands",
-      primaryFeed: asset === "GOLD" ? "Gold TradingView/Hyperliquid builder read" : "commodity watch"
-    };
-  }
   return {
     className: "crypto",
     lens: "Hyperliquid mark, FVG/Fibonacci structure, funding, OI, and liquidation context",
@@ -1539,15 +1484,11 @@ function quiverTrustText(context = null) {
 }
 
 function setupRiskPct(symbol = selectedAsset) {
-  if (["GOLD", "CL", "BRENTOIL"].includes(symbol)) return 0.0035;
-  if (["EURUSD", "GBPUSD", "USDJPY", "XAG"].includes(symbol)) return 0.0012;
   if (["SPX", "NDX", "NASDAQ", "AAPL", "TSLA", "NVDA"].includes(symbol)) return 0.0035;
   return 0.0035;
 }
 
 function setupMinRiskPct(symbol = selectedAsset) {
-  if (["EURUSD", "GBPUSD", "USDJPY", "XAG"].includes(symbol)) return 0.00035;
-  if (["GOLD", "CL", "BRENTOIL"].includes(symbol)) return 0.0008;
   if (["SPX", "NDX", "NASDAQ", "AAPL", "TSLA", "NVDA"].includes(symbol)) return 0.0008;
   return 0.0008;
 }
@@ -1906,41 +1847,6 @@ function indicatorBiasValue(value) {
   return 0;
 }
 
-function goldIndicatorConfluence(signal = latestTradingViewSignal) {
-  if (!signal || String(signal.symbol || "").toUpperCase() !== "GOLD") {
-    return { bias: 0, detail: "", live: 0, total: 0 };
-  }
-  const indicators = signal.indicators || {};
-  const stack = [
-    ["LuxAlgo", "luxalgo"],
-    ["Historical color", "historical_color"],
-    ["Liquidity swings", "liquidity_swings"],
-    ["Wick extremity", "wick_extremity"],
-    ["Equal highs/lows", "equal_highs_lows"],
-    ["Liquidity grabs", "liquidity_grabs"],
-    ["Dynamic trend pivot", "dynamic_trend_pivot"],
-    ["Auto fib", "auto_fib"],
-    ["Daily VWAP", "daily_vwap"],
-    ["Volume profile", "volume_profile"],
-    ["HTF levels", "htf_levels"],
-    ["RSI/SMA cross", "rsi_sma_cross"]
-  ];
-  const readings = stack
-    .map(([label, key]) => ({ label, value: indicators[key], bias: indicatorBiasValue(indicators[key]) }))
-    .filter((item) => String(item.value || "").trim());
-  const bias = readings.reduce((sum, item) => sum + item.bias, 0);
-  const strongest = readings
-    .filter((item) => item.bias)
-    .slice(0, 4)
-    .map((item) => `${item.label}: ${item.value}`);
-  return {
-    bias,
-    detail: strongest.length ? `Gold indicators ${strongest.join(" · ")}.` : "",
-    live: readings.length,
-    total: stack.length
-  };
-}
-
 function tradingViewConfluence(direction) {
   const signal = activeTradingViewSignal(2 * 60 * 60 * 1000);
   if (!signal) return { boost: 0, detail: "", status: "none" };
@@ -1948,30 +1854,21 @@ function tradingViewConfluence(direction) {
   const confidence = Math.max(0, Math.min(100, Number(signal.confidence || 0)));
   const receivedAt = Number(signal.receivedAt || 0) * 1000;
   const fresh = receivedAt > 0 && Date.now() - receivedAt <= 2 * 60 * 60 * 1000;
-  const goldStack = goldIndicatorConfluence(signal);
-  const goldBoost =
-    selectedAsset === "GOLD" && ["LONG", "SHORT"].includes(direction)
-      ? direction === "LONG"
-        ? Math.max(-14, Math.min(14, goldStack.bias * 2))
-        : Math.max(-14, Math.min(14, goldStack.bias * -2))
-      : 0;
   if (!fresh || !["BUY", "SELL"].includes(action) || confidence < 50) {
     return {
-      boost: goldBoost,
-      detail: goldStack.detail || "TradingView confluence is neutral or stale.",
-      goldIndicators: goldStack,
-      status: goldBoost ? (goldBoost > 0 ? "aligned" : "conflict") : "neutral"
+      boost: 0,
+      detail: "TradingView confluence is neutral or stale.",
+      status: "neutral"
     };
   }
   const aligned = (direction === "LONG" && action === "BUY") || (direction === "SHORT" && action === "SELL");
   const conflicting = (direction === "LONG" && action === "SELL") || (direction === "SHORT" && action === "BUY");
   const alertBoost = aligned ? Math.min(12, 4 + Math.round(confidence / 12)) : conflicting ? -Math.min(18, 6 + Math.round(confidence / 10)) : 0;
-  const boost = Math.max(-22, Math.min(18, alertBoost + goldBoost));
+  const boost = Math.max(-22, Math.min(18, alertBoost));
   const label = `${signal.indicator || "TradingView"} ${action} ${confidence.toFixed(0)}%`;
-  const stackDetail = goldStack.detail ? ` ${goldStack.detail}` : "";
-  if (aligned) return { boost, detail: `${label} agrees with the setup.${stackDetail}`, goldIndicators: goldStack, status: boost >= 0 ? "aligned" : "conflict" };
-  if (conflicting) return { boost, detail: `${label} conflicts with the setup.${stackDetail}`, goldIndicators: goldStack, status: boost >= 0 ? "aligned" : "conflict" };
-  return { boost: goldBoost, detail: `${label} is watchlist confluence only.${stackDetail}`, goldIndicators: goldStack, status: goldBoost ? (goldBoost > 0 ? "aligned" : "conflict") : "watch" };
+  if (aligned) return { boost, detail: `${label} agrees with the setup.`, status: boost >= 0 ? "aligned" : "conflict" };
+  if (conflicting) return { boost, detail: `${label} conflicts with the setup.`, status: boost >= 0 ? "aligned" : "conflict" };
+  return { boost: 0, detail: `${label} is watchlist confluence only.`, status: "watch" };
 }
 
 function tradingViewPrimarySignal(health, mark) {
@@ -2330,10 +2227,8 @@ function renderTradingViewSignal() {
   const reassessAt = Number(classification.snapshotWindow?.reassessAt || 0) * 1000;
   const reassessLabel = reassessAt ? formatSignalTime(new Date(reassessAt)) : "pending";
   const route = classification.route || "TradingView primary feed";
-  const goldStack = goldIndicatorConfluence(signal);
   const detail =
     classification.executionNote ||
-    goldStack.detail ||
     signal.message ||
     "TradingView alert received as the primary setup feed. Execution still stays behind Monatise risk gates.";
   els.tradingViewSignalPanel.innerHTML = `
@@ -2350,7 +2245,6 @@ function renderTradingViewSignal() {
       <span>Agreement <strong>${classification.agreement || "watch"}</strong></span>
       <span>5m check <strong>${fastReassessLabel}</strong></span>
       <span>Reassess <strong>${reassessLabel}</strong></span>
-      ${goldStack.total ? `<span>Gold stack <strong>${goldStack.live}/${goldStack.total}</strong></span>` : ""}
     </div>
     <p>${detail}</p>
   `;
@@ -2523,7 +2417,7 @@ function renderExecutionTicket(orders = [], options = {}) {
     fibTrend: fibAnalysis?.trend || "unknown",
     interval: tradingRules.chartInterval,
     source: mode,
-    suggestedForexLots: sizing.forexLots,
+    suggestedNotionalLabel: sizing.quantityLabel,
     suggestedLot: sizing.quantity,
     suggestedMargin: sizing.marginRequired,
     suggestedNotional: sizing.notional,
@@ -2701,7 +2595,7 @@ function answerSignalChat(prompt) {
   if (/hedge|offset|protect|insurance|opposite/.test(lower)) {
     const plan = hedgePlanFromSignal(signal, sizing, context);
     return plan.active
-      ? `Hedge layer: ${plan.hedgeSide} ${Math.round(plan.hedgeRatio * 100)}% offset, suggested ${forexLotLabel(plan.hedgeNotional)} (${money(plan.hedgeNotional)} notional). Trigger near ${money(plan.trigger)}, release near ${money(plan.release)}, hard invalidation ${money(plan.hardExit)}. ${plan.note}`
+      ? `Hedge layer: ${plan.hedgeSide} ${Math.round(plan.hedgeRatio * 100)}% offset, suggested ${quantityNotionalLabel(plan.hedgeNotional)}. Trigger near ${money(plan.trigger)}, release near ${money(plan.release)}, hard invalidation ${money(plan.hardExit)}. ${plan.note}`
       : `Hedge layer is on standby. ${plan.note}`;
   }
 
@@ -2878,7 +2772,7 @@ function updateLiveDesk(snapshot = null) {
         : "Start Private Sync";
   els.backendStartButton.disabled = !loggedIn || !hasCredentials || sessionBlocked;
   if (sessionBlocked) {
-    els.riskStatus.textContent = sessionGuard.message || "forex session-break guard";
+    els.riskStatus.textContent = sessionGuard.message || "session guard";
   }
   renderReadinessChecklist(snapshot);
   renderActivationPath(snapshot);
@@ -3048,16 +2942,8 @@ function minutesUntilSessionChange(session, date) {
   return (target - now + 1440) % 1440;
 }
 
-function londonSession() {
-  return forexSessions.find((session) => session.name === "London");
-}
-
-function newYorkSession() {
-  return forexSessions.find((session) => session.name === "New York");
-}
-
 function signalWindowSessions() {
-  return [londonSession(), newYorkSession()].filter(Boolean);
+  return [];
 }
 
 function minutesFromUtcMinute(now, target) {
@@ -3076,40 +2962,6 @@ function sessionBreakProximity(session, date) {
     return { ...open, transition: "open" };
   }
   return { ...close, transition: "close" };
-}
-
-function forexSessionBreakGuard(symbol = selectedAsset, date = new Date()) {
-  const pair = normalizeForexSymbol(symbol);
-  if (!forexPairs.includes(pair)) return { active: false, symbol: pair };
-  const guardMinutes = Number(tradingRules.sessionGuardMinutes || 60);
-  const guarded = forexSessions
-    .filter((session) => session.pairs.includes(pair))
-    .map((session) => {
-      const proximity = sessionBreakProximity(session, date);
-      return {
-        active: proximity.minutes <= guardMinutes,
-        direction: proximity.direction,
-        minutes: proximity.minutes,
-        pairs: session.pairs,
-        session: session.name,
-        transition: proximity.transition
-      };
-    })
-    .filter((guard) => guard.active)
-    .sort((left, right) => left.minutes - right.minutes);
-  if (!guarded.length) return { active: false, symbol: pair };
-  const primary = guarded[0];
-  return {
-    active: true,
-    affectedPairs: primary.pairs,
-    direction: primary.direction,
-    guardMinutes,
-    message: `forex session-break guard: ${pair} is ${primary.minutes}m ${primary.direction} ${primary.session} ${primary.transition}`,
-    minutes: primary.minutes,
-    session: primary.session,
-    symbol: pair,
-    transition: primary.transition
-  };
 }
 
 function commodityLondonGuard(symbol = selectedAsset, date = new Date()) {
@@ -3136,8 +2988,6 @@ function activeSessionGuard(symbol = selectedAsset, date = new Date()) {
   if (economicGuard.active) return economicGuard;
   const signalGuard = signalWindowGuard(date);
   if (signalGuard.active) return signalGuard;
-  const forexGuard = forexSessionBreakGuard(symbol, date);
-  if (forexGuard.active) return forexGuard;
   return commodityLondonGuard(symbol, date);
 }
 
@@ -3372,56 +3222,6 @@ function utcHourLabel(hour) {
   return `${String(hour).padStart(2, "0")}:00`;
 }
 
-function activeForexPairs(date = new Date()) {
-  return Array.from(
-    new Set(
-      forexSessions
-        .filter((session) => isSessionOpen(session, date))
-        .flatMap((session) => session.pairs)
-    )
-  );
-}
-
-function renderForexSessions(date = new Date()) {
-  if (!els.forexSessions) return;
-  const activePairs = activeForexPairs(date);
-  const sessionGuard = activeSessionGuard(selectedAsset, date);
-  const rows = forexSessions
-    .map((session) => {
-      const open = isSessionOpen(session, date);
-      const change = minutesUntilSessionChange(session, date);
-      const proximity = sessionBreakProximity(session, date);
-      const guarded = proximity.minutes <= Number(tradingRules.sessionGuardMinutes || 60);
-      return `<article class="session-row ${open ? "open" : "closed"} ${guarded ? "guarded" : ""}">
-        <div>
-          <strong>${session.name}</strong>
-          <span>${utcHourLabel(session.openHour)}-${utcHourLabel(session.closeHour)} UTC</span>
-        </div>
-        <em>${open ? "Open" : "Closed"}</em>
-        <b>${open ? "closes" : "opens"} in ${durationLabel(change)}</b>
-      </article>`;
-    })
-    .join("");
-  els.forexSessions.innerHTML = `
-    <div class="session-head">
-      <strong>Forex Session Timers</strong>
-      <span>${date.toISOString().slice(11, 19)} UTC</span>
-    </div>
-    <div class="session-grid">${rows}</div>
-    <div class="session-pairs ${sessionGuard.active ? "guarded" : ""}">
-      <strong>${sessionGuard.active ? "Close signal window" : "Active pairs"}</strong>
-      <span>${
-        sessionGuard.active
-          ? `${sessionGuard.symbol}: ${durationLabel(sessionGuard.minutes)} ${sessionGuard.direction} ${sessionGuard.session} ${sessionGuard.transition}`
-          : activePairs.length
-            ? activePairs.join(" · ")
-            : "No major session active"
-      }</span>
-    </div>
-  `;
-  updateLiveDesk(lastBackendSnapshot);
-}
-
 function normalizedTradingRules(rules = {}) {
   const interval = String(rules.chartInterval || "1h");
   const rawLossPct = Number(rules.maxDailyLossPct ?? 0.05);
@@ -3480,12 +3280,9 @@ function renderTradingRules() {
   els.rulesStatus.textContent = `${tradingRules.chartInterval} signal profile`;
   els.rulesSummary.textContent = `10x risk lens · ${money(tradingRules.orderQuoteSize)} alert size · ${money(
     tradingRules.maxTotalNotional
-  )} max signal risk · ${money(tradingRules.maxPositionValue)} exposure lens · disciplined stop band · ${tradingRules.chartInterval} CoinGlass analysis · ${signalWindowLabel} · CPI/PPI ${economicBlackoutMinutes}m blackout · ${tradingRules.sessionGuardMinutes}m session guard · ${
-    tradingRules.londonCommodityOnly ? "London commodity guard on" : "London commodity guard off"
-  } · ${drawdownLabel} · ${tradingRules.staleGridCancel ? "stale signal expiry on" : "stale signal expiry off"} · private access`;
+  )} max signal risk · ${money(tradingRules.maxPositionValue)} exposure lens · disciplined stop band · ${tradingRules.chartInterval} CoinGlass analysis · ${signalWindowLabel} · CPI/PPI ${economicBlackoutMinutes}m blackout · ${drawdownLabel} · ${tradingRules.staleGridCancel ? "stale signal expiry on" : "stale signal expiry off"} · private access`;
   els.ticketDrawdown.textContent = `${(tradingRules.maxDailyLossPct * 100).toFixed(2)}%`;
   els.decisionDrawdown.textContent = `${(tradingRules.maxDailyLossPct * 100).toFixed(2)}%`;
-  renderForexSessions();
   renderTradingViewChart();
   updateDecisionSurface(lastBackendSnapshot);
   renderRegistrationDesk();
@@ -3982,7 +3779,7 @@ async function loadSelectableAssets() {
     syncSelectedAsset();
   } catch {
     if (!selectableAssets.length) {
-      mergeSelectableAssets(["BTC", "ETH", "SOL", "HYPE", "BNB", "XRP", "DOGE", "EURUSD", "GBPUSD"].map((symbol) => ({ symbol })));
+      mergeSelectableAssets(["BTC", "ETH", "SOL", "HYPE", "BNB", "XRP", "DOGE"].map((symbol) => ({ symbol })));
       renderAssetOptions();
     }
   }
@@ -4514,15 +4311,9 @@ function radarSection(title, items, limit = 18) {
 
 function renderMarketRadar() {
   if (!els.marketRadar) return;
-  const commodityWatch = marketGroups.commodities && marketGroups.commodities.length
-    ? marketGroups.commodities
-    : [];
   const sections = [
     ["Routed", marketGroups.crypto || markets, 12],
-    ["Gold / Oil", commodityWatch, 8],
-    ["Builder", marketGroups.builder || [], 18],
-    ["Stocks", marketGroups.stocks || [], 8],
-    ["Forex", marketGroups.forex || [], 8]
+    ["Stocks", marketGroups.stocks || [], 8]
   ];
   els.marketRadar.innerHTML = sections
     .map(([title, items, limit]) => radarSection(title, items, limit))
@@ -4530,22 +4321,8 @@ function renderMarketRadar() {
 }
 
 function renderAssetGroups() {
-  const commodityWatch = marketGroups.commodities && marketGroups.commodities.length
-    ? [...marketGroups.commodities]
-    : ["GOLD", "XAG", "CL", "BRENTOIL", "USOIL"].map((symbol) => ({ symbol, tradable: false }));
-  ["GOLD", "XAG", "CL", "BRENTOIL", "USOIL"].forEach((symbol) => {
-    if (!commodityWatch.some((asset) => asset.symbol === symbol)) {
-      commodityWatch.push({ symbol, tradable: false });
-    }
-  });
-  const forexWatch = marketGroups.forex && marketGroups.forex.length
-    ? [...marketGroups.forex]
-    : ["EURUSD", "GBPUSD", "USDJPY", "XAG"].map((symbol) => ({ symbol, tradable: false }));
   const groups = [
     ["Routed markets", marketGroups.crypto || markets],
-    ["HIP-3 builder", marketGroups.builder || []],
-    ["Gold / oil perps", commodityWatch],
-    ["Forex watch", forexWatch],
     ["Stock watch", marketGroups.stocks?.length ? marketGroups.stocks : ["SPX", "NDX", "QQQ", "SPY", "AAPL", "TSLA", "NVDA"].map((symbol) => ({ symbol, tradable: false }))]
   ];
   els.assetGroups.innerHTML = groups
@@ -4753,13 +4530,10 @@ function formatLotSize(value) {
   return numeric.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
 }
 
-function forexLotLabel(notional) {
+function quantityNotionalLabel(notional) {
   const numeric = Number(notional);
-  if (!Number.isFinite(numeric) || numeric <= 0) return "0 lot";
-  const lots = numeric / 100_000;
-  const lotText = formatLotSize(lots);
-  const descriptor = lots >= 1 ? "standard" : lots >= 0.1 ? "mini" : lots >= 0.01 ? "micro" : "nano";
-  return `${lotText} ${lotText === "1" ? "lot" : "lots"} ${descriptor}`;
+  if (!Number.isFinite(numeric) || numeric <= 0) return "$0 notional";
+  return `${money(numeric)} notional`;
 }
 
 function tradeSizingFromSignal(signal, capital, drawdownPct) {
@@ -4773,7 +4547,6 @@ function tradeSizingFromSignal(signal, capital, drawdownPct) {
       marginRequired: 0,
       notional: 0,
       quantity: 0,
-      forexLots: 0,
       quantityLabel: "Pending setup",
       rewardRiskOneLabel: "pending",
       rewardRiskTwoLabel: "pending",
@@ -4796,7 +4569,6 @@ function tradeSizingFromSignal(signal, capital, drawdownPct) {
   const riskBasedNotional = stopPct > 0 ? perSetupRiskBudget / stopPct : alertRiskBudget;
   const notional = Math.max(0, Math.min(maxNotional, riskBasedNotional));
   const quantity = Number.isFinite(entry) && entry > 0 ? notional / entry : 0;
-  const forexLots = notional / 100_000;
   const pointValue = quantity;
   const targetOneMove = direction === "SHORT" ? entry - targetOne : targetOne - entry;
   const targetTwoMove = direction === "SHORT" ? entry - targetTwo : targetTwo - entry;
@@ -4810,8 +4582,7 @@ function tradeSizingFromSignal(signal, capital, drawdownPct) {
     marginRequired,
     notional,
     quantity,
-    forexLots,
-    quantityLabel: forexLotLabel(notional),
+    quantityLabel: quantityNotionalLabel(notional),
     rewardRiskOneLabel: rewardRiskOne > 0 ? `${rewardRiskOne.toFixed(2)}x` : "pending",
     rewardRiskTwoLabel: rewardRiskTwo > 0 ? `${rewardRiskTwo.toFixed(2)}x` : "pending",
     stopLoss,
@@ -4914,7 +4685,7 @@ function renderHedgeLayer(signal, sizing, context = {}) {
     </article>
     <article>
       <span>Suggested hedge</span>
-      <strong>${forexLotLabel(plan.hedgeNotional)}</strong>
+      <strong>${quantityNotionalLabel(plan.hedgeNotional)}</strong>
       <em>${money(plan.hedgeNotional)} notional</em>
     </article>
     <article>
@@ -5801,7 +5572,6 @@ loadMarkets();
 loadMe();
 loadOperatorStatus();
 refreshBackend();
-renderForexSessions();
 renderChatMessages();
 loadTradingViewSignals();
 loadCoinGlassContext();
@@ -5810,7 +5580,6 @@ applyRememberedLogin();
 setInterval(loadMarkets, 5000);
 setInterval(loadOperatorStatus, 30000);
 setInterval(refreshBackend, 2500);
-setInterval(renderForexSessions, 1000);
 setInterval(loadTradingViewSignals, 10000);
 setInterval(loadCoinGlassContext, 60000);
 setInterval(loadQuiverContext, 120000);

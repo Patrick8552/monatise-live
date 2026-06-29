@@ -26,7 +26,6 @@
         <nav class="desk-nav" aria-label="primary navigation">
           <a href="./index.html" aria-current="page">Signal Console</a>
           <a href="./dashboard/">Market Dashboard</a>
-          <a href="./game.html">Gold Trainer</a>
           <button id="installAppButton" type="button" hidden>Install App</button>
         </nav>
         <div class="desk-preferences" aria-label="console preferences">
@@ -81,14 +80,11 @@
         <a href="#activation">Activation</a>
         <a href="#operator">Operator</a>
         <a href="#markets">Market Intel</a>
-        <a href="#trainer">Gold Trainer</a>
-        <a href="#setup-library">Setups</a>
         <a href="#hedge">Hedge Layer</a>
         <a href="#chat">AI Chat</a>
         <a href="#account">Private Access</a>
         <a href="#about">About</a>
         <a href="#activity">Activity</a>
-        <a href="./game.html">Trainer</a>
       </nav>
 
       <section class="command-strip" aria-label="live decision surface">
@@ -146,7 +142,7 @@
           <div class="section-head">
             <div>
               <p class="eyebrow">Signal builder</p>
-              <h2>Generate an actionable setup before any execution decision.</h2>
+              <h2>Generate a crypto signal before any execution decision.</h2>
             </div>
             <button id="resetButton" type="button" title="Reset to defaults">Reset</button>
           </div>
@@ -279,14 +275,13 @@
               <div id="chatMessages" class="chat-messages" aria-live="polite"></div>
               <div class="chat-quick-actions" aria-label="chat prompts">
                 <button type="button" data-chat-prompt="Explain the current signal using CoinGlass funding, open interest, liquidations, and session context">Explain Signal</button>
-                <button type="button" data-chat-prompt="Which entry should I use?">Entry Plan</button>
-                <button type="button" data-chat-prompt="Explain the risk and lot size">Risk</button>
-                <button type="button" data-chat-prompt="Show me historical setups like this">Research</button>
+                <button type="button" data-chat-prompt="Explain the current risk state">Risk</button>
+                <button type="button" data-chat-prompt="Show me historical crypto context like this">Research</button>
                 <button type="button" data-chat-prompt="Explain the hedge layer">Hedge</button>
                 <button type="button" data-chat-prompt="Why is the app waiting?">Wait State</button>
               </div>
               <form id="chatForm" class="chat-form">
-                <input id="chatInput" type="text" autocomplete="off" placeholder="Ask about entry, TP, stop, wait state, or lot size" />
+                <input id="chatInput" type="text" autocomplete="off" placeholder="Ask about signal quality, wait state, or risk" />
                 <button class="primary" type="submit">Ask</button>
               </form>
             </section>
@@ -420,7 +415,7 @@
               </label>
               <label class="toggle-rule">
                 <input id="londonCommodityInput" type="checkbox" checked />
-                <span>Gold/oil signals stay London-only inside the London/New York window</span>
+                <span>Commodity signals are disabled on Monatise Live</span>
               </label>
               <div id="rulesSummary" class="rules-summary">CoinGlass 1h analysis · London/New York signal window · CPI/PPI blackout</div>
             </div>
@@ -552,12 +547,6 @@
                 <span>Stock and ETF alternative-data lens</span>
               </div>
             </div>
-            <div id="forexSessions" class="forex-sessions" aria-label="forex session timers">
-              <div class="session-head">
-                <strong>Forex Session Timers</strong>
-                <span>UTC market clocks</span>
-              </div>
-            </div>
             <div id="marketStrip" class="market-strip" aria-label="live market prices"></div>
             <div id="marketRadar" class="market-radar" aria-label="multi asset market radar"></div>
             <div id="assetGroups" class="asset-groups utility-hidden" aria-label="asset classes"></div>
@@ -567,90 +556,9 @@
                 <span id="researchStatus">Historical probability model</span>
               </div>
               <div id="researchStats" class="research-stats"></div>
-              <p id="researchNarrative">Ask Monatise AI for historical setups to compare current funding, open interest, liquidity sweeps, and 15m CHoCH conditions.</p>
+              <p id="researchNarrative">Ask Monatise AI for historical crypto context using funding, open interest, liquidations, and market structure.</p>
             </section>
           </section>
-        </section>
-
-        <section id="trainer" class="desk-section trainer-section">
-          <div class="section-head">
-            <div>
-              <p class="eyebrow">Gold signal trainer</p>
-              <h2>Practice the XAUUSD discipline loop inside the Monatise desk.</h2>
-            </div>
-            <a class="button-link" href="./game.html">Full Screen</a>
-          </div>
-
-          <section id="goldTrainerApp" class="game-board" aria-label="Gold signal trainer">
-            <div class="game-stage">
-              <canvas id="trainerCanvas" width="980" height="520" aria-label="XAUUSD scenario chart"></canvas>
-            </div>
-
-            <aside class="game-panel">
-              <div class="game-stat-grid">
-                <div><span>Score</span><strong id="scoreValue">0</strong></div>
-                <div><span>Streak</span><strong id="streakValue">0</strong></div>
-                <div><span>Discipline</span><strong id="disciplineValue">100%</strong></div>
-                <div><span>Round</span><strong id="roundValue">1/10</strong></div>
-              </div>
-
-              <div class="scenario-card">
-                <span id="sessionValue">London/New York</span>
-                <strong id="scenarioTitle">Loading setup</strong>
-                <p id="scenarioMeta">Broker time aligned · XAUUSD</p>
-              </div>
-
-              <div class="decision-buttons" aria-label="Decision">
-                <button type="button" data-decision="long">Long</button>
-                <button type="button" data-decision="short">Short</button>
-                <button type="button" data-decision="skip">Skip</button>
-              </div>
-
-              <div class="spotify-panel game-feedback" id="feedbackBox">
-                <strong>Awaiting decision</strong>
-                <p>Round starts on the current XAUUSD structure.</p>
-              </div>
-
-              <button type="button" id="nextRoundButton">Next setup</button>
-              <section id="trainerSpotifyPanel" class="spotify-panel" aria-label="Connected Spotify playlist"></section>
-            </aside>
-          </section>
-        </section>
-
-        <section id="setup-library" class="desk-section setup-library-section">
-          <div class="section-head">
-            <div>
-              <p class="eyebrow">Setup library</p>
-              <h2>Imported desk modules are now part of the main Monatise workflow.</h2>
-            </div>
-          </div>
-
-          <div class="setup-library-grid">
-            <article>
-              <span>Gold path</span>
-              <strong>London-only XAU/USD drills, 15m structure, 5m confirmation, and skip discipline.</strong>
-            </article>
-            <article>
-              <span>News guard</span>
-              <strong>CPI, FOMC, PPI, NFP, and session risk windows block weak signal decisions.</strong>
-            </article>
-            <article>
-              <span>Signal journal</span>
-              <strong>Saved setups track issue, entry, TP1, stop, expiry, and setup grade.</strong>
-            </article>
-            <article>
-              <span>Spotify desk</span>
-              <strong>Profile playlists carry into training and live desk routines.</strong>
-            </article>
-            <article>
-              <span>Payout readiness</span>
-              <strong>Approved-client flow is visible from private access and connected to the desk story.</strong>
-            </article>
-            <article>
-              <span>Operator checks</span>
-              <strong>Provider status keeps CoinGlass, SMTP, TradingView, Quiver, and billing readiness visible.</strong>
-            </article>
-          </div>
         </section>
 
         <section id="account" class="desk-section">
@@ -792,7 +700,6 @@
               </div>
               <div class="button-row">
                 <button id="billingCheckoutButton" class="primary" type="button">Activate Private Billing</button>
-                <a class="button-link" href="./game.html">Gold Trainer</a>
               </div>
               <figure class="payout-showcase">
                 <img src="./assets/payout-clients.svg" alt="Illustration of approved Monatise clients with payout-ready account status and signal journal access" />
@@ -840,15 +747,6 @@
               </p>
             </section>
 
-            <section class="panel trainer-callout">
-              <div>
-                <span>Training path</span>
-                <h3>Practice the XAUUSD discipline loop before live decisions.</h3>
-                <p>The trainer turns news filters, invalidation, and London/New York timing into quick signal drills.</p>
-              </div>
-              <a class="button-link" href="./game.html">Open Gold Trainer</a>
-            </section>
-
             <section class="panel about-principles">
               <article>
                 <span>Framework</span>
@@ -889,7 +787,7 @@
                 </article>
                 <article>
                   <span>Stop math</span>
-                  <strong>Stops are built from entry, structure invalidation, ATR, and the asset risk band; Gold uses a tighter bounded volatility range before position sizing.</strong>
+                  <strong>Stops are built from entry, structure invalidation, ATR, and the selected crypto asset risk band before position sizing.</strong>
                 </article>
                 <article>
                   <span>Trend grid</span>
@@ -968,7 +866,6 @@
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="./spotify.js?v=20260629-request-access-fix"></script>
-    <script src="./game.js?v=20260629-request-access-fix"></script>
     <script src="./app.js?v=20260629-request-access-fix"></script>
   </body>
 </html>

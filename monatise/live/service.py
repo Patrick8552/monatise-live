@@ -10,7 +10,7 @@ from monatise.adapters.hyperliquid import HyperliquidAdapter
 from monatise.core.models import Candle, Fill, Order, OrderSide, Portfolio
 from monatise.live.config import LIVE_CONFIRMATION, RuntimeConfig
 from monatise.live.risk import RiskDecision, RiskManager
-from monatise.live.sessions import commodity_london_guard, economic_release_guard, forex_session_break_guard, signal_window_guard
+from monatise.live.sessions import economic_release_guard, signal_window_guard
 from monatise.sim.csv_data import load_candles
 from monatise.strategy.harvester import LiquidityHarvester, LiquidityHarvesterConfig
 
@@ -74,7 +74,7 @@ class TradingService:
             session_guard = self._session_guard()
             self.state.session_guard = session_guard
             if self.config.mode == "live" and session_guard.get("active"):
-                self.state.risk_status = str(session_guard.get("message", "forex session-break guard"))
+                self.state.risk_status = str(session_guard.get("message", "session guard"))
                 self._event("warn", self.state.risk_status)
                 return self._snapshot_unlocked()
             self._stop.clear()
@@ -166,7 +166,7 @@ class TradingService:
                 "chartInterval": self.config.chart_interval,
                 "leverage": self.config.leverage,
                 "signalSessionWindow": self.config.signal_session_window,
-                "londonCommodityOnly": self.config.london_commodity_only,
+                "londonCommodityOnly": False,
                 "maxDailyLossPct": self.config.max_daily_loss_pct,
                 "orderQuoteSize": self.config.order_quote_size,
                 "maxOrderNotional": self.config.max_order_notional,
@@ -487,7 +487,7 @@ class TradingService:
         session_guard = self._session_guard()
         self.state.session_guard = session_guard
         if session_guard.get("active"):
-            return RiskDecision(False, str(session_guard.get("message", "forex session-break guard")))
+            return RiskDecision(False, str(session_guard.get("message", "session guard")))
         previous = self.state.last_mark_price or mark
         move_pct = abs(mark - previous) / previous if previous > 0 else 0.0
         if move_pct > self.config.max_mark_move_pct:
@@ -507,14 +507,7 @@ class TradingService:
         signal_guard = signal_window_guard(window=self.config.signal_session_window)
         if signal_guard.get("active"):
             return signal_guard
-        forex_guard = forex_session_break_guard(self.config.symbol, guard_minutes=self.config.session_guard_minutes)
-        if forex_guard.get("active"):
-            return forex_guard
-        if self.config.london_commodity_only:
-            commodity_guard = commodity_london_guard(self.config.symbol)
-            if commodity_guard.get("active"):
-                return commodity_guard
-        return forex_guard
+        return {"active": False, "symbol": self.config.symbol}
 
     def _fetch_live_fills(self, adapter: HyperliquidAdapter) -> list[dict]:
         if not self.state.exchange_order_ids:

@@ -7,7 +7,7 @@
       <stop offset="0.54" stop-color="#edf6f4"/>
       <stop offset="1" stop-color="#fff7e7"/>
     </linearGradient>
-    <linearGradient id="gold" x1="0" x2="1">
+    <linearGradient id="accentWarm" x1="0" x2="1">
       <stop offset="0" stop-color="#e5a83c"/>
       <stop offset="1" stop-color="#ffd977"/>
     </linearGradient>
@@ -56,7 +56,7 @@
     <rect x="456" y="196" width="332" height="112" rx="20" fill="#102a27"/>
     <text x="486" y="232" fill="#ffffff" font-family="Inter, Arial, sans-serif" font-size="19" font-weight="850">Bank details released</text>
     <text x="486" y="260" fill="#bbd6d2" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="650">Invoice matched to approved account</text>
-    <rect x="664" y="250" width="82" height="30" rx="15" fill="url(#gold)"/>
+    <rect x="664" y="250" width="82" height="30" rx="15" fill="url(#accentWarm)"/>
     <text x="684" y="270" fill="#151515" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="900">READY</text>
   </g>
 

@@ -1,33 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 
-FOREX_BREAK_GUARD_MINUTES = 60
-
-
-@dataclass(frozen=True)
-class ForexSession:
-    name: str
-    open_hour: int
-    close_hour: int
-    pairs: tuple[str, ...]
-
-
-FOREX_SESSIONS = (
-    ForexSession("Sydney", 21, 6, ("AUDUSD", "NZDUSD", "AUDJPY")),
-    ForexSession("Tokyo", 0, 9, ("USDJPY", "AUDJPY", "EURJPY")),
-    ForexSession("London", 7, 16, ("EURUSD", "GBPUSD", "EURGBP")),
-    ForexSession("New York", 12, 21, ("EURUSD", "GBPUSD", "USDJPY")),
-)
-
-FOREX_SYMBOLS = frozenset(pair for session in FOREX_SESSIONS for pair in session.pairs)
-COMMODITY_SYMBOLS = frozenset({"GOLD", "CL", "BRENTOIL"})
-LONDON_SESSION = next(session for session in FOREX_SESSIONS if session.name == "London")
-NEW_YORK_SESSION = next(session for session in FOREX_SESSIONS if session.name == "New York")
-SIGNAL_WINDOW_SESSIONS = (LONDON_SESSION, NEW_YORK_SESSION)
 EASTERN = ZoneInfo("America/New_York")
 ECONOMIC_BLACKOUT_MINUTES = 60
 ECONOMIC_RELEASES = (
@@ -59,149 +35,38 @@ ECONOMIC_RELEASES = (
 )
 
 
-def normalize_forex_symbol(symbol: str) -> str:
-    return symbol.replace("-", "").replace("/", "").upper()
-
-
-def is_forex_symbol(symbol: str) -> bool:
-    return normalize_forex_symbol(symbol) in FOREX_SYMBOLS
-
-
-def normalize_asset_symbol(symbol: str) -> str:
-    return symbol.replace("xyz:", "").split("-", 1)[0].upper()
-
-
-def minutes_since_utc_midnight(moment: datetime | None = None) -> int:
+def _minutes_since_utc_midnight(moment: datetime | None = None) -> int:
     moment = moment or datetime.now(UTC)
     return moment.hour * 60 + moment.minute
 
 
-def is_session_open(session: ForexSession, moment: datetime | None = None) -> bool:
-    now = minutes_since_utc_midnight(moment)
-    open_minute = session.open_hour * 60
-    close_minute = session.close_hour * 60
-    if open_minute < close_minute:
-        return open_minute <= now < close_minute
-    return now >= open_minute or now < close_minute
+def _window_open(start_hour: int, end_hour: int, moment: datetime | None = None) -> bool:
+    now = _minutes_since_utc_midnight(moment)
+    start = start_hour * 60
+    end = end_hour * 60
+    return start <= now < end
 
 
-def minutes_until_session_change(session: ForexSession, moment: datetime | None = None) -> int:
-    now = minutes_since_utc_midnight(moment)
-    target_hour = session.close_hour if is_session_open(session, moment) else session.open_hour
-    target = target_hour * 60
-    return (target - now + 1440) % 1440
-
-
-def minutes_from_utc_minute(now: int, target: int) -> tuple[int, str]:
-    before = (target - now + 1440) % 1440
-    after = (now - target + 1440) % 1440
-    if before == 0:
-        return 0, "at"
-    if before <= after:
-        return before, "before"
-    return after, "after"
-
-
-def session_break_proximity(session: ForexSession, moment: datetime | None = None) -> dict:
-    now = minutes_since_utc_midnight(moment)
-    open_minutes, open_direction = minutes_from_utc_minute(now, session.open_hour * 60)
-    close_minutes, close_direction = minutes_from_utc_minute(now, session.close_hour * 60)
-    if open_minutes <= close_minutes:
-        return {"transition": "open", "minutes": open_minutes, "direction": open_direction}
-    return {"transition": "close", "minutes": close_minutes, "direction": close_direction}
-
-
-def forex_session_break_guard(
-    symbol: str,
-    moment: datetime | None = None,
-    guard_minutes: int = FOREX_BREAK_GUARD_MINUTES,
-) -> dict:
-    pair = normalize_forex_symbol(symbol)
-    if pair not in FOREX_SYMBOLS:
-        return {"active": False, "symbol": pair}
-
-    guarded = []
-    for session in FOREX_SESSIONS:
-        if pair not in session.pairs:
-            continue
-        proximity = session_break_proximity(session, moment)
-        minutes = int(proximity["minutes"])
-        if minutes <= guard_minutes:
-            guarded.append(
-                {
-                    "session": session.name,
-                    "transition": proximity["transition"],
-                    "direction": proximity["direction"],
-                    "minutes": minutes,
-                    "pairs": list(session.pairs),
-                }
-            )
-
-    if not guarded:
-        return {"active": False, "symbol": pair}
-
-    primary = min(guarded, key=lambda item: int(item["minutes"]))
-    return {
-        "active": True,
-        "symbol": pair,
-        "guardMinutes": guard_minutes,
-        "session": primary["session"],
-        "transition": primary["transition"],
-        "direction": primary["direction"],
-        "minutes": primary["minutes"],
-        "affectedPairs": primary["pairs"],
-        "message": (
-            f"forex session-break guard: {pair} is {primary['minutes']}m {primary['direction']} "
-            f"{primary['session']} {primary['transition']}"
-        ),
-    }
-
-
-def commodity_london_guard(symbol: str, moment: datetime | None = None) -> dict:
-    asset = normalize_asset_symbol(symbol)
-    if asset not in COMMODITY_SYMBOLS:
-        return {"active": False, "symbol": asset}
-    if is_session_open(LONDON_SESSION, moment):
-        return {"active": False, "symbol": asset, "session": "London"}
-    proximity = session_break_proximity(LONDON_SESSION, moment)
-    return {
-        "active": True,
-        "symbol": asset,
-        "session": "London",
-        "transition": proximity["transition"],
-        "direction": proximity["direction"],
-        "minutes": proximity["minutes"],
-        "message": (
-            f"commodity session guard: {asset} signals are limited to the London session"
-        ),
-    }
+def _minutes_until_hour(hour: int, moment: datetime | None = None) -> int:
+    now = _minutes_since_utc_midnight(moment)
+    return (hour * 60 - now + 1440) % 1440
 
 
 def signal_window_guard(moment: datetime | None = None, window: str = "london_new_york") -> dict:
     if window == "always":
         return {"active": False, "window": window}
     if window != "london_new_york":
-        return {
-            "active": True,
-            "window": window,
-            "message": "signal window guard: unknown session window",
-        }
-    open_sessions = [session.name for session in SIGNAL_WINDOW_SESSIONS if is_session_open(session, moment)]
-    if open_sessions:
-        return {"active": False, "window": window, "sessions": open_sessions}
-    next_session = min(SIGNAL_WINDOW_SESSIONS, key=lambda session: minutes_until_session_change(session, moment))
-    minutes = minutes_until_session_change(next_session, moment)
+        return {"active": True, "window": window, "message": "signal window guard: unknown session window"}
+    if _window_open(7, 21, moment):
+        return {"active": False, "window": window, "sessions": ["Crypto London/New York"]}
+    minutes = min(_minutes_until_hour(7, moment), _minutes_until_hour(12, moment))
     return {
         "active": True,
         "window": window,
-        "session": next_session.name,
         "transition": "open",
         "direction": "before",
         "minutes": minutes,
-        "message": (
-            f"signal window guard: signals generate only during London or New York; "
-            f"next window opens in {minutes}m"
-        ),
+        "message": f"signal window guard: crypto signals generate during London/New York overlap; next window opens in {minutes}m",
     }
 
 
@@ -232,10 +97,7 @@ def economic_release_guard(
                 "eventName": name,
                 "releaseTime": release.isoformat().replace("+00:00", "Z"),
                 "minutes": max(0, minutes),
-                "message": (
-                    f"{code} blackout: no signals from {blackout_minutes}m before until "
-                    f"{blackout_minutes}m after the {name} release"
-                ),
+                "message": f"{code} blackout: no signals from {blackout_minutes}m before until {blackout_minutes}m after the {name} release",
                 "phase": side,
             }
         if release > now and (next_release is None or release < next_release[2]):

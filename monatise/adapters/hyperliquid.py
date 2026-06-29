@@ -9,14 +9,7 @@ from monatise.core.ports import ExecutionPort, MarketDataPort
 from monatise.live.config import RuntimeConfig
 
 
-BUILDER_ASSET_ALIASES = {
-    "BRENTOIL": "xyz:BRENTOIL",
-    "CL": "xyz:CL",
-    "GOLD": "xyz:GOLD",
-    "WTI": "xyz:CL",
-    "WTIOIL": "xyz:CL",
-    "XAU": "xyz:GOLD",
-}
+BUILDER_ASSET_ALIASES = {}
 
 
 @dataclass(frozen=True)

@@ -133,43 +133,14 @@ def test_live_start_blocks_outside_london_new_york_signal_window() -> None:
         service_module.signal_window_guard = original_guard
 
 
-def test_live_start_blocks_forex_session_break_guard() -> None:
-    original_guard = service_module.forex_session_break_guard
-    service_module.forex_session_break_guard = lambda symbol, guard_minutes=60: {
-        "active": True,
-        "message": "forex session-break guard: EURUSD is 20m before London close",
-    }
-    try:
-        service = TradingService(RuntimeConfig(mode="live", symbol="EURUSD", signal_session_window="always"))
+def test_live_start_allows_crypto_when_signal_window_is_always() -> None:
+    service = TradingService(RuntimeConfig(mode="live", symbol="BTC", signal_session_window="always"))
 
-        snapshot = service.start()
+    snapshot = service.start()
 
-        assert not snapshot["running"]
-        assert snapshot["riskStatus"] == "forex session-break guard: EURUSD is 20m before London close"
-        assert snapshot["sessionGuard"]["active"]
-    finally:
-        service_module.forex_session_break_guard = original_guard
-
-
-def test_live_start_blocks_gold_outside_london_when_rule_enabled() -> None:
-    original_forex_guard = service_module.forex_session_break_guard
-    original_commodity_guard = service_module.commodity_london_guard
-    service_module.forex_session_break_guard = lambda symbol, guard_minutes=60: {"active": False, "symbol": symbol}
-    service_module.commodity_london_guard = lambda symbol: {
-        "active": True,
-        "message": "commodity session guard: GOLD live grid orders are limited to the London session",
-    }
-    try:
-        service = TradingService(RuntimeConfig(mode="live", symbol="GOLD", london_commodity_only=True, signal_session_window="always"))
-
-        snapshot = service.start()
-
-        assert not snapshot["running"]
-        assert snapshot["riskStatus"] == "commodity session guard: GOLD live grid orders are limited to the London session"
-        assert snapshot["sessionGuard"]["active"]
-    finally:
-        service_module.forex_session_break_guard = original_forex_guard
-        service_module.commodity_london_guard = original_commodity_guard
+    service.stop()
+    assert snapshot["running"]
+    assert not snapshot["sessionGuard"]["active"]
 
 
 def test_stale_live_grid_cancels_exchange_orders_before_replace() -> None:
@@ -203,20 +174,20 @@ def test_stale_live_grid_cancels_exchange_orders_before_replace() -> None:
     assert adapter.submitted == 2
 
 
-def test_live_tick_cancels_orders_during_forex_session_break_guard() -> None:
-    original_guard = service_module.forex_session_break_guard
+def test_live_tick_cancels_orders_during_signal_window_guard() -> None:
+    original_guard = service_module.signal_window_guard
     guard_calls = {"count": 0}
 
-    def guard(symbol: str, guard_minutes: int = 60) -> dict:
+    def guard(window: str = "london_new_york") -> dict:
         guard_calls["count"] += 1
         if guard_calls["count"] == 1:
-            return {"active": False, "symbol": symbol}
+            return {"active": False, "window": window}
         return {
             "active": True,
-            "message": "forex session-break guard: EURUSD is 15m before London close",
+            "message": "signal window guard: crypto window is closed",
         }
 
-    service_module.forex_session_break_guard = guard
+    service_module.signal_window_guard = guard
     try:
         service = TradingService(
             RuntimeConfig(
@@ -226,7 +197,6 @@ def test_live_tick_cancels_orders_during_forex_session_break_guard() -> None:
                 live_confirmation=LIVE_CONFIRMATION,
                 account_address="0xabc",
                 secret_key="secret",
-                signal_session_window="always",
                 order_quote_size=10,
                 max_order_notional=10,
                 max_total_notional=100,
@@ -244,9 +214,9 @@ def test_live_tick_cancels_orders_during_forex_session_break_guard() -> None:
         assert first_ids
         assert first_ids.issubset(set(adapter.cancelled))
         assert not service.state.open_orders
-        assert service.state.risk_status == "forex session-break guard: EURUSD is 15m before London close"
+        assert service.state.risk_status == "signal window guard: crypto window is closed"
     finally:
-        service_module.forex_session_break_guard = original_guard
+        service_module.signal_window_guard = original_guard
 
 
 def test_live_tick_reconciles_exchange_fills_once() -> None:

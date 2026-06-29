@@ -84,7 +84,7 @@ services:
       - key: COINGLASS_EXCHANGE_LIST
         value: Binance,OKX,Bybit
       - key: MONATISE_ASSETS
-        value: BTC,ETH,SOL,HYPE,BNB,XRP,DOGE,GOLD,CL,BRENTOIL
+        value: BTC,ETH,SOL,HYPE,BNB,XRP,DOGE
       - key: MONATISE_BUILDER_DEXES
         value: xyz
       - key: MONATISE_EXECUTION_MODE

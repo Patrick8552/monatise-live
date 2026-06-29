@@ -14,9 +14,9 @@ const TRADER_ACCOUNT_STORAGE = "monatise-trader-account-size";
 const TRADER_RISK_STORAGE = "monatise-trader-risk-pct";
 const LOCKED_SIGNAL_STORAGE = "monatise-locked-signal";
 const ANALYSIS_INTERVAL = "30m";
-const XAU_ANALYSIS_INTERVALS = ["15m", "5m"];
-const XAU_PRIMARY_ANALYSIS_INTERVAL = "15m";
-const XAU_CONFIRMATION_INTERVAL = "5m";
+const CRYPTO_ANALYSIS_INTERVALS = ["15m", "5m"];
+const CRYPTO_PRIMARY_ANALYSIS_INTERVAL = "15m";
+const CRYPTO_CONFIRMATION_INTERVAL = "5m";
 const DEFAULT_VIEW_INTERVAL = "1h";
 const ASSET_DEFINITIONS = [
   "BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "ADA", "AVAX", "LINK", "TRX", "TON", "DOT", "BCH", "LTC", "UNI", "NEAR",
@@ -30,21 +30,7 @@ const ASSET_DEFINITIONS = [
   hyper: ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE"].includes(coin) ? coin : "",
   pair: `${coin}USDT`,
   tv: `BINANCE:${coin}USDT`
-})).concat([
-  { coin: "GOLD", hyper: "GOLD", hyperAliases: ["GOLD", "xyz:GOLD"], pair: "XAUUSD", search: "GOLD XAU XAUUSD", tv: "OANDA:XAUUSD" },
-  { coin: "XAU", hyper: "GOLD", hyperAliases: ["GOLD", "xyz:GOLD"], pair: "XAUUSD", search: "GOLD XAU XAUUSD", tv: "OANDA:XAUUSD" },
-  { coin: "XAG", hyper: "", pair: "XAGUSD", search: "SILVER XAG XAGUSD", tv: "OANDA:XAGUSD" },
-  { coin: "CL", hyper: "CL", pair: "USOIL", search: "WTI OIL CL USOIL", tv: "NYMEX:CL1!" },
-  { coin: "BRENTOIL", hyper: "BRENTOIL", pair: "UKOIL", search: "BRENT OIL UKOIL", tv: "TVC:UKOIL" },
-  { coin: "EURUSD", hyper: "", pair: "EURUSD", search: "EUR USD EURO DOLLAR", tv: "FX:EURUSD" },
-  { coin: "GBPUSD", hyper: "", pair: "GBPUSD", search: "GBP USD CABLE", tv: "FX:GBPUSD" },
-  { coin: "USDJPY", hyper: "", pair: "USDJPY", search: "USD JPY YEN", tv: "FX:USDJPY" },
-  { coin: "AUDUSD", hyper: "", pair: "AUDUSD", search: "AUD USD AUSSIE", tv: "FX:AUDUSD" },
-  { coin: "AUDJPY", hyper: "", pair: "AUDJPY", search: "AUD JPY", tv: "FX:AUDJPY" },
-  { coin: "EURGBP", hyper: "", pair: "EURGBP", search: "EUR GBP", tv: "FX:EURGBP" },
-  { coin: "EURJPY", hyper: "", pair: "EURJPY", search: "EUR JPY", tv: "FX:EURJPY" },
-  { coin: "NZDUSD", hyper: "", pair: "NZDUSD", search: "NZD USD KIWI", tv: "FX:NZDUSD" }
-]);
+}));
 const ASSETS = Object.fromEntries(ASSET_DEFINITIONS.map((asset) => [asset.coin, asset]));
 
 const els = {
@@ -527,10 +513,9 @@ function buildAtlasStructure(THREE, group) {
 }
 
 function buildAtlasEcosystem(THREE, group) {
-  const btc = createAtlasNode(THREE, "BTC", 0xffbf47, -1.15);
-  const gold = createAtlasNode(THREE, "Gold", 0xf7d774, 1.15);
-  group.add(btc.mesh, gold.mesh);
-  state.atlas.ecosystemNodes = [btc, gold];
+  const asset = createAtlasNode(THREE, selectedCoin(), 0xffbf47, 0);
+  group.add(asset.mesh);
+  state.atlas.ecosystemNodes = [asset];
 }
 
 function createAtlasNode(THREE, label, color, x) {
@@ -569,31 +554,23 @@ function resizeAtlas() {
 function updateLiquidityAtlas() {
   const direction = els.setupDirection.textContent || "WAIT";
   const asset = selectedCoin();
-  const viewLabel = state.atlas.view === "gold" ? "Gold macro" : state.atlas.view === "dual" ? `${asset} + Gold` : `${asset} crypto`;
+  const viewLabel = `${asset} crypto`;
   const vwap = state.market.vwapSignal || "VWAP pending";
   const funding = state.market.fundingAverage == null ? "CoinGlass funding pending" : `CoinGlass funding ${formatPercent(state.market.fundingAverage, 4)}`;
   const liq = state.market.liquidationBias || "liquidity forming";
   state.atlas.mode = direction;
   els.atlasMode.textContent = `Monatise Liquidity Atlas · ${viewLabel}`;
-  els.atlasSignal.textContent = state.atlas.view === "gold" ? `Gold ${goldSignalFromCrypto(direction)}` : `${asset} ${direction}`;
+  els.atlasSignal.textContent = `${asset} ${direction}`;
   els.atlasSignal.className = direction.includes("BUY") ? "positive" : direction.includes("SELL") ? "negative" : "";
-  els.atlasDetail.textContent = state.atlas.view === "gold"
-    ? `Gold hedge lens · BTC ${direction} · ${vwap} · ${liq}`
-    : `${vwap} · ${liq} · ${funding}`;
+  els.atlasDetail.textContent = `${vwap} · ${liq} · ${funding}`;
   if (state.atlas.material) {
-    const color = state.atlas.view === "gold" ? 0xf7d774 : direction.includes("BUY") ? 0x75ffd6 : direction.includes("SELL") ? 0xff62d2 : 0xffbf47;
+    const color = direction.includes("BUY") ? 0x75ffd6 : direction.includes("SELL") ? 0xff62d2 : 0xffbf47;
     state.atlas.material.color.setHex(color);
     state.atlas.material.emissive.setHex(direction.includes("SELL") ? 0x321326 : direction.includes("BUY") ? 0x102c31 : 0x2b2110);
   }
   updateAtlasHeatmapObjects(direction);
   updateAtlasEcosystemObjects();
   if (state.atlas.fallback) drawAtlasFallback();
-}
-
-function goldSignalFromCrypto(direction) {
-  if (direction.includes("BUY")) return "hedge watch";
-  if (direction.includes("SELL")) return "safe-haven bid";
-  return "macro neutral";
 }
 
 function updateAtlasHeatmapObjects(direction) {
@@ -604,29 +581,22 @@ function updateAtlasHeatmapObjects(direction) {
     const side = index % 2 === 0 ? 1 : -1;
     const bias = squeeze && side > 0 ? 1.55 : flush && side < 0 ? 1.55 : 0.86;
     const directionBias = direction.includes("BUY") && side > 0 ? 1.25 : direction.includes("SELL") && side < 0 ? 1.25 : 1;
-    const goldBias = state.atlas.view === "gold" ? 0.72 + (index % 5) * 0.08 : 1;
-    bar.scale.y = (0.18 + Math.abs(Math.sin(index * 1.27 + vwapLift)) * 0.92) * bias * directionBias * goldBias;
+    bar.scale.y = (0.18 + Math.abs(Math.sin(index * 1.27 + vwapLift)) * 0.92) * bias * directionBias;
     bar.position.y = -1.48 + bar.scale.y * 0.45;
     bar.material.opacity = Math.min(0.9, 0.46 + bar.scale.y * 0.18);
   });
   state.atlas.zones.forEach((zone, index) => {
-    const isGold = state.atlas.view === "gold";
-    zone.material.color.setHex(isGold ? 0xf7d774 : index % 2 ? 0xffbf47 : 0x52d6ff);
-    zone.material.opacity = isGold ? 0.2 + (index % 3) * 0.04 : 0.22 + Math.abs(vwapLift) * 0.04;
+    zone.material.color.setHex(index % 2 ? 0xffbf47 : 0x52d6ff);
+    zone.material.opacity = 0.22 + Math.abs(vwapLift) * 0.04;
   });
 }
 
 function updateAtlasEcosystemObjects() {
   state.atlas.ecosystemNodes.forEach((node) => {
-    const isGold = node.label === "Gold";
-    const active =
-      state.atlas.view === "dual" ||
-      (state.atlas.view === "gold" && isGold) ||
-      (state.atlas.view === "btc" && !isGold);
-    node.mesh.visible = state.atlas.view === "dual" || active;
-    node.mesh.scale.setScalar(active ? 1.18 : 0.72);
-    node.mesh.material.opacity = active ? 1 : 0.42;
-    node.mesh.material.transparent = !active;
+    node.mesh.visible = true;
+    node.mesh.scale.setScalar(1.18);
+    node.mesh.material.opacity = 1;
+    node.mesh.material.transparent = false;
   });
 }
 
@@ -652,14 +622,13 @@ function drawAtlasFallback() {
     }
     ctx.stroke();
   }
-  const view = state.atlas.view;
-  const nodes = view === "dual" ? [["BTC", width * 0.36, height * 0.42], ["Gold", width * 0.64, height * 0.42]] : [[view === "gold" ? "Gold" : selectedCoin(), width * 0.5, height * 0.42]];
+  const nodes = [[selectedCoin(), width * 0.5, height * 0.42]];
   nodes.forEach(([label, x, y]) => {
     ctx.beginPath();
     ctx.arc(x, y, 28, 0, Math.PI * 2);
-    ctx.fillStyle = label === "Gold" ? "rgba(247, 215, 116, 0.34)" : "rgba(117, 255, 214, 0.28)";
+    ctx.fillStyle = "rgba(117, 255, 214, 0.28)";
     ctx.fill();
-    ctx.strokeStyle = label === "Gold" ? "rgba(247, 215, 116, 0.86)" : "rgba(117, 255, 214, 0.86)";
+    ctx.strokeStyle = "rgba(117, 255, 214, 0.86)";
     ctx.lineWidth = 2;
     ctx.stroke();
     ctx.fillStyle = "#eef4fb";
@@ -981,7 +950,7 @@ function currentSignalMark(price) {
 function signalInvalidationTolerance(invalidation) {
   const value = Math.abs(Number(invalidation));
   if (!Number.isFinite(value) || value <= 0) return 0;
-  return Math.max(value * 0.00005, isXauAsset() ? 0.5 : 0);
+  return Math.max(value * 0.00005, usesCryptoMultiFrame() ? 0.5 : 0);
 }
 
 function isSignalInvalidated(action, mark, invalidation) {
@@ -1046,12 +1015,12 @@ function combinedIntervalsToMs(intervals) {
 }
 
 function selectedSnapshotInterval() {
-  if (isXauAsset()) return `${XAU_PRIMARY_ANALYSIS_INTERVAL} + ${XAU_CONFIRMATION_INTERVAL}`;
+  if (usesCryptoMultiFrame()) return `${CRYPTO_PRIMARY_ANALYSIS_INTERVAL} + ${CRYPTO_CONFIRMATION_INTERVAL}`;
   return els.intervalSelect?.value || DEFAULT_VIEW_INTERVAL;
 }
 
 function selectedSnapshotLockMs() {
-  if (isXauAsset()) return combinedIntervalsToMs(XAU_ANALYSIS_INTERVALS);
+  if (usesCryptoMultiFrame()) return combinedIntervalsToMs(CRYPTO_ANALYSIS_INTERVALS);
   return intervalToMs(selectedSnapshotInterval());
 }
 
@@ -1779,12 +1748,12 @@ function selectedPair() {
   return selectedAsset().pair;
 }
 
-function isXauAsset(asset = selectedAsset()) {
-  return ["GOLD", "XAU"].includes(asset.coin);
+function usesCryptoMultiFrame(asset = selectedAsset()) {
+  return false;
 }
 
 function usesServerMarketCandles(asset = selectedAsset()) {
-  return ["GOLD", "XAU", "CL", "BRENTOIL"].includes(asset.coin);
+  return false;
 }
 
 function syncAssetLabels() {
@@ -1819,7 +1788,7 @@ function renderAssetSearch() {
           <small>${asset.pair}</small>
         </button>
       `).join("")
-    : `<button type="button" disabled><strong>No match</strong><small>Try GOLD, XAU, EURUSD, BTC</small></button>`;
+    : `<button type="button" disabled><strong>No match</strong><small>Try BTC, ETH, or SOL</small></button>`;
   els.assetSearchResults.classList.toggle("open", Boolean(els.assetSearchInput.value.trim()));
 }
 
@@ -1864,7 +1833,7 @@ function updateCoinGlassSourceStatus(message = "") {
     ? `${asset.tv} · Monatise market candles`
     : `${asset.pair} · CoinGlass futures price history`;
   els.coinGlassRouteRef.textContent = usesServerMarketCandles(asset)
-    ? `/api/candles · symbol ${asset.coin} · ${isXauAsset(asset) ? `analysis ${XAU_ANALYSIS_INTERVALS.join(" + ")}` : `view ${viewInterval}`}`
+    ? `/api/candles · symbol ${asset.coin} · ${usesCryptoMultiFrame(asset) ? `analysis ${CRYPTO_ANALYSIS_INTERVALS.join(" + ")}` : `view ${viewInterval}`}`
     : `/api/futures/price/history · exchange ${exchange} · analysis ${ANALYSIS_INTERVAL} · view ${viewInterval}`;
   els.openIntegrationsButton.textContent = serverReady ? "CoinGlass Connected" : localKey ? "Update Local Key" : "Add Local Key";
 }
@@ -1937,21 +1906,21 @@ async function fetchServerMarketCandles(asset, interval, limit = "96") {
 
 async function getPriceForAsset(asset, limit = "96") {
   if (usesServerMarketCandles(asset)) {
-    if (isXauAsset(asset)) {
+    if (usesCryptoMultiFrame(asset)) {
       const [primaryRows, confirmationRows] = await Promise.all([
-        fetchServerMarketCandles(asset, XAU_PRIMARY_ANALYSIS_INTERVAL, limit),
-        fetchServerMarketCandles(asset, XAU_CONFIRMATION_INTERVAL, "180")
+        fetchServerMarketCandles(asset, CRYPTO_PRIMARY_ANALYSIS_INTERVAL, limit),
+        fetchServerMarketCandles(asset, CRYPTO_CONFIRMATION_INTERVAL, "180")
       ]);
       primaryRows.multiTimeframe = {
-        primary: XAU_PRIMARY_ANALYSIS_INTERVAL,
-        confirmation: XAU_CONFIRMATION_INTERVAL,
+        primary: CRYPTO_PRIMARY_ANALYSIS_INTERVAL,
+        confirmation: CRYPTO_CONFIRMATION_INTERVAL,
         series: {
-          [XAU_PRIMARY_ANALYSIS_INTERVAL]: primaryRows,
-          [XAU_CONFIRMATION_INTERVAL]: confirmationRows
+          [CRYPTO_PRIMARY_ANALYSIS_INTERVAL]: primaryRows,
+          [CRYPTO_CONFIRMATION_INTERVAL]: confirmationRows
         }
       };
       primaryRows.source = primaryRows.source || confirmationRows.source || "Monatise market feed";
-      primaryRows.interval = `${XAU_PRIMARY_ANALYSIS_INTERVAL} + ${XAU_CONFIRMATION_INTERVAL}`;
+      primaryRows.interval = `${CRYPTO_PRIMARY_ANALYSIS_INTERVAL} + ${CRYPTO_CONFIRMATION_INTERVAL}`;
       return primaryRows;
     }
     return fetchServerMarketCandles(asset, els.intervalSelect.value || DEFAULT_VIEW_INTERVAL, limit);
@@ -1989,7 +1958,7 @@ async function getPrice() {
   const interval = ANALYSIS_INTERVAL;
   const rows = await getPriceForAsset(asset);
   els.priceSource.textContent = usesServerMarketCandles(asset)
-    ? `${rows.source || "Monatise market feed"} · ${asset.tv} · ${isXauAsset(asset) ? "15m structure + 5m execution candles" : `${rows.interval || els.intervalSelect.value || DEFAULT_VIEW_INTERVAL} TradingView-aligned candles`}`
+    ? `${rows.source || "Monatise market feed"} · ${asset.tv} · ${usesCryptoMultiFrame(asset) ? "15m structure + 5m execution candles" : `${rows.interval || els.intervalSelect.value || DEFAULT_VIEW_INTERVAL} TradingView-aligned candles`}`
     : `CoinGlass futures price history · ${asset.pair} · ${exchange} · analysis ${interval} · view ${els.intervalSelect.value || DEFAULT_VIEW_INTERVAL}`;
   return rows;
 }
@@ -2436,7 +2405,7 @@ function summarizeLiquidationPayload(payload) {
 
 function renderPrice(series) {
   const asset = selectedAsset();
-  if (isXauAsset(asset) && series.multiTimeframe) {
+  if (usesCryptoMultiFrame(asset) && series.multiTimeframe) {
     renderXauMultiTimeframePrice(series, asset);
     return;
   }
@@ -2493,13 +2462,13 @@ function mergeXauIndicatorStack(primaryStack, confirmationStack, primaryResearch
   const bias = signalFromScore(score);
   const rows = [
     {
-      name: `${XAU_PRIMARY_ANALYSIS_INTERVAL} structure`,
+      name: `${CRYPTO_PRIMARY_ANALYSIS_INTERVAL} structure`,
       signal: signalFromScore(primaryStack.score),
       score: clampScore(primaryStack.score, -2, 2),
       detail: `${primaryStack.summary} · ${primaryResearch.signal} · ${primaryResearch.vwapSignal}`
     },
     {
-      name: `${XAU_CONFIRMATION_INTERVAL} execution`,
+      name: `${CRYPTO_CONFIRMATION_INTERVAL} execution`,
       signal: signalFromScore(confirmationStack.score),
       score: clampScore(confirmationStack.score, -2, 2),
       detail: `${confirmationStack.summary} · ${confirmationResearch.signal} · ${confirmationResearch.vwapSignal}`
@@ -2508,22 +2477,22 @@ function mergeXauIndicatorStack(primaryStack, confirmationStack, primaryResearch
       name: "15m/5m alignment",
       signal: aligned ? `${bias} ALIGNED` : conflict ? "CONFLICT" : "WAIT",
       score: aligned ? primaryDirection : conflict ? -primaryDirection : 0,
-      detail: aligned ? "5m confirms the 15m XAU/USD setup." : conflict ? "5m is fighting the 15m structure; reduce conviction." : "One timeframe is neutral."
+      detail: aligned ? "5m confirms the 15m crypto structure." : conflict ? "5m is fighting the 15m structure; reduce conviction." : "One timeframe is neutral."
     },
     ...primaryStack.rows.slice(0, 4).map((row) => ({ ...row, name: `15m ${row.name}` })),
     ...confirmationStack.rows.slice(0, 4).map((row) => ({ ...row, name: `5m ${row.name}` }))
   ];
   return {
     score,
-    summary: `XAU/USD 15m + 5m ${bias} stack ${score >= 0 ? "+" : ""}${score}`,
+    summary: `Selected crypto 15m + 5m ${bias} stack ${score >= 0 ? "+" : ""}${score}`,
     rows
   };
 }
 
 function renderXauMultiTimeframePrice(series, asset) {
   const frames = series.multiTimeframe.series || {};
-  const primarySeries = frames[XAU_PRIMARY_ANALYSIS_INTERVAL] || series;
-  const confirmationSeries = frames[XAU_CONFIRMATION_INTERVAL] || [];
+  const primarySeries = frames[CRYPTO_PRIMARY_ANALYSIS_INTERVAL] || series;
+  const confirmationSeries = frames[CRYPTO_CONFIRMATION_INTERVAL] || [];
   state.priceSeries = primarySeries;
 
   const primaryLast = latestCandle(primarySeries);
@@ -2535,13 +2504,13 @@ function renderXauMultiTimeframePrice(series, asset) {
   state.lastPrice = last.close;
   const change = previous ? ((last.close - previous.close) / previous.close) * 100 : 0;
   state.market.priceChange = change;
-  state.market.analysisFrame = `${XAU_PRIMARY_ANALYSIS_INTERVAL} + ${XAU_CONFIRMATION_INTERVAL}`;
-  updateTopPrice(last.close, `${change >= 0 ? "Up" : "Down"} ${formatPercent(change, 2)} on ${XAU_CONFIRMATION_INTERVAL}`);
-  els.priceChange.textContent = `${change >= 0 ? "Up" : "Down"} ${formatPercent(change, 2)} ${XAU_CONFIRMATION_INTERVAL} candle`;
+  state.market.analysisFrame = `${CRYPTO_PRIMARY_ANALYSIS_INTERVAL} + ${CRYPTO_CONFIRMATION_INTERVAL}`;
+  updateTopPrice(last.close, `${change >= 0 ? "Up" : "Down"} ${formatPercent(change, 2)} on ${CRYPTO_CONFIRMATION_INTERVAL}`);
+  els.priceChange.textContent = `${change >= 0 ? "Up" : "Down"} ${formatPercent(change, 2)} ${CRYPTO_CONFIRMATION_INTERVAL} candle`;
   els.priceChange.className = change >= 0 ? "positive" : "negative";
   els.headerPriceChange.className = change >= 0 ? "positive" : "negative";
   els.pricePulse.textContent = "live";
-  updateCoinGlassSourceStatus(`XAU/USD setup uses ${primarySeries.length} ${XAU_PRIMARY_ANALYSIS_INTERVAL} candles and ${confirmationSeries.length} ${XAU_CONFIRMATION_INTERVAL} candles.`);
+  updateCoinGlassSourceStatus(`Selected crypto setup uses ${primarySeries.length} ${CRYPTO_PRIMARY_ANALYSIS_INTERVAL} candles and ${confirmationSeries.length} ${CRYPTO_CONFIRMATION_INTERVAL} candles.`);
 
   const primaryResearch = studyHistoricalPattern(primarySeries);
   const confirmationResearch = studyHistoricalPattern(confirmationSeries.length ? confirmationSeries : primarySeries);
@@ -2564,10 +2533,10 @@ function renderXauMultiTimeframePrice(series, asset) {
   state.market.scaleAction = primaryResearch.action !== "wait" ? primaryResearch.action : confirmationResearch.action;
   state.market.pattern = `${primaryResearch.pattern} + ${confirmationResearch.pattern}`;
 
-  els.researchSource.textContent = `XAU/USD setup study · ${XAU_PRIMARY_ANALYSIS_INTERVAL} structure + ${XAU_CONFIRMATION_INTERVAL} execution`;
+  els.researchSource.textContent = `Selected crypto setup study · ${CRYPTO_PRIMARY_ANALYSIS_INTERVAL} structure + ${CRYPTO_CONFIRMATION_INTERVAL} execution`;
   els.researchPattern.textContent = state.market.pattern;
   els.historySignal.textContent = state.market.researchSignal;
-  els.historyStats.textContent = `${XAU_PRIMARY_ANALYSIS_INTERVAL}: ${primaryResearch.stats} · ${XAU_CONFIRMATION_INTERVAL}: ${confirmationResearch.stats}`;
+  els.historyStats.textContent = `${CRYPTO_PRIMARY_ANALYSIS_INTERVAL}: ${primaryResearch.stats} · ${CRYPTO_CONFIRMATION_INTERVAL}: ${confirmationResearch.stats}`;
   els.vwapMetric.textContent = `${state.market.vwapSignal} ${formatPercent(primaryResearch.vwapDistance, 2)} / ${formatPercent(confirmationResearch.vwapDistance, 2)}`;
   els.vwapMetric.className = vwapScore > 0 ? "positive" : vwapScore < 0 ? "negative" : "";
   els.vwapSignal.textContent = state.market.vwapSignal;
@@ -2576,8 +2545,8 @@ function renderXauMultiTimeframePrice(series, asset) {
   els.scaleAction.textContent = state.market.scaleAction;
   els.scaleAction.className = state.market.scaleAction === "average down" || state.market.scaleAction === "average up" ? "positive" : state.market.scaleAction === "scale out" ? "negative" : "";
   els.scalePlan.textContent = `Use 15m for direction and invalidation; use 5m for entry timing and pullback confirmation. ${primaryResearch.plan}`;
-  els.patternMemory.textContent = `${XAU_PRIMARY_ANALYSIS_INTERVAL} ${primaryResearch.memory} · ${XAU_CONFIRMATION_INTERVAL} ${confirmationResearch.memory}`;
-  els.patternDetail.textContent = `${XAU_PRIMARY_ANALYSIS_INTERVAL}: ${primaryResearch.detail} · ${XAU_CONFIRMATION_INTERVAL}: ${confirmationResearch.detail}`;
+  els.patternMemory.textContent = `${CRYPTO_PRIMARY_ANALYSIS_INTERVAL} ${primaryResearch.memory} · ${CRYPTO_CONFIRMATION_INTERVAL} ${confirmationResearch.memory}`;
+  els.patternDetail.textContent = `${CRYPTO_PRIMARY_ANALYSIS_INTERVAL}: ${primaryResearch.detail} · ${CRYPTO_CONFIRMATION_INTERVAL}: ${confirmationResearch.detail}`;
 
   renderIndicatorStack(mergedStack);
   renderStructureSummary(primaryStructure);
@@ -2868,7 +2837,7 @@ function analyzeIndicatorStack(series, research, structure) {
   if (!last || closes.length < 20) {
     return {
       score: 0,
-      summary: "waiting for enough GOLD candles",
+      summary: "waiting for enough crypto candles",
       rows: [{ name: "Indicator stack", signal: "WAIT", score: 0, detail: "Need at least 20 candles before building the native stack." }]
     };
   }
@@ -3254,8 +3223,8 @@ function applyMonatiseFramework() {
   addCheck(checks, "VWAP", m.vwapSignal, m.vwapScore, m.vwapSignal ? `${m.vwapSignal} · ${formatPercent(m.vwapDistance, 2)} from VWAP` : "waiting");
   addCheck(checks, "History research", m.researchSignal, m.researchScore > 0 ? 1 : m.researchScore < 0 ? -1 : 0, m.researchSignal ? `${m.researchSignal} · ${m.scaleAction}` : "waiting");
   addCheck(checks, "Indicator stack", m.indicatorSummary, clampScore(m.indicatorScore || 0), m.indicatorSummary || "waiting");
-  if (isXauAsset(asset)) {
-    addCheck(checks, "XAU timeframe", m.analysisFrame, m.analysisFrame === `${XAU_PRIMARY_ANALYSIS_INTERVAL} + ${XAU_CONFIRMATION_INTERVAL}` ? 1 : 0, m.analysisFrame ? `${m.analysisFrame} setup analysis` : "waiting for 15m + 5m");
+  if (usesCryptoMultiFrame(asset)) {
+    addCheck(checks, "Multi-timeframe", m.analysisFrame, m.analysisFrame === `${CRYPTO_PRIMARY_ANALYSIS_INTERVAL} + ${CRYPTO_CONFIRMATION_INTERVAL}` ? 1 : 0, m.analysisFrame ? `${m.analysisFrame} setup analysis` : "waiting for 15m + 5m");
   }
 
   const liveChecks = checks.filter((check) => check.live).length;
@@ -3264,8 +3233,8 @@ function applyMonatiseFramework() {
   const confidence = Math.min(100, Math.round((Math.abs(score) / 6) * 100 + liveChecks * 5));
   const hedge = hedgeFromCoinGlass({ direction, score, confidence, market: m });
 
-  els.frameworkSource.textContent = isXauAsset(asset)
-    ? `${asset.coin} selected · XAU/USD ${XAU_PRIMARY_ANALYSIS_INTERVAL} structure + ${XAU_CONFIRMATION_INTERVAL} execution + CoinGlass/Hyperliquid context`
+  els.frameworkSource.textContent = usesCryptoMultiFrame(asset)
+    ? `${asset.coin} selected · selected crypto multi-timeframe context + CoinGlass/Hyperliquid context`
     : `${asset.coin} selected · Native indicator stack + market candles + CoinGlass/Hyperliquid context`;
   els.setupDirection.textContent = direction;
   els.setupDirection.className = direction.includes("BUY") ? "positive" : direction.includes("SELL") ? "negative" : "";
@@ -3707,11 +3676,7 @@ function newsImageData(title, description = "") {
 }
 
 const SESSION_WINDOWS = [
-  { asset: "crypto", close: null, focus: "Crypto", note: "24/7 market. Best liquidity usually appears during London/New York overlap.", open: null },
-  { asset: "forex", close: 6, focus: "Sydney", note: "AUD/NZD pairs; lower volatility than London/New York.", open: 21 },
-  { asset: "forex", close: 9, focus: "Tokyo", note: "JPY and Asia risk tone.", open: 0 },
-  { asset: "forex", close: 16, focus: "London", note: "Best forex liquidity for EUR, GBP, gold, oil, and crypto continuation.", open: 7 },
-  { asset: "forex", close: 21, focus: "New York", note: "Best overlap with London from 12:00-16:00 UTC.", open: 12 }
+  { asset: "crypto", close: null, focus: "Crypto", note: "24/7 market. Best liquidity usually appears during London/New York overlap.", open: null }
 ];
 
 function utcMinutes(date = new Date()) {
@@ -3775,7 +3740,7 @@ function renderSessionTimers(date = new Date()) {
     </div>
     <div class="best-window">
       <strong>Best windows</strong>
-      <span>Crypto: London/New York overlap, 12:00-16:00 UTC. Forex: London 07:00-16:00 UTC and London/New York overlap 12:00-16:00 UTC.</span>
+      <span>Crypto: London/New York overlap, 12:00-16:00 UTC.</span>
     </div>
     <div class="session-card-grid">${rows}</div>
   `;

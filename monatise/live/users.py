@@ -21,6 +21,7 @@ REMEMBERED_SESSION_SECONDS = 60 * 60 * 24 * 90
 PASSWORD_RESET_CODE_SECONDS = 60 * 10
 LOGIN_CODE_SECONDS = 60 * 10
 COINGLASS_STARTUP_INTERVALS = {"30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "1w"}
+CRYPTO_SYMBOLS = {"BTC", "ETH", "SOL", "HYPE", "BNB", "XRP", "DOGE"}
 
 
 @dataclass(frozen=True)
@@ -73,7 +74,7 @@ class UserSettings:
     max_position_value: float = 5000.0
     session_guard_minutes: int = 60
     stale_grid_cancel: bool = True
-    london_commodity_only: bool = True
+    london_commodity_only: bool = False
     max_daily_loss_pct: float = 0.05
 
 
@@ -399,6 +400,8 @@ class UserStore:
         selected_symbol = symbol.strip().upper()
         if not selected_symbol:
             raise ValueError("select an asset")
+        if selected_symbol not in CRYPTO_SYMBOLS:
+            raise ValueError("Monatise Live currently supports crypto assets only")
         with self._connect() as conn:
             conn.execute(
                 """

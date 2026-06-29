@@ -4,6 +4,8 @@ import base64
 import os
 import tempfile
 
+import pytest
+
 from monatise.live.users import UserCredentials, UserStore
 
 
@@ -185,9 +187,12 @@ def test_user_store_saves_profile_name_across_settings_updates() -> None:
             settings = store.save_client_name(user.id, "  Ada   Desk  ")
             assert settings.client_name == "Ada Desk"
 
-            settings = store.save_selected_symbol(user.id, "gold")
-            assert settings.selected_symbol == "GOLD"
+            settings = store.save_selected_symbol(user.id, "eth")
+            assert settings.selected_symbol == "ETH"
             assert settings.client_name == "Ada Desk"
+
+            with pytest.raises(ValueError, match="crypto assets only"):
+                store.save_selected_symbol(user.id, "gold")
 
             settings = store.save_trading_rules(
                 user.id,

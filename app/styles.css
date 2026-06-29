@@ -1489,16 +1489,6 @@ button.live-running {
   align-items: start;
 }
 
-.gold-grid {
-  align-items: start;
-}
-
-.gold-lede {
-  background:
-    linear-gradient(90deg, rgba(24, 21, 15, 0.98), rgba(38, 33, 23, 0.96)),
-    var(--terminal);
-}
-
 .path-grid,
 .withdrawal-flow {
   display: grid;
@@ -1519,7 +1509,6 @@ button.live-running {
   padding: 13px 14px;
 }
 
-.gold-preset-grid,
 .target-table {
   display: grid;
   gap: 10px;
@@ -1538,7 +1527,6 @@ button.live-running {
 .feature-grid article,
 .lesson-grid article,
 .path-grid article,
-.gold-preset-grid article,
 .target-table article,
 .withdrawal-flow article,
 .contact-card {
@@ -1554,7 +1542,6 @@ button.live-running {
 .feature-grid span,
 .lesson-grid span,
 .path-grid span,
-.gold-preset-grid span,
 .target-table span,
 .contact-card span {
   color: var(--muted);
@@ -1567,7 +1554,6 @@ button.live-running {
 .feature-grid strong,
 .lesson-grid strong,
 .path-grid strong,
-.gold-preset-grid strong,
 .target-table strong,
 .withdrawal-flow strong,
 .contact-card strong {
@@ -1579,7 +1565,6 @@ button.live-running {
 .feature-grid p,
 .lesson-grid p,
 .path-grid p,
-.gold-preset-grid p,
 .target-table p,
 .withdrawal-flow p,
 .contact-card p {
@@ -2381,116 +2366,6 @@ canvas {
   line-height: 1.35;
   margin: 0;
   padding-left: 16px;
-}
-
-.forex-sessions {
-  background:
-    linear-gradient(160deg, rgba(232, 162, 20, 0.1), rgba(0, 184, 217, 0.06)),
-    rgba(4, 9, 11, 0.15);
-  border: 1px solid rgba(255, 255, 255, 0.13);
-  border-radius: 6px;
-  display: grid;
-  gap: 10px;
-  margin-bottom: 12px;
-  padding: 10px;
-}
-
-.session-head {
-  align-items: center;
-  display: flex;
-  gap: 10px;
-  justify-content: space-between;
-}
-
-.session-head strong {
-  color: #f9fffb;
-  font-size: 0.86rem;
-}
-
-.session-head span {
-  color: var(--muted);
-  font-size: 0.72rem;
-  font-variant-numeric: tabular-nums;
-  font-weight: 850;
-}
-
-.session-grid {
-  display: grid;
-  gap: 8px;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
-.session-row {
-  background: rgba(255, 255, 255, 0.07);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 6px;
-  display: grid;
-  gap: 6px;
-  min-width: 0;
-  padding: 8px;
-}
-
-.session-row.open {
-  background: rgba(0, 168, 120, 0.16);
-  border-color: rgba(0, 168, 120, 0.34);
-}
-
-.session-row.guarded {
-  background: rgba(232, 162, 20, 0.18);
-  border-color: rgba(232, 162, 20, 0.48);
-  box-shadow: inset 0 0 0 1px rgba(232, 162, 20, 0.18);
-}
-
-.session-row strong {
-  color: #f9fffb;
-  display: block;
-  font-size: 0.78rem;
-}
-
-.session-row span,
-.session-row b,
-.session-row em {
-  color: var(--muted);
-  font-size: 0.68rem;
-  font-style: normal;
-  font-variant-numeric: tabular-nums;
-  font-weight: 850;
-  overflow-wrap: anywhere;
-}
-
-.session-row.open em {
-  color: #74f3cf;
-}
-
-.session-row.closed em {
-  color: #ffb3a8;
-}
-
-.session-pairs {
-  align-items: center;
-  background: rgba(4, 9, 11, 0.25);
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  border-radius: 6px;
-  display: grid;
-  gap: 3px;
-  padding: 8px;
-}
-
-.session-pairs.guarded {
-  background: rgba(216, 58, 70, 0.18);
-  border-color: rgba(216, 58, 70, 0.42);
-}
-
-.session-pairs strong {
-  color: #f9fffb;
-  font-size: 0.74rem;
-}
-
-.session-pairs span {
-  color: rgba(249, 255, 251, 0.78);
-  font-size: 0.74rem;
-  font-weight: 800;
-  overflow-wrap: anywhere;
 }
 
 .asset-groups {
@@ -4239,7 +4114,6 @@ button:disabled {
   }
 
   .lesson-grid,
-  .gold-preset-grid,
   .path-grid,
   .target-table,
   .withdrawal-flow,

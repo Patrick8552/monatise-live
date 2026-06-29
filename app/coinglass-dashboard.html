@@ -47,7 +47,7 @@
           </label>
           <label class="asset-search-box">
             <span>Search assets</span>
-            <input id="assetSearchInput" type="search" autocomplete="off" placeholder="Search GOLD, XAU, EURUSD, BTC..." />
+            <input id="assetSearchInput" type="search" autocomplete="off" placeholder="Search BTC, ETH, SOL..." />
             <div id="assetSearchResults" class="asset-search-results" aria-label="Asset search results"></div>
           </label>
           <label>
@@ -172,8 +172,6 @@
           </div>
           <div class="atlas-controls" aria-label="Atlas ecosystem controls">
             <button type="button" data-atlas-view="btc" class="active">BTC</button>
-            <button type="button" data-atlas-view="gold">Gold</button>
-            <button type="button" data-atlas-view="dual">BTC + Gold</button>
           </div>
         </section>
 
@@ -284,7 +282,7 @@
                 <small id="frameworkBias">No confirmed bias yet.</small>
               </div>
             </div>
-            <div id="indicatorStack" class="indicator-stack" aria-label="Gold indicator stack"></div>
+            <div id="indicatorStack" class="indicator-stack" aria-label="indicator stack"></div>
           </article>
 
           <article class="panel research-panel wide">
@@ -416,7 +414,7 @@
             <div class="panel-head">
               <div>
                 <h2>Session Timers</h2>
-                <p>Best crypto and forex trading windows</p>
+                <p>Best crypto trading windows</p>
               </div>
             </div>
             <div id="sessionTimers" class="session-timers"></div>
@@ -446,7 +444,7 @@
               </label>
               <label class="voice-question">
                 <span>Ask Monatise</span>
-                <input id="voiceQuestionInput" type="text" autocomplete="off" placeholder="Ask about setup, grid, hedge, VWAP, funding..." />
+                <input id="voiceQuestionInput" type="text" autocomplete="off" placeholder="Ask about signal quality, VWAP, funding..." />
               </label>
               <div class="voice-actions">
                 <button id="voiceRecordButton" type="button">Record</button>
@@ -481,7 +479,7 @@
               </label>
               <label class="copilot-question">
                 <span>Ask Copilot</span>
-                <input id="copilotQuestionInput" type="text" autocomplete="off" placeholder="Ask for setup, risk, grid steps, hedge, or invalidation..." />
+                <input id="copilotQuestionInput" type="text" autocomplete="off" placeholder="Ask for risk, funding, liquidity, or market context..." />
               </label>
               <button id="copilotAskButton" type="button">Ask</button>
             </div>
@@ -506,6 +504,6 @@
     </div>
     <script src="https://cdn.ably.com/lib/ably.min-2.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="./coinglass-dashboard.js?v=20260623-native-gold-indicators"></script>
+    <script src="./coinglass-dashboard.js?v=20260629-crypto-only"></script>
   </body>
 </html>
