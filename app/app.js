@@ -2165,6 +2165,75 @@ function structuredSignalFromHealth(health, mark) {
   return lastStructuredSignal;
 }
 
+function backendSignalFromSnapshot(snapshot, mark, orders = []) {
+  const backendSignals = Array.isArray(snapshot?.signals) ? snapshot.signals : [];
+  const candidates = backendSignals
+    .filter((signal) => String(signal.symbol || "").toUpperCase() === selectedAsset)
+    .filter((signal) => ["BUY", "SELL"].includes(String(signal.action || "").toUpperCase()))
+    .filter((signal) => Number.isFinite(Number(signal.entry)) && Number(signal.entry) > 0)
+    .sort((left, right) => {
+      const leftDistance = Number(left.distancePct);
+      const rightDistance = Number(right.distancePct);
+      return (Number.isFinite(leftDistance) ? leftDistance : 1) - (Number.isFinite(rightDistance) ? rightDistance : 1);
+    });
+  if (!candidates.length) return null;
+
+  const primary = candidates[0];
+  const action = String(primary.action || "").toUpperCase();
+  const direction = action === "SELL" ? "SHORT" : "LONG";
+  const entry = Number(primary.entry);
+  const liveMark = Number.isFinite(Number(mark)) && Number(mark) > 0 ? Number(mark) : Number(primary.markPrice || entry);
+  const oppositeSide = direction === "LONG" ? "sell" : "buy";
+  const oppositeOrders = (Array.isArray(orders) ? orders : [])
+    .filter((order) => String(order.side || "").toLowerCase() === oppositeSide)
+    .map((order) => Number(order.price))
+    .filter((price) => Number.isFinite(price) && price > 0)
+    .sort((left, right) => Math.abs(left - entry) - Math.abs(right - entry));
+  const riskDistance = Math.max(Math.abs(liveMark - entry), entry * 0.004);
+  const stop = direction === "LONG" ? entry - riskDistance : entry + riskDistance;
+  const targetOne =
+    oppositeOrders[0] ||
+    (direction === "LONG"
+      ? Math.max(liveMark, entry + riskDistance * 1.35)
+      : Math.min(liveMark, entry - riskDistance * 1.35));
+  const targetTwo =
+    oppositeOrders[1] ||
+    (direction === "LONG" ? targetOne + riskDistance : targetOne - riskDistance);
+  const entryLevels = buildEntryLadder(direction, liveMark, entry, riskDistance, targetOne, selectedAsset);
+  const confidence = Math.max(50, Math.min(95, Number(primary.confidence || 68)));
+  const sourceState = String(primary.state || snapshot?.signalStatus?.state || "planned");
+
+  return {
+    cautions: [],
+    confidence,
+    direction,
+    entry,
+    entryLevels,
+    stop,
+    stopModel: stopLossModel(direction, entry, stop, riskDistance, riskDistance, selectedAsset, "Backend grid invalidation"),
+    targetOne,
+    targetTwo,
+    quiverContext: quiverSignalContext(direction),
+    reasons: [
+      `${String(snapshot?.mode || "backend").toUpperCase()} backend generated ${sourceState} grid signal`,
+      `${action} liquidity level ${primary.level || primary.id || "grid"} near ${money(entry)}`,
+      `signal status ${snapshot?.signalStatus?.state || "generated"}`,
+      primary.rationale || "backend grid order selected as nearest actionable setup"
+    ],
+    thesis: `${action} setup from live backend grid. Nearest ${sourceState} level is ${money(entry)} with ${confidence}% confidence.`,
+    tradingViewConfluence: {
+      detail: "Backend grid signal is controlling the displayed setup.",
+      status: "backend"
+    },
+    trigger: `${action} grid level active near ${money(entry)}`,
+    trendGrid: {
+      edge: direction === "LONG" ? 1 : -1,
+      longScore: direction === "LONG" ? confidence : 0,
+      shortScore: direction === "SHORT" ? confidence : 0
+    }
+  };
+}
+
 function hasExecutableSignalLevels(signal) {
   const direction = String(signal?.direction || "");
   const entry = Number(signal?.entry);
@@ -2296,7 +2365,7 @@ function renderStrategyReadout(orders, options = {}) {
           ? "Backend signal state"
           : "Signal preview";
   const warningText = health.warnings.length ? health.warnings.join(" · ") : "structure, context, session, and doctrine are aligned";
-  const signal = structuredSignalFromHealth(health, mark);
+  const signal = backendSignalFromSnapshot(options.snapshot, mark, orders) || structuredSignalFromHealth(health, mark);
   const timing = signalTiming(selectedAsset);
   const thesis = setupWaitDetail(health, signal, timing);
   const trustSummary = signalTrustSummary(signal, health, timing);
