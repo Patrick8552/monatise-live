@@ -88,6 +88,28 @@ def test_live_snapshot_exposes_readiness_checklist() -> None:
     assert snapshot["wealthCommand"]["primaryBlock"]
 
 
+def test_live_snapshot_generates_planned_signals_before_orders_rest() -> None:
+    service = TradingService(
+        RuntimeConfig(
+            mode="live",
+            network="mainnet",
+            symbol="BTC",
+            signal_session_window="always",
+            max_daily_loss=100,
+            max_base_inventory=1,
+        )
+    )
+    service._adapter = FakeMarketAdapter()
+
+    snapshot = service.snapshot()
+
+    assert not snapshot["running"]
+    assert snapshot["openOrders"] == []
+    assert snapshot["signalStatus"]["state"] == "generated"
+    assert snapshot["signals"]
+    assert {signal["state"] for signal in snapshot["signals"]} == {"planned"}
+
+
 def test_client_drawdown_percentage_sets_daily_loss_limit() -> None:
     service = TradingService(
         RuntimeConfig(mode="paper", leverage=10, max_daily_loss=1, max_daily_loss_pct=0.12, max_total_notional=150)

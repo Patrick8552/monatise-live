@@ -139,6 +139,7 @@ class TradingService:
     def _snapshot_unlocked(self) -> dict:
         mark = self.state.mark_price or self._paper_candles[0].open
         risk_snapshot = self.risk.snapshot(self.state.open_orders, self.portfolio, mark)
+        self.state.session_guard = self._session_guard()
         signals = self._signals_from_orders(mark, risk_snapshot)
         return {
             "running": self.state.running,
@@ -202,17 +203,19 @@ class TradingService:
         if self.risk.kill_switch:
             return []
 
+        source_orders = self.state.open_orders or self._planned_signal_orders(mark)
         signals = []
-        for order in self.state.open_orders:
+        for order in source_orders:
             distance_pct = abs(order.price - mark) / mark if mark > 0 else 0.0
             side = order.side.value.upper()
+            resting = bool(self.state.open_orders)
             signals.append(
                 {
                     "id": order.order_id,
                     "symbol": order.symbol,
                     "action": side,
                     "side": order.side.value,
-                    "state": "resting" if self.config.live_enabled else "planned",
+                    "state": "resting" if resting and self.config.live_enabled else "planned",
                     "entry": order.price,
                     "quantity": order.quantity,
                     "notional": order.notional,
@@ -229,6 +232,19 @@ class TradingService:
                 }
             )
         return signals
+
+    def _planned_signal_orders(self, mark: float) -> list[Order]:
+        if mark <= 0:
+            return []
+        try:
+            orders = self.harvester.plan_orders(self.portfolio, mark)
+        except Exception as error:  # noqa: BLE001
+            self._event("warn", f"signal preview unavailable: {error}")
+            return []
+        decision = self.risk.check_batch(orders, self.portfolio, mark)
+        if not decision.allowed:
+            return []
+        return orders
 
     def _signal_confidence(self, distance_pct: float, risk_snapshot) -> int:  # noqa: ANN001
         risk_usage = (
