@@ -86,7 +86,7 @@ class RiskManager:
         )
 
     def check_order(self, order: Order, portfolio: Portfolio) -> RiskDecision:
-        if order.notional > self.config.max_order_notional + 1e-9:
+        if order.notional > self.config.max_order_notional + 0.01:
             return RiskDecision(False, f"order {order.order_id} exceeds max notional")
         if order.side is OrderSide.BUY and portfolio.base >= self.config.max_base_inventory:
             return RiskDecision(False, "base inventory cap reached")

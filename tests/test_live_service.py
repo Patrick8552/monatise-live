@@ -110,6 +110,29 @@ def test_live_snapshot_generates_planned_signals_before_orders_rest() -> None:
     assert {signal["state"] for signal in snapshot["signals"]} == {"planned"}
 
 
+def test_live_snapshot_trims_planned_signals_to_total_risk_cap() -> None:
+    service = TradingService(
+        RuntimeConfig(
+            mode="live",
+            network="mainnet",
+            symbol="BTC",
+            signal_session_window="always",
+            order_quote_size=25,
+            max_order_notional=25,
+            max_total_notional=150,
+            max_daily_loss=100,
+            max_base_inventory=1,
+        )
+    )
+    service._adapter = FakeMarketAdapter()
+
+    snapshot = service.snapshot()
+
+    assert snapshot["signalStatus"]["state"] == "generated"
+    assert 1 <= len(snapshot["signals"]) <= 6
+    assert sum(signal["notional"] for signal in snapshot["signals"]) <= 150
+
+
 def test_client_drawdown_percentage_sets_daily_loss_limit() -> None:
     service = TradingService(
         RuntimeConfig(mode="paper", leverage=10, max_daily_loss=1, max_daily_loss_pct=0.12, max_total_notional=150)

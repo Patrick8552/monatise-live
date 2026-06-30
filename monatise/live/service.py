@@ -241,10 +241,25 @@ class TradingService:
         except Exception as error:  # noqa: BLE001
             self._event("warn", f"signal preview unavailable: {error}")
             return []
+        orders = self._orders_within_risk_budget(orders, mark)
         decision = self.risk.check_batch(orders, self.portfolio, mark)
         if not decision.allowed:
             return []
         return orders
+
+    def _orders_within_risk_budget(self, orders: list[Order], mark: float) -> list[Order]:
+        budgeted: list[Order] = []
+        total_notional = 0.0
+        for order in sorted(orders, key=lambda item: abs(item.price - mark)):
+            decision = self.risk.check_order(order, self.portfolio)
+            if not decision.allowed:
+                continue
+            next_total = total_notional + order.notional
+            if next_total > self.config.max_total_notional + 1e-9:
+                continue
+            budgeted.append(order)
+            total_notional = next_total
+        return budgeted
 
     def _signal_confidence(self, distance_pct: float, risk_snapshot) -> int:  # noqa: ANN001
         risk_usage = (
@@ -485,7 +500,7 @@ class TradingService:
                 self._event("info", "refreshing stale live grid")
                 self.state.open_orders = []
                 self.state.exchange_order_ids = {}
-            orders = self.harvester.plan_orders(self.portfolio, mark)
+            orders = self._orders_within_risk_budget(self.harvester.plan_orders(self.portfolio, mark), mark)
             decision = self.risk.check_batch(orders, self.portfolio, mark)
             if not decision.allowed:
                 self._cancel_live_orders("risk guard cancel")
