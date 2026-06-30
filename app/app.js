@@ -3483,6 +3483,10 @@ async function showRecoveryPanel(show = true) {
         els.recoveryStatus.textContent = payload.error || "Could not send reset code.";
         return;
       }
+      if (payload.emailUnavailable) {
+        els.recoveryStatus.textContent = payload.message || "Reset email is unavailable. Use password login or the verified SMTP test email.";
+        return;
+      }
       els.recoveryStatus.textContent = payload.devResetCode
         ? `Development reset code: ${payload.devResetCode}`
         : payload.message || "If that email exists, a reset code has been sent.";
@@ -3602,6 +3606,12 @@ async function requestLoginCode() {
     const message = payload.devLoginCode
       ? `Development login code: ${payload.devLoginCode}`
       : payload.message || "If that email exists, a login code has been sent.";
+    if (payload.emailUnavailable) {
+      setAuthStatus("Email unavailable");
+      els.credentialStatus.textContent = message;
+      showLoginCodePanel(false);
+      return;
+    }
     setAuthStatus("Code sent");
     els.credentialStatus.textContent = "Use the email code to login on this device. Passwords are not stored or autofilled by Monatise.";
     showLoginCodePanel(true, message);

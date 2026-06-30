@@ -956,8 +956,15 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                     send_login_code(code.user.username, code.code)
                 except EmailDeliveryError as error:
                     if not expose_dev_reset_code():
-                        self._error(503, str(error))
-                        return
+                        response["emailUnavailable"] = True
+                        response["message"] = (
+                            "Email delivery is not available for this address right now. "
+                            "Use password login, or use the verified test email on the SMTP account."
+                        )
+                    else:
+                        response["devLoginCode"] = code.code
+                else:
+                    response["emailUnavailable"] = False
                 if expose_dev_reset_code():
                     response["devLoginCode"] = code.code
             self._json(response)
@@ -986,8 +993,15 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                     send_password_reset_code(reset.user.username, reset.code)
                 except EmailDeliveryError as error:
                     if not expose_dev_reset_code():
-                        self._error(503, str(error))
-                        return
+                        response["emailUnavailable"] = True
+                        response["message"] = (
+                            "Password reset email delivery is not available for this address right now. "
+                            "Use password login, or use the verified test email on the SMTP account."
+                        )
+                    else:
+                        response["devResetCode"] = reset.code
+                else:
+                    response["emailUnavailable"] = False
                 if expose_dev_reset_code():
                     response["devResetCode"] = reset.code
             self._json(response)

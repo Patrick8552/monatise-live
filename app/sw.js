@@ -1,4 +1,4 @@
-const CACHE_NAME = "monatise-shell-20260630-dollar-icon";
+const CACHE_NAME = "monatise-shell-20260630-auth-email-unavailable";
 const SHELL_ASSETS = [
   "./",
   "./index.html",
@@ -7,7 +7,7 @@ const SHELL_ASSETS = [
   "./game.html",
   "./coinglass-dashboard.html?v=20260617-trader-mode",
   "./styles.css?v=20260629-crypto-trainer",
-  "./app.js?v=20260629-crypto-trainer",
+  "./app.js?v=20260630-auth-email-unavailable",
   "./spotify.js?v=20260629-request-access-fix",
   "./game.js?v=20260629-crypto-trainer",
   "./assets/payout-clients.svg",
