@@ -66,6 +66,11 @@ def test_live_tick_initializes_risk_baseline_from_live_mark() -> None:
     assert snapshot["executionMode"] == "dry_run"
     assert "risk" in snapshot
     assert snapshot["risk"]["max_daily_loss_pct"] > 0
+    assert snapshot["signalStatus"]["state"] == "generated"
+    assert snapshot["signalStatus"]["count"] == len(snapshot["signals"])
+    assert snapshot["signals"]
+    assert snapshot["signals"][0]["action"] in {"BUY", "SELL"}
+    assert snapshot["signals"][0]["state"] == "planned"
     assert snapshot["wealthCommand"]["score"] <= 100
     assert snapshot["wealthCommand"]["posture"] in {"Offensive", "Selective", "Cautious", "Defensive"}
 
@@ -129,6 +134,8 @@ def test_live_start_blocks_outside_london_new_york_signal_window() -> None:
         assert not snapshot["running"]
         assert snapshot["riskStatus"] == "signal window guard: signals generate only during London or New York"
         assert snapshot["sessionGuard"]["active"]
+        assert snapshot["signals"] == []
+        assert snapshot["signalStatus"]["state"] == "blocked"
     finally:
         service_module.signal_window_guard = original_guard
 
@@ -168,10 +175,13 @@ def test_stale_live_grid_cancels_exchange_orders_before_replace() -> None:
     first_ids = set(service.state.exchange_order_ids.values())
     service.state.last_order_refresh -= 1
     service._live_tick()
+    snapshot = service.snapshot()
 
     assert first_ids
     assert first_ids.issubset(set(adapter.cancelled))
     assert adapter.submitted == 2
+    assert snapshot["signalStatus"]["state"] == "generated"
+    assert {signal["state"] for signal in snapshot["signals"]} == {"resting"}
 
 
 def test_live_tick_cancels_orders_during_signal_window_guard() -> None:

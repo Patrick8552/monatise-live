@@ -139,6 +139,7 @@ class TradingService:
     def _snapshot_unlocked(self) -> dict:
         mark = self.state.mark_price or self._paper_candles[0].open
         risk_snapshot = self.risk.snapshot(self.state.open_orders, self.portfolio, mark)
+        signals = self._signals_from_orders(mark, risk_snapshot)
         return {
             "running": self.state.running,
             "mode": self.state.mode,
@@ -155,6 +156,8 @@ class TradingService:
                 "feePaid": self.portfolio.fee_paid,
             },
             "openOrders": [asdict(order) for order in self.state.open_orders],
+            "signals": signals,
+            "signalStatus": self._signal_status(signals),
             "fills": [asdict(fill) for fill in self.state.fills[-50:]],
             "events": [asdict(event) for event in self.state.events[-50:]],
             "liveReady": self.state.live_ready,
@@ -192,6 +195,67 @@ class TradingService:
             },
             "wealthCommand": self.wealth_command(mark, risk_snapshot),
         }
+
+    def _signals_from_orders(self, mark: float, risk_snapshot) -> list[dict]:  # noqa: ANN001
+        if self.state.session_guard.get("active"):
+            return []
+        if self.risk.kill_switch:
+            return []
+
+        signals = []
+        for order in self.state.open_orders:
+            distance_pct = abs(order.price - mark) / mark if mark > 0 else 0.0
+            side = order.side.value.upper()
+            signals.append(
+                {
+                    "id": order.order_id,
+                    "symbol": order.symbol,
+                    "action": side,
+                    "side": order.side.value,
+                    "state": "resting" if self.config.live_enabled else "planned",
+                    "entry": order.price,
+                    "quantity": order.quantity,
+                    "notional": order.notional,
+                    "level": order.level_id,
+                    "markPrice": mark,
+                    "distancePct": distance_pct,
+                    "confidence": self._signal_confidence(distance_pct, risk_snapshot),
+                    "executionMode": self.config.execution_mode,
+                    "rationale": (
+                        f"{side} liquidity level {order.level_id} is {distance_pct * 100:.2f}% "
+                        f"from the current {order.symbol} mark."
+                    ),
+                    "metadata": order.metadata,
+                }
+            )
+        return signals
+
+    def _signal_confidence(self, distance_pct: float, risk_snapshot) -> int:  # noqa: ANN001
+        risk_usage = (
+            float(risk_snapshot.open_order_notional) / float(risk_snapshot.max_total_notional)
+            if float(risk_snapshot.max_total_notional) > 0
+            else 1.0
+        )
+        score = 82
+        score -= min(22, round(distance_pct * 900))
+        score -= min(20, round(max(0.0, risk_usage - 0.5) * 40))
+        score -= min(18, round(float(risk_snapshot.drawdown_pct) * 140))
+        return max(35, min(95, score))
+
+    def _signal_status(self, signals: list[dict]) -> dict:
+        if self.state.session_guard.get("active"):
+            return {
+                "state": "blocked",
+                "reason": self.state.session_guard.get("message", "session guard"),
+                "count": 0,
+            }
+        if self.risk.kill_switch:
+            return {"state": "blocked", "reason": "kill switch is active", "count": 0}
+        if signals:
+            return {"state": "generated", "reason": "", "count": len(signals)}
+        if self.state.running:
+            return {"state": "waiting", "reason": self.state.risk_status, "count": 0}
+        return {"state": "idle", "reason": self.state.risk_status, "count": 0}
 
     def wealth_command(self, mark: float, risk_snapshot) -> dict:  # noqa: ANN001
         account_value = self._account_value()

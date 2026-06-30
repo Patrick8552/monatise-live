@@ -229,7 +229,7 @@ let candleCsvBuffer = sampleCsv;
 let tradingRules = {
   chartInterval: "1h",
   leverage: 10,
-  signalSessionWindow: "london_new_york",
+  signalSessionWindow: "always",
   londonCommodityOnly: true,
   maxDailyLossPct: 0.05,
   orderQuoteSize: 25,
@@ -3023,7 +3023,7 @@ function economicReleaseGuard(date = new Date()) {
 }
 
 function signalWindowGuard(date = new Date()) {
-  const window = tradingRules.signalSessionWindow || "london_new_york";
+  const window = tradingRules.signalSessionWindow || "always";
   if (window === "always") return { active: false, window };
   const sessions = signalWindowSessions();
   const openSessions = sessions.filter((session) => isSessionOpen(session, date));
@@ -3246,7 +3246,7 @@ function normalizedTradingRules(rules = {}) {
     leverage: 10,
     signalSessionWindow: ["london_new_york", "always"].includes(String(rules.signalSessionWindow || ""))
       ? String(rules.signalSessionWindow)
-      : "london_new_york",
+      : "always",
     londonCommodityOnly: rules.londonCommodityOnly !== false,
     maxDailyLossPct,
     orderQuoteSize,

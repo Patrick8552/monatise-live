@@ -52,7 +52,7 @@ def _minutes_until_hour(hour: int, moment: datetime | None = None) -> int:
     return (hour * 60 - now + 1440) % 1440
 
 
-def signal_window_guard(moment: datetime | None = None, window: str = "london_new_york") -> dict:
+def signal_window_guard(moment: datetime | None = None, window: str = "always") -> dict:
     if window == "always":
         return {"active": False, "window": window}
     if window != "london_new_york":

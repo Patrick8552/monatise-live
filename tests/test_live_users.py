@@ -250,7 +250,7 @@ def test_user_store_saves_startup_plan_trading_rules_on_free_access() -> None:
             assert settings.chart_interval == "30m"
             assert settings.leverage == 10
             assert settings.max_daily_loss_pct == 0.12
-            assert settings.signal_session_window == "london_new_york"
+            assert settings.signal_session_window == "always"
             assert settings.session_guard_minutes == 15
             assert not settings.stale_grid_cancel
             assert not settings.london_commodity_only

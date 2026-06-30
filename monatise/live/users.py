@@ -66,7 +66,7 @@ class UserSettings:
     subscription_plan: str = "free"
     subscription_status: str = "active"
     chart_interval: str = "1h"
-    signal_session_window: str = "london_new_york"
+    signal_session_window: str = "always"
     leverage: float = 10.0
     order_quote_size: float = 25.0
     max_order_notional: float = 25.0
@@ -460,7 +460,7 @@ class UserStore:
     ) -> UserSettings:
         settings = self.settings_for_user(user_id)
         chart_interval = chart_interval.strip()
-        signal_session_window = signal_session_window or "london_new_york"
+        signal_session_window = signal_session_window or "always"
         if chart_interval not in COINGLASS_STARTUP_INTERVALS:
             raise ValueError("chart interval must be 30m, 1h, 2h, 4h, 6h, 8h, 12h, 1d, or 1w")
         if signal_session_window not in {"london_new_york", "always"}:
@@ -577,7 +577,7 @@ class UserStore:
             subscription_plan=str(row["subscription_plan"]),
             subscription_status=str(row["subscription_status"]),
             chart_interval=str(row["chart_interval"] if row["chart_interval"] in COINGLASS_STARTUP_INTERVALS else "1h"),
-            signal_session_window=str(row["signal_session_window"] or "london_new_york"),
+            signal_session_window=str(row["signal_session_window"] or "always"),
             leverage=float(row["leverage"] or 10.0),
             order_quote_size=order_quote_size,
             max_order_notional=float(row["max_order_notional"] or row["order_quote_size"] or 25.0),
@@ -658,7 +658,7 @@ class UserStore:
                   subscription_plan text not null,
                   subscription_status text not null,
                   chart_interval text not null default '1h',
-                  signal_session_window text not null default 'london_new_york',
+                  signal_session_window text not null default 'always',
                   leverage real not null default 10,
                   order_quote_size real not null default 25,
                   max_order_notional real not null default 25,
@@ -688,7 +688,7 @@ class UserStore:
                 "spotify_playlist_url": "alter table user_settings add column spotify_playlist_url text not null default ''",
                 "spotify_playlist_embed_url": "alter table user_settings add column spotify_playlist_embed_url text not null default ''",
                 "chart_interval": "alter table user_settings add column chart_interval text not null default '1h'",
-                "signal_session_window": "alter table user_settings add column signal_session_window text not null default 'london_new_york'",
+                "signal_session_window": "alter table user_settings add column signal_session_window text not null default 'always'",
                 "leverage": "alter table user_settings add column leverage real not null default 10",
                 "order_quote_size": "alter table user_settings add column order_quote_size real not null default 25",
                 "max_order_notional": "alter table user_settings add column max_order_notional real not null default 25",
@@ -702,6 +702,9 @@ class UserStore:
             for column, statement in migrations.items():
                 if column not in existing:
                     conn.execute(statement)
+            conn.execute(
+                "update user_settings set signal_session_window = 'always' where signal_session_window = 'london_new_york'"
+            )
 
     @staticmethod
     def _validate_username_password(username: str, password: str) -> None:

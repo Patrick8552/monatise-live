@@ -35,7 +35,7 @@ class RuntimeConfig:
     order_refresh_seconds: float = 30.0
     session_guard_minutes: int = 60
     chart_interval: str = "1h"
-    signal_session_window: str = "london_new_york"
+    signal_session_window: str = "always"
     london_commodity_only: bool = False
     stale_grid_cancel: bool = True
     allow_live_orders: bool = False
@@ -80,7 +80,7 @@ class RuntimeConfig:
             order_refresh_seconds=float(os.getenv("MONATISE_ORDER_REFRESH_SECONDS", "30")),
             session_guard_minutes=int(os.getenv("MONATISE_SESSION_GUARD_MINUTES", "60")),
             chart_interval=os.getenv("MONATISE_CHART_INTERVAL", "1h"),
-            signal_session_window=os.getenv("MONATISE_SIGNAL_SESSION_WINDOW", "london_new_york"),
+            signal_session_window=os.getenv("MONATISE_SIGNAL_SESSION_WINDOW", "always"),
             london_commodity_only=False,
             stale_grid_cancel=os.getenv("MONATISE_STALE_GRID_CANCEL", "true").lower() == "true",
             allow_live_orders=os.getenv("MONATISE_ALLOW_LIVE_ORDERS", "false").lower() == "true",

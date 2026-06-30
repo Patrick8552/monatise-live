@@ -31,6 +31,8 @@ from monatise.live.service import JsonEncoder, TradingService
 from monatise.live.users import REMEMBERED_SESSION_SECONDS, SESSION_SECONDS, User, UserCredentials, UserStore, encryption_key_configured
 
 STOCK_WATCHLIST = ("SPX", "NDX", "NASDAQ", "QQQ", "SPY", "AAPL", "TSLA", "NVDA")
+METALS_WATCHLIST = {"GOLD", "XAU", "XAUUSD", "XAG", "XAGUSD", "SILVER"}
+FOREX_QUOTES = {"USD", "EUR", "GBP", "JPY", "CHF", "CAD", "AUD", "NZD"}
 TRADINGVIEW_ACTIONS = {
     "BUY": "BUY",
     "BULL": "BUY",
@@ -113,7 +115,15 @@ def _normalize_alert_symbol(value: str) -> str:
     if ":" in raw:
         raw = raw.rsplit(":", 1)[-1]
     symbol = "".join(character for character in raw if character.isalnum())
-    aliases = {"IXIC": "NASDAQ"}
+    aliases = {
+        "IXIC": "NASDAQ",
+        "XAU": "GOLD",
+        "XAUUSD": "GOLD",
+        "GOLDUSD": "GOLD",
+        "XAGUSD": "XAG",
+        "SILVER": "XAG",
+        "SILVERUSD": "XAG",
+    }
     if symbol in aliases:
         return aliases[symbol]
     crypto_bases = {"BTC", "ETH", "SOL", "HYPE", "BNB", "XRP", "DOGE"}
@@ -128,9 +138,22 @@ def _normalize_alert_action(value: str) -> str:
 
 
 def _tradingview_route(symbol: str) -> str:
+    symbol = str(symbol or "").upper().strip()
+    if symbol in METALS_WATCHLIST:
+        return "metals and commodities primary signal feed"
+    if _is_forex_symbol(symbol):
+        return "forex primary signal feed"
     if symbol in STOCK_WATCHLIST:
         return "stocks and indices primary signal feed"
     return "crypto confluence feed"
+
+
+def _is_forex_symbol(symbol: str) -> bool:
+    if len(symbol) != 6 or not symbol.isalpha():
+        return False
+    base = symbol[:3]
+    quote = symbol[3:]
+    return base in FOREX_QUOTES and quote in FOREX_QUOTES and base != quote
 
 
 def _float_payload(payload: dict, *keys: str) -> float | None:
@@ -1083,7 +1106,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                 settings = self.store.save_trading_rules(
                     user.id,
                     chart_interval=str(payload.get("chartInterval", "")),
-                    signal_session_window=str(payload.get("signalSessionWindow", "london_new_york")),
+                    signal_session_window=str(payload.get("signalSessionWindow", "always")),
                     london_commodity_only=False,
                     max_daily_loss_pct=float(payload.get("maxDailyLossPct", 0.05)),
                     session_guard_minutes=int(payload.get("sessionGuardMinutes", 60)),

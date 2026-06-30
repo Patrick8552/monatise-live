@@ -107,6 +107,8 @@ services:
         value: 250
       - key: MONATISE_ORDER_REFRESH_SECONDS
         value: 30
+      - key: MONATISE_SIGNAL_SESSION_WINDOW
+        value: always
       - key: MONATISE_ALLOW_LIVE_ORDERS
         value: true
       - key: MONATISE_LIVE_CONFIRMATION

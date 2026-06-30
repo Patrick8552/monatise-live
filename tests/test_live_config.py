@@ -51,6 +51,17 @@ def test_total_notional_defaults_to_trading_capital() -> None:
 
     assert config.max_total_notional == 25_000
     assert config.leverage == 10
+    assert config.signal_session_window == "always"
+
+
+def test_env_signal_window_defaults_to_always() -> None:
+    old_window = os.environ.get("MONATISE_SIGNAL_SESSION_WINDOW")
+    os.environ.pop("MONATISE_SIGNAL_SESSION_WINDOW", None)
+    try:
+        config = RuntimeConfig.from_env()
+        assert config.signal_session_window == "always"
+    finally:
+        _restore_env("MONATISE_SIGNAL_SESSION_WINDOW", old_window)
 
 
 def test_total_notional_env_override_is_respected() -> None:
