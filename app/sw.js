@@ -1,4 +1,4 @@
-const CACHE_NAME = "monatise-shell-20260629-crypto-trainer";
+const CACHE_NAME = "monatise-shell-20260630-dollar-icon";
 const SHELL_ASSETS = [
   "./",
   "./index.html",
@@ -13,7 +13,7 @@ const SHELL_ASSETS = [
   "./assets/payout-clients.svg",
   "./coinglass-dashboard.css?v=20260617-trader-mode",
   "./coinglass-dashboard.js?v=20260617-trader-mode",
-  "./manifest.webmanifest?v=20260616-dashboard-install",
+  "./manifest.webmanifest?v=20260630-dollar-icon",
   "./icon-lotus.svg"
 ];
 
