@@ -18,6 +18,7 @@ const CRYPTO_ANALYSIS_INTERVALS = ["15m", "5m"];
 const CRYPTO_PRIMARY_ANALYSIS_INTERVAL = "15m";
 const CRYPTO_CONFIRMATION_INTERVAL = "5m";
 const DEFAULT_VIEW_INTERVAL = "1h";
+const MIN_CONTEXT_SIGNAL_CONFIDENCE = 50;
 const MIN_ENTRY_NOTIFICATION_CONFIDENCE = 65;
 const MIN_ENTRY_NOTIFICATION_CHECKS = 6;
 const ASSET_DEFINITIONS = [
@@ -789,18 +790,18 @@ function evaluateLiveAlerts(setup) {
   }
   state.realtime.lastSetup = setupSignature;
 
-  const entryReady = setup.tradeReady
+  const entryReady = setup.contextSignalReady
     && setup.direction !== "WAIT"
-    && setup.confidence >= MIN_ENTRY_NOTIFICATION_CONFIDENCE
+    && setup.contextConfidence >= MIN_CONTEXT_SIGNAL_CONFIDENCE
     && setup.liveChecks >= MIN_ENTRY_NOTIFICATION_CHECKS;
   const entrySignature = `${asset}:${setup.direction}:${Math.floor(Date.now() / 300000)}`;
   if (entryReady && state.realtime.lastEntrySignal !== entrySignature) {
     state.realtime.lastEntrySignal = entrySignature;
     pushLiveAlert({
-      kind: "entry notification",
+      kind: setup.tradeReady ? "entry notification" : "context signal",
       asset,
-      title: `${asset} ${setup.direction} entry window`,
-      detail: `${setup.gridDirection}. ${setup.gridPlan}`,
+      title: `${asset} ${setup.direction} ${setup.tradeReady ? "entry window" : "context signal"}`,
+      detail: `Context strength ${setup.contextConfidence}%. ${setup.gridDirection}. ${setup.gridPlan}`,
       payload: setup
     });
   }
@@ -1150,7 +1151,7 @@ function dynamicInvalidationPlan(action, entry, mark) {
 }
 
 function buildGeneratedSignal(setup, price, vwap) {
-  const setupAction = setup.tradeReady && setup.direction === "BUY SETUP" ? "BUY" : setup.tradeReady && setup.direction === "SELL SETUP" ? "SELL" : "WAIT";
+  const setupAction = setup.contextSignalReady && setup.direction === "BUY SETUP" ? "BUY" : setup.contextSignalReady && setup.direction === "SELL SETUP" ? "SELL" : "WAIT";
   const atrPct = averageTrueRangePercent(state.priceSeries.slice(-24)) || 0.6;
   const riskPct = Math.max(0.35, Math.min(1.6, atrPct * 1.15));
   const spacingPct = Math.max(0.12, Math.min(0.55, riskPct / 3));
@@ -1205,6 +1206,8 @@ function buildGeneratedSignal(setup, price, vwap) {
         : actionBlocked
           ? `No trade: dynamic stop is too wide for ${setup.asset}. Use small lot size only if a later setup becomes tradable; otherwise wait for a closer structural sweep or lower ATR.`
           : `No ${setupAction} entry yet. Wait for the full framework sequence: liquidity sweep, rejection, CHoCH/BOS, retest, confirmation candle, then grid validation.`
+      : !setup.tradeReady
+        ? `${executableAction} context signal at ${formatUsd(executableEntry)}; context strength ${setup.contextConfidence}%. Framework entry is still pending: ${setup.frameworkGate?.summary || "waiting for the full sequence."}`
       : invalidationPlan.reducedSize
         ? `${executableAction} maneuver entry ${formatUsd(executableEntry)}; use small lot size, keep the wider invalidation, and hold account risk constant. First target ${formatUsd(target)}.`
         : `${executableAction} pullback entry ${formatUsd(executableEntry)}; first target ${formatUsd(target)}.`,
@@ -1225,6 +1228,8 @@ function buildGeneratedSignal(setup, price, vwap) {
         ? `${setup.direction} maneuver · small lot size · wider stop accepted · context strength ${setup.contextConfidence ?? setup.confidence}% · score ${setup.score >= 0 ? "+" : ""}${setup.score}`
       : setupAction === "WAIT"
         ? `${displayFrameworkDirection(setup.direction)} · context strength ${setup.contextConfidence ?? setup.confidence}% · score ${setup.score >= 0 ? "+" : ""}${setup.score}`
+        : !setup.tradeReady
+          ? `${setup.direction} · context strength ${setup.contextConfidence ?? setup.confidence}% · framework pending · score ${setup.score >= 0 ? "+" : ""}${setup.score}`
         : `${setup.direction} · probability ${setup.confidence}% · score ${setup.score >= 0 ? "+" : ""}${setup.score}`,
     evidence: bestChecks.length ? bestChecks.join(" · ") : "Framework checks are still warming up.",
     time: new Date().toLocaleTimeString()
@@ -3322,30 +3327,31 @@ function applyMonatiseFramework() {
   const contextConfidence = Math.min(100, Math.round((Math.abs(score) / 6) * 100 + liveChecks * 5));
   const direction = score >= 2 ? "BUY SETUP" : score <= -2 ? "SELL SETUP" : "WAIT";
   const frameworkGate = currentFrameworkGate(direction, contextConfidence, liveChecks);
-  const confidence = frameworkGate.ready ? contextConfidence : 0;
+  const contextSignalReady = direction !== "WAIT" && contextConfidence >= MIN_CONTEXT_SIGNAL_CONFIDENCE;
+  const confidence = contextSignalReady ? contextConfidence : 0;
   const hedge = hedgeFromCoinGlass({ direction, score, confidence: contextConfidence, market: m });
 
   els.frameworkSource.textContent = usesCryptoMultiFrame(asset)
     ? `${asset.coin} selected · selected crypto multi-timeframe context + CoinGlass/Hyperliquid context`
     : `${asset.coin} selected · Native indicator stack + market candles + CoinGlass/Hyperliquid context`;
-  els.setupDirection.textContent = frameworkGate.ready ? direction : displayFrameworkDirection("WAIT");
-  els.setupDirection.className = frameworkGate.ready && direction.includes("BUY") ? "positive" : frameworkGate.ready && direction.includes("SELL") ? "negative" : "";
-  els.setupConfidence.textContent = frameworkGate.ready ? `probability ${confidence}%` : "probability n/a";
+  els.setupDirection.textContent = contextSignalReady ? direction : displayFrameworkDirection("WAIT");
+  els.setupDirection.className = contextSignalReady && direction.includes("BUY") ? "positive" : contextSignalReady && direction.includes("SELL") ? "negative" : "";
+  els.setupConfidence.textContent = contextSignalReady ? `context strength ${confidence}%` : `context strength < ${MIN_CONTEXT_SIGNAL_CONFIDENCE}%`;
   els.frameworkChecks.textContent = `${liveChecks} / ${checks.length}`;
-  els.frameworkBias.textContent = `${frameworkGate.ready ? "Ready" : "No Trade"} · Context strength ${contextConfidence}% · Score ${score >= 0 ? "+" : ""}${score} from ${checks.length} checks`;
-  els.setupReason.textContent = `${frameworkGate.summary} ${checks.map((check) => `${check.name}: ${check.detail}`).join(" · ")}`;
+  els.frameworkBias.textContent = `${frameworkGate.ready ? "Entry Ready" : contextSignalReady ? "Context Signal" : "No Trade"} · Context strength ${contextConfidence}% · Score ${score >= 0 ? "+" : ""}${score} from ${checks.length} checks`;
+  els.setupReason.textContent = `${contextSignalReady && !frameworkGate.ready ? `Context signal active from ${MIN_CONTEXT_SIGNAL_CONFIDENCE}-100% strength. ` : ""}${frameworkGate.summary} ${checks.map((check) => `${check.name}: ${check.detail}`).join(" · ")}`;
 
   let gridDirection = `Neutral grid ${asset.coin}`;
   let gridPlan = "Use small two-sided grid or wait until funding/OI/liquidation checks align.";
   let hedgeDirection = hedge.direction;
   let hedgePlan = hedge.plan;
 
-  if (frameworkGate.ready && direction === "BUY SETUP") {
+  if (contextSignalReady && direction === "BUY SETUP") {
     gridDirection = `Buy grid ${asset.coin}`;
-    gridPlan = gridPlanForResearch("buy", m.scaleAction, m.vwapSignal);
-  } else if (frameworkGate.ready && direction === "SELL SETUP") {
+    gridPlan = frameworkGate.ready ? gridPlanForResearch("buy", m.scaleAction, m.vwapSignal) : `Context signal active at ${contextConfidence}%. ${frameworkGate.summary}`;
+  } else if (contextSignalReady && direction === "SELL SETUP") {
     gridDirection = `Sell grid ${asset.coin}`;
-    gridPlan = gridPlanForResearch("sell", m.scaleAction, m.vwapSignal);
+    gridPlan = frameworkGate.ready ? gridPlanForResearch("sell", m.scaleAction, m.vwapSignal) : `Context signal active at ${contextConfidence}%. ${frameworkGate.summary}`;
   } else {
     gridPlan = frameworkGate.summary;
   }
@@ -3362,6 +3368,8 @@ function applyMonatiseFramework() {
     confidence,
     contextConfidence,
     frameworkGate,
+    contextSignalReady,
+    frameworkReady: frameworkGate.ready,
     tradeReady: frameworkGate.ready,
     liveChecks,
     score,
