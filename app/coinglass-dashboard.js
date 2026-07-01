@@ -756,11 +756,19 @@ function pushLiveAlert(event, shouldPublish = true) {
   state.realtime.events.unshift(item);
   state.realtime.events = state.realtime.events.slice(0, 40);
   renderLiveAlerts();
-  if (shouldPublish && state.realtime.channel) {
-    state.realtime.channel.publish("monatise-alert", item).catch((error) => {
+  if (!shouldPublish) return;
+  if (state.realtime.channel) {
+    state.realtime.channel.publish("monatise-alert", item).then(() => {
+      setLiveAlertStatus(`Signal routed · ${state.realtime.channelName}`);
+      recordTelemetry("Publish alert", "Ably", true, 0, item.kind);
+    }).catch((error) => {
       recordTelemetry("Publish alert", "Ably", false, 0, error.message);
       setLiveAlertStatus(`Ably publish failed · ${error.message}`);
     });
+  } else {
+    const reason = state.realtime.key ? "Ably channel not connected" : "local dashboard route";
+    setLiveAlertStatus(`Signal routed locally · ${item.kind}`);
+    recordTelemetry("Publish alert", "Local", true, 0, reason);
   }
 }
 

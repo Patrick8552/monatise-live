@@ -1,4 +1,4 @@
-const CACHE_NAME = "monatise-shell-20260701-auth-button-state";
+const CACHE_NAME = "monatise-shell-20260701-signal-routing";
 const SHELL_ASSETS = [
   "./",
   "./index.html",
@@ -12,7 +12,7 @@ const SHELL_ASSETS = [
   "./game.js?v=20260629-crypto-trainer",
   "./assets/payout-clients.svg",
   "./coinglass-dashboard.css?v=20260617-trader-mode",
-  "./coinglass-dashboard.js?v=20260617-trader-mode",
+  "./coinglass-dashboard.js?v=20260701-signal-routing",
   "./manifest.webmanifest?v=20260630-dollar-icon",
   "./icon-lotus.svg"
 ];
