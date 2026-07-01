@@ -3434,6 +3434,8 @@ function renderAuth(me) {
   window.MonatiseSpotify?.renderSpotifyPanel(loggedIn ? me : null, els.spotifyPanel);
   els.backendStartButton.disabled = !loggedIn || !me.credentialsConfigured;
   els.backendStopButton.disabled = !loggedIn;
+  els.loginButton.disabled = loggedIn;
+  els.registerButton.disabled = loggedIn;
   els.emailLoginCodeButton.disabled = loggedIn;
   els.completeLoginCodeButton.disabled = loggedIn;
   if (loggedIn) els.loginCodePanel.hidden = true;
@@ -3523,6 +3525,11 @@ async function loadMe() {
 }
 
 async function loginOrRegister(path) {
+  if (currentUser.authenticated) {
+    renderAuth(currentUser);
+    els.credentialStatus.textContent = `Already logged in as ${currentUser.username || "this profile"}.`;
+    return;
+  }
   const username = els.usernameInput.value.trim();
   const password = els.passwordInput.value;
   const isRegister = path.includes("register");
@@ -3600,7 +3607,7 @@ async function loginOrRegister(path) {
     setAuthStatus("Auth request failed");
     els.credentialStatus.textContent = "Network request failed. Try again.";
   } finally {
-    actionButton.disabled = false;
+    actionButton.disabled = Boolean(currentUser.authenticated);
     actionButton.textContent = isRegister ? "Request Access" : "Login";
   }
 }
