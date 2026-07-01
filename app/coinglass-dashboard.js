@@ -783,7 +783,7 @@ function evaluateLiveAlerts(setup) {
       kind: "state change",
       asset,
       title: `${asset} setup changed to ${setup.direction}`,
-      detail: `${setup.gridDirection}; ${setup.hedgeDirection}. Confidence ${setup.confidence}%.`,
+      detail: `${setup.gridDirection}; ${setup.hedgeDirection}. Context strength ${setup.contextConfidence ?? setup.confidence}%.`,
       payload: setup
     });
   }
@@ -1188,6 +1188,7 @@ function buildGeneratedSignal(setup, price, vwap) {
       : invalidationPlan.reducedSize
         ? Math.min(setup.confidence, 55)
         : setup.confidence,
+    contextConfidence: setup.contextConfidence ?? setup.confidence,
     score: setup.score,
     liveChecks: setup.liveChecks,
     checksTotal: setup.checks.length,
@@ -1219,12 +1220,12 @@ function buildGeneratedSignal(setup, price, vwap) {
     gridHedge: `Buys ${formatGridLevels(buyGrid)}; sells ${formatGridLevels(sellGrid)}; ${setup.hedgeDirection}`,
     gridHedgePlan: `${setup.gridPlan} ${setup.hedgePlan}`,
     thesis: actionBlocked
-      ? `${setup.direction} blocked · dynamic stop too wide · score ${setup.score >= 0 ? "+" : ""}${setup.score}`
+      ? `${setup.direction} blocked · dynamic stop too wide · context strength ${setup.contextConfidence ?? setup.confidence}% · score ${setup.score >= 0 ? "+" : ""}${setup.score}`
       : invalidationPlan.reducedSize
-        ? `${setup.direction} maneuver · small lot size · wider stop accepted · score ${setup.score >= 0 ? "+" : ""}${setup.score}`
+        ? `${setup.direction} maneuver · small lot size · wider stop accepted · context strength ${setup.contextConfidence ?? setup.confidence}% · score ${setup.score >= 0 ? "+" : ""}${setup.score}`
       : setupAction === "WAIT"
-        ? `${displayFrameworkDirection(setup.direction)} · confidence ${setup.confidence}% · score ${setup.score >= 0 ? "+" : ""}${setup.score}`
-        : `${setup.direction} · confidence ${setup.confidence}% · score ${setup.score >= 0 ? "+" : ""}${setup.score}`,
+        ? `${displayFrameworkDirection(setup.direction)} · context strength ${setup.contextConfidence ?? setup.confidence}% · score ${setup.score >= 0 ? "+" : ""}${setup.score}`
+        : `${setup.direction} · probability ${setup.confidence}% · score ${setup.score >= 0 ? "+" : ""}${setup.score}`,
     evidence: bestChecks.length ? bestChecks.join(" · ") : "Framework checks are still warming up.",
     time: new Date().toLocaleTimeString()
   };
@@ -3318,19 +3319,20 @@ function applyMonatiseFramework() {
 
   const liveChecks = checks.filter((check) => check.live).length;
   const score = checks.reduce((sum, check) => sum + check.score, 0);
-  const confidence = Math.min(100, Math.round((Math.abs(score) / 6) * 100 + liveChecks * 5));
+  const contextConfidence = Math.min(100, Math.round((Math.abs(score) / 6) * 100 + liveChecks * 5));
   const direction = score >= 2 ? "BUY SETUP" : score <= -2 ? "SELL SETUP" : "WAIT";
-  const frameworkGate = currentFrameworkGate(direction, confidence, liveChecks);
-  const hedge = hedgeFromCoinGlass({ direction, score, confidence, market: m });
+  const frameworkGate = currentFrameworkGate(direction, contextConfidence, liveChecks);
+  const confidence = frameworkGate.ready ? contextConfidence : 0;
+  const hedge = hedgeFromCoinGlass({ direction, score, confidence: contextConfidence, market: m });
 
   els.frameworkSource.textContent = usesCryptoMultiFrame(asset)
     ? `${asset.coin} selected · selected crypto multi-timeframe context + CoinGlass/Hyperliquid context`
     : `${asset.coin} selected · Native indicator stack + market candles + CoinGlass/Hyperliquid context`;
   els.setupDirection.textContent = frameworkGate.ready ? direction : displayFrameworkDirection("WAIT");
   els.setupDirection.className = frameworkGate.ready && direction.includes("BUY") ? "positive" : frameworkGate.ready && direction.includes("SELL") ? "negative" : "";
-  els.setupConfidence.textContent = `confidence ${confidence}%`;
+  els.setupConfidence.textContent = frameworkGate.ready ? `probability ${confidence}%` : "probability n/a";
   els.frameworkChecks.textContent = `${liveChecks} / ${checks.length}`;
-  els.frameworkBias.textContent = `${frameworkGate.ready ? "Ready" : "No Trade"} · Score ${score >= 0 ? "+" : ""}${score} from ${checks.length} checks`;
+  els.frameworkBias.textContent = `${frameworkGate.ready ? "Ready" : "No Trade"} · Context strength ${contextConfidence}% · Score ${score >= 0 ? "+" : ""}${score} from ${checks.length} checks`;
   els.setupReason.textContent = `${frameworkGate.summary} ${checks.map((check) => `${check.name}: ${check.detail}`).join(" · ")}`;
 
   let gridDirection = `Neutral grid ${asset.coin}`;
@@ -3358,6 +3360,7 @@ function applyMonatiseFramework() {
     asset: asset.coin,
     direction,
     confidence,
+    contextConfidence,
     frameworkGate,
     tradeReady: frameworkGate.ready,
     liveChecks,

@@ -1,4 +1,4 @@
-const CACHE_NAME = "monatise-shell-20260701-current-framework";
+const CACHE_NAME = "monatise-shell-20260701-framework-probability";
 const SHELL_ASSETS = [
   "./",
   "./cg.html",
@@ -11,7 +11,7 @@ const SHELL_ASSETS = [
   "./game.js?v=20260629-crypto-trainer",
   "./assets/payout-clients.svg",
   "./coinglass-dashboard.css?v=20260701-market-icon",
-  "./coinglass-dashboard.js?v=20260701-current-framework",
+  "./coinglass-dashboard.js?v=20260701-framework-probability",
   "./manifest.webmanifest?v=20260701-yin-yang-icon",
   "./icon.svg?v=20260701-yin-yang-icon"
 ];
