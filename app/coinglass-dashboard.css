@@ -113,6 +113,17 @@ button:hover {
   color: var(--text);
 }
 
+.dashboard-nav .telegram-link {
+  border-color: rgba(255, 215, 106, 0.55);
+  color: #f6d985;
+}
+
+.dashboard-nav .telegram-link:hover {
+  background: rgba(255, 215, 106, 0.14);
+  border-color: rgba(255, 215, 106, 0.82);
+  color: #fff4c7;
+}
+
 .eyebrow,
 .market-title p,
 .panel-head p,

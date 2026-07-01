@@ -10,7 +10,7 @@ const SHELL_ASSETS = [
   "./spotify.js?v=20260629-request-access-fix",
   "./game.js?v=20260629-crypto-trainer",
   "./assets/payout-clients.svg",
-  "./coinglass-dashboard.css?v=20260701-install-nav",
+  "./coinglass-dashboard.css?v=20260701-telegram-gold",
   "./coinglass-dashboard.js?v=20260701-context-signal-tp",
   "./manifest.webmanifest?v=20260701-yinyang-png",
   "./icon.svg?v=20260701-yinyang-png",
