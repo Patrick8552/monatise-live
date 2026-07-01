@@ -18,6 +18,9 @@ const CRYPTO_ANALYSIS_INTERVALS = ["15m", "5m"];
 const CRYPTO_PRIMARY_ANALYSIS_INTERVAL = "15m";
 const CRYPTO_CONFIRMATION_INTERVAL = "5m";
 const DEFAULT_VIEW_INTERVAL = "1h";
+const MIN_DIRECTIONAL_SIGNAL_CONFIDENCE = 50;
+const MIN_ENTRY_NOTIFICATION_CONFIDENCE = 50;
+const MIN_ENTRY_NOTIFICATION_CHECKS = 4;
 const ASSET_DEFINITIONS = [
   "BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "ADA", "AVAX", "LINK", "TRX", "TON", "DOT", "BCH", "LTC", "UNI", "NEAR",
   "APT", "ICP", "ETC", "ATOM", "FIL", "ARB", "OP", "SUI", "SEI", "INJ", "TIA", "WLD", "AAVE", "MKR", "RUNE", "GRT",
@@ -787,7 +790,9 @@ function evaluateLiveAlerts(setup) {
   }
   state.realtime.lastSetup = setupSignature;
 
-  const entryReady = setup.direction !== "WAIT" && setup.confidence >= 55 && setup.liveChecks >= 5;
+  const entryReady = setup.direction !== "WAIT"
+    && setup.confidence >= MIN_ENTRY_NOTIFICATION_CONFIDENCE
+    && setup.liveChecks >= MIN_ENTRY_NOTIFICATION_CHECKS;
   const entrySignature = `${asset}:${setup.direction}:${Math.floor(Date.now() / 300000)}`;
   if (entryReady && state.realtime.lastEntrySignal !== entrySignature) {
     state.realtime.lastEntrySignal = entrySignature;
@@ -1051,6 +1056,16 @@ function plannedDashboardEntry(action, mark, vwap, buyGrid = [], sellGrid = []) 
   return candidates.sort((left, right) => Math.abs(left - mark) - Math.abs(right - mark))[0];
 }
 
+function fallbackDirectionalEntry(action, mark, buyGrid = [], sellGrid = []) {
+  const numericMark = Number(mark);
+  if (!["BUY", "SELL"].includes(action) || !Number.isFinite(numericMark) || numericMark <= 0) return Number.NaN;
+  const levels = (action === "BUY" ? buyGrid : sellGrid)
+    .map((level) => Number(level))
+    .filter((level) => Number.isFinite(level) && level > 0);
+  if (!levels.length) return numericMark;
+  return levels.sort((left, right) => Math.abs(left - numericMark) - Math.abs(right - numericMark))[0];
+}
+
 function averageTrueRange(rows) {
   if (rows.length < 2) return 0;
   const ranges = rows.slice(1).map((row, index) => {
@@ -1143,8 +1158,11 @@ function buildGeneratedSignal(setup, price, vwap) {
   const buyGrid = buildGridLevels(anchor, "buy", spacingPct, setupAction);
   const sellGrid = buildGridLevels(anchor, "sell", spacingPct, setupAction);
   const plannedEntry = plannedDashboardEntry(setupAction, mark, vwap, buyGrid, sellGrid);
-  const action = setupAction === "WAIT" || !Number.isFinite(plannedEntry) ? "WAIT" : setupAction;
-  const entry = action === "WAIT" ? null : plannedEntry;
+  const directionalWatch = setupAction !== "WAIT" && setup.confidence >= MIN_DIRECTIONAL_SIGNAL_CONFIDENCE;
+  const fallbackEntry = directionalWatch ? fallbackDirectionalEntry(setupAction, mark, buyGrid, sellGrid) : Number.NaN;
+  const entryCandidate = Number.isFinite(plannedEntry) ? plannedEntry : fallbackEntry;
+  const action = setupAction === "WAIT" || !Number.isFinite(entryCandidate) ? "WAIT" : setupAction;
+  const entry = action === "WAIT" ? null : entryCandidate;
   const invalidationPlan = dynamicInvalidationPlan(action, entry, mark);
   const actionBlocked = action !== "WAIT" && !invalidationPlan.executable;
   const executableAction = actionBlocked ? "WAIT" : action;
@@ -1184,7 +1202,7 @@ function buildGeneratedSignal(setup, price, vwap) {
         ? "No entry until the framework score clears the setup threshold."
         : actionBlocked
           ? `No trade: dynamic stop is too wide for ${setup.asset}. Use small lot size only if a later setup becomes tradable; otherwise wait for a closer structural sweep or lower ATR.`
-          : `No ${setupAction} entry at mark. Wait for a pullback ${setupAction === "BUY" ? "below" : "above"} ${formatUsd(mark)}.`
+          : `No ${setupAction} pullback entry yet. Directional watch is active from nearest grid ${formatUsd(entryCandidate)} while confidence stays above ${MIN_DIRECTIONAL_SIGNAL_CONFIDENCE}%.`
       : invalidationPlan.reducedSize
         ? `${executableAction} maneuver entry ${formatUsd(executableEntry)}; use small lot size, keep the wider invalidation, and hold account risk constant. First target ${formatUsd(target)}.`
         : `${executableAction} pullback entry ${formatUsd(executableEntry)}; first target ${formatUsd(target)}.`,
@@ -3237,8 +3255,12 @@ function applyMonatiseFramework() {
 
   const liveChecks = checks.filter((check) => check.live).length;
   const score = checks.reduce((sum, check) => sum + check.score, 0);
-  const direction = score >= 2 ? "BUY SETUP" : score <= -2 ? "SELL SETUP" : "WAIT";
   const confidence = Math.min(100, Math.round((Math.abs(score) / 6) * 100 + liveChecks * 5));
+  const direction = score >= 2 || (score > 0 && confidence >= MIN_DIRECTIONAL_SIGNAL_CONFIDENCE)
+    ? "BUY SETUP"
+    : score <= -2 || (score < 0 && confidence >= MIN_DIRECTIONAL_SIGNAL_CONFIDENCE)
+      ? "SELL SETUP"
+      : "WAIT";
   const hedge = hedgeFromCoinGlass({ direction, score, confidence, market: m });
 
   els.frameworkSource.textContent = usesCryptoMultiFrame(asset)
