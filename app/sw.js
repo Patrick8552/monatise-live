@@ -12,8 +12,11 @@ const SHELL_ASSETS = [
   "./assets/payout-clients.svg",
   "./coinglass-dashboard.css?v=20260701-market-icon",
   "./coinglass-dashboard.js?v=20260701-context-signal-tp",
-  "./manifest.webmanifest?v=20260701-yin-yang-icon",
-  "./icon.svg?v=20260701-yin-yang-icon"
+  "./manifest.webmanifest?v=20260701-yinyang-png",
+  "./icon.svg?v=20260701-yinyang-png",
+  "./icon-180.png?v=20260701-yinyang-png",
+  "./icon-192.png?v=20260701-yinyang-png",
+  "./icon-512.png?v=20260701-yinyang-png"
 ];
 
 self.addEventListener("install", (event) => {
