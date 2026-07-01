@@ -302,11 +302,17 @@ function setupDashboardInstall() {
   window.addEventListener("beforeinstallprompt", (event) => {
     event.preventDefault();
     deferredDashboardInstallPrompt = event;
-    if (els.installDashboardButton) els.installDashboardButton.hidden = false;
+    if (els.installDashboardButton) {
+      els.installDashboardButton.classList.add("install-ready");
+      els.installDashboardButton.textContent = "Install App";
+    }
   });
   window.addEventListener("appinstalled", () => {
     deferredDashboardInstallPrompt = null;
-    if (els.installDashboardButton) els.installDashboardButton.hidden = true;
+    if (els.installDashboardButton) {
+      els.installDashboardButton.classList.remove("install-ready");
+      els.installDashboardButton.textContent = "Installed";
+    }
   });
 }
 
@@ -3911,11 +3917,14 @@ els.openIntegrationsButton?.addEventListener("click", () => {
   els.apiKeyInput.focus();
 });
 els.installDashboardButton?.addEventListener("click", async () => {
-  if (!deferredDashboardInstallPrompt) return;
+  if (!deferredDashboardInstallPrompt) {
+    setSessionStatus("warn", "Use browser install menu");
+    return;
+  }
   deferredDashboardInstallPrompt.prompt();
   await deferredDashboardInstallPrompt.userChoice.catch(() => {});
   deferredDashboardInstallPrompt = null;
-  els.installDashboardButton.hidden = true;
+  els.installDashboardButton.classList.remove("install-ready");
 });
 els.assetSearchInput?.addEventListener("input", renderAssetSearch);
 els.assetSearchInput?.addEventListener("focus", renderAssetSearch);

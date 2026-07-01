@@ -89,18 +89,25 @@ button:hover {
   justify-content: center;
 }
 
-.dashboard-nav a {
+.dashboard-nav a,
+.dashboard-nav button {
+  appearance: none;
+  background: transparent;
   border: 1px solid rgba(117, 255, 214, 0.32);
   border-radius: 999px;
   color: var(--muted);
+  cursor: pointer;
   font-size: 0.78rem;
   font-weight: 850;
+  font-family: inherit;
   padding: 8px 11px;
   text-decoration: none;
 }
 
 .dashboard-nav a:hover,
-.dashboard-nav a[aria-current="page"] {
+.dashboard-nav a[aria-current="page"],
+.dashboard-nav button:hover,
+.dashboard-nav button.install-ready {
   background: rgba(117, 255, 214, 0.14);
   border-color: rgba(117, 255, 214, 0.6);
   color: var(--text);
