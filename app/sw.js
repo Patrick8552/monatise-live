@@ -1,4 +1,4 @@
-const CACHE_NAME = "monatise-shell-20260701-directional-signals";
+const CACHE_NAME = "monatise-shell-20260701-yin-yang-icon";
 const SHELL_ASSETS = [
   "./",
   "./cg.html",
@@ -12,8 +12,8 @@ const SHELL_ASSETS = [
   "./assets/payout-clients.svg",
   "./coinglass-dashboard.css?v=20260701-market-icon",
   "./coinglass-dashboard.js?v=20260701-directional-signals",
-  "./manifest.webmanifest?v=20260701-market-icon",
-  "./icon.svg?v=20260701-market-icon"
+  "./manifest.webmanifest?v=20260701-yin-yang-icon",
+  "./icon.svg?v=20260701-yin-yang-icon"
 ];
 
 self.addEventListener("install", (event) => {

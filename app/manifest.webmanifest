@@ -10,7 +10,7 @@
   "orientation": "portrait-primary",
   "icons": [
     {
-      "src": "./icon.svg?v=20260701-market-icon",
+      "src": "./icon.svg?v=20260701-yin-yang-icon",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any maskable"

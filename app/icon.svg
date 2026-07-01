@@ -1,8 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Monatise dollar sign logo">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Monatise yin yang logo">
   <rect width="512" height="512" rx="112" fill="#101820"/>
   <circle cx="256" cy="256" r="176" fill="#f8faf5" opacity="0.08"/>
-  <circle cx="256" cy="256" r="134" fill="none" stroke="#00a878" stroke-width="28"/>
-  <path d="M256 112v288" fill="none" stroke="#f8faf5" stroke-width="34" stroke-linecap="round"/>
-  <path d="M326 176c-19-22-48-34-82-29-35 5-58 24-58 52 0 32 32 45 75 56 44 11 77 27 77 67 0 37-31 62-80 66-40 3-76-9-99-34" fill="none" stroke="#f8faf5" stroke-width="42" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M326 176c-19-22-48-34-82-29-35 5-58 24-58 52 0 32 32 45 75 56 44 11 77 27 77 67 0 37-31 62-80 66-40 3-76-9-99-34" fill="none" stroke="#00b8d9" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="256" cy="256" r="150" fill="#f8faf5"/>
+  <path d="M256 106a150 150 0 0 1 0 300 75 75 0 0 1 0-150 75 75 0 0 0 0-150Z" fill="#101820"/>
+  <path d="M256 106a75 75 0 0 1 0 150 75 75 0 0 0 0 150 150 150 0 0 1 0-300Z" fill="#f8faf5"/>
+  <circle cx="256" cy="181" r="24" fill="#00b8d9"/>
+  <circle cx="256" cy="331" r="24" fill="#00a878"/>
+  <circle cx="256" cy="256" r="150" fill="none" stroke="#00a878" stroke-width="20"/>
+  <circle cx="256" cy="256" r="118" fill="none" stroke="#00b8d9" stroke-width="8" opacity="0.42"/>
 </svg>
