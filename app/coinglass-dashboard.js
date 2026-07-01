@@ -3461,10 +3461,12 @@ function hedgeFromCoinGlass({ direction, score, confidence, market }) {
   const liveData = data.length;
   const enoughData = liveData >= 2;
   const strongSetup = Math.abs(Number(score || 0)) >= 3 || Number(confidence || 0) >= 65;
+  const activeContextSignal = setupSide && Number(confidence || 0) >= MIN_CONTEXT_SIGNAL_CONFIDENCE;
   let percent = 0;
   if (enoughData && adversePressure >= 3) percent = strongSetup ? 50 : 35;
   else if (enoughData && adversePressure >= 2) percent = 25;
   else if (enoughData && adversePressure >= 1) percent = 15;
+  if (activeContextSignal && percent === 0) percent = strongSetup ? 20 : 10;
 
   if (!setupSide) {
     return {
@@ -3484,10 +3486,10 @@ function hedgeFromCoinGlass({ direction, score, confidence, market }) {
     direction: percent ? `${hedgeSide} hedge ${percent}%` : "No hedge",
     percent,
     plan: percent
-      ? `${hedgeSide} ${percent}% because market data shows adverse risk against the ${setupLabel} setup: ${reasons.slice(0, 4).join(" · ")}. Datapoints: ${data.join(", ")}.`
-      : enoughData
-        ? `No hedge required yet. Datapoints (${data.join(", ")}) do not show enough adverse pressure against the ${setupLabel} setup.`
-        : "Hedge sizing needs at least two live datapoints: CoinGlass/Hyperliquid funding, OI, liquidations, VWAP, fear/greed, or history."
+      ? reasons.length
+        ? `${hedgeSide} ${percent}% because market data shows adverse risk against the ${setupLabel} setup: ${reasons.slice(0, 4).join(" · ")}. Datapoints: ${data.join(", ")}.`
+        : `${hedgeSide} ${percent}% protective hedge for the active ${setupLabel} context signal. Keep it opposite the trade and reduce only after the framework entry confirms or invalidation risk compresses.`
+      : "Hedge sizing needs at least two live datapoints: CoinGlass/Hyperliquid funding, OI, liquidations, VWAP, fear/greed, or history."
   };
 }
 
