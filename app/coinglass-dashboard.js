@@ -18,9 +18,8 @@ const CRYPTO_ANALYSIS_INTERVALS = ["15m", "5m"];
 const CRYPTO_PRIMARY_ANALYSIS_INTERVAL = "15m";
 const CRYPTO_CONFIRMATION_INTERVAL = "5m";
 const DEFAULT_VIEW_INTERVAL = "1h";
-const MIN_DIRECTIONAL_SIGNAL_CONFIDENCE = 50;
-const MIN_ENTRY_NOTIFICATION_CONFIDENCE = 50;
-const MIN_ENTRY_NOTIFICATION_CHECKS = 4;
+const MIN_ENTRY_NOTIFICATION_CONFIDENCE = 65;
+const MIN_ENTRY_NOTIFICATION_CHECKS = 6;
 const ASSET_DEFINITIONS = [
   "BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "ADA", "AVAX", "LINK", "TRX", "TON", "DOT", "BCH", "LTC", "UNI", "NEAR",
   "APT", "ICP", "ETC", "ATOM", "FIL", "ARB", "OP", "SUI", "SEI", "INJ", "TIA", "WLD", "AAVE", "MKR", "RUNE", "GRT",
@@ -790,7 +789,8 @@ function evaluateLiveAlerts(setup) {
   }
   state.realtime.lastSetup = setupSignature;
 
-  const entryReady = setup.direction !== "WAIT"
+  const entryReady = setup.tradeReady
+    && setup.direction !== "WAIT"
     && setup.confidence >= MIN_ENTRY_NOTIFICATION_CONFIDENCE
     && setup.liveChecks >= MIN_ENTRY_NOTIFICATION_CHECKS;
   const entrySignature = `${asset}:${setup.direction}:${Math.floor(Date.now() / 300000)}`;
@@ -807,12 +807,13 @@ function evaluateLiveAlerts(setup) {
 
   const vwap = Number(setup.vwap);
   const price = Number(setup.price);
-  const completed =
+  const completed = setup.tradeReady && (
     setup.direction === "BUY SETUP"
       ? Number.isFinite(price) && Number.isFinite(vwap) && price >= vwap
       : setup.direction === "SELL SETUP"
         ? Number.isFinite(price) && Number.isFinite(vwap) && price <= vwap
-        : false;
+        : false
+  );
   const gridSignature = `${asset}:${setup.direction}:${Math.round(vwap || 0)}:${Math.floor(Date.now() / 900000)}`;
   if (completed && state.realtime.lastGridCompletion !== gridSignature) {
     state.realtime.lastGridCompletion = gridSignature;
@@ -845,7 +846,7 @@ function publishGeneratedSignal(setup) {
     pushLiveAlert({
       kind: "monatise signal",
       asset: signal.asset,
-      title: `${signal.asset} ${signal.action}`,
+      title: `${signal.asset} ${displayFrameworkAction(signal.action)}`,
       detail: `${signal.buyGridPlan} ${signal.sellGridPlan} Hedge: ${signal.hedgeDirection}.`,
       payload: signal
     });
@@ -912,10 +913,10 @@ function snapshotLockedSignal(candidate, setup, price) {
     snapshotTime: formatClock(snapshotAtMs),
     reassessTime: formatClock(reassessAtMs),
     status: candidate.action === "WAIT" ? "watch" : "active",
-    stateLabel: candidate.action === "WAIT" ? "watch signal" : "active snapshot",
+    stateLabel: candidate.action === "WAIT" ? "no trade" : "active snapshot",
     thesis: candidate.action === "WAIT"
       ? candidate.thesis
-      : `At ${formatClock(snapshotAtMs)}, probability favored ${candidate.action === "BUY" ? "buyers" : "sellers"}. Grid, invalidation, and target are locked on the ${snapshotInterval} snapshot until ${formatClock(reassessAtMs)}.`
+      : `At ${formatClock(snapshotAtMs)}, the full Monatise sequence favored ${candidate.action === "BUY" ? "buyers" : "sellers"}. Grid, invalidation, and target are locked on the ${snapshotInterval} snapshot until ${formatClock(reassessAtMs)}.`
   };
   setLockedSignal(fresh.action === "WAIT" ? null : fresh);
   return fresh;
@@ -1149,7 +1150,7 @@ function dynamicInvalidationPlan(action, entry, mark) {
 }
 
 function buildGeneratedSignal(setup, price, vwap) {
-  const setupAction = setup.direction === "BUY SETUP" ? "BUY" : setup.direction === "SELL SETUP" ? "SELL" : "WAIT";
+  const setupAction = setup.tradeReady && setup.direction === "BUY SETUP" ? "BUY" : setup.tradeReady && setup.direction === "SELL SETUP" ? "SELL" : "WAIT";
   const atrPct = averageTrueRangePercent(state.priceSeries.slice(-24)) || 0.6;
   const riskPct = Math.max(0.35, Math.min(1.6, atrPct * 1.15));
   const spacingPct = Math.max(0.12, Math.min(0.55, riskPct / 3));
@@ -1158,7 +1159,7 @@ function buildGeneratedSignal(setup, price, vwap) {
   const buyGrid = buildGridLevels(anchor, "buy", spacingPct, setupAction);
   const sellGrid = buildGridLevels(anchor, "sell", spacingPct, setupAction);
   const plannedEntry = plannedDashboardEntry(setupAction, mark, vwap, buyGrid, sellGrid);
-  const directionalWatch = setupAction !== "WAIT" && setup.confidence >= MIN_DIRECTIONAL_SIGNAL_CONFIDENCE;
+  const directionalWatch = setupAction !== "WAIT";
   const fallbackEntry = directionalWatch ? fallbackDirectionalEntry(setupAction, mark, buyGrid, sellGrid) : Number.NaN;
   const entryCandidate = Number.isFinite(plannedEntry) ? plannedEntry : fallbackEntry;
   const action = setupAction === "WAIT" || !Number.isFinite(entryCandidate) ? "WAIT" : setupAction;
@@ -1199,10 +1200,10 @@ function buildGeneratedSignal(setup, price, vwap) {
     sellGridText: formatGridLevels(sellGrid),
     entryPlan: executableAction === "WAIT"
       ? setupAction === "WAIT"
-        ? "No entry until the framework score clears the setup threshold."
+        ? setup.frameworkGate?.summary || "NO TRADE until the full framework sequence confirms."
         : actionBlocked
           ? `No trade: dynamic stop is too wide for ${setup.asset}. Use small lot size only if a later setup becomes tradable; otherwise wait for a closer structural sweep or lower ATR.`
-          : `No ${setupAction} pullback entry yet. Directional watch is active from nearest grid ${formatUsd(entryCandidate)} while confidence stays above ${MIN_DIRECTIONAL_SIGNAL_CONFIDENCE}%.`
+          : `No ${setupAction} entry yet. Wait for the full framework sequence: liquidity sweep, rejection, CHoCH/BOS, retest, confirmation candle, then grid validation.`
       : invalidationPlan.reducedSize
         ? `${executableAction} maneuver entry ${formatUsd(executableEntry)}; use small lot size, keep the wider invalidation, and hold account risk constant. First target ${formatUsd(target)}.`
         : `${executableAction} pullback entry ${formatUsd(executableEntry)}; first target ${formatUsd(target)}.`,
@@ -1221,7 +1222,9 @@ function buildGeneratedSignal(setup, price, vwap) {
       ? `${setup.direction} blocked · dynamic stop too wide · score ${setup.score >= 0 ? "+" : ""}${setup.score}`
       : invalidationPlan.reducedSize
         ? `${setup.direction} maneuver · small lot size · wider stop accepted · score ${setup.score >= 0 ? "+" : ""}${setup.score}`
-      : `${setup.direction} · confidence ${setup.confidence}% · score ${setup.score >= 0 ? "+" : ""}${setup.score}`,
+      : setupAction === "WAIT"
+        ? `${displayFrameworkDirection(setup.direction)} · confidence ${setup.confidence}% · score ${setup.score >= 0 ? "+" : ""}${setup.score}`
+        : `${setup.direction} · confidence ${setup.confidence}% · score ${setup.score >= 0 ? "+" : ""}${setup.score}`,
     evidence: bestChecks.length ? bestChecks.join(" · ") : "Framework checks are still warming up.",
     time: new Date().toLocaleTimeString()
   };
@@ -1284,6 +1287,55 @@ function gridSidePlan(side, action, asset, levels, scaleAction) {
     : `Cover ${asset} grid buys below mark: ${levelText}; recycle fills back into higher offers.`;
 }
 
+function displayFrameworkAction(action) {
+  return action === "WAIT" ? "NO TRADE" : action;
+}
+
+function displayFrameworkDirection(direction) {
+  return direction === "WAIT" ? "NO TRADE" : direction;
+}
+
+function scoreMatchesSide(score, side) {
+  const value = Number(score);
+  if (!Number.isFinite(value)) return false;
+  return side === "BUY" ? value > 0 : side === "SELL" ? value < 0 : false;
+}
+
+function indicatorRow(name) {
+  return (state.market.indicatorRows || []).find((row) => row.name === name) || null;
+}
+
+function currentFrameworkGate(direction, confidence, liveChecks) {
+  const side = direction === "BUY SETUP" ? "BUY" : direction === "SELL SETUP" ? "SELL" : "WAIT";
+  const marker = state.market.structureMarker || null;
+  const markerMatches = side === "BUY" ? marker?.side === "bullish" : side === "SELL" ? marker?.side === "bearish" : false;
+  const grab = indicatorRow("Liquidity Grabs");
+  const wick = indicatorRow("Wick Extremity");
+  const trend = indicatorRow("Dynamic Trend Pivot");
+  const fib = indicatorRow("Auto Fib Retracement");
+  const volume = indicatorRow("Volume Profile");
+  const missing = [];
+
+  if (side === "WAIT") missing.push("higher-timeframe bias");
+  if (liveChecks < MIN_ENTRY_NOTIFICATION_CHECKS) missing.push("live data quorum");
+  if (!scoreMatchesSide(grab?.score, side)) missing.push("liquidity sweep");
+  if (!scoreMatchesSide(wick?.score, side)) missing.push("strong rejection");
+  if (!markerMatches || !["CHOCH", "BOS"].includes(marker?.type)) missing.push("CHoCH/BOS");
+  if (!scoreMatchesSide(trend?.score, side)) missing.push("retest / structure pivot");
+  if (!scoreMatchesSide(fib?.score, side)) missing.push("premium/discount Fibonacci zone");
+  if (!scoreMatchesSide(volume?.score, side)) missing.push("POC / volume profile alignment");
+  if (Number(confidence) < MIN_ENTRY_NOTIFICATION_CONFIDENCE) missing.push(`probability >= ${MIN_ENTRY_NOTIFICATION_CONFIDENCE}%`);
+
+  return {
+    side,
+    ready: side !== "WAIT" && missing.length === 0,
+    missing,
+    summary: missing.length
+      ? `NO TRADE: waiting for ${missing.slice(0, 4).join(", ")}${missing.length > 4 ? ", ..." : ""}.`
+      : `${side} framework sequence confirmed: sweep, rejection, CHoCH/BOS, retest, grid, risk.`
+  };
+}
+
 function renderTraderMode(signal = state.activeSignal) {
   const accountSize = positiveInputValue(els.traderAccountInput, 1000);
   const riskPct = positiveInputValue(els.traderRiskInput, 1);
@@ -1332,10 +1384,10 @@ function renderGeneratedSignal(signal) {
   els.signalTimestamp.textContent = signal.snapshotTime
     ? `Snapshot ${signal.snapshotTime} · reassess ${signal.reassessTime}`
     : `Generated ${signal.time}`;
-  els.signalState.textContent = signal.stateLabel || (signal.action === "WAIT" ? "watch signal" : "active signal");
+  els.signalState.textContent = signal.stateLabel || (signal.action === "WAIT" ? "no trade" : "active signal");
   els.signalState.className = `pill ${signal.action === "BUY" ? "positive" : signal.action === "SELL" ? "negative" : signal.status === "invalidated" ? "negative" : ""}`;
   els.signalAsset.textContent = `${signal.asset} generated signal`;
-  els.signalAction.textContent = signal.action;
+  els.signalAction.textContent = displayFrameworkAction(signal.action);
   els.signalAction.className = signal.action === "BUY" ? "positive" : signal.action === "SELL" ? "negative" : "";
   els.signalThesis.textContent = signal.thesis;
   els.signalEntry.textContent = signal.action === "WAIT" ? "--" : "BUY / SELL grid";
@@ -1344,7 +1396,7 @@ function renderGeneratedSignal(signal) {
   els.signalInvalidationPlan.textContent = setupInvalidationPlan(signal);
   els.signalGridHedge.textContent = signal.action === "WAIT" ? "--" : formatUsd(signal.target);
   els.signalGridHedgePlan.textContent = signal.action === "WAIT"
-    ? "No target until a BUY or SELL snapshot is active."
+    ? "No target until the full framework sequence confirms a BUY or SELL snapshot."
     : `First target locked from snapshot. Hedge: ${signal.hedgeDirection}. ${signal.hedgePlan}`;
   els.signalEvidence.textContent = `${signal.liveChecks} / ${signal.checksTotal} checks`;
   els.signalEvidencePlan.textContent = signal.evidence;
@@ -1358,9 +1410,9 @@ function renderSignalLog() {
   }
   els.signalLog.innerHTML = state.signals.slice(0, 5).map((signal) => `
     <div class="signal-row">
-      <strong class="${signal.action === "BUY" ? "positive" : signal.action === "SELL" ? "negative" : ""}">${signal.action}</strong>
+      <strong class="${signal.action === "BUY" ? "positive" : signal.action === "SELL" ? "negative" : ""}">${displayFrameworkAction(signal.action)}</strong>
       <span>${signal.asset} · ${signal.snapshotTime || signal.time}</span>
-      <small>${signal.thesis} · ${signal.action === "WAIT" ? "setup grid waiting" : twoSidedGridLevelsText(signal)} · invalidation ${signal.action === "WAIT" ? "VWAP / structure" : formatUsd(signal.invalidation)} · target ${formatUsd(signal.target)} · ${signal.hedgeDirection}</small>
+      <small>${signal.thesis} · ${signal.action === "WAIT" ? "NO TRADE until sequence confirms" : twoSidedGridLevelsText(signal)} · invalidation ${signal.action === "WAIT" ? "VWAP / structure" : formatUsd(signal.invalidation)} · target ${formatUsd(signal.target)} · ${signal.hedgeDirection}</small>
     </div>
   `).join("");
 }
@@ -3013,6 +3065,9 @@ function renderIndicatorStack(stack) {
 }
 
 function renderStructureSummary(structure) {
+  state.market.structureMarker = structure.marker || null;
+  state.market.liquidityZones = structure.liquidityZones || [];
+  state.market.fvgZones = structure.fvgZones || [];
   const markerText = structure.marker ? `${structure.marker.type} ${structure.marker.side}` : "No fresh CHOCH/BOS";
   const fvgText = `${structure.fvgZones.length} FVG`;
   const liqText = `${structure.liquidityZones.length} liquidity zones`;
@@ -3264,34 +3319,33 @@ function applyMonatiseFramework() {
   const liveChecks = checks.filter((check) => check.live).length;
   const score = checks.reduce((sum, check) => sum + check.score, 0);
   const confidence = Math.min(100, Math.round((Math.abs(score) / 6) * 100 + liveChecks * 5));
-  const direction = score >= 2 || (score > 0 && confidence >= MIN_DIRECTIONAL_SIGNAL_CONFIDENCE)
-    ? "BUY SETUP"
-    : score <= -2 || (score < 0 && confidence >= MIN_DIRECTIONAL_SIGNAL_CONFIDENCE)
-      ? "SELL SETUP"
-      : "WAIT";
+  const direction = score >= 2 ? "BUY SETUP" : score <= -2 ? "SELL SETUP" : "WAIT";
+  const frameworkGate = currentFrameworkGate(direction, confidence, liveChecks);
   const hedge = hedgeFromCoinGlass({ direction, score, confidence, market: m });
 
   els.frameworkSource.textContent = usesCryptoMultiFrame(asset)
     ? `${asset.coin} selected · selected crypto multi-timeframe context + CoinGlass/Hyperliquid context`
     : `${asset.coin} selected · Native indicator stack + market candles + CoinGlass/Hyperliquid context`;
-  els.setupDirection.textContent = direction;
-  els.setupDirection.className = direction.includes("BUY") ? "positive" : direction.includes("SELL") ? "negative" : "";
+  els.setupDirection.textContent = frameworkGate.ready ? direction : displayFrameworkDirection("WAIT");
+  els.setupDirection.className = frameworkGate.ready && direction.includes("BUY") ? "positive" : frameworkGate.ready && direction.includes("SELL") ? "negative" : "";
   els.setupConfidence.textContent = `confidence ${confidence}%`;
   els.frameworkChecks.textContent = `${liveChecks} / ${checks.length}`;
-  els.frameworkBias.textContent = `Score ${score >= 0 ? "+" : ""}${score} from ${checks.length} checks`;
-  els.setupReason.textContent = checks.map((check) => `${check.name}: ${check.detail}`).join(" · ");
+  els.frameworkBias.textContent = `${frameworkGate.ready ? "Ready" : "No Trade"} · Score ${score >= 0 ? "+" : ""}${score} from ${checks.length} checks`;
+  els.setupReason.textContent = `${frameworkGate.summary} ${checks.map((check) => `${check.name}: ${check.detail}`).join(" · ")}`;
 
   let gridDirection = `Neutral grid ${asset.coin}`;
   let gridPlan = "Use small two-sided grid or wait until funding/OI/liquidation checks align.";
   let hedgeDirection = hedge.direction;
   let hedgePlan = hedge.plan;
 
-  if (direction === "BUY SETUP") {
+  if (frameworkGate.ready && direction === "BUY SETUP") {
     gridDirection = `Buy grid ${asset.coin}`;
     gridPlan = gridPlanForResearch("buy", m.scaleAction, m.vwapSignal);
-  } else if (direction === "SELL SETUP") {
+  } else if (frameworkGate.ready && direction === "SELL SETUP") {
     gridDirection = `Sell grid ${asset.coin}`;
     gridPlan = gridPlanForResearch("sell", m.scaleAction, m.vwapSignal);
+  } else {
+    gridPlan = frameworkGate.summary;
   }
 
   els.gridDirection.textContent = gridDirection;
@@ -3304,6 +3358,8 @@ function applyMonatiseFramework() {
     asset: asset.coin,
     direction,
     confidence,
+    frameworkGate,
+    tradeReady: frameworkGate.ready,
     liveChecks,
     score,
     gridDirection,

@@ -167,7 +167,7 @@
           <canvas id="liquidityAtlasCanvas" aria-label="3D liquidity and signal atlas"></canvas>
           <div class="atlas-hud">
             <span id="atlasMode">Monatise Liquidity Atlas</span>
-            <strong id="atlasSignal">WAIT</strong>
+            <strong id="atlasSignal">NO TRADE</strong>
             <small id="atlasDetail">VWAP, liquidity, funding, and structure will shape the field.</small>
           </div>
           <div class="atlas-controls" aria-label="Atlas ecosystem controls">
@@ -187,7 +187,7 @@
             <div class="signal-ticket">
               <div class="signal-primary">
                 <span id="signalAsset">BTC signal</span>
-                <strong id="signalAction">WAIT</strong>
+                <strong id="signalAction">NO TRADE</strong>
                 <p id="signalThesis">Dashboard context will shape the current setup after CoinGlass candles, VWAP, liquidity, funding, and open interest load.</p>
               </div>
               <div class="signal-detail-grid">
@@ -263,7 +263,7 @@
             <div class="setup-grid">
               <div class="setup-primary">
                 <span id="setupAsset">BTC setup</span>
-                <strong id="setupDirection">WAIT</strong>
+                <strong id="setupDirection">NO TRADE</strong>
                 <p id="setupReason">CoinGlass funding, open interest, liquidation pressure, VWAP, price trend, and history will decide the grid.</p>
               </div>
               <div class="setup-card">
@@ -504,6 +504,6 @@
     </div>
     <script src="https://cdn.ably.com/lib/ably.min-2.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="./coinglass-dashboard.js?v=20260701-signal-crash-fix"></script>
+    <script src="./coinglass-dashboard.js?v=20260701-current-framework"></script>
   </body>
 </html>
