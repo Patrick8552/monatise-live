@@ -822,7 +822,7 @@ function evaluateLiveAlerts(setup) {
       kind: "grid completion",
       asset,
       title: `${asset} grid reached VWAP target`,
-      detail: `Price ${formatUsd(price)} reached VWAP ${formatUsd(vwap)}. Review partials, hedge, and next grid.`,
+      detail: `Price ${formatUsd(price)} reached VWAP ${formatUsd(vwap)}. Review partials, take profit, and next grid.`,
       payload: setup
     });
   }
@@ -848,7 +848,7 @@ function publishGeneratedSignal(setup) {
       kind: "monatise signal",
       asset: signal.asset,
       title: `${signal.asset} ${displayFrameworkAction(signal.action)}`,
-      detail: `${signal.buyGridPlan} ${signal.sellGridPlan} Hedge: ${signal.hedgeDirection}.`,
+      detail: `${signal.buyGridPlan} ${signal.sellGridPlan} Take profit: ${formatUsd(signal.target)}. ${signal.takeProfitPlan || signal.hedgePlan}`,
       payload: signal
     });
   }
@@ -1218,10 +1218,12 @@ function buildGeneratedSignal(setup, price, vwap) {
       : invalidationInstruction(executableAction, invalidation, invalidationPlan),
     buyGridPlan: gridSidePlan("buy", executableAction, setup.asset, buyGrid, setup.scaleAction),
     sellGridPlan: gridSidePlan("sell", executableAction, setup.asset, sellGrid, setup.scaleAction),
-    hedgeDirection: setup.hedgeDirection,
-    hedgePlan: `${setup.gridPlan} ${setup.hedgePlan}`,
-    gridHedge: `Buys ${formatGridLevels(buyGrid)}; sells ${formatGridLevels(sellGrid)}; ${setup.hedgeDirection}`,
-    gridHedgePlan: `${setup.gridPlan} ${setup.hedgePlan}`,
+    hedgeDirection: setup.takeProfitDirection || setup.hedgeDirection,
+    hedgePlan: setup.takeProfitPlan || setup.hedgePlan,
+    takeProfitDirection: setup.takeProfitDirection || setup.hedgeDirection,
+    takeProfitPlan: setup.takeProfitPlan || setup.hedgePlan,
+    gridHedge: `Buys ${formatGridLevels(buyGrid)}; sells ${formatGridLevels(sellGrid)}; TP ${formatUsd(target)}`,
+    gridHedgePlan: setup.takeProfitPlan || setup.hedgePlan,
     thesis: actionBlocked
       ? `${setup.direction} blocked · dynamic stop too wide · context strength ${setup.contextConfidence ?? setup.confidence}% · score ${setup.score >= 0 ? "+" : ""}${setup.score}`
       : invalidationPlan.reducedSize
@@ -1403,7 +1405,7 @@ function renderGeneratedSignal(signal) {
   els.signalGridHedge.textContent = signal.action === "WAIT" ? "--" : formatUsd(signal.target);
   els.signalGridHedgePlan.textContent = signal.action === "WAIT"
     ? "No target until the full framework sequence confirms a BUY or SELL snapshot."
-    : `First target locked from snapshot. Hedge: ${signal.hedgeDirection}. ${signal.hedgePlan}`;
+    : `Take-profit area locked from snapshot. ${signal.takeProfitPlan || signal.hedgePlan}`;
   els.signalEvidence.textContent = `${signal.liveChecks} / ${signal.checksTotal} checks`;
   els.signalEvidencePlan.textContent = signal.evidence;
   renderTraderMode(signal);
@@ -1418,7 +1420,7 @@ function renderSignalLog() {
     <div class="signal-row">
       <strong class="${signal.action === "BUY" ? "positive" : signal.action === "SELL" ? "negative" : ""}">${displayFrameworkAction(signal.action)}</strong>
       <span>${signal.asset} · ${signal.snapshotTime || signal.time}</span>
-      <small>${signal.thesis} · ${signal.action === "WAIT" ? "NO TRADE until sequence confirms" : twoSidedGridLevelsText(signal)} · invalidation ${signal.action === "WAIT" ? "VWAP / structure" : formatUsd(signal.invalidation)} · target ${formatUsd(signal.target)} · ${signal.hedgeDirection}</small>
+      <small>${signal.thesis} · ${signal.action === "WAIT" ? "NO TRADE until sequence confirms" : twoSidedGridLevelsText(signal)} · invalidation ${signal.action === "WAIT" ? "VWAP / structure" : formatUsd(signal.invalidation)} · take profit ${formatUsd(signal.target)} · ${signal.takeProfitDirection || signal.hedgeDirection}</small>
     </div>
   `).join("");
 }
@@ -1451,6 +1453,8 @@ function currentSetupSnapshot() {
     confidence: els.setupConfidence.textContent,
     grid: els.gridDirection.textContent,
     gridPlan: els.gridPlan.textContent,
+    takeProfitArea: els.hedgeDirection.textContent,
+    takeProfitPlan: els.hedgePlan.textContent,
     hedge: els.hedgeDirection.textContent,
     hedgePlan: els.hedgePlan.textContent,
     vwap: els.vwapMetric.textContent,
@@ -1469,9 +1473,9 @@ function currentSetupSnapshot() {
 function answerVoiceQuestion(question) {
   const q = question.toLowerCase();
   const s = currentSetupSnapshot();
-  if (!question.trim()) return "Ask me about the current setup, grid, hedge, VWAP, funding, open interest, or liquidation map.";
+  if (!question.trim()) return "Ask me about the current setup, grid, take profit, VWAP, funding, open interest, or liquidation map.";
   if (q.includes("hedge")) {
-    return `${s.asset} hedge is ${s.hedge}. ${s.hedgePlan} The current setup is ${s.direction} with ${s.confidence}.`;
+    return `${s.asset} no longer uses a separate hedge field for this signal. The former hedge area is now take profit: ${s.takeProfitArea}. ${s.takeProfitPlan}`;
   }
   if (q.includes("grid") || q.includes("entry") || q.includes("buy") || q.includes("sell")) {
     return `${s.asset} is showing ${s.direction}. ${s.signalEntryPlan} ${s.signalInvalidationPlan} VWAP is ${s.vwap}, and the framework has ${s.checks} live checks.`;
@@ -1485,7 +1489,7 @@ function answerVoiceQuestion(question) {
   if (q.includes("average") || q.includes("scale") || q.includes("research") || q.includes("history")) {
     return `${s.asset} research signal is ${s.research}. Scale plan says ${s.scale}. The framework reason is: ${s.reason}`;
   }
-  return `${s.asset} is currently ${s.direction} with ${s.confidence}. The grid is ${s.grid}, hedge is ${s.hedge}, VWAP is ${s.vwap}, and the active thesis is: ${s.reason}`;
+  return `${s.asset} is currently ${s.direction} with ${s.confidence}. The grid is ${s.grid}, take profit is ${s.takeProfitArea}, VWAP is ${s.vwap}, and the active thesis is: ${s.reason}`;
 }
 
 function setCopilotStatus(text) {
@@ -1531,7 +1535,7 @@ function localCopilotAnswer(question) {
       isActive
         ? `If your position matches ${s.signalAction}, manage around the locked invalidation and first target. If it is opposite, reduce risk or wait for structural invalidation before trusting the flip.`
         : "If you are already in while Monatise is waiting, tighten risk around market structure instead of treating this as a fresh confirmation.",
-      `Hedge context: ${s.hedge}. ${s.hedgePlan}`
+      `Take-profit context: ${s.takeProfitArea}. ${s.takeProfitPlan}`
     ].join("\n");
   }
 
@@ -1577,7 +1581,7 @@ function localCopilotAnswer(question) {
     `${s.asset} copilot: ${s.direction} with ${s.confidence}.`,
     `Signal: ${s.signalAction} · ${levels}`,
     `Grid: ${s.grid}. ${s.gridPlan}`,
-    `Hedge: ${s.hedge}. ${s.hedgePlan}`,
+    `Take profit: ${s.takeProfitArea}. ${s.takeProfitPlan}`,
     `VWAP: ${s.vwap}; ${s.vwapSignal}. Funding ${s.funding}, OI ${s.oi}, liquidation bias ${s.liquidation}.`,
     clean ? `Your question: ${clean}` : "Ask a personal setup, risk, entry, invalidation, target, or position-management question."
   ].join("\n");
@@ -1586,7 +1590,7 @@ function localCopilotAnswer(question) {
 async function askOpenAICopilot(question) {
   const clean = question.trim();
   const snapshot = currentSetupSnapshot();
-  if (!clean) return "Ask the copilot about setup, grid, hedge, invalidation, risk, VWAP, funding, or open interest.";
+  if (!clean) return "Ask the copilot about setup, grid, take profit, invalidation, risk, VWAP, funding, or open interest.";
   if (!state.copilot.apiKey.trim()) return localCopilotAnswer(clean);
 
   const started = performance.now();
@@ -1605,7 +1609,7 @@ async function askOpenAICopilot(question) {
         "Answer the user's individual question directly using the visible signal fields.",
         "When the user asks what they should do, frame the answer as conditional analysis: if they choose to trade, use the displayed entry, invalidation, target, and risk controls.",
         "Do not invent live prices, exchange fills, or execution certainty.",
-        "Answer with entry, invalidation, target, setup, grid, hedge, and caution when relevant.",
+        "Answer with entry, invalidation, target, setup, grid, take-profit area, and caution when relevant.",
         "If the dashboard has no active BUY or SELL snapshot, say to wait instead of fabricating a trade.",
         "This is trading analysis, not financial advice."
       ].join(" "),
@@ -3329,7 +3333,6 @@ function applyMonatiseFramework() {
   const frameworkGate = currentFrameworkGate(direction, contextConfidence, liveChecks);
   const contextSignalReady = direction !== "WAIT" && contextConfidence >= MIN_CONTEXT_SIGNAL_CONFIDENCE;
   const confidence = contextSignalReady ? contextConfidence : 0;
-  const hedge = hedgeFromCoinGlass({ direction, score, confidence: contextConfidence, market: m });
 
   els.frameworkSource.textContent = usesCryptoMultiFrame(asset)
     ? `${asset.coin} selected · selected crypto multi-timeframe context + CoinGlass/Hyperliquid context`
@@ -3343,23 +3346,27 @@ function applyMonatiseFramework() {
 
   let gridDirection = `Neutral grid ${asset.coin}`;
   let gridPlan = "Use small two-sided grid or wait until funding/OI/liquidation checks align.";
-  let hedgeDirection = hedge.direction;
-  let hedgePlan = hedge.plan;
+  let takeProfitDirection = "TP pending";
+  let takeProfitPlan = "No take-profit area until a BUY or SELL context signal appears.";
 
   if (contextSignalReady && direction === "BUY SETUP") {
     gridDirection = `Buy grid ${asset.coin}`;
     gridPlan = frameworkGate.ready ? gridPlanForResearch("buy", m.scaleAction, m.vwapSignal) : `Context signal active at ${contextConfidence}%. ${frameworkGate.summary}`;
+    takeProfitDirection = `TP above ${asset.coin}`;
+    takeProfitPlan = "Use the generated snapshot target as the first take-profit area. Scale out into the sell grid and reassess after target, invalidation, or snapshot expiry.";
   } else if (contextSignalReady && direction === "SELL SETUP") {
     gridDirection = `Sell grid ${asset.coin}`;
     gridPlan = frameworkGate.ready ? gridPlanForResearch("sell", m.scaleAction, m.vwapSignal) : `Context signal active at ${contextConfidence}%. ${frameworkGate.summary}`;
+    takeProfitDirection = `TP below ${asset.coin}`;
+    takeProfitPlan = "Use the generated snapshot target as the first take-profit area. Cover into the buy grid and reassess after target, invalidation, or snapshot expiry.";
   } else {
     gridPlan = frameworkGate.summary;
   }
 
   els.gridDirection.textContent = gridDirection;
   els.gridPlan.textContent = gridPlan;
-  els.hedgeDirection.textContent = hedgeDirection;
-  els.hedgePlan.textContent = hedgePlan;
+  els.hedgeDirection.textContent = takeProfitDirection;
+  els.hedgePlan.textContent = takeProfitPlan;
   updateLiquidityAtlas();
 
   return {
@@ -3375,121 +3382,17 @@ function applyMonatiseFramework() {
     score,
     gridDirection,
     gridPlan,
-    hedgeDirection,
-    hedgePlan,
-    hedgePct: hedge.percent,
-    hedgeData: hedge.data,
+    hedgeDirection: takeProfitDirection,
+    hedgePlan: takeProfitPlan,
+    hedgePct: 0,
+    hedgeData: [],
+    takeProfitDirection,
+    takeProfitPlan,
     price: state.lastPrice,
     vwap: m.vwap,
     vwapSignal: m.vwapSignal,
     scaleAction: m.scaleAction,
     checks
-  };
-}
-
-function hedgeFromCoinGlass({ direction, score, confidence, market }) {
-  const m = market || {};
-  const reasons = [];
-  const data = [];
-  let pressure = 0;
-  const add = (label, value, contribution, reason) => {
-    const hasValue = value !== null && value !== undefined && value !== "";
-    const live = hasValue && (Number.isFinite(Number(value)) || typeof value === "string");
-    if (!live) return;
-    data.push(label);
-    pressure += contribution;
-    if (contribution) reasons.push(reason);
-  };
-
-  const fundingContext = marketFundingContext(m);
-  const funding = Number(fundingContext.value);
-  if (fundingContext.live) {
-    add(
-      fundingContext.source === "Hyperliquid" ? "Hyperliquid funding" : "CoinGlass funding",
-      funding,
-      funding > 0.015 ? -1 : funding < -0.015 ? 1 : 0,
-      `${fundingContext.label} ${formatPercent(funding, 4)}`
-    );
-    if (Math.abs(funding) > 0.04) {
-      pressure += funding > 0 ? -1 : 1;
-      reasons.push(`crowded ${fundingContext.source || "market"} funding ${formatPercent(funding, 4)}`);
-    }
-  }
-
-  const oiContext = marketOpenInterestContext(m);
-  const oi = Number(oiContext.value);
-  if (oiContext.live) {
-    add(
-      oiContext.source === "Hyperliquid" ? "Hyperliquid OI" : "CoinGlass OI",
-      oi,
-      oiContext.type === "change" ? (oi > 0.5 ? 1 : oi < -0.5 ? -1 : 0) : 0,
-      oiContext.type === "change"
-        ? `${oiContext.label} ${formatPercent(oi, 2)} 24h`
-        : `${oiContext.label} ${oi.toLocaleString(undefined, { maximumFractionDigits: 0 })} contracts`
-    );
-    if (oiContext.type === "level" && Math.abs(pressure) > 0) {
-      reasons.push(`${oiContext.label} confirms live derivatives participation`);
-    }
-  }
-
-  if (m.liquidationBias) {
-    const bookFallback = m.liquiditySource === "Hyperliquid order book";
-    add(
-      bookFallback ? "Hyperliquid book" : "CoinGlass liquidations",
-      m.liquidationBias,
-      m.liquidationBias === "short squeeze" || m.liquidationBias === "bid wall" ? 1 : m.liquidationBias === "long flush" || m.liquidationBias === "ask wall" ? -1 : 0,
-      bookFallback ? `order book ${m.liquidationBias}` : `liquidation map ${m.liquidationBias}`
-    );
-  }
-
-  const vwapScore = Number(m.vwapScore);
-  if (Number.isFinite(vwapScore) && m.vwapSignal) {
-    add("VWAP", m.vwapSignal, vwapScore, `${m.vwapSignal} ${formatPercent(Number(m.vwapDistance || 0), 2)}`);
-  }
-
-  const fearGreed = Number(m.fearGreed);
-  if (Number.isFinite(fearGreed)) {
-    add("fear/greed", fearGreed, fearGreed > 72 ? -1 : fearGreed < 28 ? 1 : 0, `fear/greed ${Math.round(fearGreed)}`);
-  }
-
-  if (m.researchSignal) {
-    add("history", m.researchSignal, Number(m.researchScore || 0), `${m.researchSignal} history`);
-  }
-
-  const setupSide = direction === "BUY SETUP" ? 1 : direction === "SELL SETUP" ? -1 : 0;
-  const adversePressure = setupSide ? pressure * -setupSide : Math.abs(pressure);
-  const liveData = data.length;
-  const enoughData = liveData >= 2;
-  const strongSetup = Math.abs(Number(score || 0)) >= 3 || Number(confidence || 0) >= 65;
-  const activeContextSignal = setupSide && Number(confidence || 0) >= MIN_CONTEXT_SIGNAL_CONFIDENCE;
-  let percent = 0;
-  if (enoughData && adversePressure >= 3) percent = strongSetup ? 50 : 35;
-  else if (enoughData && adversePressure >= 2) percent = 25;
-  else if (enoughData && adversePressure >= 1) percent = 15;
-  if (activeContextSignal && percent === 0) percent = strongSetup ? 20 : 10;
-
-  if (!setupSide) {
-    return {
-      data,
-      direction: enoughData && Math.abs(pressure) >= 2 ? `Hedge watch ${pressure > 0 ? "short risk" : "long risk"}` : "Flat hedge",
-      percent: 0,
-      plan: enoughData
-        ? `No active BUY/SELL hedge yet. Hedge lens is reading ${pressure > 0 ? "upside squeeze risk" : pressure < 0 ? "downside flush risk" : "balanced risk"} from ${data.join(", ")}.`
-        : "Add CoinGlass or Hyperliquid funding/OI plus liquidation map or VWAP data to unlock hedge sizing."
-    };
-  }
-
-  const hedgeSide = setupSide > 0 ? "Short" : "Long";
-  const setupLabel = setupSide > 0 ? "long" : "short";
-  return {
-    data,
-    direction: percent ? `${hedgeSide} hedge ${percent}%` : "No hedge",
-    percent,
-    plan: percent
-      ? reasons.length
-        ? `${hedgeSide} ${percent}% because market data shows adverse risk against the ${setupLabel} setup: ${reasons.slice(0, 4).join(" · ")}. Datapoints: ${data.join(", ")}.`
-        : `${hedgeSide} ${percent}% protective hedge for the active ${setupLabel} context signal. Keep it opposite the trade and reduce only after the framework entry confirms or invalidation risk compresses.`
-      : "Hedge sizing needs at least two live datapoints: CoinGlass/Hyperliquid funding, OI, liquidations, VWAP, fear/greed, or history."
   };
 }
 
@@ -3504,7 +3407,7 @@ function gridPlanForResearch(side, action, vwapSignal) {
     return "Sell grid into VWAP extension, take partials faster, and avoid adding after downside exhaustion.";
   }
   if (side === "sell" && action === "average up") {
-    return "Build offers above mark as price extends; hedge squeeze risk with smaller order spacing.";
+    return "Build offers above mark as price extends; manage squeeze risk with smaller order spacing.";
   }
   if (side === "buy" && vwapSignal === "below VWAP") {
     return "Wait for VWAP reclaim before increasing buy grid size; keep bids smaller below VWAP.";
