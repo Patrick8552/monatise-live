@@ -116,12 +116,23 @@ button:hover {
 .dashboard-nav .telegram-link {
   border-color: rgba(255, 215, 106, 0.55);
   color: #f6d985;
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  line-height: 1.05;
+  text-align: center;
 }
 
 .dashboard-nav .telegram-link:hover {
   background: rgba(255, 215, 106, 0.14);
   border-color: rgba(255, 215, 106, 0.82);
   color: #fff4c7;
+}
+
+.dashboard-nav .telegram-link small {
+  color: rgba(255, 244, 199, 0.74);
+  font-size: 0.64rem;
+  font-weight: 800;
 }
 
 .eyebrow,
