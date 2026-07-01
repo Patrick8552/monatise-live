@@ -6,6 +6,8 @@ import tempfile
 
 import pytest
 
+from monatise.live.config import RuntimeConfig
+from monatise.live.server import TenantServices
 from monatise.live.users import UserCredentials, UserStore
 
 
@@ -173,6 +175,32 @@ def test_user_store_saves_asset_and_free_access_settings() -> None:
             settings = store.save_subscription_plan(user.id, "private", "trialing")
             assert settings.subscription_plan == "private"
             assert settings.subscription_status == "trialing"
+            assert store.private_plan_active(user.id)
+
+            settings = store.save_subscription_plan(user.id, "private", "canceled")
+            assert settings.subscription_plan == "private"
+            assert settings.subscription_status == "canceled"
+            assert not store.private_plan_active(user.id)
+    finally:
+        _restore_key(old_key)
+
+
+def test_tenant_services_require_private_plan_before_private_sync() -> None:
+    old_key = _with_key()
+    try:
+        with tempfile.NamedTemporaryFile() as db:
+            store = UserStore(db.name)
+            user = store.create_user("sync-trader@example.com", "password123")
+            store.save_credentials(user.id, UserCredentials(account_address="0x1234567890abcdef", secret_key="secret"))
+            tenants = TenantServices(RuntimeConfig(mode="paper"), store)
+
+            with pytest.raises(ValueError, match="activate private billing"):
+                tenants.service_for_user(user)
+
+            store.save_subscription_plan(user.id, "private", "active")
+            service = tenants.service_for_user(user)
+
+            assert service.config.account_address == "0x1234567890abcdef"
     finally:
         _restore_key(old_key)
 

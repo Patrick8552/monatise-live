@@ -10,6 +10,15 @@ from monatise.live.config import RuntimeConfig
 
 
 BUILDER_ASSET_ALIASES = {}
+PRICE_DECIMALS_BY_COIN = {
+    "BTC": 1,
+    "ETH": 2,
+    "BNB": 2,
+    "SOL": 3,
+    "HYPE": 4,
+    "XRP": 5,
+    "DOGE": 6,
+}
 
 
 @dataclass(frozen=True)
@@ -102,7 +111,7 @@ class HyperliquidAdapter(MarketDataPort, ExecutionPort):
 
         submitted: list[SubmittedOrder] = []
         for order in orders:
-            price = self._order_price(order.price)
+            price = self._order_price(order.price, order.symbol)
             quantity = self._order_quantity(order.quantity)
             response = self.exchange.order(
                 self._coin(order.symbol),
@@ -167,8 +176,10 @@ class HyperliquidAdapter(MarketDataPort, ExecutionPort):
                 continue
         return mids
 
-    def _order_price(self, price: float) -> float:
-        return round(price, 1)
+    def _order_price(self, price: float, symbol: str = "BTC") -> float:
+        coin = self._coin(symbol)
+        decimals = PRICE_DECIMALS_BY_COIN.get(coin, 4)
+        return round(price, decimals)
 
     def _order_quantity(self, quantity: float) -> float:
         return round(quantity, 5)

@@ -3551,6 +3551,7 @@ async function loginOrRegister(path) {
   actionButton.disabled = true;
   actionButton.textContent = isRegister ? "Requesting..." : "Logging in...";
   setAuthStatus(isRegister ? "Requesting access..." : "Logging in...");
+  let authRendered = false;
   try {
     const response = await jsonPost(path, {
       username,
@@ -3568,6 +3569,7 @@ async function loginOrRegister(path) {
     updateRememberedLogin(payload.username || username);
     if (isRegister) saveClientProfile(payload.username || username);
     renderAuth(payload);
+    authRendered = true;
     if (isRegister) {
       renderRegistrationDesk(payload);
       els.credentialStatus.textContent = "Private profile created. Password reset codes will go to this email.";
@@ -3576,6 +3578,25 @@ async function loginOrRegister(path) {
     addAuditEvent(isRegister ? "access requested" : "login", isRegister ? "Private access profile created" : "User logged in", payload.username || username);
     refreshBackend();
   } catch {
+    if (authRendered) {
+      setAuthStatus(username);
+      els.credentialStatus.textContent = isRegister
+        ? "Private profile created. Refresh the page if the dashboard does not update."
+        : "Logged in. Refresh the page if the dashboard does not update.";
+      return;
+    }
+    try {
+      const meResponse = await apiFetch("/api/me", { cache: "no-store" });
+      const me = await meResponse.json().catch(() => ({}));
+      if (meResponse.ok && me.authenticated) {
+        renderAuth(me);
+        els.passwordInput.value = "";
+        els.credentialStatus.textContent = "Logged in. The dashboard is ready.";
+        return;
+      }
+    } catch {
+      // Keep the visible auth failure below when the session check also fails.
+    }
     setAuthStatus("Auth request failed");
     els.credentialStatus.textContent = "Network request failed. Try again.";
   } finally {

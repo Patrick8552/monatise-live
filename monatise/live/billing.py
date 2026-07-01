@@ -127,10 +127,7 @@ def private_plan_user_id_from_event(event: dict) -> int | None:
 
 
 def _stripe_session_paid_or_subscription(session: dict) -> bool:
-    return (
-        str(session.get("mode") or "").lower() == "subscription"
-        or str(session.get("payment_status") or "").lower() in {"paid", "no_payment_required"}
-    )
+    return str(session.get("payment_status") or "").lower() in {"paid", "no_payment_required"}
 
 
 def _parse_user_id(value) -> int | None:  # noqa: ANN001

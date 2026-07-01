@@ -25,7 +25,13 @@ def test_auth_bootstrap_routes_remain_public() -> None:
         "/api/login-code/complete",
         "/api/password-reset/request",
         "/api/tradingview/webhook",
+    ):
+        assert not requires_site_auth(path)
+
+
+def test_coinglass_proxy_requires_site_authentication() -> None:
+    for path in (
         "/api/coinglass/proxy/api/futures/open-interest/exchange-list",
         "/api/coinglass/proxy/api/futures/price/history",
     ):
-        assert not requires_site_auth(path)
+        assert requires_site_auth(path)

@@ -102,7 +102,7 @@ def save_tradingview_alerts(alerts: list[dict], path: Path | None = None) -> Non
 
 
 def requires_site_auth(path: str) -> bool:
-    return path in PRIVATE_GET_PATHS
+    return path in PRIVATE_GET_PATHS or path.startswith("/api/coinglass/proxy/")
 
 
 def _is_email(value: str) -> bool:
@@ -449,6 +449,8 @@ class TenantServices:
             service = self._services.get(user.id)
             if service is not None:
                 return service
+            if not self.store.private_plan_active(user.id):
+                raise ValueError("activate private billing before starting private sync")
             credentials = self.store.credentials_for_user(user.id)
             if credentials is None:
                 raise ValueError("save private sync details before starting private sync")
@@ -685,6 +687,9 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                 self._error(502, str(error))
             return
         if parsed.path.startswith("/api/coinglass/proxy/"):
+            if self._rate_limited("/api/coinglass/proxy"):
+                self._error(429, "too many requests")
+                return
             proxy_path = "/" + parsed.path.removeprefix("/api/coinglass/proxy/")
             if proxy_path not in COINGLASS_PROXY_PATHS:
                 self._error(404, "CoinGlass proxy route is not allowed")
@@ -1054,6 +1059,9 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             user = self._require_user()
             if user is None:
                 return
+            if not self.store.private_plan_active(user.id):
+                self._error(402, "activate private billing before saving private sync details")
+                return
             payload = self._read_json()
             try:
                 self.store.save_credentials(
@@ -1272,6 +1280,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             "/api/start": (6, 60),
             "/api/stop": (12, 60),
             "/api/tradingview/webhook": (120, 60),
+            "/api/coinglass/proxy": (60, 60),
         }
         limit, window = limits.get(path, (60, 60))
         client = self._client_ip()

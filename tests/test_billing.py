@@ -36,7 +36,16 @@ def test_private_plan_user_id_from_checkout_event() -> None:
 def test_private_plan_user_id_rejects_unpaid_checkout_event() -> None:
     event = {
         "type": "checkout.session.completed",
-        "data": {"object": {"client_reference_id": "42", "payment_status": "unpaid"}},
+        "data": {"object": {"mode": "subscription", "client_reference_id": "42", "payment_status": "unpaid"}},
     }
 
     assert private_plan_user_id_from_event(event) is None
+
+
+def test_private_plan_user_id_from_active_subscription_event() -> None:
+    event = {
+        "type": "customer.subscription.updated",
+        "data": {"object": {"status": "active", "metadata": {"monatise_user_id": "42"}}},
+    }
+
+    assert private_plan_user_id_from_event(event) == 42

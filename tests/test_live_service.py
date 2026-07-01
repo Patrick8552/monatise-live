@@ -325,6 +325,7 @@ def test_hyperliquid_order_values_are_rounded_for_wire_format() -> None:
 
     assert adapter._order_quantity(0.0041410259) == 0.00414
     assert adapter._order_price(61919.54321) == 61919.5
+    assert adapter._order_price(0.123456789, "DOGE") == 0.123457
 
 
 def test_hyperliquid_extracts_exchange_order_id() -> None:

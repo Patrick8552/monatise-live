@@ -547,6 +547,10 @@ class UserStore:
             )
         return self.settings_for_user(user_id)
 
+    def private_plan_active(self, user_id: int) -> bool:
+        settings = self.settings_for_user(user_id)
+        return settings.subscription_plan == "private" and settings.subscription_status in {"active", "trialing"}
+
     def settings_for_user(self, user_id: int) -> UserSettings:
         with self._connect() as conn:
             row = conn.execute(
