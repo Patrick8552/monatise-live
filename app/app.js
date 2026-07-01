@@ -274,7 +274,7 @@ const languageCopy = {
     riskLens: "Risk Lens",
     signal: "Signal",
     signalBuilder: "Signal Builder",
-    signalConsole: "Signal Console",
+    signalConsole: "Market Dashboard",
     theme: "Theme",
     workspace: "Workspace"
   },

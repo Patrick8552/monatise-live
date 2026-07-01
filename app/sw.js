@@ -1,20 +1,19 @@
-const CACHE_NAME = "monatise-shell-20260701-signal-routing";
+const CACHE_NAME = "monatise-shell-20260701-market-icon";
 const SHELL_ASSETS = [
   "./",
-  "./index.html",
   "./cg.html",
   "./dashboard/",
   "./game.html",
-  "./coinglass-dashboard.html?v=20260617-trader-mode",
+  "./coinglass-dashboard.html?v=20260701-market-icon",
   "./styles.css?v=20260629-crypto-trainer",
   "./app.js?v=20260701-auth-button-state",
   "./spotify.js?v=20260629-request-access-fix",
   "./game.js?v=20260629-crypto-trainer",
   "./assets/payout-clients.svg",
-  "./coinglass-dashboard.css?v=20260617-trader-mode",
+  "./coinglass-dashboard.css?v=20260701-market-icon",
   "./coinglass-dashboard.js?v=20260701-signal-routing",
-  "./manifest.webmanifest?v=20260630-dollar-icon",
-  "./icon-lotus.svg"
+  "./manifest.webmanifest?v=20260701-market-icon",
+  "./icon.svg?v=20260701-market-icon"
 ];
 
 self.addEventListener("install", (event) => {

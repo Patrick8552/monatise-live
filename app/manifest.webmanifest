@@ -1,7 +1,7 @@
 {
-  "name": "Monatise Signal Console",
+  "name": "Monatise Market Dashboard",
   "short_name": "Monatise",
-  "description": "Monatise signal desk for setup review, risk sizing, and profile tracking.",
+  "description": "Monatise CoinGlass market dashboard for setup review, risk sizing, and live market telemetry.",
   "start_url": "./dashboard/",
   "scope": "./",
   "display": "standalone",
@@ -10,7 +10,7 @@
   "orientation": "portrait-primary",
   "icons": [
     {
-      "src": "./icon-lotus.svg",
+      "src": "./icon.svg?v=20260701-market-icon",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any maskable"
