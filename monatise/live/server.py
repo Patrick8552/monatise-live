@@ -102,7 +102,7 @@ def save_tradingview_alerts(alerts: list[dict], path: Path | None = None) -> Non
 
 
 def requires_site_auth(path: str) -> bool:
-    return path in PRIVATE_GET_PATHS or path.startswith("/api/coinglass/proxy/")
+    return path in PRIVATE_GET_PATHS
 
 
 def _is_email(value: str) -> bool:
@@ -583,6 +583,9 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             return
         if parsed.path == "/api/operator":
             self._json(operator_status_payload(self.config))
+            return
+        if parsed.path in {"/", "/index.html"}:
+            self._redirect("/coinglass-dashboard.html?v=20260701-coinglass-primary")
             return
         if requires_site_auth(parsed.path):
             user = self._require_user()
@@ -1252,6 +1255,12 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _redirect(self, location: str) -> None:
+        self.send_response(302)
+        self.send_header("Location", location)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def _valid_request_origin(self) -> bool:
         origin = self.headers.get("Origin") or self.headers.get("Referer")
