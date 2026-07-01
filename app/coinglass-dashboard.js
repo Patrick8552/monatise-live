@@ -1782,6 +1782,14 @@ function usesServerMarketCandles(asset = selectedAsset()) {
   return false;
 }
 
+function isCommodityAsset(asset = selectedAsset()) {
+  const coin = String(asset?.coin || "").toUpperCase();
+  const pair = String(asset?.pair || "").toUpperCase();
+  return ["GOLD", "XAU", "XAUUSD", "SILVER", "XAG", "XAGUSD", "OIL", "WTI", "BRENT"].some((symbol) => (
+    coin === symbol || pair === symbol || pair.startsWith(symbol)
+  ));
+}
+
 function syncAssetLabels() {
   const asset = selectedAsset();
   els.dashboardTitle.textContent = `${asset.coin} Market Dashboard`;
