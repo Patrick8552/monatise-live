@@ -20,7 +20,8 @@ SESSION_SECONDS = 60 * 60 * 24 * 14
 REMEMBERED_SESSION_SECONDS = 60 * 60 * 24 * 90
 PASSWORD_RESET_CODE_SECONDS = 60 * 10
 LOGIN_CODE_SECONDS = 60 * 10
-COINGLASS_STARTUP_INTERVALS = {"30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "1w"}
+COINGLASS_STARTUP_INTERVALS = {"1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "1w"}
+COINGLASS_STARTUP_INTERVAL_LABEL = "1m, 3m, 5m, 15m, 30m, 1h, 2h, 4h, 6h, 8h, 12h, 1d, or 1w"
 CRYPTO_SYMBOLS = {"BTC", "ETH", "SOL", "HYPE", "BNB", "XRP", "DOGE"}
 
 
@@ -462,7 +463,7 @@ class UserStore:
         chart_interval = chart_interval.strip()
         signal_session_window = signal_session_window or "always"
         if chart_interval not in COINGLASS_STARTUP_INTERVALS:
-            raise ValueError("chart interval must be 30m, 1h, 2h, 4h, 6h, 8h, 12h, 1d, or 1w")
+            raise ValueError(f"chart interval must be {COINGLASS_STARTUP_INTERVAL_LABEL}")
         if signal_session_window not in {"london_new_york", "always"}:
             raise ValueError("signal session window must be london_new_york or always")
         if session_guard_minutes not in {5, 15, 30, 60, 90}:

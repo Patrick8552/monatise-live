@@ -460,6 +460,10 @@ const tradingViewSymbols = {
 };
 
 const tradingViewIntervals = {
+  "1m": "1",
+  "3m": "3",
+  "5m": "5",
+  "15m": "15",
   "30m": "30",
   "1h": "60",
   "2h": "120",
@@ -3311,7 +3315,7 @@ function normalizedTradingRules(rules = {}) {
     ? 5000
     : Number.isFinite(rawMaxPositionValue) ? Math.max(1, rawMaxPositionValue) : 5000;
   return {
-    chartInterval: ["30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "1w"].includes(interval) ? interval : "1h",
+    chartInterval: ["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "1w"].includes(interval) ? interval : "1h",
     leverage: 10,
     signalSessionWindow: ["london_new_york", "always"].includes(String(rules.signalSessionWindow || ""))
       ? String(rules.signalSessionWindow)

@@ -7,7 +7,8 @@ from monatise.live.secrets import secret_value
 
 
 LIVE_CONFIRMATION = "I_UNDERSTAND_REAL_MONEY"
-COINGLASS_STARTUP_INTERVALS = {"30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "1w"}
+COINGLASS_STARTUP_INTERVALS = {"1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "1w"}
+COINGLASS_STARTUP_INTERVAL_LABEL = "1m, 3m, 5m, 15m, 30m, 1h, 2h, 4h, 6h, 8h, 12h, 1d, or 1w"
 
 
 @dataclass(frozen=True)
@@ -153,6 +154,6 @@ class RuntimeConfig:
         if self.session_guard_minutes not in {5, 15, 30, 60, 90}:
             raise ValueError("MONATISE_SESSION_GUARD_MINUTES must be 5, 15, 30, 60, or 90")
         if self.chart_interval not in COINGLASS_STARTUP_INTERVALS:
-            raise ValueError("MONATISE_CHART_INTERVAL must be one of 30m, 1h, 2h, 4h, 6h, 8h, 12h, 1d, or 1w")
+            raise ValueError(f"MONATISE_CHART_INTERVAL must be one of {COINGLASS_STARTUP_INTERVAL_LABEL}")
         if self.signal_session_window not in {"london_new_york", "always"}:
             raise ValueError("MONATISE_SIGNAL_SESSION_WINDOW must be london_new_york or always")

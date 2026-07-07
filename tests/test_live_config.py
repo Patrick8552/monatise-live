@@ -54,6 +54,12 @@ def test_total_notional_defaults_to_trading_capital() -> None:
     assert config.signal_session_window == "always"
 
 
+def test_startup_lower_chart_interval_is_valid() -> None:
+    config = RuntimeConfig(chart_interval="1m")
+
+    config.validate()
+
+
 def test_env_signal_window_defaults_to_always() -> None:
     old_window = os.environ.get("MONATISE_SIGNAL_SESSION_WINDOW")
     os.environ.pop("MONATISE_SIGNAL_SESSION_WINDOW", None)
