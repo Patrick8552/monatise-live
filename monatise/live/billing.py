@@ -14,6 +14,7 @@ from monatise.live.secrets import secret_value
 
 STRIPE_CHECKOUT_SESSIONS_URL = "https://api.stripe.com/v1/checkout/sessions"
 PRIVATE_PLAN = "private"
+PRIVATE_PLAN_PAYMENT_ASSET = "USDC"
 
 
 @dataclass(frozen=True)
@@ -58,7 +59,7 @@ def create_private_checkout_session(
     opener=urlopen,
 ) -> dict:
     if not config.checkout_configured:
-        raise StripeBillingError("Stripe private billing is not configured")
+        raise StripeBillingError("USDC checkout is not configured")
     body = urlencode(
         {
             "mode": "subscription",
@@ -69,7 +70,9 @@ def create_private_checkout_session(
             "success_url": config.success_url,
             "cancel_url": config.cancel_url,
             "metadata[monatise_user_id]": str(user_id),
+            "metadata[payment_asset]": PRIVATE_PLAN_PAYMENT_ASSET,
             "subscription_data[metadata][monatise_user_id]": str(user_id),
+            "subscription_data[metadata][payment_asset]": PRIVATE_PLAN_PAYMENT_ASSET,
         }
     ).encode("utf-8")
     request = Request(

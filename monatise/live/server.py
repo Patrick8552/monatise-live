@@ -19,6 +19,7 @@ from monatise.adapters.hyperliquid import HyperliquidAdapter
 from monatise.adapters.quiver import QuiverAdapter, normalize_quiver_symbol
 from monatise.live.billing import (
     PRIVATE_PLAN,
+    PRIVATE_PLAN_PAYMENT_ASSET,
     StripeBillingConfig,
     StripeBillingError,
     create_private_checkout_session,
@@ -69,6 +70,26 @@ PRIVATE_GET_PATHS = {
     "/api/coinglass/context",
     "/api/quiver/context",
 }
+PLATFORM_GET_PATHS = PRIVATE_GET_PATHS | {
+    "/api/status",
+    "/api/tradingview/signals",
+}
+PLATFORM_GET_PREFIXES = (
+    "/api/coinglass/proxy/",
+)
+PLATFORM_STATIC_PATHS = {
+    "/coinglass-dashboard.html",
+    "/dashboard/",
+    "/dashboard/index.html",
+}
+PLATFORM_POST_PATHS = {
+    "/api/credentials",
+    "/api/spotify-playlist",
+    "/api/settings",
+    "/api/trading-rules",
+    "/api/start",
+    "/api/stop",
+}
 
 
 def tradingview_alert_store_path() -> Path:
@@ -103,6 +124,22 @@ def save_tradingview_alerts(alerts: list[dict], path: Path | None = None) -> Non
 
 def requires_site_auth(path: str) -> bool:
     return path in PRIVATE_GET_PATHS
+
+
+def requires_platform_access(path: str) -> bool:
+    return path in PLATFORM_GET_PATHS or path in PLATFORM_STATIC_PATHS or any(path.startswith(prefix) for prefix in PLATFORM_GET_PREFIXES)
+
+
+def platform_access_denied_payload() -> dict:
+    return {
+        "error": f"USDC payment required before platform use",
+        "access": {
+            "state": "payment_required",
+            "plan": PRIVATE_PLAN,
+            "paymentAsset": PRIVATE_PLAN_PAYMENT_ASSET,
+            "allowed": False,
+        },
+    }
 
 
 def _is_email(value: str) -> bool:
@@ -450,7 +487,7 @@ class TenantServices:
             if service is not None:
                 return service
             if not self.store.private_plan_active(user.id):
-                raise ValueError("activate private billing before starting private sync")
+                raise ValueError("activate USDC access before starting private sync")
             credentials = self.store.credentials_for_user(user.id)
             if credentials is None:
                 raise ValueError("save private sync details before starting private sync")
@@ -584,12 +621,22 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/operator":
             self._json(operator_status_payload(self.config))
             return
-        if parsed.path in {"/", "/index.html"}:
-            self._redirect("/coinglass-dashboard.html?v=20260701-coinglass-primary")
+        if parsed.path == "/":
+            self._redirect("/index.html#account")
             return
-        if requires_site_auth(parsed.path):
+        if parsed.path in PLATFORM_STATIC_PATHS:
             user = self._require_user()
             if user is None:
+                self._redirect("/index.html#account")
+                return
+            if not self.store.private_plan_active(user.id):
+                self._redirect("/index.html?payment=required#account")
+                return
+        if parsed.path not in PLATFORM_STATIC_PATHS and requires_platform_access(parsed.path):
+            if self._require_platform_user() is None:
+                return
+        elif requires_site_auth(parsed.path):
+            if self._require_platform_user() is None:
                 return
         if parsed.path == "/api/markets":
             try:
@@ -690,6 +737,8 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                 self._error(502, str(error))
             return
         if parsed.path.startswith("/api/coinglass/proxy/"):
+            if self._require_platform_user() is None:
+                return
             if self._rate_limited("/api/coinglass/proxy"):
                 self._error(429, "too many requests")
                 return
@@ -795,8 +844,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                 self._error(502, str(error))
             return
         if parsed.path == "/api/tradingview/signals":
-            if self._current_user() is None:
-                self._error(401, "login required for TradingView confluence")
+            if self._require_platform_user() is None:
                 return
             query = parse_qs(parsed.query)
             symbol = _normalize_alert_symbol(str(query.get("symbol", [""])[0]))
@@ -1054,16 +1102,19 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                 self._error(503, str(error))
                 return
             except Exception as error:  # noqa: BLE001
-                self._error(502, f"Stripe Checkout request failed: {error}")
+                self._error(502, f"USDC checkout request failed: {error}")
                 return
             self._json({"id": session.get("id", ""), "url": session["url"]})
             return
+        if parsed.path in PLATFORM_POST_PATHS:
+            if self._require_platform_user() is None:
+                return
         if parsed.path == "/api/credentials":
             user = self._require_user()
             if user is None:
                 return
             if not self.store.private_plan_active(user.id):
-                self._error(402, "activate private billing before saving private sync details")
+                self._error(402, "activate USDC access before saving private sync details")
                 return
             payload = self._read_json()
             try:
@@ -1187,6 +1238,15 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
         self._error(401, "login required")
         return None
 
+    def _require_platform_user(self) -> User | None:
+        user = self._require_user()
+        if user is None:
+            return None
+        if self.store.private_plan_active(user.id):
+            return user
+        self._json_status(402, platform_access_denied_payload())
+        return None
+
     def _session_token(self) -> str:
         for part in self.headers.get("Cookie", "").split(";"):
             name, _, value = part.strip().partition("=")
@@ -1235,8 +1295,11 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
         super().end_headers()
 
     def _json(self, payload: dict) -> None:
+        self._json_status(200, payload)
+
+    def _json_status(self, status: int, payload: dict) -> None:
         body = json.dumps(payload, cls=JsonEncoder).encode("utf-8")
-        self.send_response(200)
+        self.send_response(status)
         self.send_header("Content-Type", "application/json")
         if hasattr(self, "_pending_cookie"):
             self.send_header("Set-Cookie", self._pending_cookie)

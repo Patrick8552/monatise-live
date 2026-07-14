@@ -616,12 +616,12 @@ function renderRegistrationDesk(me = currentUser) {
   }
   const clientName = els.clientNameInput.value.trim() || me.clientName || profile.clientName || "Client";
   const syncReady = Boolean(me.credentialsConfigured);
-  const planText = "Private access";
+  const planText = hasLivePlan() ? "Paid - USDC" : loggedIn ? "USDC required" : "Guest";
   els.onboardingContact.textContent = `${clientName} / ${me.username}`;
   els.onboardingDrawdown.textContent = `${(tradingRules.maxDailyLossPct * 100).toFixed(1).replace(/\.0$/, "")}% cap`;
   els.onboardingAccount.textContent = syncReady ? "Saved" : "Optional";
   els.onboardingPlan.textContent = planText;
-  els.onboardingStatus.textContent = loggedIn && hasLivePlan() ? "Profile ready" : "Pending save";
+  els.onboardingStatus.textContent = loggedIn && hasLivePlan() ? "Paid access ready" : "USDC payment pending";
 }
 
 function setGate(element, label, status, className = "") {
@@ -2270,13 +2270,13 @@ function tradingViewStatusClass(classification = {}) {
 
 function renderTradingViewSignal() {
   if (!els.tradingViewSignalPanel) return;
-  if (!currentUser.authenticated) {
+  if (!hasLivePlan()) {
     els.tradingViewSignalPanel.innerHTML = `
       <div class="strategy-status wait">
         <strong>TV LOCKED</strong>
-        <span>Private TradingView signal feed</span>
+        <span>USDC payment required</span>
       </div>
-      <p>Request access or log in to view live TradingView price, setup, grid, and hedge alerts for ${assetLabel(selectedAsset)}.</p>
+      <p>Activate the USDC plan before viewing live TradingView price, setup, grid, and hedge alerts for ${assetLabel(selectedAsset)}.</p>
     `;
     return;
   }
@@ -2327,7 +2327,7 @@ function renderTradingViewSignal() {
 
 async function loadTradingViewSignals() {
   if (!els.tradingViewSignalPanel) return;
-  if (!currentUser.authenticated) {
+  if (!hasLivePlan()) {
     latestTradingViewSignal = null;
     renderTradingViewSignal();
     return;
@@ -2708,6 +2708,7 @@ function refreshChatOpening() {
 function updateDecisionSurface(snapshot = null) {
   if (!els.decisionState) return;
   const loggedIn = Boolean(currentUser.authenticated);
+  const paid = hasLivePlan();
   const hasCredentials = Boolean(currentUser.credentialsConfigured);
   const blocks = readinessBlocks(snapshot);
   const running = Boolean(snapshot?.running);
@@ -2721,18 +2722,21 @@ function updateDecisionSurface(snapshot = null) {
   let state = "Profile needed";
   let detail = "Create a signal profile to save and reuse preferences.";
   let className = "blocked";
-  if (loggedIn && !hasCredentials) {
-    state = "Profile ready";
-    detail = "Preferences can be saved. Private sync is optional.";
+  if (loggedIn && !paid) {
+    state = "USDC payment required";
+    detail = "Activate the USDC plan before using live signals, dashboard data, alerts, or sync.";
+  } else if (loggedIn && !hasCredentials) {
+    state = "Paid access ready";
+    detail = "USDC payment is active. Private sync is optional.";
     className = "ready";
-  } else if (loggedIn && hasCredentials && blocks.length) {
+  } else if (loggedIn && paid && hasCredentials && blocks.length) {
     state = "Signal blocked";
     detail = blocks[0]?.detail || riskStatus || "Quality gate has not cleared.";
   } else if (running) {
     state = "Private sync running";
     detail = `${mode} ${network} private sync is active for ${assetLabel(selectedAsset)}.`;
     className = "ready";
-  } else if (loggedIn && hasCredentials) {
+  } else if (loggedIn && paid && hasCredentials) {
     state = "Signal ready";
     detail = riskStatus && !/ready|local/i.test(riskStatus) ? riskStatus : "Review thesis, invalidation, and session before saving.";
     className = "ready";
@@ -2743,7 +2747,7 @@ function updateDecisionSurface(snapshot = null) {
   commandState?.classList.add(className);
   els.decisionState.textContent = state;
   els.decisionDetail.textContent = detail;
-  els.decisionAccount.textContent = loggedIn ? `${currentUser.username || "profile"} · ${currentPlan()}` : "No profile";
+  els.decisionAccount.textContent = loggedIn ? `${currentUser.username || "profile"} · ${accessState()}` : "No profile";
   els.decisionAsset.textContent = assetLabel(selectedAsset);
   if (Number.isFinite(openNotional)) {
     els.decisionExposure.textContent = money(openNotional);
@@ -2799,6 +2803,7 @@ function renderWealthCommand(snapshot = null) {
 
 function updateLiveDesk(snapshot = null) {
   const loggedIn = Boolean(currentUser.authenticated);
+  const paid = hasLivePlan();
   const hasCredentials = Boolean(currentUser.credentialsConfigured);
   const mode = snapshot?.mode || "paper";
   const network = snapshot?.network || "local";
@@ -2810,13 +2815,13 @@ function updateLiveDesk(snapshot = null) {
   const liveReady = Boolean(snapshot?.liveReady && !sessionBlocked);
   const requires = Array.isArray(snapshot?.requires) ? snapshot.requires : [];
 
-  setGate(els.loginGate, "Profile", loggedIn ? "Ready" : "Needed", loggedIn ? "ready" : "warn");
-  setGate(els.credentialGate, "Private sync", hasCredentials ? "Saved" : "Optional", hasCredentials ? "ready" : "ready");
+  setGate(els.loginGate, "Access", paid ? "Paid USDC" : loggedIn ? "Pay USDC" : "Guest", paid ? "ready" : "warn");
+  setGate(els.credentialGate, "Private sync", paid ? hasCredentials ? "Saved" : "Optional" : "Locked", paid ? "ready" : "warn");
   setGate(
     els.riskGate,
     "Signal gate",
     sessionBlocked ? "Session break" : liveReady ? "Ready" : requires[0] || "Waiting",
-    liveReady ? "hot" : mode === "live" || sessionBlocked ? "warn" : "ready"
+    paid && liveReady ? "hot" : mode === "live" || sessionBlocked || !paid ? "warn" : "ready"
   );
 
   els.liveNetworkBadge.textContent = `${mode} / ${network}`;
@@ -2826,16 +2831,18 @@ function updateLiveDesk(snapshot = null) {
       ? "Close signal window"
     : liveReady
       ? "Private sync ready"
-      : loggedIn
-        ? "Profile ready"
-        : "Profile needed";
+      : paid
+        ? "Paid profile ready"
+        : loggedIn
+          ? "USDC payment required"
+          : "Profile needed";
   els.liveModeStatus.textContent = running
     ? `${mode.toUpperCase()} running`
     : sessionBlocked
       ? `${sessionGuard.session} ${sessionGuard.transition} guard`
     : liveReady
       ? "Private sync armed"
-      : `${mode.toUpperCase()} idle`;
+      : paid ? `${mode.toUpperCase()} idle` : "USDC required";
   els.liveModeStatus.classList.toggle("live-mode", mode === "live");
   els.backendStartButton.classList.toggle("live-running", running);
   els.backendStartButton.textContent = running
@@ -2879,6 +2886,15 @@ function setAuthStatus(message) {
 
 function currentPlan() {
   return String(currentUser.subscription?.plan || "free").toLowerCase();
+}
+
+function currentSubscriptionStatus() {
+  return String(currentUser.subscription?.status || "inactive").toLowerCase();
+}
+
+function accessState() {
+  if (!currentUser.authenticated) return "guest";
+  return hasLivePlan() ? "paid" : "expired";
 }
 
 function assetLabel(symbol) {
@@ -3364,7 +3380,7 @@ function renderTradingRules() {
 }
 
 function hasLivePlan() {
-  return true;
+  return currentPlan() === "private" && ["active", "trialing"].includes(currentSubscriptionStatus());
 }
 
 function applySelectedAsset(symbol, options = {}) {
@@ -3372,7 +3388,7 @@ function applySelectedAsset(symbol, options = {}) {
   if (!nextSymbol) return false;
   if (nextSymbol === selectedAsset) {
     syncSelectedAsset();
-    if (options.load && (options.force || candleSource.symbol !== nextSymbol || candleSource.type !== "live")) {
+    if (options.load && hasLivePlan() && (options.force || candleSource.symbol !== nextSymbol || candleSource.type !== "live")) {
       loadLiveCandles({ force: true, limit: 120, symbol: nextSymbol }).catch(() => {});
     }
     return false;
@@ -3402,7 +3418,7 @@ function applySelectedAsset(symbol, options = {}) {
   renderCoinGlassServices();
   renderQuiverContext();
   if (options.render !== false) rebuildFromInputs();
-  if (options.load !== false) {
+  if (options.load !== false && hasLivePlan()) {
     loadLiveCandles({ force: true, limit: 120, symbol: nextSymbol }).catch(() => {});
     loadFibonacciAnalysis({ force: true });
     loadContextRadar({ force: true });
@@ -3417,40 +3433,46 @@ function renderAuth(me) {
   applyTradingRules(me.tradingRules || tradingRules);
   const changedAsset = applySelectedAsset(me.selectedSymbol, { load: Boolean(me.authenticated) });
   const loggedIn = Boolean(me.authenticated);
+  const paid = loggedIn && hasLivePlan();
   document.body.classList.toggle("auth-required", !loggedIn);
+  document.body.classList.toggle("payment-required", loggedIn && !paid);
   els.authStatus.textContent = loggedIn ? me.username : "No profile";
   els.subscriptionStatus.textContent = me.subscription
-    ? "Private access"
-    : "Selective";
+    ? paid ? "Paid - USDC" : "USDC required"
+    : "Guest";
   els.credentialStatus.textContent = loggedIn
-    ? me.credentialsConfigured
-      ? "Private sync saved for this signal profile."
-      : "Private sync is optional. Save rules to keep this profile useful."
+    ? paid
+      ? me.credentialsConfigured
+        ? "Private sync saved for this paid USDC profile."
+        : "USDC payment active. Private sync remains optional."
+      : "USDC payment is required before live signals, dashboard tools, alerts, and private sync."
     : "Request access with an email to save preferences. Monatise remembers the device, not your password.";
   if (!loggedIn) applyRememberedLogin(me.rememberedLogin || {});
   els.logoutButton.disabled = !loggedIn;
-  els.saveCredentialsButton.disabled = !loggedIn;
-  if (els.saveSpotifyButton) els.saveSpotifyButton.disabled = !loggedIn;
+  els.saveCredentialsButton.disabled = !paid;
+  if (els.saveSpotifyButton) els.saveSpotifyButton.disabled = !paid;
   if (els.spotifyPlaylistInput) {
-    els.spotifyPlaylistInput.disabled = !loggedIn;
+    els.spotifyPlaylistInput.disabled = !paid;
     els.spotifyPlaylistInput.value = loggedIn ? me.spotifyPlaylistUrl || "" : "";
   }
   window.MonatiseSpotify?.renderSpotifyPanel(loggedIn ? me : null, els.spotifyPanel);
-  els.backendStartButton.disabled = !loggedIn || !me.credentialsConfigured;
-  els.backendStopButton.disabled = !loggedIn;
+  els.backendStartButton.disabled = !paid || !me.credentialsConfigured;
+  els.backendStopButton.disabled = !paid;
   els.loginButton.disabled = loggedIn;
   els.registerButton.disabled = loggedIn;
   els.emailLoginCodeButton.disabled = loggedIn;
   els.completeLoginCodeButton.disabled = loggedIn;
   if (loggedIn) els.loginCodePanel.hidden = true;
-  if (els.billingCheckoutButton) els.billingCheckoutButton.disabled = !loggedIn;
+  if (els.billingCheckoutButton) {
+    els.billingCheckoutButton.disabled = !loggedIn || paid;
+    els.billingCheckoutButton.textContent = paid ? "USDC Access Active" : "Activate USDC Access";
+  }
   if (els.billingStatus) {
-    const plan = String(me.subscription?.plan || "free").toLowerCase();
     els.billingStatus.textContent = loggedIn
-      ? plan === "private"
-        ? "Private billing is active on this profile."
-        : "Stripe Checkout can activate the private plan for this profile."
-      : "Login or request access before private billing.";
+      ? paid
+        ? "USDC payment is active. Platform access and commercial API connectors are unlocked."
+        : "USDC payment is required before platform use. Activate the USDC plan to unlock signals, alerts, dashboard data, API connectors, and sync."
+      : "Login or request access before USDC payment.";
   }
   els.rotateRecoveryCodeButton.disabled = true;
   els.recoveryCodeBox.hidden = true;
@@ -3458,6 +3480,9 @@ function renderAuth(me) {
   if (!loggedIn) {
     backendOnline = false;
     els.backendStatus.textContent = "Login required";
+  } else if (!paid) {
+    backendOnline = false;
+    els.backendStatus.textContent = "USDC payment required";
   }
   updateLiveDesk();
   if (!changedAsset) syncSelectedAsset();
@@ -3788,7 +3813,7 @@ async function saveSpotifyPlaylist() {
     els.credentialStatus.textContent = "Playlist request failed. Try again.";
   } finally {
     if (els.saveSpotifyButton) {
-      els.saveSpotifyButton.disabled = !currentUser.authenticated;
+      els.saveSpotifyButton.disabled = !hasLivePlan();
       els.saveSpotifyButton.textContent = "Save Playlist";
     }
   }
@@ -3796,20 +3821,24 @@ async function saveSpotifyPlaylist() {
 
 async function startBillingCheckout() {
   if (!currentUser.authenticated) {
-    if (els.billingStatus) els.billingStatus.textContent = "Login or request access before private billing.";
+    if (els.billingStatus) els.billingStatus.textContent = "Login or request access before USDC payment.";
     els.usernameInput.focus();
+    return;
+  }
+  if (hasLivePlan()) {
+    if (els.billingStatus) els.billingStatus.textContent = "USDC payment is already active.";
     return;
   }
   if (els.billingCheckoutButton) {
     els.billingCheckoutButton.disabled = true;
     els.billingCheckoutButton.textContent = "Opening Checkout...";
   }
-  if (els.billingStatus) els.billingStatus.textContent = "Preparing Stripe Checkout...";
+  if (els.billingStatus) els.billingStatus.textContent = "Preparing USDC checkout...";
   try {
     const response = await jsonPost("/api/billing/checkout");
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
-      if (els.billingStatus) els.billingStatus.textContent = payload.error || "Stripe Checkout is not ready.";
+      if (els.billingStatus) els.billingStatus.textContent = payload.error || "USDC checkout is not ready.";
       return;
     }
     window.location.href = payload.url;
@@ -3817,8 +3846,8 @@ async function startBillingCheckout() {
     if (els.billingStatus) els.billingStatus.textContent = "Checkout request failed. Try again.";
   } finally {
     if (els.billingCheckoutButton) {
-      els.billingCheckoutButton.disabled = !currentUser.authenticated;
-      els.billingCheckoutButton.textContent = "Activate Private Billing";
+      els.billingCheckoutButton.disabled = !currentUser.authenticated || hasLivePlan();
+      els.billingCheckoutButton.textContent = hasLivePlan() ? "USDC Access Active" : "Activate USDC Access";
     }
   }
 }
@@ -3883,6 +3912,13 @@ function syncSelectedAsset() {
 }
 
 async function loadSelectableAssets() {
+  if (!hasLivePlan()) {
+    if (!selectableAssets.length) {
+      mergeSelectableAssets(["BTC", "ETH", "SOL", "HYPE", "BNB", "XRP", "DOGE"].map((symbol) => ({ symbol })));
+      renderAssetOptions();
+    }
+    return;
+  }
   try {
     const response = await apiFetch("/api/assets", { cache: "no-store" });
     if (!response.ok) throw new Error("asset list unavailable");
@@ -3899,6 +3935,14 @@ async function loadSelectableAssets() {
 }
 
 async function loadMarkets() {
+  if (!hasLivePlan()) {
+    if (!els.assetSelect.options.length) {
+      mergeSelectableAssets(["BTC", "ETH", "SOL", "HYPE", "BNB", "XRP", "DOGE"].map((symbol) => ({ symbol })));
+      renderAssetOptions();
+      syncSelectedAsset();
+    }
+    return;
+  }
   try {
     const response = await apiFetch("/api/markets", { cache: "no-store" });
     if (!response.ok) throw new Error("market fetch failed");
@@ -3935,6 +3979,7 @@ async function loadMarkets() {
 }
 
 async function loadFibonacciAnalysis(options = {}) {
+  if (!hasLivePlan()) return;
   if (fibLoading && !options.force) return;
   const now = Date.now();
   const interval = tradingRules.chartInterval;
@@ -4054,6 +4099,7 @@ function renderFvgPanel() {
 }
 
 async function loadContextRadar(options = {}) {
+  if (!hasLivePlan()) return;
   if (contextLoading && !options.force) return;
   const now = Date.now();
   const interval = tradingRules.chartInterval;
@@ -4296,6 +4342,7 @@ function renderCoinGlassServices() {
 }
 
 async function loadQuiverContext(options = {}) {
+  if (!hasLivePlan()) return;
   if (quiverLoading && !options.force) return;
   const now = Date.now();
   if (!isQuiverAsset(selectedAsset)) {
@@ -4346,6 +4393,7 @@ function renderResearchSystem() {
 }
 
 async function loadCoinGlassContext(options = {}) {
+  if (!hasLivePlan()) return;
   if (coinGlassLoading && !options.force) return;
   const interval = tradingRules.chartInterval || "1h";
   const now = Date.now();
@@ -4466,7 +4514,7 @@ function renderAssetGroups() {
 async function saveSelectedAsset(symbol) {
   const previous = selectedAsset;
   applySelectedAsset(symbol, { force: true, load: true });
-  if (!currentUser.authenticated) {
+  if (!hasLivePlan()) {
     addAuditEvent("asset changed", "Signal asset changed", `${previous} -> ${selectedAsset}`);
     render();
     return;
@@ -4896,6 +4944,7 @@ function candlesToCsv(candles) {
 }
 
 async function loadLiveCandles(options = {}) {
+  if (!hasLivePlan()) return;
   const symbol = options.symbol || selectedAsset;
   if (candleLoading && !options.force && symbol === candleLoadingSymbol) return;
   const interval = options.interval || tradingRules.chartInterval;
@@ -4931,7 +4980,7 @@ async function loadLiveCandles(options = {}) {
 }
 
 async function refreshClosedStructure() {
-  if (!selectedAsset || !currentUser.authenticated) return;
+  if (!selectedAsset || !hasLivePlan()) return;
   await loadLiveCandles({ force: true, limit: 120, symbol: selectedAsset });
   loadFibonacciAnalysis({ force: true });
   loadContextRadar({ force: true });
@@ -5324,6 +5373,14 @@ async function refreshBackend() {
       updateLiveDesk();
       return;
     }
+    if (!hasLivePlan()) {
+      backendOnline = false;
+      lastBackendSnapshot = null;
+      els.backendStatus.textContent = "USDC payment required";
+      renderWealthCommand();
+      updateLiveDesk();
+      return;
+    }
     const response = await apiFetch("/api/status", { cache: "no-store" });
     if (response.status === 401) {
       backendOnline = false;
@@ -5331,6 +5388,14 @@ async function refreshBackend() {
       els.backendStatus.textContent = "Login required";
       renderWealthCommand();
       renderAuth({ authenticated: false, credentialsConfigured: false });
+      return;
+    }
+    if (response.status === 402) {
+      backendOnline = false;
+      lastBackendSnapshot = null;
+      els.backendStatus.textContent = "USDC payment required";
+      renderWealthCommand();
+      updateLiveDesk();
       return;
     }
     if (!response.ok) throw new Error("backend offline");
@@ -5375,7 +5440,7 @@ async function saveTradingRules() {
     sessionGuardMinutes: Number(els.sessionGuardSelect.value),
     staleGridCancel: els.staleGridCancelInput.checked
   });
-  if (!currentUser.authenticated) {
+  if (!hasLivePlan()) {
     applyTradingRules(nextRules);
     rebuildFromInputs();
     fibAnalysis = null;
@@ -5386,7 +5451,7 @@ async function saveTradingRules() {
     loadFibonacciAnalysis({ force: true });
     loadContextRadar({ force: true });
     loadCoinGlassContext({ force: true });
-    addAuditEvent("rules updated", "Signal rules updated locally", `${nextRules.chartInterval} · ${nextRules.sessionGuardMinutes}m guard`);
+    addAuditEvent("rules preview", "USDC payment required before saving signal rules", `${nextRules.chartInterval} · ${nextRules.sessionGuardMinutes}m guard`);
     return;
   }
   const response = await jsonPost("/api/trading-rules", nextRules);

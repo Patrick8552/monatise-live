@@ -72,15 +72,22 @@ COINGLASS_EXCHANGE_LIST=Binance,OKX,Bybit
 
 CoinGlass is used for market data. Hyperliquid remains the execution and private sync adapter.
 
-Stripe gates the private billing plan through hosted Checkout. Add real Stripe
-values only in Render or a local `.env`, then point the Stripe webhook at
-`/api/stripe/webhook`:
+USDC payment gates platform use. Guests can authenticate and view the access
+screen, but live signals, dashboard market data, alerts, signal history, private
+sync, and commercial API connectors require an active private plan paid in USDC.
+Configure the Stripe price as the USDC private plan, add real Stripe values only
+in Render or a local `.env`, then point the Stripe webhook at `/api/stripe/webhook`:
 
 ```bash
 STRIPE_SECRET_KEY=sk_live_...
 STRIPE_PRIVATE_PRICE_ID=price_...
 STRIPE_WEBHOOK_SECRET=whsec_...
 ```
+
+Paid users can then connect supported commercial APIs from inside the platform,
+including a commercial CoinGlass key for market-data proxy routes and other
+dashboard connectors. Unpaid users receive `402 Payment Required` for platform
+APIs.
 
 Backpack is present as an exchange-aware scaffold for market data and ED25519
 private request signing:

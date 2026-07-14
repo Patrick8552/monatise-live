@@ -194,7 +194,7 @@ def test_tenant_services_require_private_plan_before_private_sync() -> None:
             store.save_credentials(user.id, UserCredentials(account_address="0x1234567890abcdef", secret_key="secret"))
             tenants = TenantServices(RuntimeConfig(mode="paper"), store)
 
-            with pytest.raises(ValueError, match="activate private billing"):
+            with pytest.raises(ValueError, match="activate USDC access"):
                 tenants.service_for_user(user)
 
             store.save_subscription_plan(user.id, "private", "active")

@@ -278,10 +278,18 @@ body[data-theme="dark"] textarea {
 }
 
 body.auth-required .ops-ribbon,
+body.payment-required .ops-ribbon,
 body.auth-required .desk-jump-nav,
+body.payment-required .desk-jump-nav,
 body.auth-required .command-strip,
+body.payment-required .command-strip,
 body.auth-required .wealth-command,
+body.payment-required .wealth-command,
 body.auth-required .desk-section:not(#account):not(#about) {
+  display: none;
+}
+
+body.payment-required .desk-section:not(#account):not(#about) {
   display: none;
 }
 
@@ -289,11 +297,24 @@ body.auth-required .desk-sections {
   display: block;
 }
 
+body.payment-required .desk-sections {
+  display: block;
+}
+
 body.auth-required #account {
   display: block;
 }
 
+body.payment-required #account {
+  display: block;
+}
+
 body.auth-required #about {
+  display: block;
+  margin-top: 14px;
+}
+
+body.payment-required #about {
   display: block;
   margin-top: 14px;
 }
