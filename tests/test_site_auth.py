@@ -1,4 +1,6 @@
-from monatise.live.server import requires_platform_access, requires_site_auth
+from __future__ import annotations
+
+from monatise.live.server import MonatiseHandler, requires_platform_access, requires_site_auth
 
 
 def test_market_data_routes_require_site_authentication() -> None:
@@ -47,3 +49,22 @@ def test_auth_bootstrap_routes_remain_public() -> None:
     ):
         assert not requires_site_auth(path)
         assert not requires_platform_access(path)
+
+
+def test_platform_static_routes_redirect_guests_to_account() -> None:
+    class Handler(MonatiseHandler):
+        def _current_user(self):  # noqa: ANN202
+            return None
+
+        def _require_user(self):  # noqa: ANN202
+            raise AssertionError("static dashboard routes should redirect guests without writing a 401 first")
+
+        def _redirect(self, location: str) -> None:
+            self.redirect_location = location
+
+    handler = Handler.__new__(Handler)
+    handler.path = "/coinglass-dashboard.html"
+
+    handler.do_GET()
+
+    assert handler.redirect_location == "/index.html#account"

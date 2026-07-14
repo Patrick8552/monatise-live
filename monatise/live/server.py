@@ -635,7 +635,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             self._redirect("/index.html#account")
             return
         if parsed.path in PLATFORM_STATIC_PATHS:
-            user = self._require_user()
+            user = self._current_user()
             if user is None:
                 self._redirect("/index.html#account")
                 return
