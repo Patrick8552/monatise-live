@@ -1208,6 +1208,7 @@ function buildGeneratedSignal(setup, price, vwap) {
     liveChecks: setup.liveChecks,
     checksTotal: setup.checks.length,
     entry: executableEntry,
+    entryMode: executableAction === "WAIT" ? "none" : entryMode,
     invalidation,
     target: actionBlocked ? Number.isFinite(vwap) ? vwap : mark : target,
     buyGrid,
@@ -1267,10 +1268,6 @@ function formatGridLevels(levels) {
   return levels.map((level) => formatUsd(level)).join(" / ");
 }
 
-function twoSidedGridLevelsText(signal) {
-  return `BUY ${formatGridLevels(signal.buyGrid)}; SELL ${formatGridLevels(signal.sellGrid)}`;
-}
-
 function setupGridLabel(signal) {
   if (signal.action === "BUY") return "Long entry / take-profit grid";
   if (signal.action === "SELL") return "Short entry / cover grid";
@@ -1278,11 +1275,12 @@ function setupGridLabel(signal) {
 }
 
 function setupGridPlan(signal) {
+  const entryPlan = signal.entryPlan ? `${signal.entryPlan} ` : "";
   if (signal.action === "BUY") {
-    return `Long entries: ${formatGridLevels(signal.buyGrid)}. Take-profit sells: ${formatGridLevels(signal.sellGrid)}. Active BUY idea is wrong only below ${formatUsd(signal.invalidation)}.`;
+    return `${entryPlan}Long entries: ${formatGridLevels(signal.buyGrid)}. Take-profit sells: ${formatGridLevels(signal.sellGrid)}. Active BUY idea is wrong only below ${formatUsd(signal.invalidation)}.`;
   }
   if (signal.action === "SELL") {
-    return `Short entries: ${formatGridLevels(signal.sellGrid)}. Cover buys: ${formatGridLevels(signal.buyGrid)}. Active SELL idea is wrong only above ${formatUsd(signal.invalidation)}.`;
+    return `${entryPlan}Short entries: ${formatGridLevels(signal.sellGrid)}. Cover buys: ${formatGridLevels(signal.buyGrid)}. Active SELL idea is wrong only above ${formatUsd(signal.invalidation)}.`;
   }
   return signal.entryPlan;
 }
@@ -1439,7 +1437,7 @@ function renderSignalLog() {
     <div class="signal-row">
       <strong class="${signal.action === "BUY" ? "positive" : signal.action === "SELL" ? "negative" : ""}">${displayFrameworkAction(signal.action)}</strong>
       <span>${signal.asset} · ${signal.snapshotTime || signal.time}</span>
-      <small>${signal.thesis} · ${signal.action === "WAIT" ? "NO TRADE until sequence confirms" : twoSidedGridLevelsText(signal)} · invalidation ${signal.action === "WAIT" ? "VWAP / structure" : formatUsd(signal.invalidation)} · take profit ${formatUsd(signal.target)} · ${signal.takeProfitDirection || signal.hedgeDirection}</small>
+      <small>${signal.thesis} · ${signal.action === "WAIT" ? "NO TRADE until sequence confirms" : setupGridPlan(signal)} · invalidation ${signal.action === "WAIT" ? "VWAP / structure" : formatUsd(signal.invalidation)} · take profit ${formatUsd(signal.target)} · ${signal.takeProfitDirection || signal.hedgeDirection}</small>
     </div>
   `).join("");
 }
