@@ -1064,6 +1064,12 @@ function plannedDashboardEntry(action, mark, vwap, buyGrid = [], sellGrid = []) 
   return candidates.sort((left, right) => Math.abs(left - mark) - Math.abs(right - mark))[0];
 }
 
+function markEntryCandidate(action, mark, setup) {
+  const numericMark = Number(mark);
+  if (!["BUY", "SELL"].includes(action) || !Number.isFinite(numericMark) || numericMark <= 0) return Number.NaN;
+  return setup?.tradeReady || setup?.frameworkReady ? numericMark : Number.NaN;
+}
+
 function fallbackDirectionalEntry(action, mark, buyGrid = [], sellGrid = []) {
   const numericMark = Number(mark);
   if (!["BUY", "SELL"].includes(action) || !Number.isFinite(numericMark) || numericMark <= 0) return Number.NaN;
@@ -1165,10 +1171,12 @@ function buildGeneratedSignal(setup, price, vwap) {
   const anchor = Number.isFinite(vwap) && vwap > 0 ? vwap : mark;
   const buyGrid = buildGridLevels(anchor, "buy", spacingPct, setupAction);
   const sellGrid = buildGridLevels(anchor, "sell", spacingPct, setupAction);
+  const markEntry = markEntryCandidate(setupAction, mark, setup);
   const plannedEntry = plannedDashboardEntry(setupAction, mark, vwap, buyGrid, sellGrid);
   const directionalWatch = setupAction !== "WAIT";
   const fallbackEntry = directionalWatch ? fallbackDirectionalEntry(setupAction, mark, buyGrid, sellGrid) : Number.NaN;
-  const entryCandidate = Number.isFinite(plannedEntry) ? plannedEntry : fallbackEntry;
+  const entryCandidate = Number.isFinite(markEntry) ? markEntry : Number.isFinite(plannedEntry) ? plannedEntry : fallbackEntry;
+  const entryMode = Number.isFinite(markEntry) ? "mark" : Number.isFinite(plannedEntry) ? "pullback" : "grid";
   const action = setupAction === "WAIT" || !Number.isFinite(entryCandidate) ? "WAIT" : setupAction;
   const entry = action === "WAIT" ? null : entryCandidate;
   const invalidationPlan = dynamicInvalidationPlan(action, entry, mark);
@@ -1215,8 +1223,8 @@ function buildGeneratedSignal(setup, price, vwap) {
       : !setup.tradeReady
         ? `${executableAction} context signal at ${formatUsd(executableEntry)}; context strength ${setup.contextConfidence}%. Framework entry is still pending: ${setup.frameworkGate?.summary || "waiting for the full sequence."}`
       : invalidationPlan.reducedSize
-        ? `${executableAction} maneuver entry ${formatUsd(executableEntry)}; use small lot size, keep the wider invalidation, and hold account risk constant. First target ${formatUsd(target)}.`
-        : `${executableAction} pullback entry ${formatUsd(executableEntry)}; first target ${formatUsd(target)}.`,
+        ? `${executableAction} ${entryMode === "mark" ? "mark-price" : "maneuver"} entry ${formatUsd(executableEntry)}; use small lot size, keep the wider invalidation, and hold account risk constant. First target ${formatUsd(target)}.`
+        : `${executableAction} ${entryMode === "mark" ? "mark-price" : "pullback"} entry ${formatUsd(executableEntry)}; first target ${formatUsd(target)}.`,
     invalidationPlan: executableAction === "WAIT"
       ? actionBlocked
         ? `${invalidationPlan.detail} Stop became unreasonable, so Monatise stays in NO TRADE. If the next valid setup still needs a wide stop, use small lot size.`
@@ -1263,13 +1271,18 @@ function twoSidedGridLevelsText(signal) {
   return `BUY ${formatGridLevels(signal.buyGrid)}; SELL ${formatGridLevels(signal.sellGrid)}`;
 }
 
+function setupGridLabel(signal) {
+  if (signal.action === "BUY") return "Long entry / take-profit grid";
+  if (signal.action === "SELL") return "Short entry / cover grid";
+  return "--";
+}
+
 function setupGridPlan(signal) {
-  const levels = twoSidedGridLevelsText(signal);
   if (signal.action === "BUY") {
-    return `${levels}. Active BUY idea is wrong only if ${formatUsd(signal.invalidation)} breaks.`;
+    return `Long entries: ${formatGridLevels(signal.buyGrid)}. Take-profit sells: ${formatGridLevels(signal.sellGrid)}. Active BUY idea is wrong only below ${formatUsd(signal.invalidation)}.`;
   }
   if (signal.action === "SELL") {
-    return `${levels}. Active SELL idea is wrong only if ${formatUsd(signal.invalidation)} breaks.`;
+    return `Short entries: ${formatGridLevels(signal.sellGrid)}. Cover buys: ${formatGridLevels(signal.buyGrid)}. Active SELL idea is wrong only above ${formatUsd(signal.invalidation)}.`;
   }
   return signal.entryPlan;
 }
@@ -1297,8 +1310,8 @@ function gridSidePlan(side, action, asset, levels, scaleAction) {
       : `Take-profit ${asset} grid sells above mark: ${levelText}; recycle fills back into lower bids.`;
   }
   return side === "sell"
-    ? `Primary ${asset} grid sells above mark: ${levelText}; ${scaleAction === "average up" ? "average up carefully into researched resistance" : "add only into controlled strength"}.`
-    : `Cover ${asset} grid buys below mark: ${levelText}; recycle fills back into higher offers.`;
+    ? `Short-entry ${asset} grid sells above mark: ${levelText}; ${scaleAction === "average up" ? "average up carefully into researched resistance" : "add only into controlled strength"}.`
+    : `Cover-zone ${asset} grid buys below mark: ${levelText}; buy back shorts there and reassess.`;
 }
 
 function displayFrameworkAction(action) {
@@ -1404,7 +1417,7 @@ function renderGeneratedSignal(signal) {
   els.signalAction.textContent = displayFrameworkAction(signal.action);
   els.signalAction.className = signal.action === "BUY" ? "positive" : signal.action === "SELL" ? "negative" : "";
   els.signalThesis.textContent = signal.thesis;
-  els.signalEntry.textContent = signal.action === "WAIT" ? "--" : "BUY / SELL grid";
+  els.signalEntry.textContent = setupGridLabel(signal);
   els.signalEntryPlan.textContent = setupGridPlan(signal);
   els.signalInvalidation.textContent = signal.action === "WAIT" ? "VWAP / structure" : formatUsd(signal.invalidation);
   els.signalInvalidationPlan.textContent = setupInvalidationPlan(signal);
@@ -3364,7 +3377,7 @@ function applyMonatiseFramework() {
     gridDirection = `Sell grid ${asset.coin}`;
     gridPlan = frameworkGate.ready ? gridPlanForResearch("sell", m.scaleAction, m.vwapSignal) : `Context signal active at ${contextConfidence}%. ${frameworkGate.summary}`;
     takeProfitDirection = `TP below ${asset.coin}`;
-    takeProfitPlan = "Use the generated snapshot target as the first take-profit area. Cover into the buy grid and reassess after target, invalidation, or snapshot expiry.";
+    takeProfitPlan = "Use the generated snapshot target as the first take-profit area. Cover into the lower buy-back zone and reassess after target, invalidation, or snapshot expiry.";
   } else {
     gridPlan = frameworkGate.summary;
   }
