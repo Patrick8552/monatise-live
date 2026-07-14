@@ -78,6 +78,10 @@ sync, and commercial API connectors require an active private plan paid in USDC.
 Configure the Stripe price as the USDC private plan, add real Stripe values only
 in Render or a local `.env`, then point the Stripe webhook at `/api/stripe/webhook`:
 
+USDC payments are routed on Solana only. The live payment destination is
+`69aNnKVjSin6x2HYqMgu9FsWawWDiRxohGfZw8efGjue`, configurable with
+`MONATISE_USDC_SOLANA_ADDRESS`.
+
 ```bash
 STRIPE_SECRET_KEY=sk_live_...
 STRIPE_PRIVATE_PRICE_ID=price_...

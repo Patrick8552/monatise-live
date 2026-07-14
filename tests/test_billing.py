@@ -81,4 +81,8 @@ def test_private_checkout_session_marks_usdc_only() -> None:
 
     assert session["url"] == "https://checkout.stripe.test/session"
     assert fields["metadata[payment_asset]"] == ["USDC"]
+    assert fields["metadata[payment_network]"] == ["solana"]
+    assert fields["metadata[payment_destination]"] == ["69aNnKVjSin6x2HYqMgu9FsWawWDiRxohGfZw8efGjue"]
     assert fields["subscription_data[metadata][payment_asset]"] == ["USDC"]
+    assert fields["subscription_data[metadata][payment_network]"] == ["solana"]
+    assert fields["subscription_data[metadata][payment_destination]"] == ["69aNnKVjSin6x2HYqMgu9FsWawWDiRxohGfZw8efGjue"]

@@ -15,6 +15,8 @@ from monatise.live.secrets import secret_value
 STRIPE_CHECKOUT_SESSIONS_URL = "https://api.stripe.com/v1/checkout/sessions"
 PRIVATE_PLAN = "private"
 PRIVATE_PLAN_PAYMENT_ASSET = "USDC"
+PRIVATE_PLAN_PAYMENT_NETWORK = "solana"
+DEFAULT_USDC_SOLANA_ADDRESS = "69aNnKVjSin6x2HYqMgu9FsWawWDiRxohGfZw8efGjue"
 
 
 @dataclass(frozen=True)
@@ -51,6 +53,10 @@ class StripeBillingError(RuntimeError):
     pass
 
 
+def usdc_payment_destination() -> str:
+    return os.getenv("MONATISE_USDC_SOLANA_ADDRESS", DEFAULT_USDC_SOLANA_ADDRESS).strip() or DEFAULT_USDC_SOLANA_ADDRESS
+
+
 def create_private_checkout_session(
     config: StripeBillingConfig,
     *,
@@ -71,8 +77,12 @@ def create_private_checkout_session(
             "cancel_url": config.cancel_url,
             "metadata[monatise_user_id]": str(user_id),
             "metadata[payment_asset]": PRIVATE_PLAN_PAYMENT_ASSET,
+            "metadata[payment_network]": PRIVATE_PLAN_PAYMENT_NETWORK,
+            "metadata[payment_destination]": usdc_payment_destination(),
             "subscription_data[metadata][monatise_user_id]": str(user_id),
             "subscription_data[metadata][payment_asset]": PRIVATE_PLAN_PAYMENT_ASSET,
+            "subscription_data[metadata][payment_network]": PRIVATE_PLAN_PAYMENT_NETWORK,
+            "subscription_data[metadata][payment_destination]": usdc_payment_destination(),
         }
     ).encode("utf-8")
     request = Request(

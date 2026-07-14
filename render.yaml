@@ -27,6 +27,8 @@ services:
         sync: false
       - key: MONATISE_SOLANA_RPC_URL
         value: https://api.mainnet-beta.solana.com
+      - key: MONATISE_USDC_SOLANA_ADDRESS
+        value: 69aNnKVjSin6x2HYqMgu9FsWawWDiRxohGfZw8efGjue
       - key: MONATISE_ARBITRUM_RPC_URL
         value: https://arb1.arbitrum.io/rpc
       - key: MONATISE_POLYGON_RPC_URL

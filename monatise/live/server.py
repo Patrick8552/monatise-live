@@ -20,10 +20,12 @@ from monatise.adapters.quiver import QuiverAdapter, normalize_quiver_symbol
 from monatise.live.billing import (
     PRIVATE_PLAN,
     PRIVATE_PLAN_PAYMENT_ASSET,
+    PRIVATE_PLAN_PAYMENT_NETWORK,
     StripeBillingConfig,
     StripeBillingError,
     create_private_checkout_session,
     private_plan_user_id_from_event,
+    usdc_payment_destination,
     verify_stripe_signature,
 )
 from monatise.live.config import LIVE_CONFIRMATION, RuntimeConfig
@@ -137,6 +139,8 @@ def platform_access_denied_payload() -> dict:
             "state": "payment_required",
             "plan": PRIVATE_PLAN,
             "paymentAsset": PRIVATE_PLAN_PAYMENT_ASSET,
+            "paymentNetwork": PRIVATE_PLAN_PAYMENT_NETWORK,
+            "paymentDestination": usdc_payment_destination(),
             "allowed": False,
         },
     }
@@ -416,6 +420,12 @@ def operator_status_payload(config: RuntimeConfig) -> dict:
             "instanceId": os.getenv("RENDER_INSTANCE_ID", ""),
         },
         "integrations": {
+            "billing": {
+                "paymentAsset": PRIVATE_PLAN_PAYMENT_ASSET,
+                "paymentNetwork": PRIVATE_PLAN_PAYMENT_NETWORK,
+                "paymentDestination": usdc_payment_destination(),
+                "checkoutConfigured": StripeBillingConfig.from_env().checkout_configured,
+            },
             "coinglass": {
                 "configured": bool(os.getenv("COINGLASS_API_KEY", "").strip()),
                 "exchange": os.getenv("COINGLASS_EXCHANGE", "Binance"),

@@ -3617,6 +3617,10 @@ button:disabled {
   line-height: 1.35;
 }
 
+.access-list code {
+  overflow-wrap: anywhere;
+}
+
 .about-grid {
   display: grid;
   gap: 14px;
