@@ -91,7 +91,7 @@
       <section class="command-strip" aria-label="live decision surface">
         <div class="command-state">
           <span>Signal</span>
-          <strong id="decisionState">Login required</strong>
+          <strong id="decisionState">Desk preparing</strong>
           <em id="decisionDetail">Create a signal profile to save preferences.</em>
         </div>
         <div class="command-metrics">
@@ -123,7 +123,7 @@
             </div>
             <span id="cioPosture">Standby</span>
           </div>
-          <p id="cioBrief">Login to load your executive risk brief, opportunity score, and next best action.</p>
+          <p id="cioBrief">Preparing your executive risk brief, opportunity score, and next best action.</p>
           <div id="cioDrivers" class="cio-drivers" aria-label="CIO decision drivers"></div>
         </div>
         <div class="opportunity-score" aria-label="opportunity score">
@@ -337,7 +337,7 @@
                   <span>Activation path</span>
                   <strong id="activationStatus">Profile first</strong>
                 </div>
-                <em id="activationNext">Create or log in to a profile.</em>
+                <em id="activationNext">Your automatic profile is being prepared.</em>
               </div>
               <div id="activationList" class="activation-list"></div>
             </section>
@@ -595,8 +595,8 @@
         <section id="account" class="desk-section">
           <div class="section-head">
             <div>
-              <p class="eyebrow">Private access</p>
-              <h2>Enter only if you intend to trade with discipline.</h2>
+              <p class="eyebrow">Automatic profile</p>
+              <h2>Your desk is ready without a login.</h2>
             </div>
           </div>
 
@@ -607,28 +607,28 @@
                   <span>Private Desk</span>
                   <strong id="authStatus">No profile</strong>
                 </div>
-                <button id="logoutButton" type="button">Logout</button>
+                <button id="logoutButton" type="button" hidden>Logout</button>
               </div>
               <label>
                 Profile name
                 <input id="clientNameInput" type="text" autocomplete="name" placeholder="Your signal desk name" />
               </label>
-              <label>
+              <label hidden>
                 Email
                 <input id="usernameInput" type="email" autocomplete="username" inputmode="email" placeholder="client@email.com" />
               </label>
-              <label>
+              <label hidden>
                 Password
                 <span class="password-field">
                   <input id="passwordInput" type="password" autocomplete="current-password" />
                   <button id="passwordToggle" type="button" aria-label="Show password" aria-pressed="false">Show</button>
                 </span>
               </label>
-              <label class="remember-login">
+              <label class="remember-login" hidden>
                 <input id="rememberLoginInput" type="checkbox" />
                 <span>Remember this device and email</span>
               </label>
-              <div class="button-row">
+              <div class="button-row" hidden>
                 <button id="loginButton" class="primary" type="submit">Login</button>
                 <button id="emailLoginCodeButton" type="button">Email Code</button>
                 <button id="registerButton" type="button">Request Access</button>
@@ -712,35 +712,35 @@
 
             <section class="panel access-panel">
               <div class="panel-head">
-                <h2>Private Desk Access</h2>
-                <span id="subscriptionStatus">Selective</span>
+                <h2>Monatise Access</h2>
+                <span id="subscriptionStatus">Open access</span>
               </div>
               <div class="access-list">
                 <article>
-                  <span>Guest</span>
-                  <strong>Preview the public intro and account screen only. Platform tools stay locked.</strong>
+                  <span>Open</span>
+                  <strong>Signals, dashboards, market data, alerts, and supported connectors are available without payment.</strong>
                 </article>
                 <article>
-                  <span>Paid</span>
-                  <strong>USDC payment unlocks live signals, commercial CoinGlass/API connectors, alerts, signal history, and private sync.</strong>
+                  <span>Profile</span>
+                  <strong>Your automatic browser profile saves preferences, signal history, and optional private sync details.</strong>
                 </article>
                 <article>
                   <span>USDC Route</span>
                   <strong>Solana only: <code>69aNnKVjSin6x2HYqMgu9FsWawWDiRxohGfZw8efGjue</code></strong>
                 </article>
                 <article>
-                  <span>Expired</span>
-                  <strong>Access pauses until the USDC plan is active again.</strong>
+                  <span>USDC</span>
+                  <strong>Payment is optional and does not control platform access.</strong>
                 </article>
               </div>
               <div class="button-row">
-                <button id="billingCheckoutButton" class="primary" type="button">Activate USDC Access</button>
+                <button id="billingCheckoutButton" class="primary" type="button">Support with USDC</button>
               </div>
               <figure class="payout-showcase">
                 <img src="./assets/payout-clients.svg" alt="Illustration of approved Monatise clients with payout-ready account status and signal journal access" />
                 <figcaption>Client payout flow for approved accounts, shown as a product illustration rather than verified earning proof.</figcaption>
               </figure>
-              <p id="billingStatus">USDC payment opens only for logged-in profiles when checkout is configured. Paid users can connect commercial CoinGlass and supported API keys inside the platform.</p>
+              <p id="billingStatus">Platform access is open. Optional USDC support is available to logged-in profiles when checkout is configured.</p>
               <p>Monatise does not custody funds or store raw passwords. Your browser can save passwords, while Monatise keeps only the secure session and profile settings.</p>
             </section>
           </div>

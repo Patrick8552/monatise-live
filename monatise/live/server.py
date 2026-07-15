@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import secrets
 import threading
 import time
 from dataclasses import replace
@@ -125,11 +126,11 @@ def save_tradingview_alerts(alerts: list[dict], path: Path | None = None) -> Non
 
 
 def requires_site_auth(path: str) -> bool:
-    return path in PRIVATE_GET_PATHS
+    return False
 
 
 def requires_platform_access(path: str) -> bool:
-    return path in PLATFORM_GET_PATHS or path in PLATFORM_STATIC_PATHS or any(path.startswith(prefix) for prefix in PLATFORM_GET_PREFIXES)
+    return False
 
 
 def platform_access_denied_payload() -> dict:
@@ -496,8 +497,6 @@ class TenantServices:
             service = self._services.get(user.id)
             if service is not None:
                 return service
-            if not self.store.private_plan_active(user.id):
-                raise ValueError("activate USDC access before starting private sync")
             credentials = self.store.credentials_for_user(user.id)
             if credentials is None:
                 raise ValueError("save private sync details before starting private sync")
@@ -632,16 +631,8 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             self._json(operator_status_payload(self.config))
             return
         if parsed.path == "/":
-            self._redirect("/index.html#account")
+            self._redirect("/index.html")
             return
-        if parsed.path in PLATFORM_STATIC_PATHS:
-            user = self._current_user()
-            if user is None:
-                self._redirect("/index.html#account")
-                return
-            if not self.store.private_plan_active(user.id):
-                self._redirect("/index.html?payment=required#account")
-                return
         if parsed.path not in PLATFORM_STATIC_PATHS and requires_platform_access(parsed.path):
             if self._require_platform_user() is None:
                 return
@@ -842,9 +833,6 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                 self._error(502, str(error))
             return
         if parsed.path == "/api/quiver/context":
-            if self._current_user() is None:
-                self._error(401, "login required for Quiver context")
-                return
             query = parse_qs(parsed.query)
             symbol = normalize_quiver_symbol(str(query.get("symbol", [self.config.symbol])[0]))
             try:
@@ -879,20 +867,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             )
             return
         if parsed.path == "/api/me":
-            user = self._current_user()
-            if user is None:
-                hint = self.store.login_hint_for_ip(self._client_ip())
-                self._json(
-                    {
-                        "authenticated": False,
-                        "rememberedLogin": {
-                            "username": hint.username if hint else "",
-                            "lastLoginAt": hint.last_login_at if hint else 0,
-                            "lastSeenAt": hint.last_seen_at if hint else 0,
-                        },
-                    }
-                )
-                return
+            user = self._ensure_user()
             self.store.touch_seen(user.id, user.username, self._client_ip())
             settings = self.store.settings_for_user(user.id)
             self._json(user_payload(user, settings, self.store))
@@ -1117,14 +1092,11 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             self._json({"id": session.get("id", ""), "url": session["url"]})
             return
         if parsed.path in PLATFORM_POST_PATHS:
-            if self._require_platform_user() is None:
+            if self._require_user() is None:
                 return
         if parsed.path == "/api/credentials":
             user = self._require_user()
             if user is None:
-                return
-            if not self.store.private_plan_active(user.id):
-                self._error(402, "activate USDC access before saving private sync details")
                 return
             payload = self._read_json()
             try:
@@ -1242,20 +1214,25 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
         return self.store.user_for_session(self._session_token())
 
     def _require_user(self) -> User | None:
+        return self._ensure_user()
+
+    def _ensure_user(self) -> User:
         user = self._current_user()
         if user is not None:
             return user
-        self._error(401, "login required")
-        return None
+        while True:
+            token = secrets.token_urlsafe(18)
+            try:
+                user = self.store.create_user(f"desk-{token.lower()}@monatise.local", secrets.token_urlsafe(32))
+                break
+            except ValueError as error:
+                if "already exists" not in str(error):
+                    raise
+        self._create_login_session(user.id, remember_device=True)
+        return user
 
     def _require_platform_user(self) -> User | None:
-        user = self._require_user()
-        if user is None:
-            return None
-        if self.store.private_plan_active(user.id):
-            return user
-        self._json_status(402, platform_access_denied_payload())
-        return None
+        return self._require_user()
 
     def _session_token(self) -> str:
         for part in self.headers.get("Cookie", "").split(";"):

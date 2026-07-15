@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import io
+
 from monatise.live.server import MonatiseHandler, requires_platform_access, requires_site_auth
 
 
-def test_market_data_routes_require_site_authentication() -> None:
+def test_market_data_routes_are_open() -> None:
     for path in (
         "/api/markets",
         "/api/assets",
@@ -13,10 +15,10 @@ def test_market_data_routes_require_site_authentication() -> None:
         "/api/coinglass/context",
         "/api/quiver/context",
     ):
-        assert requires_site_auth(path)
+        assert not requires_site_auth(path)
 
 
-def test_platform_routes_require_paid_access() -> None:
+def test_platform_routes_do_not_require_paid_access() -> None:
     for path in (
         "/coinglass-dashboard.html",
         "/dashboard/",
@@ -32,7 +34,7 @@ def test_platform_routes_require_paid_access() -> None:
         "/api/tradingview/signals",
         "/api/coinglass/proxy/api/futures/price/history",
     ):
-        assert requires_platform_access(path)
+        assert not requires_platform_access(path)
 
 
 def test_auth_bootstrap_routes_remain_public() -> None:
@@ -51,7 +53,7 @@ def test_auth_bootstrap_routes_remain_public() -> None:
         assert not requires_platform_access(path)
 
 
-def test_platform_static_routes_redirect_guests_to_account() -> None:
+def test_platform_static_routes_are_served_to_guests() -> None:
     class Handler(MonatiseHandler):
         def _current_user(self):  # noqa: ANN202
             return None
@@ -60,11 +62,29 @@ def test_platform_static_routes_redirect_guests_to_account() -> None:
             raise AssertionError("static dashboard routes should redirect guests without writing a 401 first")
 
         def _redirect(self, location: str) -> None:
-            self.redirect_location = location
+            raise AssertionError(f"open dashboard unexpectedly redirected to {location}")
+
+        def send_response(self, code, message=None):  # noqa: ANN001, ANN201
+            self.response_code = code
+
+        def send_header(self, keyword, value):  # noqa: ANN001, ANN201
+            pass
+
+        def end_headers(self):  # noqa: ANN201
+            pass
+
+        def copyfile(self, source, outputfile):  # noqa: ANN001, ANN201
+            pass
+
+        def send_head(self):  # noqa: ANN201
+            self.response_code = 200
+            return io.BytesIO(b"")
+
+        wfile = io.BytesIO()
 
     handler = Handler.__new__(Handler)
     handler.path = "/coinglass-dashboard.html"
 
     handler.do_GET()
 
-    assert handler.redirect_location == "/index.html#account"
+    assert handler.response_code == 200

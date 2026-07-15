@@ -616,12 +616,12 @@ function renderRegistrationDesk(me = currentUser) {
   }
   const clientName = els.clientNameInput.value.trim() || me.clientName || profile.clientName || "Client";
   const syncReady = Boolean(me.credentialsConfigured);
-  const planText = hasLivePlan() ? "Paid - USDC" : loggedIn ? "USDC required" : "Guest";
+  const planText = "Open access";
   els.onboardingContact.textContent = `${clientName} / ${me.username}`;
   els.onboardingDrawdown.textContent = `${(tradingRules.maxDailyLossPct * 100).toFixed(1).replace(/\.0$/, "")}% cap`;
   els.onboardingAccount.textContent = syncReady ? "Saved" : "Optional";
   els.onboardingPlan.textContent = planText;
-  els.onboardingStatus.textContent = loggedIn && hasLivePlan() ? "Paid access ready" : "USDC payment pending";
+  els.onboardingStatus.textContent = "Platform access ready";
 }
 
 function setGate(element, label, status, className = "") {
@@ -3380,7 +3380,7 @@ function renderTradingRules() {
 }
 
 function hasLivePlan() {
-  return currentPlan() === "private" && ["active", "trialing"].includes(currentSubscriptionStatus());
+  return true;
 }
 
 function applySelectedAsset(symbol, options = {}) {
@@ -3433,46 +3433,41 @@ function renderAuth(me) {
   applyTradingRules(me.tradingRules || tradingRules);
   const changedAsset = applySelectedAsset(me.selectedSymbol, { load: Boolean(me.authenticated) });
   const loggedIn = Boolean(me.authenticated);
-  const paid = loggedIn && hasLivePlan();
-  document.body.classList.toggle("auth-required", !loggedIn);
-  document.body.classList.toggle("payment-required", loggedIn && !paid);
-  els.authStatus.textContent = loggedIn ? me.username : "No profile";
-  els.subscriptionStatus.textContent = me.subscription
-    ? paid ? "Paid - USDC" : "USDC required"
-    : "Guest";
+  const paid = true;
+  document.body.classList.remove("auth-required");
+  document.body.classList.remove("payment-required");
+  els.authStatus.textContent = loggedIn ? "Automatic profile" : "Preparing profile";
+  els.subscriptionStatus.textContent = "Open access";
   els.credentialStatus.textContent = loggedIn
-    ? paid
-      ? me.credentialsConfigured
-        ? "Private sync saved for this paid USDC profile."
-        : "USDC payment active. Private sync remains optional."
-      : "USDC payment is required before live signals, dashboard tools, alerts, and private sync."
-    : "Request access with an email to save preferences. Monatise remembers the device, not your password.";
+    ? me.credentialsConfigured
+      ? "Private sync is saved for this profile."
+      : "Open access is active. Private sync remains optional."
+    : "Open access is active. Sign in only to save preferences or configure private sync.";
   if (!loggedIn) applyRememberedLogin(me.rememberedLogin || {});
   els.logoutButton.disabled = !loggedIn;
-  els.saveCredentialsButton.disabled = !paid;
-  if (els.saveSpotifyButton) els.saveSpotifyButton.disabled = !paid;
+  els.saveCredentialsButton.disabled = !loggedIn;
+  if (els.saveSpotifyButton) els.saveSpotifyButton.disabled = !loggedIn;
   if (els.spotifyPlaylistInput) {
-    els.spotifyPlaylistInput.disabled = !paid;
+    els.spotifyPlaylistInput.disabled = !loggedIn;
     els.spotifyPlaylistInput.value = loggedIn ? me.spotifyPlaylistUrl || "" : "";
   }
   window.MonatiseSpotify?.renderSpotifyPanel(loggedIn ? me : null, els.spotifyPanel);
-  els.backendStartButton.disabled = !paid || !me.credentialsConfigured;
-  els.backendStopButton.disabled = !paid;
+  els.backendStartButton.disabled = !loggedIn || !me.credentialsConfigured;
+  els.backendStopButton.disabled = !loggedIn;
   els.loginButton.disabled = loggedIn;
   els.registerButton.disabled = loggedIn;
   els.emailLoginCodeButton.disabled = loggedIn;
   els.completeLoginCodeButton.disabled = loggedIn;
   if (loggedIn) els.loginCodePanel.hidden = true;
   if (els.billingCheckoutButton) {
-    els.billingCheckoutButton.disabled = !loggedIn || paid;
-    els.billingCheckoutButton.textContent = paid ? "USDC Access Active" : "Activate USDC Access";
+    const supported = currentPlan() === "private" && ["active", "trialing"].includes(currentSubscriptionStatus());
+    els.billingCheckoutButton.disabled = !loggedIn || supported;
+    els.billingCheckoutButton.textContent = supported ? "USDC Support Active" : "Support with USDC";
   }
   if (els.billingStatus) {
     els.billingStatus.textContent = loggedIn
-      ? paid
-        ? "USDC payment is active. Platform access and commercial API connectors are unlocked."
-        : "USDC payment is required before platform use. Activate the USDC plan to unlock signals, alerts, dashboard data, API connectors, and sync."
-      : "Login or request access before USDC payment.";
+      ? "Platform access is open. USDC support is optional and does not unlock or restrict features."
+      : "Platform access is open. Sign in only if you want to support with USDC.";
   }
   els.rotateRecoveryCodeButton.disabled = true;
   els.recoveryCodeBox.hidden = true;
@@ -3480,9 +3475,6 @@ function renderAuth(me) {
   if (!loggedIn) {
     backendOnline = false;
     els.backendStatus.textContent = "Login required";
-  } else if (!paid) {
-    backendOnline = false;
-    els.backendStatus.textContent = "USDC payment required";
   }
   updateLiveDesk();
   if (!changedAsset) syncSelectedAsset();
@@ -3825,8 +3817,9 @@ async function startBillingCheckout() {
     els.usernameInput.focus();
     return;
   }
-  if (hasLivePlan()) {
-    if (els.billingStatus) els.billingStatus.textContent = "USDC payment is already active.";
+  const supported = currentPlan() === "private" && ["active", "trialing"].includes(currentSubscriptionStatus());
+  if (supported) {
+    if (els.billingStatus) els.billingStatus.textContent = "USDC support is already active.";
     return;
   }
   if (els.billingCheckoutButton) {
@@ -3846,8 +3839,9 @@ async function startBillingCheckout() {
     if (els.billingStatus) els.billingStatus.textContent = "Checkout request failed. Try again.";
   } finally {
     if (els.billingCheckoutButton) {
-      els.billingCheckoutButton.disabled = !currentUser.authenticated || hasLivePlan();
-      els.billingCheckoutButton.textContent = hasLivePlan() ? "USDC Access Active" : "Activate USDC Access";
+      const supportActive = currentPlan() === "private" && ["active", "trialing"].includes(currentSubscriptionStatus());
+      els.billingCheckoutButton.disabled = !currentUser.authenticated || supportActive;
+      els.billingCheckoutButton.textContent = supportActive ? "USDC Support Active" : "Support with USDC";
     }
   }
 }

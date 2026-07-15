@@ -185,7 +185,7 @@ def test_user_store_saves_asset_and_free_access_settings() -> None:
         _restore_key(old_key)
 
 
-def test_tenant_services_require_private_plan_before_private_sync() -> None:
+def test_tenant_services_allow_private_sync_without_paid_plan() -> None:
     old_key = _with_key()
     try:
         with tempfile.NamedTemporaryFile() as db:
@@ -194,10 +194,6 @@ def test_tenant_services_require_private_plan_before_private_sync() -> None:
             store.save_credentials(user.id, UserCredentials(account_address="0x1234567890abcdef", secret_key="secret"))
             tenants = TenantServices(RuntimeConfig(mode="paper"), store)
 
-            with pytest.raises(ValueError, match="activate USDC access"):
-                tenants.service_for_user(user)
-
-            store.save_subscription_plan(user.id, "private", "active")
             service = tenants.service_for_user(user)
 
             assert service.config.account_address == "0x1234567890abcdef"
