@@ -1087,7 +1087,7 @@ function fallbackDirectionalEntry(action, mark, buyGrid = [], sellGrid = []) {
   const levels = (action === "BUY" ? buyGrid : sellGrid)
     .map((level) => Number(level))
     .filter((level) => Number.isFinite(level) && level > 0);
-  if (!levels.length) return numericMark;
+  if (!levels.length) return Number.NaN;
   return levels.sort((left, right) => Math.abs(left - numericMark) - Math.abs(right - numericMark))[0];
 }
 
@@ -1215,7 +1215,7 @@ function buildGeneratedSignal(setup, price, vwap) {
         ? Math.min(setup.confidence, 55)
         : setup.confidence,
     contextConfidence: setup.contextConfidence ?? setup.confidence,
-    contextPrice: executableEntry || mark,
+    contextPrice: mark,
     tradeReady: Boolean(setup.tradeReady),
     score: setup.score,
     liveChecks: setup.liveChecks,
@@ -1235,10 +1235,10 @@ function buildGeneratedSignal(setup, price, vwap) {
           ? `No trade: dynamic stop is too wide for ${setup.asset}. Use small lot size only if a later setup becomes tradable; otherwise wait for a closer structural sweep or lower ATR.`
           : `No ${setupAction} entry yet. Wait for the full framework sequence: liquidity sweep, rejection, CHoCH/BOS, retest, confirmation candle, then grid validation.`
       : !setup.tradeReady
-        ? `${executableAction} context signal at ${formatUsd(executableEntry)}; context strength ${setup.contextConfidence}%. Framework entry is still pending: ${setup.frameworkGate?.summary || "waiting for the full sequence."}`
+        ? `Potential ${executableAction} pullback entry at ${formatUsd(executableEntry)}; current mark ${formatUsd(mark)} is not approved for entry. Context strength ${setup.contextConfidence}%. ${setup.frameworkGate?.summary || "Wait for the full sequence."}`
       : invalidationPlan.reducedSize
-        ? `${executableAction} ${entryMode === "mark" ? "mark-price" : "maneuver"} entry ${formatUsd(executableEntry)}; use small lot size, keep the wider invalidation, and hold account risk constant. First target ${formatUsd(target)}.`
-        : `${executableAction} ${entryMode === "mark" ? "mark-price" : "pullback"} entry ${formatUsd(executableEntry)}; first target ${formatUsd(target)}.`,
+        ? `Potential ${executableAction} ${entryMode === "mark" ? "mark-price" : "maneuver"} entry ${formatUsd(executableEntry)}; analysis favors the entry, but use small lot size, keep the wider invalidation, and hold account risk constant. First target ${formatUsd(target)}.`
+        : `Potential ${executableAction} ${entryMode === "mark" ? "mark-price" : "pullback"} entry ${formatUsd(executableEntry)}; analysis ${entryMode === "mark" ? "supports using current price" : "requires price to pull back"}. First target ${formatUsd(target)}.`,
     invalidationPlan: executableAction === "WAIT"
       ? actionBlocked
         ? `${invalidationPlan.detail} Stop became unreasonable, so Monatise stays in NO TRADE. If the next valid setup still needs a wide stop, use small lot size.`
@@ -1308,11 +1308,20 @@ function setupInvalidationPlan(signal) {
   return "VWAP and market structure are the wait-state guard rails.";
 }
 
-function renderSetupLevels(container, levels) {
+function renderSetupLevels(container, levels, primaryLevel = Number.NaN) {
   const values = Array.isArray(levels) ? levels.filter(Number.isFinite) : [];
   container.innerHTML = values.length
-    ? values.map((level) => `<strong>${formatUsd(level)}</strong>`).join("")
+    ? values.map((level) => `<strong class="${Number.isFinite(primaryLevel) && Math.abs(level - primaryLevel) < Math.max(0.000001, Math.abs(primaryLevel) * 0.000001) ? "primary-entry" : ""}">${formatUsd(level)}</strong>`).join("")
     : `<strong class="empty">--</strong>`;
+}
+
+function setupEntryLevels(signal) {
+  const entry = Number(signal.entry);
+  const directionalGrid = signal.action === "BUY" ? signal.buyGrid : signal.action === "SELL" ? signal.sellGrid : [];
+  const levels = [entry, ...(Array.isArray(directionalGrid) ? directionalGrid : [])]
+    .filter((level) => Number.isFinite(level) && level > 0)
+    .filter((level, index, values) => values.findIndex((candidate) => Math.abs(candidate - level) < Math.max(0.000001, Math.abs(level) * 0.000001)) === index);
+  return levels.slice(0, 3);
 }
 
 function renderSetupGrid(signal) {
@@ -1320,18 +1329,19 @@ function renderSetupGrid(signal) {
   const isSell = signal.action === "SELL";
   const isDirectional = isBuy || isSell;
   const pending = isDirectional && !signal.tradeReady;
-  const entryLevels = isBuy ? signal.buyGrid : isSell ? signal.sellGrid : [];
+  const entryLevels = isDirectional ? setupEntryLevels(signal) : [];
   const profitLevels = isBuy ? signal.sellGrid : isSell ? signal.buyGrid : [];
+  const entryModeLabel = signal.entryMode === "mark" ? "MARK ENTRY" : signal.entryMode === "pullback" || signal.entryMode === "grid" ? "PULLBACK ENTRY" : "ENTRY PENDING";
 
   els.setupGridStatus.textContent = pending || !isDirectional ? "WAIT · NO TRADE" : `${signal.action} · ACTIVE`;
   els.setupGridStatus.className = `setup-grid-status ${pending || !isDirectional ? "waiting" : isBuy ? "positive" : "negative"}`;
   els.setupContextDirection.textContent = isDirectional ? `${signal.action} CONTEXT` : "WAIT CONTEXT";
   els.setupContextDirection.className = isBuy ? "positive" : isSell ? "negative" : "";
   els.setupContextPrice.textContent = Number.isFinite(signal.contextPrice) ? formatUsd(signal.contextPrice) : "--";
-  els.setupContextStrength.textContent = `${signal.contextConfidence || 0}% strength`;
-  els.setupEntryLabel.textContent = isSell ? "Short entry grid" : "Long entry grid";
+  els.setupContextStrength.textContent = `${entryModeLabel} · ${signal.contextConfidence || 0}%`;
+  els.setupEntryLabel.textContent = isDirectional ? `Potential ${signal.entryMode === "mark" ? "mark" : "pullback"} entry` : "Entry pending";
   els.setupProfitLabel.textContent = isSell ? "Cover buys" : "Take profit";
-  renderSetupLevels(els.setupEntryLevels, entryLevels);
+  renderSetupLevels(els.setupEntryLevels, entryLevels, Number(signal.entry));
   renderSetupLevels(els.setupProfitLevels, profitLevels);
   els.setupInvalidationValue.textContent = isDirectional
     ? `${isBuy ? "Below" : "Above"} ${formatUsd(signal.invalidation)}`

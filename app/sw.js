@@ -1,4 +1,4 @@
-const CACHE_NAME = "monatise-shell-20260715-setup-grid";
+const CACHE_NAME = "monatise-shell-20260715-entry-mode";
 const SHELL_ASSETS = [
   "./",
   "./cg.html",
@@ -10,8 +10,8 @@ const SHELL_ASSETS = [
   "./spotify.js?v=20260629-request-access-fix",
   "./game.js?v=20260629-crypto-trainer",
   "./assets/payout-clients.svg",
-  "./coinglass-dashboard.css?v=20260715-setup-grid",
-  "./coinglass-dashboard.js?v=20260715-setup-grid",
+  "./coinglass-dashboard.css?v=20260715-entry-mode",
+  "./coinglass-dashboard.js?v=20260715-entry-mode",
   "./manifest.webmanifest?v=20260701-yinyang-png",
   "./icon.svg?v=20260701-yinyang-png",
   "./icon-180.png?v=20260701-yinyang-png",
