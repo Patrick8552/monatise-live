@@ -11,7 +11,7 @@
     <link rel="manifest" href="./manifest.webmanifest?v=20260701-yinyang-png" />
     <link rel="icon" href="./icon.svg?v=20260701-yinyang-png" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./icon-180.png?v=20260701-yinyang-png" />
-    <link rel="stylesheet" href="./coinglass-dashboard.css?v=20260701-vip-mentorship" />
+    <link rel="stylesheet" href="./coinglass-dashboard.css?v=20260715-setup-grid" />
   </head>
   <body>
     <div class="app-shell">
@@ -198,10 +198,41 @@
                 <p id="signalThesis">Dashboard context will shape the current setup after CoinGlass candles, VWAP, liquidity, funding, and open interest load.</p>
               </div>
               <div class="signal-detail-grid">
-                <div>
-                  <span>Setup Grid</span>
-                  <strong id="signalEntry">--</strong>
-                  <small id="signalEntryPlan">Waiting for setup grid.</small>
+                <div class="setup-grid-card">
+                  <div class="setup-grid-head">
+                    <div>
+                      <span>Setup Grid</span>
+                      <strong id="signalEntry">--</strong>
+                    </div>
+                    <span id="setupGridStatus" class="setup-grid-status">WAIT · NO TRADE</span>
+                  </div>
+                  <div class="setup-context-strip">
+                    <span id="setupContextDirection">WAIT CONTEXT</span>
+                    <strong id="setupContextPrice">--</strong>
+                    <small id="setupContextStrength">0% strength</small>
+                  </div>
+                  <div class="setup-level-section">
+                    <span id="setupEntryLabel">Entry grid</span>
+                    <div id="setupEntryLevels" class="setup-levels" aria-label="Entry grid levels"></div>
+                  </div>
+                  <div class="setup-level-section setup-profit-section">
+                    <span id="setupProfitLabel">Take profit</span>
+                    <div id="setupProfitLevels" class="setup-levels" aria-label="Take-profit levels"></div>
+                  </div>
+                  <div id="setupInvalidationStrip" class="setup-invalidation-strip">
+                    <span>Invalidation</span>
+                    <strong id="setupInvalidationValue">VWAP / structure</strong>
+                  </div>
+                  <div class="setup-unlocks">
+                    <span>Entry unlocks after</span>
+                    <div class="setup-unlock-list">
+                      <small>Liquidity sweep</small>
+                      <small>Strong rejection</small>
+                      <small>CHoCH / BOS</small>
+                    </div>
+                  </div>
+                  <small id="setupGridValidity" class="setup-grid-validity">Waiting for a valid snapshot</small>
+                  <small id="signalEntryPlan" class="visually-hidden">Waiting for setup grid.</small>
                 </div>
                 <div>
                   <span>Invalidation</span>
@@ -511,6 +542,6 @@
     </div>
     <script src="https://cdn.ably.com/lib/ably.min-2.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="./coinglass-dashboard.js?v=20260707-lower-timeframes"></script>
+    <script src="./coinglass-dashboard.js?v=20260715-setup-grid"></script>
   </body>
 </html>

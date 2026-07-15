@@ -104,6 +104,17 @@ const els = {
   signalThesis: document.querySelector("#signalThesis"),
   signalEntry: document.querySelector("#signalEntry"),
   signalEntryPlan: document.querySelector("#signalEntryPlan"),
+  setupGridStatus: document.querySelector("#setupGridStatus"),
+  setupContextDirection: document.querySelector("#setupContextDirection"),
+  setupContextPrice: document.querySelector("#setupContextPrice"),
+  setupContextStrength: document.querySelector("#setupContextStrength"),
+  setupEntryLabel: document.querySelector("#setupEntryLabel"),
+  setupEntryLevels: document.querySelector("#setupEntryLevels"),
+  setupProfitLabel: document.querySelector("#setupProfitLabel"),
+  setupProfitLevels: document.querySelector("#setupProfitLevels"),
+  setupInvalidationStrip: document.querySelector("#setupInvalidationStrip"),
+  setupInvalidationValue: document.querySelector("#setupInvalidationValue"),
+  setupGridValidity: document.querySelector("#setupGridValidity"),
   signalInvalidation: document.querySelector("#signalInvalidation"),
   signalInvalidationPlan: document.querySelector("#signalInvalidationPlan"),
   signalGridHedge: document.querySelector("#signalGridHedge"),
@@ -1204,6 +1215,8 @@ function buildGeneratedSignal(setup, price, vwap) {
         ? Math.min(setup.confidence, 55)
         : setup.confidence,
     contextConfidence: setup.contextConfidence ?? setup.confidence,
+    contextPrice: executableEntry || mark,
+    tradeReady: Boolean(setup.tradeReady),
     score: setup.score,
     liveChecks: setup.liveChecks,
     checksTotal: setup.checks.length,
@@ -1293,6 +1306,40 @@ function setupInvalidationPlan(signal) {
     return `One overall invalidation for the setup: the sell idea is wrong only above ${formatUsd(signal.invalidation)}.`;
   }
   return "VWAP and market structure are the wait-state guard rails.";
+}
+
+function renderSetupLevels(container, levels) {
+  const values = Array.isArray(levels) ? levels.filter(Number.isFinite) : [];
+  container.innerHTML = values.length
+    ? values.map((level) => `<strong>${formatUsd(level)}</strong>`).join("")
+    : `<strong class="empty">--</strong>`;
+}
+
+function renderSetupGrid(signal) {
+  const isBuy = signal.action === "BUY";
+  const isSell = signal.action === "SELL";
+  const isDirectional = isBuy || isSell;
+  const pending = isDirectional && !signal.tradeReady;
+  const entryLevels = isBuy ? signal.buyGrid : isSell ? signal.sellGrid : [];
+  const profitLevels = isBuy ? signal.sellGrid : isSell ? signal.buyGrid : [];
+
+  els.setupGridStatus.textContent = pending || !isDirectional ? "WAIT · NO TRADE" : `${signal.action} · ACTIVE`;
+  els.setupGridStatus.className = `setup-grid-status ${pending || !isDirectional ? "waiting" : isBuy ? "positive" : "negative"}`;
+  els.setupContextDirection.textContent = isDirectional ? `${signal.action} CONTEXT` : "WAIT CONTEXT";
+  els.setupContextDirection.className = isBuy ? "positive" : isSell ? "negative" : "";
+  els.setupContextPrice.textContent = Number.isFinite(signal.contextPrice) ? formatUsd(signal.contextPrice) : "--";
+  els.setupContextStrength.textContent = `${signal.contextConfidence || 0}% strength`;
+  els.setupEntryLabel.textContent = isSell ? "Short entry grid" : "Long entry grid";
+  els.setupProfitLabel.textContent = isSell ? "Cover buys" : "Take profit";
+  renderSetupLevels(els.setupEntryLevels, entryLevels);
+  renderSetupLevels(els.setupProfitLevels, profitLevels);
+  els.setupInvalidationValue.textContent = isDirectional
+    ? `${isBuy ? "Below" : "Above"} ${formatUsd(signal.invalidation)}`
+    : "VWAP / structure";
+  els.setupInvalidationStrip.className = `setup-invalidation-strip ${isDirectional ? "active" : ""}`;
+  els.setupGridValidity.textContent = signal.snapshotTime
+    ? `15m snapshot · valid until ${signal.reassessTime}`
+    : `Generated ${signal.time}`;
 }
 
 function gridSidePlan(side, action, asset, levels, scaleAction) {
@@ -1417,6 +1464,7 @@ function renderGeneratedSignal(signal) {
   els.signalThesis.textContent = signal.thesis;
   els.signalEntry.textContent = setupGridLabel(signal);
   els.signalEntryPlan.textContent = setupGridPlan(signal);
+  renderSetupGrid(signal);
   els.signalInvalidation.textContent = signal.action === "WAIT" ? "VWAP / structure" : formatUsd(signal.invalidation);
   els.signalInvalidationPlan.textContent = setupInvalidationPlan(signal);
   els.signalGridHedge.textContent = signal.action === "WAIT" ? "--" : formatUsd(signal.target);
