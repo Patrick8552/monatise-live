@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#081310" />
+    <title>Monatise Memecoin Radar</title>
+    <meta name="description" content="Public Pump.fun token discovery, Solana mint inspection, risk screening, and paper-grid analysis from Monatise." />
+    <link rel="manifest" href="./manifest.webmanifest?v=20260715-memecoins" />
+    <link rel="icon" href="./icon.svg?v=20260701-yinyang-png" type="image/svg+xml" />
+    <link rel="stylesheet" href="./memecoins.css?v=20260715-memecoins" />
+  </head>
+  <body>
+    <div class="meme-shell">
+      <header class="meme-topbar">
+        <a class="meme-brand" href="./">
+          <img src="./icon.svg?v=20260701-yinyang-png" alt="" />
+          <span><small>Monatise</small><strong>Memecoin Radar</strong></span>
+        </a>
+        <nav aria-label="Primary navigation">
+          <a href="./">Desk</a>
+          <a href="./dashboard/">Market Dashboard</a>
+          <a class="active" href="./memecoins.html" aria-current="page">Memecoins</a>
+          <a href="./game.html">Trainer</a>
+        </nav>
+        <span class="public-badge"><i></i> Public beta</span>
+      </header>
+
+      <main>
+        <section class="meme-hero">
+          <div>
+            <p class="eyebrow">Pump.fun intelligence · Solana verification</p>
+            <h1>Find the signal.<br /><span>See the risk first.</span></h1>
+            <p class="hero-copy">Inspect a mint, understand its market, and build a paper grid before connecting any wallet. Monatise does not rank paid boosts as quality.</p>
+          </div>
+          <div class="hero-radar" aria-hidden="true">
+            <span class="radar-orbit orbit-one"></span>
+            <span class="radar-orbit orbit-two"></span>
+            <span class="radar-sweep"></span>
+            <strong>PUMP</strong>
+            <small>public radar</small>
+          </div>
+        </section>
+
+        <section class="lookup-panel" aria-labelledby="lookupTitle">
+          <div>
+            <p class="eyebrow">Verify by mint address</p>
+            <h2 id="lookupTitle">Research any Solana memecoin</h2>
+          </div>
+          <form id="tokenLookupForm" class="lookup-form">
+            <label for="tokenAddressInput">Solana token mint</label>
+            <div>
+              <input id="tokenAddressInput" name="address" autocomplete="off" spellcheck="false" placeholder="Paste the mint address — never rely on a ticker" />
+              <button type="submit">Inspect token</button>
+            </div>
+            <small id="lookupStatus">Market data from DEX Screener; mint controls verified through Solana RPC.</small>
+          </form>
+        </section>
+
+        <section class="lifecycle" aria-label="Pump.fun token lifecycle">
+          <article><span>01</span><div><strong>Launch</strong><small>Token begins on Pump.fun</small></div></article>
+          <i></i>
+          <article><span>02</span><div><strong>Bonding curve</strong><small>Price follows virtual reserves</small></div></article>
+          <i></i>
+          <article><span>03</span><div><strong>Graduation</strong><small>Curve closes irreversibly</small></div></article>
+          <i></i>
+          <article><span>04</span><div><strong>PumpSwap</strong><small>Canonical pool takes over</small></div></article>
+        </section>
+
+        <section id="tokenDetail" class="token-detail" hidden aria-live="polite"></section>
+
+        <section class="radar-section" aria-labelledby="radarTitle">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Public discovery</p>
+              <h2 id="radarTitle">Latest Pump.fun candidates</h2>
+              <p>Discovery candidates, not recommendations. Screening favors liquidity, activity, pool age and verifiable mint controls.</p>
+            </div>
+            <button id="refreshRadarButton" class="ghost-button" type="button">Refresh radar</button>
+          </div>
+          <div id="radarSummary" class="radar-summary">
+            <article><span>Candidates</span><strong id="candidateCount">--</strong></article>
+            <article><span>Screened</span><strong id="screenedCount">--</strong></article>
+            <article><span>Source</span><strong>On-chain markets</strong></article>
+            <article><span>Execution</span><strong>Paper only</strong></article>
+          </div>
+          <div id="tokenGrid" class="token-grid" aria-live="polite">
+            <div class="loading-card"><span></span><strong>Scanning public markets</strong><small>Looking for Pump.fun mint candidates…</small></div>
+          </div>
+          <p id="radarMethodology" class="methodology"></p>
+        </section>
+
+        <section class="public-value">
+          <div>
+            <p class="eyebrow">Built for public usefulness</p>
+            <h2>Research before reaction.</h2>
+          </div>
+          <div class="value-grid">
+            <article><span>01</span><strong>Address-first verification</strong><p>Reduce ticker impersonation by making the Solana mint the primary identity.</p></article>
+            <article><span>02</span><strong>Mint-control visibility</strong><p>Expose active mint and freeze authority flags before showing a paper plan.</p></article>
+            <article><span>03</span><strong>Market-quality screening</strong><p>Put liquidity, age, volume and transaction activity beside every candidate.</p></article>
+            <article><span>04</span><strong>Non-custodial research</strong><p>No wallet connection, deposits or automatic execution in the public beta.</p></article>
+          </div>
+        </section>
+      </main>
+
+      <footer>
+        <span>Monatise Memecoin Radar</span>
+        <p>High-risk market research. A screening score is not a safety guarantee or financial advice.</p>
+        <a href="https://pump.fun/docs/bonding-curve" target="_blank" rel="noreferrer">Pump.fun lifecycle docs ↗</a>
+      </footer>
+    </div>
+    <script src="./memecoins.js?v=20260715-memecoins"></script>
+  </body>
+</html>

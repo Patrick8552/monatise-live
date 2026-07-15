@@ -17,6 +17,7 @@ from monatise.analysis.fibonacci import analyze_fibonacci
 from monatise.analysis.fvg import analyze_fvg
 from monatise.adapters.coinglass import CoinGlassAdapter, CoinGlassPlanError
 from monatise.adapters.hyperliquid import HyperliquidAdapter
+from monatise.adapters.memecoins import discover_pumpfun, inspect_memecoin
 from monatise.adapters.quiver import QuiverAdapter, normalize_quiver_symbol
 from monatise.live.billing import (
     PRIVATE_PLAN,
@@ -72,6 +73,8 @@ PRIVATE_GET_PATHS = {
     "/api/context/radar",
     "/api/coinglass/context",
     "/api/quiver/context",
+    "/api/memecoins/discover",
+    "/api/memecoins/token",
 }
 PLATFORM_GET_PATHS = PRIVATE_GET_PATHS | {
     "/api/status",
@@ -655,6 +658,31 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                     source = f"configured assets fallback: {error}"
                 self._json({"assets": assets, "count": len(assets), "source": source})
             except Exception as error:  # noqa: BLE001
+                self._error(502, str(error))
+            return
+        if parsed.path == "/api/memecoins/discover":
+            if self._rate_limited("/api/memecoins"):
+                self._error(429, "memecoin radar refresh limit reached; try again shortly")
+                return
+            query = parse_qs(parsed.query)
+            try:
+                limit = max(4, min(24, int(query.get("limit", ["12"])[0])))
+                self._json(discover_pumpfun(limit))
+            except (RuntimeError, ValueError) as error:
+                self._error(502, str(error))
+            return
+        if parsed.path == "/api/memecoins/token":
+            if self._rate_limited("/api/memecoins"):
+                self._error(429, "memecoin lookup limit reached; try again shortly")
+                return
+            query = parse_qs(parsed.query)
+            address = str(query.get("address", [""])[0]).strip()
+            rpc_url = os.getenv("MONATISE_SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com").strip()
+            try:
+                self._json(inspect_memecoin(address, rpc_url))
+            except ValueError as error:
+                self._error(400, str(error))
+            except RuntimeError as error:
                 self._error(502, str(error))
             return
         if parsed.path == "/api/candles":
@@ -1340,6 +1368,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             "/api/stop": (12, 60),
             "/api/tradingview/webhook": (120, 60),
             "/api/coinglass/proxy": (60, 60),
+            "/api/memecoins": (30, 60),
         }
         limit, window = limits.get(path, (60, 60))
         client = self._client_ip()

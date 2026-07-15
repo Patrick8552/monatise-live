@@ -14,6 +14,8 @@ def test_market_data_routes_are_open() -> None:
         "/api/context/radar",
         "/api/coinglass/context",
         "/api/quiver/context",
+        "/api/memecoins/discover",
+        "/api/memecoins/token",
     ):
         assert not requires_site_auth(path)
 
