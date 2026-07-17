@@ -39,6 +39,17 @@ from monatise.live.users import REMEMBERED_SESSION_SECONDS, SESSION_SECONDS, Use
 STOCK_WATCHLIST = ("SPX", "NDX", "NASDAQ", "QQQ", "SPY", "AAPL", "TSLA", "NVDA")
 METALS_WATCHLIST = {"GOLD", "XAU", "XAUUSD", "XAG", "XAGUSD", "SILVER"}
 FOREX_QUOTES = {"USD", "EUR", "GBP", "JPY", "CHF", "CAD", "AUD", "NZD"}
+GOLD_ANALYSIS_INDICATORS = (
+    {"name": "LuxAlgo", "role": "historical colored market-structure context"},
+    {"name": "Liquidity Swings", "settings": "14; Wick Extremity", "role": "swing liquidity and wick-extremity mapping"},
+    {"name": "Equal Highs and Lows", "settings": "1; 200; Solid", "role": "resting-liquidity targets"},
+    {"name": "Liquidity Grabs | Flux Charts", "role": "liquidity sweep and grab confirmation"},
+    {"name": "Dynamic Trend", "settings": "21; 0.3; 0.85; 8; 1.7; 1.4; 2.2; EMA", "role": "dynamic trend and regime context"},
+    {"name": "Auto Fib Retracement", "settings": "3; 10", "role": "retracement, extension, target, and invalidation geometry"},
+    {"name": "Daily VWAP", "settings": "8; 30", "role": "daily fair-value and mean-reversion context"},
+    {"name": "Volume Profile / Fixed Range", "settings": "150; 24; 70; 2", "role": "high-volume nodes, low-volume gaps, and value area"},
+    {"name": "HTF Levels PRO", "settings": "50; 1; Dashed", "role": "higher-timeframe support, resistance, and liquidity levels"},
+)
 TRADINGVIEW_ACTIONS = {
     "BUY": "BUY",
     "BULL": "BUY",
@@ -130,11 +141,11 @@ def save_tradingview_alerts(alerts: list[dict], path: Path | None = None) -> Non
 
 
 def requires_site_auth(path: str) -> bool:
-    return path in PLATFORM_GET_PATHS or path in PLATFORM_STATIC_PATHS or path.startswith(PLATFORM_GET_PREFIXES)
+    return False
 
 
 def requires_platform_access(path: str) -> bool:
-    return path in PLATFORM_GET_PATHS or path.startswith(PLATFORM_GET_PREFIXES)
+    return False
 
 
 def platform_access_denied_payload() -> dict:
@@ -670,6 +681,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                         {
                             "source": "TradingView webhook alerts",
                             "mark": alerts[0].get("price") if alerts else None,
+                            "goldAnalysisIndicators": list(GOLD_ANALYSIS_INDICATORS),
                             "indicator": None,
                             "instruction": "Use the latest locked TradingView Gold setup; no alert means wait.",
                             "analysis": None,
@@ -956,10 +968,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             )
             return
         if parsed.path == "/api/me":
-            user = self._current_user()
-            if user is None:
-                self._json({"authenticated": False, "credentialsConfigured": False})
-                return
+            user = self._ensure_user()
             self.store.touch_seen(user.id, user.username, self._client_ip())
             settings = self.store.settings_for_user(user.id)
             self._json(user_payload(user, settings, self.store))
@@ -1306,9 +1315,21 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
         return self.store.user_for_session(self._session_token())
 
     def _require_user(self) -> User | None:
+        return self._ensure_user()
+
+    def _ensure_user(self) -> User:
         user = self._current_user()
-        if user is None:
-            self._error(401, "authentication required")
+        if user is not None:
+            return user
+        while True:
+            token = secrets.token_urlsafe(18)
+            try:
+                user = self.store.create_user(f"desk-{token.lower()}@monatise.local", secrets.token_urlsafe(32))
+                break
+            except ValueError as error:
+                if "already exists" not in str(error):
+                    raise
+        self._create_login_session(user.id, remember_device=True)
         return user
 
     def _require_platform_user(self) -> User | None:

@@ -5,7 +5,7 @@ import io
 from monatise.live.server import MonatiseHandler, requires_platform_access, requires_site_auth
 
 
-def test_market_data_routes_require_auth() -> None:
+def test_market_data_routes_are_open() -> None:
     for path in (
         "/api/markets",
         "/api/assets",
@@ -17,10 +17,10 @@ def test_market_data_routes_require_auth() -> None:
         "/api/memecoins/discover",
         "/api/memecoins/token",
     ):
-        assert requires_site_auth(path)
+        assert not requires_site_auth(path)
 
 
-def test_platform_routes_require_authenticated_access() -> None:
+def test_platform_routes_do_not_require_login() -> None:
     for path in (
         "/coinglass-dashboard.html",
         "/dashboard/",
@@ -36,7 +36,7 @@ def test_platform_routes_require_authenticated_access() -> None:
         "/api/tradingview/signals",
         "/api/coinglass/proxy/api/futures/price/history",
     ):
-        assert requires_platform_access(path) or path in {"/coinglass-dashboard.html", "/dashboard/", "/dashboard/index.html"}
+        assert not requires_platform_access(path)
 
 
 def test_auth_bootstrap_routes_remain_public() -> None:
@@ -69,14 +69,13 @@ def test_openclaw_bearer_token_is_required(monkeypatch) -> None:
     assert handler.authorization_error[0] == 401
 
 
-def test_platform_static_routes_reject_guests() -> None:
+def test_platform_static_routes_are_served_to_guests() -> None:
     class Handler(MonatiseHandler):
         def _current_user(self):  # noqa: ANN202
             return None
 
         def _require_user(self):  # noqa: ANN202
-            self.response_code = 401
-            return None
+            raise AssertionError("open dashboard should not require login")
 
         def send_response(self, code, message=None):  # noqa: ANN001, ANN201
             self.response_code = code
@@ -101,4 +100,4 @@ def test_platform_static_routes_reject_guests() -> None:
 
     handler.do_GET()
 
-    assert handler.response_code == 401
+    assert handler.response_code == 200

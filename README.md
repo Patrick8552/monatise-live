@@ -78,16 +78,16 @@ MONATISE_DATA_FEED=hyperliquid
 
 Hyperliquid then supplies crypto prices and candles as well as remaining the execution/private-sync adapter. CoinGlass-only funding, open-interest, liquidation, and fear/greed fields remain unavailable; they are never interpreted as zero or neutral.
 
-Dashboard and platform GET routes require a valid Monatise login session. OpenClaw uses the separate bearer-protected `GET /api/openclaw/status` route, which is structurally read-only and cannot place orders, change configuration, or deploy. Configure its secret only in Render and OpenClaw:
+Dashboard and market-analysis GET routes are temporarily open without login. OpenClaw still uses the separate bearer-protected `GET /api/openclaw/status` route, which is structurally read-only and cannot place orders, change configuration, or deploy. Configure its secret only in Render and OpenClaw:
 
 ```bash
 MONATISE_OPENCLAW_TOKEN=use-a-long-random-secret
 ```
 
-USDC billing can gate paid product access separately from the authentication
-gate. Guests can view the public site and authentication screens, while dashboard
-market data, alerts, signal history, private sync, and commercial API connectors
-require a valid login session.
+USDC billing can gate paid product access later, but login and payment gates are
+currently disabled. The app creates an isolated guest session automatically so
+the dashboard and its actions work without registration. Do not treat that guest
+session as an authorization boundary.
 Configure the Stripe price as the USDC private plan, add real Stripe values only
 in Render or a local `.env`, then point the Stripe webhook at `/api/stripe/webhook`:
 
