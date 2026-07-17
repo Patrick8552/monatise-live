@@ -1,18 +1,18 @@
-const CACHE_NAME = "monatise-shell-20260715-memecoin-radar";
+const CACHE_NAME = "monatise-shell-20260717-market-primary";
 const SHELL_ASSETS = [
   "./",
   "./cg.html",
   "./dashboard/",
   "./game.html",
   "./memecoins.html",
-  "./coinglass-dashboard.html?v=20260701-market-icon",
+  "./coinglass-dashboard.html?v=20260717-market-primary",
   "./styles.css?v=20260715-memecoin-tab",
   "./app.js?v=20260715-memecoin-tab",
   "./spotify.js?v=20260629-request-access-fix",
   "./game.js?v=20260629-crypto-trainer",
   "./assets/payout-clients.svg",
-  "./coinglass-dashboard.css?v=20260715-memecoin-tab",
-  "./coinglass-dashboard.js?v=20260715-memecoin-tab",
+  "./coinglass-dashboard.css?v=20260717-market-primary",
+  "./coinglass-dashboard.js?v=20260717-market-primary",
   "./memecoins.css?v=20260715-memecoins",
   "./memecoins.js?v=20260715-memecoins",
   "./manifest.webmanifest?v=20260701-yinyang-png",

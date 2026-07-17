@@ -11,7 +11,7 @@
     <link rel="manifest" href="./manifest.webmanifest?v=20260701-yinyang-png" />
     <link rel="icon" href="./icon.svg?v=20260701-yinyang-png" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./icon-180.png?v=20260701-yinyang-png" />
-    <link rel="stylesheet" href="./coinglass-dashboard.css?v=20260715-memecoin-tab" />
+    <link rel="stylesheet" href="./coinglass-dashboard.css?v=20260717-market-primary" />
   </head>
   <body>
     <div class="app-shell">
@@ -94,7 +94,7 @@
           <summary>Integrations</summary>
           <div class="integration-grid">
             <label>
-              <span>CoinGlass override</span>
+              <span>CoinGlass premium add-on</span>
               <input id="apiKeyInput" type="password" autocomplete="off" placeholder="optional local CG-API-KEY" />
             </label>
             <label>
@@ -116,25 +116,25 @@
           </div>
         </details>
 
-        <section class="source-band" aria-label="CoinGlass source status">
+        <section class="source-band" aria-label="Optional premium data status">
           <div>
-            <span>CoinGlass source</span>
-            <strong id="coinGlassStatus">Checking server</strong>
-            <small id="coinGlassStatusDetail">Monatise checks the server-side CoinGlass connection. A local key is only an override.</small>
+            <span>Optional premium context</span>
+            <strong id="coinGlassStatus">Checking CoinGlass</strong>
+            <small id="coinGlassStatusDetail">Hyperliquid powers the core dashboard. CoinGlass optionally adds cross-exchange derivatives data.</small>
           </div>
           <div>
             <span>Price reference</span>
             <strong id="coinGlassPriceRef">BTCUSDT · futures price history</strong>
             <small id="coinGlassRouteRef">/api/futures/price/history · exchange Binance · analysis 30m · view 1h</small>
           </div>
-          <button id="openIntegrationsButton" type="button" class="ghost-button">Checking CoinGlass</button>
+          <button id="openIntegrationsButton" type="button" class="ghost-button">Optional CoinGlass</button>
         </section>
 
-        <section class="panel monitor-panel wide" aria-label="Autonomous CoinGlass asset monitor">
+        <section class="panel monitor-panel wide" aria-label="Autonomous market asset monitor">
           <div class="panel-head">
             <div>
               <h2>Autonomous Asset Monitor</h2>
-              <p id="monitorStatus">Waiting for CoinGlass key to scan the asset universe</p>
+              <p id="monitorStatus">Loading the Hyperliquid asset universe</p>
             </div>
             <span class="pill">auto scan</span>
           </div>
@@ -196,7 +196,7 @@
               <div class="signal-primary">
                 <span id="signalAsset">BTC signal</span>
                 <strong id="signalAction">NO TRADE</strong>
-                <p id="signalThesis">Dashboard context will shape the current setup after CoinGlass candles, VWAP, liquidity, funding, and open interest load.</p>
+                <p id="signalThesis">Hyperliquid candles, VWAP, structure, liquidity, funding, and open interest will shape the current setup.</p>
               </div>
               <div class="signal-detail-grid">
                 <div class="setup-grid-card">
@@ -303,7 +303,7 @@
               <div class="setup-primary">
                 <span id="setupAsset">BTC setup</span>
                 <strong id="setupDirection">NO TRADE</strong>
-                <p id="setupReason">CoinGlass funding, open interest, liquidation pressure, VWAP, price trend, and history will decide the grid.</p>
+                <p id="setupReason">Hyperliquid market structure, funding, open interest, order-book liquidity, VWAP, and price history will decide the grid.</p>
               </div>
               <div class="setup-card">
                 <span>Grid</span>
@@ -327,7 +327,7 @@
           <article class="panel research-panel wide">
             <div class="panel-head">
               <div>
-                <h2>CoinGlass Research System</h2>
+                <h2>Market Research System</h2>
                 <p id="researchSource">Studying selected asset history</p>
               </div>
               <span id="researchPattern" class="pill">pattern --</span>
@@ -389,7 +389,7 @@
             <div class="panel-head">
               <div>
                 <h2>Funding Rate Check</h2>
-                <p id="fundingSource">CoinGlass futures funding rate</p>
+                <p id="fundingSource">Hyperliquid funding · CoinGlass comparison optional</p>
               </div>
             </div>
             <div id="fundingList" class="metric-list"></div>
@@ -399,7 +399,7 @@
             <div class="panel-head">
               <div>
                 <h2>Open Interest Check</h2>
-                <p id="oiSource">CoinGlass futures open interest</p>
+                <p id="oiSource">Hyperliquid open interest · CoinGlass comparison optional</p>
               </div>
             </div>
             <div id="oiList" class="metric-list"></div>
@@ -409,7 +409,7 @@
             <div class="panel-head">
               <div>
                 <h2>Liquidation Map</h2>
-                <p id="liqSource">CoinGlass aggregated liquidation map</p>
+                <p id="liqSource">Hyperliquid order-book liquidity · CoinGlass heat map optional</p>
               </div>
               <span id="maxPain" class="pill">max pain --</span>
             </div>
@@ -430,7 +430,7 @@
             <div class="panel-head">
               <div>
                 <h2>Fear & Greed</h2>
-                <p id="fgSource">CoinGlass crypto index</p>
+                <p id="fgSource">Optional CoinGlass sentiment index</p>
               </div>
             </div>
             <div class="gauge-wrap">
@@ -443,7 +443,7 @@
             <div class="panel-head">
               <div>
                 <h2>News Alerts</h2>
-                <p id="newsSource">CoinGlass instant news</p>
+                <p id="newsSource">Optional CoinGlass market news</p>
               </div>
             </div>
             <div id="newsList" class="news-list"></div>
@@ -532,7 +532,7 @@
             <div class="panel-head">
               <div>
                 <h2>Session Telemetry</h2>
-              <p>Monatise routes price, indicators, research, and alerts through CoinGlass market telemetry.</p>
+              <p>Monatise uses Hyperliquid for core prices, candles, funding, open interest, and book liquidity. CoinGlass adds optional premium context.</p>
               </div>
               <button id="clearSessionButton" type="button" class="ghost-button">Clear</button>
             </div>
@@ -543,6 +543,6 @@
     </div>
     <script src="https://cdn.ably.com/lib/ably.min-2.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="./coinglass-dashboard.js?v=20260715-memecoin-tab"></script>
+    <script src="./coinglass-dashboard.js?v=20260717-market-primary"></script>
   </body>
 </html>

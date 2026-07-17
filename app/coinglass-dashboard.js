@@ -1994,19 +1994,19 @@ function updateCoinGlassSourceStatus(message = "") {
   const sourceBand = document.querySelector(".source-band");
   sourceBand?.classList.toggle("ready", ready);
   sourceBand?.classList.toggle("waiting", !ready);
-  els.coinGlassStatus.textContent = serverReady ? "Server connected" : localKey ? "Local key saved" : "Connection required";
+  els.coinGlassStatus.textContent = serverReady ? "Premium connected" : localKey ? "Premium key saved" : "Optional · not connected";
   els.coinGlassStatusDetail.textContent = ready
     ? message || (serverReady
       ? `Render provides the CoinGlass connection${state.operator?.integrations?.coinglass?.exchange ? ` via ${state.operator.integrations.coinglass.exchange}` : ""}. Local key override is optional.`
       : "CoinGlass local key is saved for this browser.")
-    : "CoinGlass is not connected. Add a local key only if the server integration is unavailable.";
+    : "Core Hyperliquid analysis remains available. Connect CoinGlass only for premium cross-exchange context.";
   els.coinGlassPriceRef.textContent = usesServerMarketCandles(asset)
     ? `${asset.tv} · Monatise market candles`
     : `${asset.pair} · CoinGlass futures price history`;
   els.coinGlassRouteRef.textContent = usesServerMarketCandles(asset)
     ? `/api/candles · symbol ${asset.coin} · ${usesCryptoMultiFrame(asset) ? `analysis ${CRYPTO_ANALYSIS_INTERVALS.join(" + ")}` : `view ${viewInterval}`}`
     : `/api/futures/price/history · exchange ${exchange} · analysis ${ANALYSIS_INTERVAL} · view ${viewInterval}`;
-  els.openIntegrationsButton.textContent = serverReady ? "CoinGlass Connected" : localKey ? "Update Local Key" : "Add Local Key";
+  els.openIntegrationsButton.textContent = serverReady ? "Premium Connected" : localKey ? "Update Premium Key" : "Add Optional CoinGlass";
 }
 
 function syncTradingView(asset = selectedAsset()) {
@@ -2157,13 +2157,13 @@ function renderMonitorGrid() {
           </button>
         `;
       }).join("")
-    : `<article class="monitor-card"><span>Scanner idle</span><strong>--</strong><small>CoinGlass connection starts autonomous monitoring.</small></article>`;
+    : `<article class="monitor-card"><span>Premium scanner idle</span><strong>Optional</strong><small>CoinGlass adds cross-exchange universe scanning; the selected Hyperliquid market remains live.</small></article>`;
 }
 
 async function refreshAutonomousMonitor() {
   if (!els.monitorStatus || state.monitor.scanning) return;
   if (!hasKey()) {
-    els.monitorStatus.textContent = "Connect CoinGlass to autonomously scan supported futures assets";
+    els.monitorStatus.textContent = "Selected Hyperliquid market is live · CoinGlass universe scanner is optional";
     renderMonitorGrid();
     return;
   }
@@ -3183,12 +3183,12 @@ function renderFunding(rows) {
 
 function renderFundingLocked(error) {
   state.market.fundingAverage = null;
-  els.fundingAverage.textContent = "CoinGlass key";
+  els.fundingAverage.textContent = state.market.hyperFunding == null ? "--" : formatPercent(state.market.hyperFunding, 4);
   els.fundingAverage.className = "";
-  els.fundingSource.textContent = "CoinGlass funding required";
-  els.fundingList.innerHTML = lockedRows("Funding rate", error.message, [
-    "Primary endpoint: /api/futures/funding-rate/exchange-list",
-    "Monatise will not score funding without CoinGlass data"
+  els.fundingSource.textContent = "Hyperliquid funding remains available · CoinGlass comparison optional";
+  els.fundingList.innerHTML = lockedRows("Premium funding comparison", error.message, [
+    "Core source: Hyperliquid public context",
+    "CoinGlass adds optional cross-exchange comparison"
   ]);
 }
 
@@ -3215,11 +3215,11 @@ function renderOpenInterest(rows) {
 
 function renderOpenInterestLocked(error) {
   state.market.oiChange = null;
-  els.openInterest.textContent = "CoinGlass key";
-  els.oiSource.textContent = "CoinGlass open interest required";
-  els.oiList.innerHTML = lockedRows("Open interest", error.message, [
-    `Primary endpoint: /api/futures/open-interest/exchange-list?symbol=${selectedCoin()}`,
-    "Monatise will not score open interest without CoinGlass data"
+  els.openInterest.textContent = state.market.hyperOpenInterest == null ? "$--" : formatUsd(state.market.hyperOpenInterest, true);
+  els.oiSource.textContent = "Hyperliquid open interest remains available · CoinGlass comparison optional";
+  els.oiList.innerHTML = lockedRows("Premium open-interest comparison", error.message, [
+    "Core source: Hyperliquid public context",
+    "CoinGlass adds optional cross-exchange comparison"
   ]);
 }
 
@@ -3303,10 +3303,10 @@ function renderNews(rows) {
 }
 
 function renderNewsLocked(error) {
-  els.newsSource.textContent = "CoinGlass news required";
-  els.newsList.innerHTML = lockedRows("News alerts", error.message, [
-    "Primary endpoint: /api/article/list",
-    "Monatise will only publish news alerts from CoinGlass"
+  els.newsSource.textContent = "Optional CoinGlass news unavailable";
+  els.newsList.innerHTML = lockedRows("Premium news add-on", error.message, [
+    "Core market analysis continues without news",
+    "CoinGlass news is optional and does not control signals"
   ]);
 }
 
@@ -3314,6 +3314,14 @@ function renderHyperliquid(ctx) {
   state.market.hyperFunding = ctx.funding;
   state.market.hyperOpenInterest = ctx.openInterest;
   state.market.hyperPrice = ctx.markPrice;
+  if (state.market.fundingAverage == null) {
+    els.fundingAverage.textContent = formatPercent(ctx.funding, 4);
+    els.fundingSource.textContent = `Hyperliquid ${ctx.coin}-PERP funding · CoinGlass comparison optional`;
+  }
+  if (state.market.oiChange == null) {
+    els.openInterest.textContent = `${ctx.openInterest.toLocaleString(undefined, { maximumFractionDigits: 0 })} ${ctx.coin}`;
+    els.oiSource.textContent = `Hyperliquid ${ctx.coin}-PERP open interest · CoinGlass comparison optional`;
+  }
   els.hyperSource.textContent = `Hyperliquid public context · ${ctx.coin}-PERP`;
   els.hyperList.innerHTML = [
     ["Mark price", formatUsd(ctx.markPrice), "Oracle " + formatUsd(ctx.oraclePrice)],
@@ -3845,14 +3853,14 @@ async function refreshDashboard() {
     state.market.priceChange = null;
     els.assetPrice.textContent = "$--";
     els.headerAssetPrice.textContent = "$--";
-    els.priceChange.textContent = "CoinGlass required";
+    els.priceChange.textContent = "Market data unavailable";
     els.priceChange.className = "";
-    els.headerPriceChange.textContent = "CoinGlass required";
+    els.headerPriceChange.textContent = "Market data unavailable";
     els.headerPriceChange.className = "";
-    els.priceSource.textContent = `CoinGlass price unavailable · ${error.message}`;
+    els.priceSource.textContent = `Hyperliquid market candles unavailable · ${error.message}`;
     els.pricePulse.textContent = "offline";
     updateCoinGlassSourceStatus(error.message);
-    drawCanvasNotice(els.priceCanvas, "CoinGlass price history required", error.message);
+    drawCanvasNotice(els.priceCanvas, "Market candles unavailable", error.message);
   }
 
   const jobs = [
@@ -3861,11 +3869,11 @@ async function refreshDashboard() {
     getLiquidations().then(renderLiquidations).catch(renderLiquidationsLocked),
     getFearGreed().then(renderFearGreed).catch((error) => {
       state.market.fearGreed = null;
-      els.fearGreed.textContent = "CoinGlass key";
+      els.fearGreed.textContent = "Optional";
       els.fgLabel.textContent = error.message;
       els.fgGauge.querySelector("span").textContent = "--";
       els.fgGauge.style.background = "";
-      els.fgSource.textContent = `CoinGlass fear and greed unavailable · ${error.message}`;
+      els.fgSource.textContent = `Optional CoinGlass sentiment unavailable · ${error.message}`;
     }),
     getHyperliquidContext().then(renderHyperliquid).catch(renderHyperliquidLocked),
     getNews().then(renderNews).catch(renderNewsLocked)
@@ -4023,7 +4031,7 @@ window.addEventListener("resize", () => {
   if (state.market.liquidationLevels.length && state.lastPrice) {
     drawLiquidationMap(els.liqCanvas, state.market.liquidationLevels, state.lastPrice);
   } else {
-    drawCanvasNotice(els.liqCanvas, "CoinGlass liquidation map required", "Waiting for CoinGlass liquidation levels");
+    drawCanvasNotice(els.liqCanvas, "Loading liquidity map", "Hyperliquid book liquidity is primary; CoinGlass liquidation levels are optional");
   }
   resizeAtlas();
 });

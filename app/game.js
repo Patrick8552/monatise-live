@@ -193,7 +193,7 @@ function drawChart() {
   ctx.fillText(`${scenario.asset} ${scenario.title}`, pad.left, 24);
   ctx.fillStyle = "#63716c";
   ctx.font = "750 12px Inter, system-ui";
-  ctx.fillText("CoinGlass context + Hyperliquid mark drill", pad.left, height - 16);
+  ctx.fillText("Hyperliquid core + optional CoinGlass context drill", pad.left, height - 16);
 }
 
 function renderScenario() {
@@ -205,7 +205,7 @@ function renderScenario() {
   });
   els.session.textContent = scenario.session;
   els.title.textContent = scenario.title;
-  els.meta.textContent = `${scenario.asset} · CoinGlass + Hyperliquid context`;
+  els.meta.textContent = `${scenario.asset} · Hyperliquid + optional CoinGlass context`;
   els.funding.textContent = scenario.funding;
   els.oi.textContent = scenario.oi;
   els.liq.textContent = scenario.liq;
