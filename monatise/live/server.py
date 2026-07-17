@@ -77,20 +77,20 @@ COINGLASS_PROXY_PATHS = {
     "/api/futures/price/history",
     "/api/index/fear-greed-history",
 }
-PRIVATE_GET_PATHS = {
+PUBLIC_ANALYSIS_GET_PATHS = {
     "/api/markets",
     "/api/assets",
     "/api/candles",
     "/api/analysis/fibonacci",
     "/api/context/radar",
-    "/api/coinglass/context",
-    "/api/quiver/context",
     "/api/memecoins/discover",
     "/api/memecoins/token",
 }
-PLATFORM_GET_PATHS = PRIVATE_GET_PATHS | {
+PROTECTED_GET_PATHS = {
     "/api/status",
     "/api/tradingview/signals",
+    "/api/coinglass/context",
+    "/api/quiver/context",
 }
 PLATFORM_GET_PREFIXES = (
     "/api/coinglass/proxy/",
@@ -141,11 +141,11 @@ def save_tradingview_alerts(alerts: list[dict], path: Path | None = None) -> Non
 
 
 def requires_site_auth(path: str) -> bool:
-    return False
+    return path in PROTECTED_GET_PATHS or path.startswith(PLATFORM_GET_PREFIXES)
 
 
 def requires_platform_access(path: str) -> bool:
-    return False
+    return requires_site_auth(path)
 
 
 def platform_access_denied_payload() -> dict:
@@ -723,12 +723,12 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             return
         if parsed.path == "/api/assets":
             try:
-                try:
+                if self.config.data_feed == "hyperliquid":
+                    assets = [{"symbol": symbol, "exchange": "Hyperliquid", "instrument": symbol, "tradable": True} for symbol in self.config.assets]
+                    source = "configured Hyperliquid assets"
+                else:
                     assets = CoinGlassAdapter(self.config).supported_assets()
                     source = "CoinGlass futures exchange pairs"
-                except Exception as error:  # noqa: BLE001
-                    assets = [{"symbol": symbol, "exchange": "", "instrument": symbol, "tradable": True} for symbol in self.config.assets]
-                    source = f"configured assets fallback: {error}"
                 self._json({"assets": assets, "count": len(assets), "source": source})
             except Exception as error:  # noqa: BLE001
                 self._error(502, str(error))
@@ -968,7 +968,10 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             )
             return
         if parsed.path == "/api/me":
-            user = self._ensure_user()
+            user = self._current_user()
+            if user is None:
+                self._json({"authenticated": False, "credentialsConfigured": False})
+                return
             self.store.touch_seen(user.id, user.username, self._client_ip())
             settings = self.store.settings_for_user(user.id)
             self._json(user_payload(user, settings, self.store))
@@ -1315,21 +1318,9 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
         return self.store.user_for_session(self._session_token())
 
     def _require_user(self) -> User | None:
-        return self._ensure_user()
-
-    def _ensure_user(self) -> User:
         user = self._current_user()
-        if user is not None:
-            return user
-        while True:
-            token = secrets.token_urlsafe(18)
-            try:
-                user = self.store.create_user(f"desk-{token.lower()}@monatise.local", secrets.token_urlsafe(32))
-                break
-            except ValueError as error:
-                if "already exists" not in str(error):
-                    raise
-        self._create_login_session(user.id, remember_device=True)
+        if user is None:
+            self._error(401, "authentication required")
         return user
 
     def _require_platform_user(self) -> User | None:
