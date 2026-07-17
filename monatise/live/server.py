@@ -727,8 +727,12 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                     assets = [{"symbol": symbol, "exchange": "Hyperliquid", "instrument": symbol, "tradable": True} for symbol in self.config.assets]
                     source = "configured Hyperliquid assets"
                 else:
-                    assets = CoinGlassAdapter(self.config).supported_assets()
-                    source = "CoinGlass futures exchange pairs"
+                    try:
+                        assets = CoinGlassAdapter(self.config).supported_assets()
+                        source = "CoinGlass futures exchange pairs"
+                    except Exception as error:  # noqa: BLE001
+                        assets = [{"symbol": symbol, "exchange": "Hyperliquid", "instrument": symbol, "tradable": True} for symbol in self.config.assets]
+                        source = f"configured Hyperliquid assets (CoinGlass unavailable: {error})"
                 self._json({"assets": assets, "count": len(assets), "source": source})
             except Exception as error:  # noqa: BLE001
                 self._error(502, str(error))
