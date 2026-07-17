@@ -795,12 +795,19 @@ function pushLiveAlert(event, shouldPublish = true) {
 function evaluateLiveAlerts(setup) {
   if (!setup) return;
   const asset = setup.asset;
+  const displayedSetup = setup.tradeReady
+    ? setup.direction.replace(" SETUP", "")
+    : setup.direction === "BUY SETUP"
+      ? "NO TRADE · BUY BIAS"
+      : setup.direction === "SELL SETUP"
+        ? "NO TRADE · SELL BIAS"
+        : "NO TRADE";
   const setupSignature = `${asset}:${setup.direction}:${setup.gridDirection}:${setup.hedgeDirection}`;
   if (state.realtime.lastSetup && state.realtime.lastSetup !== setupSignature) {
     pushLiveAlert({
       kind: "state change",
       asset,
-      title: `${asset} setup changed to ${setup.direction}`,
+      title: `${asset} setup changed to ${displayedSetup}`,
       detail: `${setup.gridDirection}; ${setup.hedgeDirection}. Context strength ${setup.contextConfidence ?? setup.confidence}%.`,
       payload: setup
     });
@@ -817,7 +824,7 @@ function evaluateLiveAlerts(setup) {
     pushLiveAlert({
       kind: setup.tradeReady ? "entry notification" : "context signal",
       asset,
-      title: `${asset} ${setup.direction} ${setup.tradeReady ? "entry window" : "context signal"}`,
+      title: `${asset} ${displayedSetup} ${setup.tradeReady ? "entry window" : "context only"}`,
       detail: `Context strength ${setup.contextConfidence}%. ${setup.gridDirection}. ${setup.gridPlan}`,
       payload: setup
     });
@@ -1259,7 +1266,7 @@ function buildGeneratedSignal(setup, price, vwap) {
       : setupAction === "WAIT"
         ? `${displayFrameworkDirection(setup.direction)} · context strength ${setup.contextConfidence ?? setup.confidence}% · score ${setup.score >= 0 ? "+" : ""}${setup.score}`
         : !setup.tradeReady
-          ? `${setup.direction} · context strength ${setup.contextConfidence ?? setup.confidence}% · framework pending · score ${setup.score >= 0 ? "+" : ""}${setup.score}`
+          ? `NO TRADE · ${setup.direction.startsWith("BUY") ? "BUY" : "SELL"} BIAS · context strength ${setup.contextConfidence ?? setup.confidence}% · framework pending · score ${setup.score >= 0 ? "+" : ""}${setup.score}`
         : `${setup.direction} · probability ${setup.confidence}% · score ${setup.score >= 0 ? "+" : ""}${setup.score}`,
     evidence: bestChecks.length ? bestChecks.join(" · ") : "Framework checks are still warming up.",
     time: new Date().toLocaleTimeString()
