@@ -1188,7 +1188,7 @@ function buildGeneratedSignal(setup, price, vwap) {
   const fallbackEntry = directionalWatch ? fallbackDirectionalEntry(setupAction, mark, buyGrid, sellGrid) : Number.NaN;
   const entryCandidate = Number.isFinite(markEntry) ? markEntry : Number.isFinite(plannedEntry) ? plannedEntry : fallbackEntry;
   const entryMode = Number.isFinite(markEntry) ? "mark" : Number.isFinite(plannedEntry) ? "pullback" : "grid";
-  const action = setupAction === "WAIT" || !Number.isFinite(entryCandidate) ? "WAIT" : setupAction;
+  const action = setupAction === "WAIT" || !setup.tradeReady || !Number.isFinite(entryCandidate) ? "WAIT" : setupAction;
   const entry = action === "WAIT" ? null : entryCandidate;
   const invalidationPlan = dynamicInvalidationPlan(action, entry, mark);
   const actionBlocked = action !== "WAIT" && !invalidationPlan.executable;
@@ -1912,11 +1912,11 @@ function selectedPair() {
 }
 
 function usesCryptoMultiFrame(asset = selectedAsset()) {
-  return false;
+  return Boolean(asset?.hyper);
 }
 
 function usesServerMarketCandles(asset = selectedAsset()) {
-  return false;
+  return Boolean(asset?.hyper);
 }
 
 function isCommodityAsset(asset = selectedAsset()) {
@@ -2136,7 +2136,7 @@ async function getPrice() {
 
 function monitorAssetKeys() {
   const selected = selectedCoin();
-  const keys = ASSET_DEFINITIONS.map((asset) => asset.coin);
+  const keys = ASSET_DEFINITIONS.filter((asset) => asset.hyper).map((asset) => asset.coin);
   return [selected, ...keys.filter((coin) => coin !== selected)];
 }
 
@@ -2162,18 +2162,13 @@ function renderMonitorGrid() {
 
 async function refreshAutonomousMonitor() {
   if (!els.monitorStatus || state.monitor.scanning) return;
-  if (!hasKey()) {
-    els.monitorStatus.textContent = "Selected Hyperliquid market is live · CoinGlass universe scanner is optional";
-    renderMonitorGrid();
-    return;
-  }
   state.monitor.scanning = true;
   const keys = monitorAssetKeys();
   const batchSize = 8;
   const start = state.monitor.cursor % keys.length;
   const batch = Array.from({ length: batchSize }, (_, index) => keys[(start + index) % keys.length]);
   state.monitor.cursor = (start + batchSize) % keys.length;
-  els.monitorStatus.textContent = `Scanning ${batch.join(", ")} · ${keys.length} assets in rotation`;
+  els.monitorStatus.textContent = `Scanning ${batch.join(", ")} · ${keys.length} Hyperliquid markets in rotation`;
   const settled = await Promise.allSettled(batch.map(async (coin) => {
     const asset = ASSETS[coin];
     const rows = await getPriceForAsset(asset, "32");
@@ -3420,8 +3415,13 @@ function applyMonatiseFramework() {
   els.frameworkSource.textContent = usesCryptoMultiFrame(asset)
     ? `${asset.coin} selected · selected crypto multi-timeframe context + CoinGlass/Hyperliquid context`
     : `${asset.coin} selected · Native indicator stack + market candles + CoinGlass/Hyperliquid context`;
-  els.setupDirection.textContent = contextSignalReady ? direction : displayFrameworkDirection("WAIT");
-  els.setupDirection.className = contextSignalReady && direction.includes("BUY") ? "positive" : contextSignalReady && direction.includes("SELL") ? "negative" : "";
+  const displayedDirection = frameworkGate.ready
+    ? direction.replace(" SETUP", "")
+    : contextSignalReady
+      ? `NO TRADE · ${direction.startsWith("BUY") ? "BUY" : "SELL"} BIAS`
+      : displayFrameworkDirection("WAIT");
+  els.setupDirection.textContent = displayedDirection;
+  els.setupDirection.className = frameworkGate.ready && direction.includes("BUY") ? "positive" : frameworkGate.ready && direction.includes("SELL") ? "negative" : "";
   els.setupConfidence.textContent = contextSignalReady ? `context strength ${confidence}%` : `context strength < ${MIN_CONTEXT_SIGNAL_CONFIDENCE}%`;
   els.frameworkChecks.textContent = `${liveChecks} / ${checks.length}`;
   els.frameworkBias.textContent = `${frameworkGate.ready ? "Entry Ready" : contextSignalReady ? "Context Signal" : "No Trade"} · Context strength ${contextConfidence}% · Score ${score >= 0 ? "+" : ""}${score} from ${checks.length} checks`;
@@ -3883,8 +3883,8 @@ async function refreshDashboard() {
   const setup = applyMonatiseFramework();
   publishGeneratedSignal(setup);
   evaluateLiveAlerts(setup);
-  const failures = state.telemetry.slice(0, 8).filter((item) => !item.ok).length;
-  setSessionStatus(failures ? "bad" : "good", failures ? "Session degraded" : "Session live");
+  const coreReady = Number.isFinite(state.lastPrice) && state.lastPrice > 0;
+  setSessionStatus(coreReady ? "good" : "bad", coreReady ? "Session live · Hyperliquid core" : "Core market data unavailable");
   els.refreshButton.disabled = false;
   els.refreshButton.textContent = "Refresh";
 }
