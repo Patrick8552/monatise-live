@@ -55,6 +55,20 @@ def test_auth_bootstrap_routes_remain_public() -> None:
         assert not requires_platform_access(path)
 
 
+def test_openclaw_bearer_token_is_required(monkeypatch) -> None:
+    monkeypatch.setenv("MONATISE_OPENCLAW_TOKEN", "read-only-secret")
+    handler = MonatiseHandler.__new__(MonatiseHandler)
+    handler.headers = {"Authorization": "Bearer read-only-secret"}
+
+    assert handler._openclaw_authorized()
+
+    handler.headers = {"Authorization": "Bearer wrong-secret"}
+    handler._error = lambda status, message: setattr(handler, "authorization_error", (status, message))
+
+    assert not handler._openclaw_authorized()
+    assert handler.authorization_error[0] == 401
+
+
 def test_platform_static_routes_reject_guests() -> None:
     class Handler(MonatiseHandler):
         def _current_user(self):  # noqa: ANN202

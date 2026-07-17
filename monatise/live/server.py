@@ -32,6 +32,7 @@ from monatise.live.billing import (
 )
 from monatise.live.config import LIVE_CONFIRMATION, RuntimeConfig
 from monatise.live.emailer import EmailDeliveryError, expose_dev_reset_code, send_login_code, send_password_reset_code, send_trading_alert_email
+from monatise.live.secrets import secret_value
 from monatise.live.service import JsonEncoder, TradingService
 from monatise.live.users import REMEMBERED_SESSION_SECONDS, SESSION_SECONDS, User, UserCredentials, UserStore, encryption_key_configured
 
