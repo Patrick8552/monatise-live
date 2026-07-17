@@ -129,8 +129,8 @@ class RuntimeConfig:
             raise ValueError("MONATISE_NETWORK must be testnet or mainnet")
         if self.execution_mode not in {"observe", "dry_run", "live"}:
             raise ValueError("MONATISE_EXECUTION_MODE must be observe, dry_run, or live")
-        if self.data_feed != "coinglass":
-            raise ValueError("MONATISE_DATA_FEED must be coinglass")
+        if self.data_feed not in {"coinglass", "hyperliquid"}:
+            raise ValueError("MONATISE_DATA_FEED must be coinglass or hyperliquid")
         if self.exchange not in {"hyperliquid", "backpack"}:
             raise ValueError("MONATISE_EXCHANGE must be hyperliquid or backpack")
         if self.leverage <= 0:

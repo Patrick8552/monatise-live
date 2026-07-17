@@ -129,11 +129,11 @@ def save_tradingview_alerts(alerts: list[dict], path: Path | None = None) -> Non
 
 
 def requires_site_auth(path: str) -> bool:
-    return False
+    return path in PLATFORM_GET_PATHS or path in PLATFORM_STATIC_PATHS or path.startswith(PLATFORM_GET_PREFIXES)
 
 
 def requires_platform_access(path: str) -> bool:
-    return False
+    return path in PLATFORM_GET_PATHS or path.startswith(PLATFORM_GET_PREFIXES)
 
 
 def platform_access_denied_payload() -> dict:
@@ -473,7 +473,8 @@ def operator_status_payload(config: RuntimeConfig) -> dict:
 
 
 def _market_data_adapter(config: RuntimeConfig, symbol: str):  # noqa: ANN202
-    coin = symbol.split("-", 1)[0].upper()
+    if config.data_feed == "hyperliquid":
+        return HyperliquidAdapter(config), "Hyperliquid candleSnapshot"
     return CoinGlassAdapter(config), "CoinGlass futures price history"
 
 
@@ -632,6 +633,65 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             return
         if parsed.path == "/api/operator":
             self._json(operator_status_payload(self.config))
+            return
+        if parsed.path == "/api/openclaw/status":
+            if not self._openclaw_authorized():
+                return
+            query = parse_qs(parsed.query)
+            symbol = _normalize_alert_symbol(str(query.get("symbol", [self.config.symbol])[0]))
+            interval = str(query.get("interval", ["1h"])[0]).strip() or "1h"
+            try:
+                limit = max(50, min(240, int(query.get("limit", ["120"])[0])))
+                with self.tradingview_lock:
+                    alerts = [
+                        enrich_tradingview_alert(alert)
+                        for alert in type(self).tradingview_alerts
+                        if not symbol or alert.get("symbol") == symbol
+                    ][:10]
+                payload = {
+                    "ok": True,
+                    "service": "monatise-live",
+                    "access": "openclaw_read_only",
+                    "symbol": symbol,
+                    "interval": interval,
+                    "market": self.market_feed.snapshot(),
+                    "tradingView": {"alerts": alerts, "count": len(alerts)},
+                    "operator": operator_status_payload(self.config),
+                    "capabilities": {
+                        "readOnly": True,
+                        "liveOrders": False,
+                        "configurationWrites": False,
+                        "deploymentWrites": False,
+                    },
+                }
+                if symbol == "GOLD":
+                    payload.update(
+                        {
+                            "source": "TradingView webhook alerts",
+                            "mark": alerts[0].get("price") if alerts else None,
+                            "indicator": None,
+                            "instruction": "Use the latest locked TradingView Gold setup; no alert means wait.",
+                            "analysis": None,
+                            "fvg": None,
+                        }
+                    )
+                else:
+                    candles, source = _market_candles(self.config, symbol, limit, interval)
+                    mark = candles[-1].close
+                    indicators = indicator_snapshot(candles)
+                    payload.update(
+                        {
+                            "source": source,
+                            "mark": mark,
+                            "indicator": indicators.__dict__,
+                            "instruction": grid_instruction(indicators),
+                            "analysis": analyze_fibonacci(symbol, interval, candles, mark=mark).to_dict(),
+                            "fvg": analyze_fvg(symbol, interval, candles, mark=mark).to_dict(),
+                        }
+                    )
+                self._json(payload)
+            except Exception as error:  # noqa: BLE001
+                self._error(502, str(error))
             return
         if parsed.path == "/":
             self._redirect("/index.html")
@@ -895,7 +955,10 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             )
             return
         if parsed.path == "/api/me":
-            user = self._ensure_user()
+            user = self._current_user()
+            if user is None:
+                self._json({"authenticated": False, "credentialsConfigured": False})
+                return
             self.store.touch_seen(user.id, user.username, self._client_ip())
             settings = self.store.settings_for_user(user.id)
             self._json(user_payload(user, settings, self.store))
@@ -1242,25 +1305,24 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
         return self.store.user_for_session(self._session_token())
 
     def _require_user(self) -> User | None:
-        return self._ensure_user()
-
-    def _ensure_user(self) -> User:
         user = self._current_user()
-        if user is not None:
-            return user
-        while True:
-            token = secrets.token_urlsafe(18)
-            try:
-                user = self.store.create_user(f"desk-{token.lower()}@monatise.local", secrets.token_urlsafe(32))
-                break
-            except ValueError as error:
-                if "already exists" not in str(error):
-                    raise
-        self._create_login_session(user.id, remember_device=True)
+        if user is None:
+            self._error(401, "authentication required")
         return user
 
     def _require_platform_user(self) -> User | None:
         return self._require_user()
+
+    def _openclaw_authorized(self) -> bool:
+        expected = secret_value("MONATISE_OPENCLAW_TOKEN", "").strip()
+        if not expected:
+            self._error(503, "OpenClaw read-only integration is not configured")
+            return False
+        scheme, _, supplied = self.headers.get("Authorization", "").partition(" ")
+        if scheme.lower() != "bearer" or not secrets.compare_digest(supplied.strip(), expected):
+            self._error(401, "invalid OpenClaw authorization")
+            return False
+        return True
 
     def _session_token(self) -> str:
         for part in self.headers.get("Cookie", "").split(";"):

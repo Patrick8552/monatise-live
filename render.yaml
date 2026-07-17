@@ -36,7 +36,9 @@ services:
       - key: MONATISE_SYMBOL
         value: BTC
       - key: MONATISE_DATA_FEED
-        value: coinglass
+        value: hyperliquid
+      - key: MONATISE_OPENCLAW_TOKEN
+        sync: false
       - key: MONATISE_EXCHANGE
         value: hyperliquid
       - key: COINGLASS_API_KEY

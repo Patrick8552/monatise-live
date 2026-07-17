@@ -62,7 +62,7 @@ HYPERLIQUID_ACCOUNT_ADDRESS=0x...
 HYPERLIQUID_SECRET_KEY=...
 ```
 
-CoinGlass is the required read-only market data feed for crypto futures candles and context metrics:
+CoinGlass can provide crypto futures candles and derivatives context when a subscription is active:
 
 ```bash
 COINGLASS_API_KEY=...
@@ -70,11 +70,24 @@ COINGLASS_EXCHANGE=Binance
 COINGLASS_EXCHANGE_LIST=Binance,OKX,Bybit
 ```
 
-CoinGlass is used for market data. Hyperliquid remains the execution and private sync adapter.
+When CoinGlass is unavailable, select Hyperliquid's public candle snapshot feed:
 
-USDC payment gates platform use. Guests can authenticate and view the access
-screen, but live signals, dashboard market data, alerts, signal history, private
-sync, and commercial API connectors require an active private plan paid in USDC.
+```bash
+MONATISE_DATA_FEED=hyperliquid
+```
+
+Hyperliquid then supplies crypto prices and candles as well as remaining the execution/private-sync adapter. CoinGlass-only funding, open-interest, liquidation, and fear/greed fields remain unavailable; they are never interpreted as zero or neutral.
+
+Dashboard and platform GET routes require a valid Monatise login session. OpenClaw uses the separate bearer-protected `GET /api/openclaw/status` route, which is structurally read-only and cannot place orders, change configuration, or deploy. Configure its secret only in Render and OpenClaw:
+
+```bash
+MONATISE_OPENCLAW_TOKEN=use-a-long-random-secret
+```
+
+USDC billing can gate paid product access separately from the authentication
+gate. Guests can view the public site and authentication screens, while dashboard
+market data, alerts, signal history, private sync, and commercial API connectors
+require a valid login session.
 Configure the Stripe price as the USDC private plan, add real Stripe values only
 in Render or a local `.env`, then point the Stripe webhook at `/api/stripe/webhook`:
 

@@ -155,15 +155,9 @@ def test_data_feed_keeps_coinglass_from_env() -> None:
         _restore_env("MONATISE_DATA_FEED", old_feed)
 
 
-def test_hyperliquid_data_feed_fails_validation() -> None:
+def test_hyperliquid_data_feed_is_valid() -> None:
     config = RuntimeConfig(data_feed="hyperliquid")
-
-    try:
-        config.validate()
-    except ValueError as error:
-        assert "must be coinglass" in str(error)
-    else:
-        raise AssertionError("expected non-CoinGlass data feed to fail")
+    config.validate()
 
 
 def _restore_env(key: str, value: str | None) -> None:
