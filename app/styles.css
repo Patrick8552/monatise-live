@@ -264,6 +264,45 @@ h2 {
   font-size: 0.88rem;
 }
 
+.about-contact {
+  border-left: 5px solid var(--cyan);
+}
+
+.about-contact > span {
+  color: var(--muted);
+  display: block;
+  font-size: 0.74rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.about-contact > a {
+  color: var(--cyan);
+  display: inline-block;
+  font-size: clamp(1.25rem, 2.4vw, 2rem);
+  font-weight: 900;
+  margin-top: 12px;
+  text-decoration: none;
+}
+
+.about-contact-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.about-contact-actions a {
+  background: rgba(0, 184, 217, 0.12);
+  border: 1px solid rgba(0, 184, 217, 0.35);
+  border-radius: 999px;
+  color: var(--ink);
+  font-size: 0.82rem;
+  font-weight: 850;
+  padding: 8px 12px;
+  text-decoration: none;
+}
+
 @media (max-width: 720px) {
   .preferred-api-banner {
     align-items: flex-start;
