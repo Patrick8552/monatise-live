@@ -1367,6 +1367,11 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
         return ""
 
     def end_headers(self) -> None:
+        static_path = urlparse(self.path).path
+        if static_path in {"/", "/index.html", "/coinglass-dashboard.html", "/sw.js"}:
+            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Expires", "0")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "no-referrer")

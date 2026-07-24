@@ -73,6 +73,19 @@ def test_openclaw_bearer_token_is_required(monkeypatch) -> None:
     assert handler.authorization_error[0] == 401
 
 
+def test_dashboard_and_service_worker_disable_stale_browser_caching(monkeypatch) -> None:
+    monkeypatch.setattr("http.server.SimpleHTTPRequestHandler.end_headers", lambda self: None)
+    handler = MonatiseHandler.__new__(MonatiseHandler)
+    captured = []
+    handler.path = "/index.html?v=latest"
+    handler.send_header = lambda key, value: captured.append((key, value))
+
+    MonatiseHandler.end_headers(handler)
+
+    assert ("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0") in captured
+    assert ("Pragma", "no-cache") in captured
+
+
 def test_platform_static_routes_are_served_to_guests() -> None:
     class Handler(MonatiseHandler):
         def _current_user(self):  # noqa: ANN202
