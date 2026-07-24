@@ -1,0 +1,4 @@
+interface:
+  display_name: "Crypto Intelligence Collector"
+  short_description: "Collect crypto intelligence with provenance"
+  default_prompt: "Collect live crypto intelligence for Monatise analysis."

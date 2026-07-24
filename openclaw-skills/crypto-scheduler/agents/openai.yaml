@@ -1,0 +1,4 @@
+interface:
+  display_name: "Crypto Scheduler"
+  short_description: "Schedule idempotent crypto workflows"
+  default_prompt: "Schedule Monatise crypto analysis and monitoring jobs."

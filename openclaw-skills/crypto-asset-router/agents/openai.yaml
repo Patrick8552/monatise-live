@@ -1,0 +1,4 @@
+interface:
+  display_name: "Crypto Asset Router"
+  short_description: "Route supported crypto analysis requests"
+  default_prompt: "Route and complete a Monatise crypto analysis request."

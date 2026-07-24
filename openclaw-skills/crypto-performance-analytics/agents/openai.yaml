@@ -1,0 +1,4 @@
+interface:
+  display_name: "Crypto Performance Analytics"
+  short_description: "Measure stored crypto analysis outcomes"
+  default_prompt: "Calculate Monatise crypto analysis performance from recorded outcomes."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Crypto Error Recovery"
+  short_description: "Recover crypto workflows safely"
+  default_prompt: "Retry and recover temporary Monatise crypto workflow failures."

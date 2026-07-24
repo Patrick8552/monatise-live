@@ -1,0 +1,4 @@
+interface:
+  display_name: "Crypto Intelligence Normalizer"
+  short_description: "Normalize crypto provider data safely"
+  default_prompt: "Normalize live crypto intelligence without inventing missing values."

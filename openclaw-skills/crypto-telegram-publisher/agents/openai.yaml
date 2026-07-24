@@ -1,0 +1,4 @@
+interface:
+  display_name: "Crypto Telegram Publisher"
+  short_description: "Publish private crypto analysis notifications"
+  default_prompt: "Handle and publish Monatise crypto Telegram commands safely."

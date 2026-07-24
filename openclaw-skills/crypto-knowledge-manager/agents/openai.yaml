@@ -1,0 +1,4 @@
+interface:
+  display_name: "Crypto Knowledge Manager"
+  short_description: "Manage private crypto framework knowledge"
+  default_prompt: "Retrieve or maintain versioned Monatise crypto knowledge."

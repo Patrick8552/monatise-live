@@ -1,0 +1,4 @@
+interface:
+  display_name: "Crypto Response Formatter"
+  short_description: "Format completed crypto analysis"
+  default_prompt: "Format a validated Monatise crypto analysis for delivery."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Crypto Audit Logger"
+  short_description: "Log crypto analysis events with redaction"
+  default_prompt: "Audit a Monatise crypto workflow without exposing secrets."

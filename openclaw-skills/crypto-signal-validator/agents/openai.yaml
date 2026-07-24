@@ -1,0 +1,4 @@
+interface:
+  display_name: "Crypto Signal Validator"
+  short_description: "Validate crypto analysis before publication"
+  default_prompt: "Validate a completed Monatise crypto analysis."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Crypto Data Health Monitor"
+  short_description: "Monitor crypto provider and service health"
+  default_prompt: "Check live Monatise crypto intelligence health."

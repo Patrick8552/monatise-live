@@ -1,0 +1,4 @@
+interface:
+  display_name: "Crypto Report Builder"
+  short_description: "Build honest crypto analysis reports"
+  default_prompt: "Build a Monatise crypto analysis report."

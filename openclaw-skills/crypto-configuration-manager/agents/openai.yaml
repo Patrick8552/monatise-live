@@ -1,0 +1,4 @@
+interface:
+  display_name: "Crypto Configuration Manager"
+  short_description: "Validate crypto analysis configuration"
+  default_prompt: "Inspect or validate Monatise crypto configuration without enabling execution."

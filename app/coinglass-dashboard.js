@@ -308,7 +308,7 @@ function saveSession() {
 
 function setupDashboardInstall() {
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("./sw.js").catch(() => {});
+    navigator.serviceWorker.register("./sw.js?v=20260724-crypto-framework-v1").catch(() => {});
   }
   window.addEventListener("beforeinstallprompt", (event) => {
     event.preventDefault();
@@ -1266,7 +1266,7 @@ function buildGeneratedSignal(setup, price, vwap) {
       : setupAction === "WAIT"
         ? `${displayFrameworkDirection(setup.direction)} · context strength ${setup.contextConfidence ?? setup.confidence}% · score ${setup.score >= 0 ? "+" : ""}${setup.score}`
         : !setup.tradeReady
-          ? `NO TRADE · ${setup.direction.startsWith("BUY") ? "BUY" : "SELL"} BIAS · context strength ${setup.contextConfidence ?? setup.confidence}% · framework pending · score ${setup.score >= 0 ? "+" : ""}${setup.score}`
+          ? `NO TRADE · ${setup.direction.startsWith("BUY") ? "BUY" : "SELL"} BIAS · context strength ${setup.contextConfidence ?? setup.confidence}% · ${setup.frameworkGate?.summary || "full framework sequence not confirmed"} · score ${setup.score >= 0 ? "+" : ""}${setup.score}`
         : `${setup.direction} · probability ${setup.confidence}% · score ${setup.score >= 0 ? "+" : ""}${setup.score}`,
     evidence: bestChecks.length ? bestChecks.join(" · ") : "Framework checks are still warming up.",
     time: new Date().toLocaleTimeString()

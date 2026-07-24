@@ -1,0 +1,4 @@
+interface:
+  display_name: "Monatise Crypto Analysis Runner"
+  short_description: "Run the proprietary crypto analysis workflow"
+  default_prompt: "Run a completed Monatise crypto analysis from a normalized snapshot."
