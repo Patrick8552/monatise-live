@@ -118,16 +118,16 @@
 
         <section class="source-band" aria-label="Optional premium data status">
           <div>
-            <span>Optional premium context</span>
+            <span>Preferred signal-quality API</span>
             <strong id="coinGlassStatus">Checking CoinGlass</strong>
-            <small id="coinGlassStatusDetail">Hyperliquid powers the core dashboard. CoinGlass optionally adds cross-exchange derivatives data.</small>
+            <small id="coinGlassStatusDetail">CoinGlass is Monatise's preferred API for trade-signal quality. Hyperliquid remains the fallback when CoinGlass is unavailable.</small>
           </div>
           <div>
             <span>Price reference</span>
             <strong id="coinGlassPriceRef">BTCUSDT · futures price history</strong>
             <small id="coinGlassRouteRef">/api/futures/price/history · exchange Binance · analysis 30m · view 1h</small>
           </div>
-          <button id="openIntegrationsButton" type="button" class="ghost-button">Optional CoinGlass</button>
+          <button id="openIntegrationsButton" type="button" class="ghost-button">Connect CoinGlass</button>
         </section>
 
         <section class="panel monitor-panel wide" aria-label="Autonomous market asset monitor">
@@ -532,7 +532,7 @@
             <div class="panel-head">
               <div>
                 <h2>Session Telemetry</h2>
-              <p>Monatise uses Hyperliquid for core prices, candles, funding, open interest, and book liquidity. CoinGlass adds optional premium context.</p>
+              <p>CoinGlass is Monatise's preferred API for trade-signal quality. Hyperliquid keeps analysis available as the fallback when CoinGlass is unavailable.</p>
               </div>
               <button id="clearSessionButton" type="button" class="ghost-button">Clear</button>
             </div>
@@ -543,6 +543,6 @@
     </div>
     <script src="https://cdn.ably.com/lib/ably.min-2.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="./coinglass-dashboard.js?v=20260724-crypto-framework-v1"></script>
+    <script src="./coinglass-dashboard.js?v=20260724-crypto-framework-v2"></script>
   </body>
 </html>

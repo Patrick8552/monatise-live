@@ -308,7 +308,7 @@ function saveSession() {
 
 function setupDashboardInstall() {
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("./sw.js?v=20260724-crypto-framework-v1").catch(() => {});
+    navigator.serviceWorker.register("./sw.js?v=20260724-crypto-framework-v2").catch(() => {});
   }
   window.addEventListener("beforeinstallprompt", (event) => {
     event.preventDefault();
@@ -2001,19 +2001,19 @@ function updateCoinGlassSourceStatus(message = "") {
   const sourceBand = document.querySelector(".source-band");
   sourceBand?.classList.toggle("ready", ready);
   sourceBand?.classList.toggle("waiting", !ready);
-  els.coinGlassStatus.textContent = serverReady ? "Premium connected" : localKey ? "Premium key saved" : "Optional · not connected";
+  els.coinGlassStatus.textContent = serverReady ? "Preferred API connected" : localKey ? "Preferred API key saved" : "Preferred API · not connected";
   els.coinGlassStatusDetail.textContent = ready
     ? message || (serverReady
-      ? `Render provides the CoinGlass connection${state.operator?.integrations?.coinglass?.exchange ? ` via ${state.operator.integrations.coinglass.exchange}` : ""}. Local key override is optional.`
-      : "CoinGlass local key is saved for this browser.")
-    : "Core Hyperliquid analysis remains available. Connect CoinGlass only for premium cross-exchange context.";
+      ? `CoinGlass is Monatise's preferred API for trade-signal quality${state.operator?.integrations?.coinglass?.exchange ? ` via ${state.operator.integrations.coinglass.exchange}` : ""}. Hyperliquid remains the fallback.`
+      : "CoinGlass is Monatise's preferred API for trade-signal quality. Its local key is saved for this browser.")
+    : "CoinGlass is Monatise's preferred API for trade-signal quality. Hyperliquid fallback analysis remains available.";
   els.coinGlassPriceRef.textContent = usesServerMarketCandles(asset)
     ? `${asset.tv} · Monatise market candles`
     : `${asset.pair} · CoinGlass futures price history`;
   els.coinGlassRouteRef.textContent = usesServerMarketCandles(asset)
     ? `/api/candles · symbol ${asset.coin} · ${usesCryptoMultiFrame(asset) ? `analysis ${CRYPTO_ANALYSIS_INTERVALS.join(" + ")}` : `view ${viewInterval}`}`
     : `/api/futures/price/history · exchange ${exchange} · analysis ${ANALYSIS_INTERVAL} · view ${viewInterval}`;
-  els.openIntegrationsButton.textContent = serverReady ? "Premium Connected" : localKey ? "Update Premium Key" : "Add Optional CoinGlass";
+  els.openIntegrationsButton.textContent = serverReady ? "CoinGlass Connected" : localKey ? "Update CoinGlass Key" : "Connect CoinGlass";
 }
 
 function syncTradingView(asset = selectedAsset()) {
