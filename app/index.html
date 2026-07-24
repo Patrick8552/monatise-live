@@ -11,7 +11,7 @@
     <link rel="manifest" href="./manifest.webmanifest?v=20260701-yinyang-png" />
     <link rel="icon" href="./icon.svg?v=20260701-yinyang-png" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./icon-180.png?v=20260701-yinyang-png" />
-    <link rel="stylesheet" href="./styles.css?v=20260715-memecoin-tab" />
+    <link rel="stylesheet" href="./styles.css?v=20260724-primary-api-v1" />
   </head>
   <body class="auth-required">
     <main class="shell">
@@ -54,6 +54,11 @@
           <span id="fillCount">0 signals</span>
         </div>
       </header>
+
+      <section class="preferred-api-banner" role="note" aria-label="Preferred trade signal API">
+        <strong>Preferred trade-signal API: CoinGlass</strong>
+        <span>CoinGlass is Monatise's preferred API for trade-signal quality. Hyperliquid keeps analysis available as the fallback when CoinGlass is unavailable.</span>
+      </section>
 
       <section class="ops-ribbon" aria-label="desk overview">
         <article>
@@ -497,7 +502,7 @@
           </div>
 
           <section class="market-stage" aria-label="market visualization">
-            <p id="liquiditySource" class="liquidity-source">Hyperliquid provides core candles, funding, open interest, and book liquidity. CoinGlass adds optional premium context. Monatise does not place orders from this screen.</p>
+            <p id="liquiditySource" class="liquidity-source">CoinGlass is Monatise's preferred API for trade-signal quality. Hyperliquid provides fallback candles and market context when CoinGlass is unavailable. Monatise does not place orders from this screen.</p>
             <div id="coinglassServices" class="coinglass-services" aria-label="Optional premium market context">
               <article>
                 <span>Funding</span>
@@ -902,6 +907,6 @@
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="./spotify.js?v=20260629-request-access-fix"></script>
-    <script src="./app.js?v=20260715-memecoin-tab"></script>
+    <script src="./app.js?v=20260724-primary-api-v1"></script>
   </body>
 </html>

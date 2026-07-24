@@ -591,7 +591,7 @@ function setPasswordAutocomplete(isRegister) {
 
 function setupAppInstall() {
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("./sw.js").catch(() => {});
+    navigator.serviceWorker.register("./sw.js?v=20260724-primary-api-v1").catch(() => {});
   }
   window.addEventListener("beforeinstallprompt", (event) => {
     event.preventDefault();
