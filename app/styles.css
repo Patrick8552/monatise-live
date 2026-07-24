@@ -285,6 +285,12 @@ h2 {
   text-decoration: none;
 }
 
+.about-contact > .about-contact-email {
+  display: block;
+  font-size: clamp(0.95rem, 1.8vw, 1.25rem);
+  overflow-wrap: anywhere;
+}
+
 .about-contact-actions {
   display: flex;
   flex-wrap: wrap;
