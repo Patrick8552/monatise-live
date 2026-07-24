@@ -1,6 +1,8 @@
 # Monatise
 
-Monatise is a liquidity harvesting framework and protocol for grid-based trading strategies.
+This repository is the canonical production source for Monatise Live. The hosted
+system is analysis-only: it can collect market data, evaluate signals, and show
+private account context, but it cannot place orders.
 
 It is built around repeated liquidity placement, spread capture, volatility harvesting, and inventory-aware rebalancing. It is not a trend-style one-shot entry system.
 
@@ -29,7 +31,7 @@ http://localhost:4173
 
 The dashboard runs entirely in the browser using sample candle data. Change the grid spacing, levels, portfolio balances, fee rate, and candle CSV, then use `Run` or `Step` to inspect the liquidity harvesting cycle.
 
-## Paper And Live Backend
+## Analysis Backend
 
 Start the backend-powered dashboard:
 
@@ -43,23 +45,14 @@ Then open:
 http://127.0.0.1:4174
 ```
 
-Use the `Backend` Start/Stop controls for the running paper/live loop. Real Hyperliquid trading requires the live dependency and environment variables in `.env.example`.
+Hyperliquid is a read-only market-data/private-account connector. Execution is
+globally disabled in code and in `render.yaml`; environment variables cannot
+turn it back on.
 
 Install live dependencies:
 
 ```bash
 pip install -r requirements-live.txt
-```
-
-Live mode stays disabled unless all real-order gates are present:
-
-```bash
-MONATISE_MODE=live
-MONATISE_NETWORK=testnet
-MONATISE_ALLOW_LIVE_ORDERS=true
-MONATISE_LIVE_CONFIRMATION=I_UNDERSTAND_REAL_MONEY
-HYPERLIQUID_ACCOUNT_ADDRESS=0x...
-HYPERLIQUID_SECRET_KEY=...
 ```
 
 CoinGlass can provide crypto futures candles and derivatives context when a subscription is active:
@@ -76,7 +69,10 @@ When CoinGlass is unavailable, select Hyperliquid's public candle snapshot feed:
 MONATISE_DATA_FEED=hyperliquid
 ```
 
-Hyperliquid then supplies crypto prices and candles as well as remaining the execution/private-sync adapter. CoinGlass-only funding, open-interest, liquidation, and fear/greed fields remain unavailable; they are never interpreted as zero or neutral.
+Hyperliquid then supplies crypto prices and candles. CoinGlass-only funding,
+open-interest, liquidation, and fear/greed fields remain unavailable; they are
+never interpreted as zero or neutral. CoinGlass remains the preferred primary
+API for the best trade-signal quality.
 
 The website and Hyperliquid-based market-analysis GET routes are open without login. Private account status, TradingView signal history, credentials, settings, start/stop controls, and commercial CoinGlass/Quiver connectors require a valid login. OpenClaw uses the separate bearer-protected `GET /api/openclaw/status` route, which is structurally read-only and cannot place orders, change configuration, or deploy. Configure its secret only in Render and OpenClaw:
 
@@ -84,26 +80,9 @@ The website and Hyperliquid-based market-analysis GET routes are open without lo
 MONATISE_OPENCLAW_TOKEN=use-a-long-random-secret
 ```
 
-USDC billing can gate paid product access later. Public analysis does not require
-registration, but control actions and private/commercial data require a real
-authenticated session and never create an automatic guest account.
-Configure the Stripe price as the USDC private plan, add real Stripe values only
-in Render or a local `.env`, then point the Stripe webhook at `/api/stripe/webhook`:
-
-USDC payments are routed on Solana only. The live payment destination is
-`69aNnKVjSin6x2HYqMgu9FsWawWDiRxohGfZw8efGjue`, configurable with
-`MONATISE_USDC_SOLANA_ADDRESS`.
-
-```bash
-STRIPE_SECRET_KEY=sk_live_...
-STRIPE_PRIVATE_PRICE_ID=price_...
-STRIPE_WEBHOOK_SECRET=whsec_...
-```
-
-Paid users can then connect supported commercial APIs from inside the platform,
-including a commercial CoinGlass key for market-data proxy routes and other
-dashboard connectors. Unpaid users receive `402 Payment Required` for platform
-APIs.
+Stripe and USDC payment flows are not part of the current production architecture.
+Public analysis remains open; login is used only for saved preferences and
+optional private read-only context.
 
 Backpack is present as an exchange-aware scaffold for market data and ED25519
 private request signing:
@@ -133,10 +112,8 @@ See [deploy/live-runbook.md](deploy/live-runbook.md) for the full runbook.
 
 ## Render Hosting
 
-Render is the active hosting target for Monatise. The included `render.yaml`
-deploys the Docker web service in `live` + `mainnet` mode with small risk caps.
-Users log in and save their own Hyperliquid API wallet credentials in the
-dashboard before starting the trading loop.
+Render is the only active hosting target for Monatise Live. The included
+`render.yaml` deploys the hosted analysis service with execution mode disabled.
 
 Password recovery sends a six-digit email code, so Render also needs SMTP
 configured. Monatise supports plain SMTP plus provider presets for Resend and

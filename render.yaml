@@ -25,14 +25,6 @@ services:
         value: /data/monatise-users.db
       - key: MONATISE_ENCRYPTION_KEY
         sync: false
-      - key: MONATISE_SOLANA_RPC_URL
-        value: https://api.mainnet-beta.solana.com
-      - key: MONATISE_USDC_SOLANA_ADDRESS
-        value: 69aNnKVjSin6x2HYqMgu9FsWawWDiRxohGfZw8efGjue
-      - key: MONATISE_ARBITRUM_RPC_URL
-        value: https://arb1.arbitrum.io/rpc
-      - key: MONATISE_POLYGON_RPC_URL
-        value: https://polygon-rpc.com
       - key: MONATISE_SYMBOL
         value: BTC
       - key: MONATISE_DATA_FEED
@@ -65,16 +57,6 @@ services:
         value: true
       - key: MONATISE_TRADINGVIEW_WEBHOOK_TOKEN
         sync: false
-      - key: STRIPE_SECRET_KEY
-        sync: false
-      - key: STRIPE_PRIVATE_PRICE_ID
-        sync: false
-      - key: STRIPE_WEBHOOK_SECRET
-        sync: false
-      - key: STRIPE_SUCCESS_URL
-        value: https://monatise-live.onrender.com/?billing=success
-      - key: STRIPE_CANCEL_URL
-        value: https://monatise-live.onrender.com/?billing=cancelled
       - key: BACKPACK_REST_BASE
         value: https://api.backpack.exchange
       - key: BACKPACK_API_KEY
@@ -92,7 +74,7 @@ services:
       - key: MONATISE_BUILDER_DEXES
         value: xyz
       - key: MONATISE_EXECUTION_MODE
-        value: live
+        value: disabled
       - key: MONATISE_LEVERAGE
         value: 10
       - key: MONATISE_ORDER_QUOTE_SIZE
@@ -114,6 +96,4 @@ services:
       - key: MONATISE_SIGNAL_SESSION_WINDOW
         value: always
       - key: MONATISE_ALLOW_LIVE_ORDERS
-        value: true
-      - key: MONATISE_LIVE_CONFIRMATION
-        value: I_UNDERSTAND_REAL_MONEY
+        value: false

@@ -22,8 +22,6 @@ const els = {
   backendStartButton: document.querySelector("#backendStartButton"),
   backendStatus: document.querySelector("#backendStatus"),
   backendStopButton: document.querySelector("#backendStopButton"),
-  billingCheckoutButton: document.querySelector("#billingCheckoutButton"),
-  billingStatus: document.querySelector("#billingStatus"),
   accountMetricLabel: document.querySelector("#accountMetricLabel"),
   activationList: document.querySelector("#activationList"),
   activationNext: document.querySelector("#activationNext"),
@@ -170,7 +168,6 @@ const els = {
   tradingViewSignalPanel: document.querySelector("#tradingViewSignalPanel"),
   tradingViewMeta: document.querySelector("#tradingViewMeta"),
   tradingViewWidget: document.querySelector("#tradingViewWidget"),
-  londonCommodityInput: document.querySelector("#londonCommodityInput"),
   finishOnboardingButton: document.querySelector("#finishOnboardingButton"),
   onboardingAccount: document.querySelector("#onboardingAccount"),
   onboardingContact: document.querySelector("#onboardingContact"),
@@ -230,7 +227,6 @@ let tradingRules = {
   chartInterval: "1h",
   leverage: 10,
   signalSessionWindow: "always",
-  londonCommodityOnly: true,
   maxDailyLossPct: 0.05,
   orderQuoteSize: 25,
   maxOrderNotional: 25,
@@ -2270,16 +2266,6 @@ function tradingViewStatusClass(classification = {}) {
 
 function renderTradingViewSignal() {
   if (!els.tradingViewSignalPanel) return;
-  if (!hasLivePlan()) {
-    els.tradingViewSignalPanel.innerHTML = `
-      <div class="strategy-status wait">
-        <strong>TV LOCKED</strong>
-        <span>USDC payment required</span>
-      </div>
-      <p>Activate the USDC plan before viewing live TradingView price, setup, grid, and hedge alerts for ${assetLabel(selectedAsset)}.</p>
-    `;
-    return;
-  }
   const signal = activeTradingViewSignal(2 * 60 * 60 * 1000);
   if (!signal) {
     els.tradingViewSignalPanel.innerHTML = `
@@ -2680,7 +2666,7 @@ function answerSignalChat(prompt) {
   }
 
   if (/coinglass|funding|open interest|oi|liquidation|heatmap|fear|greed/.test(lower)) {
-    return `${coinGlassSummaryText()} Monatise combines those feeds with FVG zones, Fibonacci levels, CHoCH/BOS structure, and the Asia/London/New York session state before labeling a setup.`;
+    return `${coinGlassSummaryText()} Monatise combines those feeds with FVG zones, Fibonacci levels, CHoCH/BOS structure, and current market context before labeling a setup.`;
   }
 
   if (/target|tp|profit|exit|take/.test(lower)) {
@@ -2722,12 +2708,9 @@ function updateDecisionSurface(snapshot = null) {
   let state = "Profile needed";
   let detail = "Create a signal profile to save and reuse preferences.";
   let className = "blocked";
-  if (loggedIn && !paid) {
-    state = "USDC payment required";
-    detail = "Activate the USDC plan before using live signals, dashboard data, alerts, or sync.";
-  } else if (loggedIn && !hasCredentials) {
-    state = "Paid access ready";
-    detail = "USDC payment is active. Private sync is optional.";
+  if (loggedIn && !hasCredentials) {
+    state = "Open access ready";
+    detail = "Analysis is active. Private sync is optional and execution remains disabled.";
     className = "ready";
   } else if (loggedIn && paid && hasCredentials && blocks.length) {
     state = "Signal blocked";
@@ -2831,11 +2814,9 @@ function updateLiveDesk(snapshot = null) {
       ? "Close signal window"
     : liveReady
       ? "Private sync ready"
-      : paid
-        ? "Paid profile ready"
-        : loggedIn
-          ? "USDC payment required"
-          : "Profile needed";
+      : loggedIn
+        ? "Analysis profile ready"
+        : "Profile needed";
   els.liveModeStatus.textContent = running
     ? `${mode.toUpperCase()} running`
     : sessionBlocked
@@ -3055,31 +3036,12 @@ function sessionBreakProximity(session, date) {
   return { ...close, transition: "close" };
 }
 
-function commodityLondonGuard(symbol = selectedAsset, date = new Date()) {
-  const asset = radarSymbol(symbol);
-  const london = londonSession();
-  if (!tradingRules.londonCommodityOnly || !commoditySymbols.includes(asset) || !london) {
-    return { active: false, symbol: asset };
-  }
-  if (isSessionOpen(london, date)) return { active: false, symbol: asset, session: "London" };
-  const proximity = sessionBreakProximity(london, date);
-  return {
-    active: true,
-    direction: proximity.direction,
-    message: `commodity session guard: ${asset} signals are limited to the London session`,
-    minutes: proximity.minutes,
-    session: "London",
-    symbol: asset,
-    transition: proximity.transition
-  };
-}
-
 function activeSessionGuard(symbol = selectedAsset, date = new Date()) {
   const economicGuard = economicReleaseGuard(date);
   if (economicGuard.active) return economicGuard;
   const signalGuard = signalWindowGuard(date);
   if (signalGuard.active) return signalGuard;
-  return commodityLondonGuard(symbol, date);
+  return { active: false, symbol: radarSymbol(symbol) };
 }
 
 function economicReleaseGuard(date = new Date()) {
@@ -3112,26 +3074,7 @@ function economicReleaseGuard(date = new Date()) {
 }
 
 function signalWindowGuard(date = new Date()) {
-  const window = tradingRules.signalSessionWindow || "always";
-  if (window === "always") return { active: false, window };
-  const sessions = signalWindowSessions();
-  const openSessions = sessions.filter((session) => isSessionOpen(session, date));
-  if (openSessions.length) {
-    return { active: false, sessions: openSessions.map((session) => session.name), window };
-  }
-  const nextSession = sessions
-    .map((session) => ({ change: minutesUntilSessionChange(session, date), session }))
-    .sort((left, right) => left.change - right.change)[0];
-  return {
-    active: true,
-    direction: "before",
-    message: `signal window guard: signals generate only during London or New York; next window opens in ${durationLabel(nextSession?.change || 0)}`,
-    minutes: nextSession?.change || 0,
-    session: nextSession?.session?.name || "London",
-    symbol: "SIGNAL",
-    transition: "open",
-    window
-  };
+  return { active: false, window: "always" };
 }
 
 function signalSessionIntervals(date = new Date()) {
@@ -3187,7 +3130,7 @@ function sessionTimingWindow(date = new Date()) {
   const next = intervals.find((interval) => interval.start > date);
   return {
     active: false,
-    label: next ? next.names.join(" / ") : "London / New York",
+    label: next ? next.names.join(" / ") : "Always on",
     names: next?.names || [],
     start: null,
     end: null,
@@ -3333,10 +3276,7 @@ function normalizedTradingRules(rules = {}) {
   return {
     chartInterval: ["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "1w"].includes(interval) ? interval : "1h",
     leverage: 10,
-    signalSessionWindow: ["london_new_york", "always"].includes(String(rules.signalSessionWindow || ""))
-      ? String(rules.signalSessionWindow)
-      : "always",
-    londonCommodityOnly: rules.londonCommodityOnly !== false,
+    signalSessionWindow: "always",
     maxDailyLossPct,
     orderQuoteSize,
     maxOrderNotional: orderQuoteSize,
@@ -3360,14 +3300,12 @@ function applyTradingRules(rules = {}) {
   els.maxPositionValueInput.value = formatInputNumber(tradingRules.maxPositionValue);
   els.orderSizeInput.value = formatInputNumber(tradingRules.orderQuoteSize);
   els.staleGridCancelInput.checked = tradingRules.staleGridCancel;
-  els.londonCommodityInput.checked = tradingRules.londonCommodityOnly;
   renderTradingRules();
 }
 
 function renderTradingRules() {
   const drawdownLabel = `${(tradingRules.maxDailyLossPct * 100).toFixed(1).replace(/\.0$/, "")}% drawdown cap`;
-  const signalWindowLabel =
-    tradingRules.signalSessionWindow === "always" ? "always-on signal window" : "London/New York signal window";
+  const signalWindowLabel = "always-on signal window";
   els.rulesStatus.textContent = `${tradingRules.chartInterval} signal profile`;
   els.rulesSummary.textContent = `10x risk lens · ${money(tradingRules.orderQuoteSize)} alert size · ${money(
     tradingRules.maxTotalNotional
@@ -3459,16 +3397,6 @@ function renderAuth(me) {
   els.emailLoginCodeButton.disabled = loggedIn;
   els.completeLoginCodeButton.disabled = loggedIn;
   if (loggedIn) els.loginCodePanel.hidden = true;
-  if (els.billingCheckoutButton) {
-    const supported = currentPlan() === "private" && ["active", "trialing"].includes(currentSubscriptionStatus());
-    els.billingCheckoutButton.disabled = !loggedIn || supported;
-    els.billingCheckoutButton.textContent = supported ? "USDC Support Active" : "Support with USDC";
-  }
-  if (els.billingStatus) {
-    els.billingStatus.textContent = loggedIn
-      ? "Platform access is open. USDC support is optional and does not unlock or restrict features."
-      : "Platform access is open. Sign in only if you want to support with USDC.";
-  }
   els.rotateRecoveryCodeButton.disabled = true;
   els.recoveryCodeBox.hidden = true;
   renderRegistrationDesk(me);
@@ -3807,41 +3735,6 @@ async function saveSpotifyPlaylist() {
     if (els.saveSpotifyButton) {
       els.saveSpotifyButton.disabled = !hasLivePlan();
       els.saveSpotifyButton.textContent = "Save Playlist";
-    }
-  }
-}
-
-async function startBillingCheckout() {
-  if (!currentUser.authenticated) {
-    if (els.billingStatus) els.billingStatus.textContent = "Login or request access before USDC payment.";
-    els.usernameInput.focus();
-    return;
-  }
-  const supported = currentPlan() === "private" && ["active", "trialing"].includes(currentSubscriptionStatus());
-  if (supported) {
-    if (els.billingStatus) els.billingStatus.textContent = "USDC support is already active.";
-    return;
-  }
-  if (els.billingCheckoutButton) {
-    els.billingCheckoutButton.disabled = true;
-    els.billingCheckoutButton.textContent = "Opening Checkout...";
-  }
-  if (els.billingStatus) els.billingStatus.textContent = "Preparing USDC checkout...";
-  try {
-    const response = await jsonPost("/api/billing/checkout");
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      if (els.billingStatus) els.billingStatus.textContent = payload.error || "USDC checkout is not ready.";
-      return;
-    }
-    window.location.href = payload.url;
-  } catch {
-    if (els.billingStatus) els.billingStatus.textContent = "Checkout request failed. Try again.";
-  } finally {
-    if (els.billingCheckoutButton) {
-      const supportActive = currentPlan() === "private" && ["active", "trialing"].includes(currentSubscriptionStatus());
-      els.billingCheckoutButton.disabled = !currentUser.authenticated || supportActive;
-      els.billingCheckoutButton.textContent = supportActive ? "USDC Support Active" : "Support with USDC";
     }
   }
 }
@@ -5370,7 +5263,7 @@ async function refreshBackend() {
     if (!hasLivePlan()) {
       backendOnline = false;
       lastBackendSnapshot = null;
-      els.backendStatus.textContent = "USDC payment required";
+      els.backendStatus.textContent = "Open access";
       renderWealthCommand();
       updateLiveDesk();
       return;
@@ -5387,7 +5280,7 @@ async function refreshBackend() {
     if (response.status === 402) {
       backendOnline = false;
       lastBackendSnapshot = null;
-      els.backendStatus.textContent = "USDC payment required";
+      els.backendStatus.textContent = "Open access";
       renderWealthCommand();
       updateLiveDesk();
       return;
@@ -5426,7 +5319,6 @@ async function saveTradingRules() {
   const nextRules = normalizedTradingRules({
     chartInterval: els.chartIntervalSelect.value,
     signalSessionWindow: els.signalWindowSelect.value,
-    londonCommodityOnly: els.londonCommodityInput.checked,
     maxDailyLossPct: Number(els.drawdownLimitInput.value) / 100,
     orderQuoteSize: Number(els.ruleOrderSizeInput.value),
     maxTotalNotional: Number(els.maxTotalNotionalInput.value),
@@ -5445,7 +5337,7 @@ async function saveTradingRules() {
     loadFibonacciAnalysis({ force: true });
     loadContextRadar({ force: true });
     loadCoinGlassContext({ force: true });
-    addAuditEvent("rules preview", "USDC payment required before saving signal rules", `${nextRules.chartInterval} · ${nextRules.sessionGuardMinutes}m guard`);
+    addAuditEvent("rules preview", "Sign in to save signal rules", `${nextRules.chartInterval} · ${nextRules.sessionGuardMinutes}m guard`);
     return;
   }
   const response = await jsonPost("/api/trading-rules", nextRules);
@@ -5694,13 +5586,11 @@ els.logoutButton.addEventListener("click", async () => {
 });
 els.saveCredentialsButton.addEventListener("click", saveCredentials);
 els.saveSpotifyButton?.addEventListener("click", saveSpotifyPlaylist);
-els.billingCheckoutButton?.addEventListener("click", startBillingCheckout);
 els.saveRulesButton.addEventListener("click", saveTradingRules);
 function previewTradingRules() {
   const nextRules = normalizedTradingRules({
     chartInterval: els.chartIntervalSelect.value,
     signalSessionWindow: els.signalWindowSelect.value,
-    londonCommodityOnly: els.londonCommodityInput.checked,
     maxDailyLossPct: Number(els.drawdownLimitInput.value) / 100,
     orderQuoteSize: Number(els.ruleOrderSizeInput.value),
     maxTotalNotional: Number(els.maxTotalNotionalInput.value),
@@ -5711,7 +5601,7 @@ function previewTradingRules() {
   applyTradingRules(nextRules);
   rebuildFromInputs();
 }
-[els.chartIntervalSelect, els.signalWindowSelect, els.sessionGuardSelect, els.staleGridCancelInput, els.londonCommodityInput].forEach((input) => {
+[els.chartIntervalSelect, els.signalWindowSelect, els.sessionGuardSelect, els.staleGridCancelInput].forEach((input) => {
   input.addEventListener("change", previewTradingRules);
 });
 [els.drawdownLimitInput, els.ruleOrderSizeInput, els.maxTotalNotionalInput, els.maxPositionValueInput].forEach((input) => {

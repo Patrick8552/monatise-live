@@ -3776,7 +3776,7 @@ function newsImageData(title, description = "") {
 }
 
 const SESSION_WINDOWS = [
-  { asset: "crypto", close: null, focus: "Crypto", note: "24/7 market. Best liquidity usually appears during London/New York overlap.", open: null }
+  { asset: "crypto", close: null, focus: "Crypto", note: "24/7 market. Liquidity varies throughout the day.", open: null }
 ];
 
 function utcMinutes(date = new Date()) {
@@ -3840,7 +3840,7 @@ function renderSessionTimers(date = new Date()) {
     </div>
     <div class="best-window">
       <strong>Best windows</strong>
-      <span>Crypto: London/New York overlap, 12:00-16:00 UTC.</span>
+      <span>Crypto: continuous 24/7 market context.</span>
     </div>
     <div class="session-card-grid">${rows}</div>
   `;

@@ -53,21 +53,7 @@ def _minutes_until_hour(hour: int, moment: datetime | None = None) -> int:
 
 
 def signal_window_guard(moment: datetime | None = None, window: str = "always") -> dict:
-    if window == "always":
-        return {"active": False, "window": window}
-    if window != "london_new_york":
-        return {"active": True, "window": window, "message": "signal window guard: unknown session window"}
-    if _window_open(7, 21, moment):
-        return {"active": False, "window": window, "sessions": ["Crypto London/New York"]}
-    minutes = min(_minutes_until_hour(7, moment), _minutes_until_hour(12, moment))
-    return {
-        "active": True,
-        "window": window,
-        "transition": "open",
-        "direction": "before",
-        "minutes": minutes,
-        "message": f"signal window guard: crypto signals generate during London/New York overlap; next window opens in {minutes}m",
-    }
+    return {"active": False, "window": "always"}
 
 
 def economic_release_guard(

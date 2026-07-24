@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from monatise.live.secrets import secret_value
 
 
-LIVE_CONFIRMATION = "I_UNDERSTAND_REAL_MONEY"
+LIVE_CONFIRMATION = "EXECUTION_DISABLED"
 COINGLASS_STARTUP_INTERVALS = {"1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "1w"}
 COINGLASS_STARTUP_INTERVAL_LABEL = "1m, 3m, 5m, 15m, 30m, 1h, 2h, 4h, 6h, 8h, 12h, 1d, or 1w"
 
@@ -24,7 +24,7 @@ class RuntimeConfig:
     order_quote_size: float = 250.0
     fee_rate: float = 0.0004
     poll_seconds: float = 5.0
-    execution_mode: str = "dry_run"
+    execution_mode: str = "disabled"
     max_order_notional: float = 250.0
     max_total_notional: float | None = None
     max_base_inventory: float = 0.1
@@ -69,7 +69,7 @@ class RuntimeConfig:
             order_quote_size=float(os.getenv("MONATISE_ORDER_QUOTE_SIZE", "250")),
             fee_rate=float(os.getenv("MONATISE_FEE_RATE", "0.0004")),
             poll_seconds=float(os.getenv("MONATISE_POLL_SECONDS", "5")),
-            execution_mode=os.getenv("MONATISE_EXECUTION_MODE", "dry_run").lower(),
+            execution_mode="disabled",
             max_order_notional=float(os.getenv("MONATISE_MAX_ORDER_NOTIONAL", "250")),
             max_total_notional=float(max_total_notional) if max_total_notional else quote,
             max_base_inventory=float(os.getenv("MONATISE_MAX_BASE_INVENTORY", "0.1")),
@@ -84,8 +84,8 @@ class RuntimeConfig:
             signal_session_window=os.getenv("MONATISE_SIGNAL_SESSION_WINDOW", "always"),
             london_commodity_only=False,
             stale_grid_cancel=os.getenv("MONATISE_STALE_GRID_CANCEL", "true").lower() == "true",
-            allow_live_orders=os.getenv("MONATISE_ALLOW_LIVE_ORDERS", "false").lower() == "true",
-            live_confirmation=secret_value("MONATISE_LIVE_CONFIRMATION", ""),
+            allow_live_orders=False,
+            live_confirmation="",
             account_address=(
                 secret_value("HYPERLIQUID_ACCOUNT_ADDRESS", "")
                 if os.getenv("MONATISE_ENABLE_GLOBAL_CREDENTIALS", "false").lower() == "true"
@@ -113,22 +113,16 @@ class RuntimeConfig:
 
     @property
     def live_enabled(self) -> bool:
-        return (
-            self.mode == "live"
-            and self.execution_mode == "live"
-            and self.allow_live_orders
-            and self.live_confirmation == LIVE_CONFIRMATION
-            and bool(self.secret_key)
-            and bool(self.account_address)
-        )
+        """Order execution is globally disabled; Monatise Live is analysis-only."""
+        return False
 
     def validate(self) -> None:
         if self.mode not in {"paper", "live"}:
             raise ValueError("MONATISE_MODE must be paper or live")
         if self.network not in {"testnet", "mainnet"}:
             raise ValueError("MONATISE_NETWORK must be testnet or mainnet")
-        if self.execution_mode not in {"observe", "dry_run", "live"}:
-            raise ValueError("MONATISE_EXECUTION_MODE must be observe, dry_run, or live")
+        if self.execution_mode not in {"disabled", "observe", "dry_run", "live"}:
+            raise ValueError("MONATISE_EXECUTION_MODE must be disabled, observe, dry_run, or live")
         if self.data_feed not in {"coinglass", "hyperliquid"}:
             raise ValueError("MONATISE_DATA_FEED must be coinglass or hyperliquid")
         if self.exchange not in {"hyperliquid", "backpack"}:
@@ -155,5 +149,5 @@ class RuntimeConfig:
             raise ValueError("MONATISE_SESSION_GUARD_MINUTES must be 5, 15, 30, 60, or 90")
         if self.chart_interval not in COINGLASS_STARTUP_INTERVALS:
             raise ValueError(f"MONATISE_CHART_INTERVAL must be one of {COINGLASS_STARTUP_INTERVAL_LABEL}")
-        if self.signal_session_window not in {"london_new_york", "always"}:
-            raise ValueError("MONATISE_SIGNAL_SESSION_WINDOW must be london_new_york or always")
+        if self.signal_session_window != "always":
+            raise ValueError("MONATISE_SIGNAL_SESSION_WINDOW is fixed to always")

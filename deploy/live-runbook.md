@@ -1,69 +1,27 @@
-# Monatise Live Trading Runbook
+# Monatise Live production runbook
 
-## Required Accounts And Keys
+Monatise Live is an analysis-only Render service. `render.yaml` is the canonical
+deployment definition.
 
-1. Create or use a Hyperliquid account.
-2. Create an API wallet at `https://app.hyperliquid.xyz/API`.
-3. Keep the main wallet address as `HYPERLIQUID_ACCOUNT_ADDRESS`.
-4. Keep the API wallet private key as `HYPERLIQUID_SECRET_KEY`.
-5. Fund the correct environment: testnet first, then mainnet only after verification.
+## Safety invariants
 
-## Install Live Dependency
+- `MONATISE_EXECUTION_MODE=disabled`
+- `MONATISE_ALLOW_LIVE_ORDERS=false`
+- The application-level `RuntimeConfig.live_enabled` property always returns false.
+- Starting the trading service returns an analysis-only warning and never starts
+  an order loop.
+- CoinGlass is the preferred primary source; Hyperliquid public data is fallback.
+- No trade signals are generated on weekends.
 
-```bash
-pip install -r requirements-live.txt
-```
+## Verification
 
-## Start Paper Backend
-
-```bash
-MONATISE_MODE=paper python3 scripts/serve_live.py
-```
-
-Open:
-
-```text
-http://127.0.0.1:4174
-```
-
-## Start Live Dry Run
-
-Live dry run reads market prices and plans orders, but does not place orders:
+Run before deployment:
 
 ```bash
-MONATISE_MODE=live \
-MONATISE_NETWORK=testnet \
-HYPERLIQUID_ACCOUNT_ADDRESS=0x... \
-HYPERLIQUID_SECRET_KEY=... \
-python3 scripts/serve_live.py
+python3 -m pytest -q
+node --check app/app.js
 ```
 
-## Enable Real Orders
-
-Real orders require all gates:
-
-```bash
-MONATISE_MODE=live \
-MONATISE_NETWORK=testnet \
-MONATISE_ALLOW_LIVE_ORDERS=true \
-MONATISE_LIVE_CONFIRMATION=I_UNDERSTAND_REAL_MONEY \
-HYPERLIQUID_ACCOUNT_ADDRESS=0x... \
-HYPERLIQUID_SECRET_KEY=... \
-python3 scripts/serve_live.py
-```
-
-Move to `MONATISE_NETWORK=mainnet` only after testnet order placement, cancellation, and reconciliation are verified.
-
-## Hosting
-
-For cloud hosting, use the included Dockerfile:
-
-```bash
-docker build -f deploy/Dockerfile -t monatise-live .
-docker run --env-file .env -p 4174:4174 monatise-live
-```
-
-Render is the active cloud target. Deploy with `render.yaml`, then register or
-log in through the dashboard and save the user's Hyperliquid testnet credentials
-there. Do not move to mainnet until testnet order placement, cancellation, and
-fill reconciliation are verified.
+Then verify `/api/health`, `/api/assets`, and a candle/analysis request on the
+Render URL. Confirm the operator status reports `executionMode: disabled`,
+`allowLiveOrders: false`, and no Stripe/billing integration.

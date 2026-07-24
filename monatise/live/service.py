@@ -69,22 +69,10 @@ class TradingService:
 
     def start(self) -> dict:
         with self._lock:
-            if self.state.running:
-                return self._snapshot_unlocked()
-            session_guard = self._session_guard()
-            self.state.session_guard = session_guard
-            if self.config.mode == "live" and session_guard.get("active"):
-                self.state.risk_status = str(session_guard.get("message", "session guard"))
-                self._event("warn", self.state.risk_status)
-                return self._snapshot_unlocked()
-            self._stop.clear()
-            if self.config.mode == "live":
-                self._live_baseline_initialized = False
-            self.risk.resume()
-            self.state.running = True
-            self._event("info", f"starting {self.config.mode} trading loop")
-            self._thread = threading.Thread(target=self._run_loop, daemon=True)
-            self._thread.start()
+            self.state.running = False
+            self.state.live_ready = False
+            self.state.risk_status = "execution disabled: Monatise Live is analysis-only"
+            self._event("warn", self.state.risk_status)
             return self._snapshot_unlocked()
 
     def stop(self) -> dict:
@@ -107,19 +95,7 @@ class TradingService:
             return self._snapshot_unlocked()
 
     def requirements(self) -> list[str]:
-        missing = []
-        if self.config.mode == "live":
-            if self.config.execution_mode != "live":
-                missing.append("MONATISE_EXECUTION_MODE=live")
-            if not self.config.secret_key:
-                missing.append("HYPERLIQUID_SECRET_KEY")
-            if not self.config.account_address:
-                missing.append("HYPERLIQUID_ACCOUNT_ADDRESS")
-            if not self.config.allow_live_orders:
-                missing.append("MONATISE_ALLOW_LIVE_ORDERS=true")
-            if not self.config.live_confirmation:
-                missing.append("MONATISE_LIVE_CONFIRMATION=I_UNDERSTAND_REAL_MONEY")
-        return missing
+        return ["Execution is globally disabled; analysis remains available"]
 
     def _run_loop(self) -> None:
         while not self._stop.is_set():

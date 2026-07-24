@@ -8,17 +8,6 @@ from monatise.live.sessions import (
 )
 
 
-def test_signal_window_guard_allows_crypto_london_new_york_window() -> None:
-    london_guard = signal_window_guard(datetime(2026, 7, 14, 10, 0, tzinfo=UTC), window="london_new_york")
-    new_york_guard = signal_window_guard(datetime(2026, 7, 14, 17, 0, tzinfo=UTC), window="london_new_york")
-    closed_guard = signal_window_guard(datetime(2026, 7, 14, 22, 0, tzinfo=UTC), window="london_new_york")
-
-    assert not london_guard["active"]
-    assert not new_york_guard["active"]
-    assert closed_guard["active"]
-    assert "crypto signals" in closed_guard["message"]
-
-
 def test_signal_window_guard_defaults_to_always_on() -> None:
     guard = signal_window_guard(datetime(2026, 7, 14, 22, 0, tzinfo=UTC))
 

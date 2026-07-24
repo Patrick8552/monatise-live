@@ -9,7 +9,7 @@ def test_live_mode_requires_all_order_gates() -> None:
     assert not config.live_enabled
 
 
-def test_live_mode_enables_only_with_explicit_confirmation() -> None:
+def test_live_mode_remains_disabled_even_with_legacy_confirmation() -> None:
     config = RuntimeConfig(
         mode="live",
         execution_mode="live",
@@ -19,7 +19,7 @@ def test_live_mode_enables_only_with_explicit_confirmation() -> None:
         secret_key="secret",
     )
 
-    assert config.live_enabled
+    assert not config.live_enabled
 
 
 def test_live_mode_dry_run_does_not_enable_order_placement() -> None:
