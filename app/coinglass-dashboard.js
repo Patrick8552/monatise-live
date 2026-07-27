@@ -308,7 +308,7 @@ function saveSession() {
 
 function setupDashboardInstall() {
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("./sw.js?v=20260727-client-api-v5").catch(() => {});
+    navigator.serviceWorker.register("./sw.js?v=20260727-brand-v2").catch(() => {});
   }
   window.addEventListener("beforeinstallprompt", (event) => {
     event.preventDefault();

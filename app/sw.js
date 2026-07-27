@@ -1,4 +1,4 @@
-const CACHE_NAME = "monatise-shell-20260727-client-api-v5";
+const CACHE_NAME = "monatise-shell-20260727-brand-v2";
 const SHELL_ASSETS = [
   "./",
   "./cg.html",
@@ -15,11 +15,11 @@ const SHELL_ASSETS = [
   "./coinglass-dashboard.js?v=20260727-client-api-v5",
   "./memecoins.css?v=20260715-memecoins",
   "./memecoins.js?v=20260715-memecoins",
-  "./manifest.webmanifest?v=20260701-yinyang-png",
-  "./icon.svg?v=20260701-yinyang-png",
-  "./icon-180.png?v=20260701-yinyang-png",
-  "./icon-192.png?v=20260701-yinyang-png",
-  "./icon-512.png?v=20260701-yinyang-png"
+  "./manifest.webmanifest?v=20260727-brand-v2",
+  "./monatise-yinyang.svg?v=20260727-brand-v2",
+  "./icon-180.png?v=20260727-brand-v2",
+  "./icon-192.png?v=20260727-brand-v2",
+  "./icon-512.png?v=20260727-brand-v2"
 ];
 
 self.addEventListener("install", (event) => {
