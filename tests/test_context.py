@@ -17,12 +17,9 @@ def test_indicator_snapshot_and_instruction_for_range() -> None:
     assert instruction["spacingMultiplier"] >= 0
 
 
-def test_context_assets_for_gold_and_oil() -> None:
-    prices = {"GOLD": 4300.0, "CL": 90.0, "BRENTOIL": 94.0, "xyz:COPPER": 6.1}
+def test_context_assets_for_oil() -> None:
+    prices = {"CL": 90.0, "BRENTOIL": 94.0, "xyz:COPPER": 6.1}
 
-    gold_assets = context_assets("GOLD", prices)
     oil_assets = context_assets("CL", prices)
 
-    assert gold_assets[0]["symbol"] == "GOLD"
-    assert any(asset["symbol"] == "US10Y_REAL" and not asset["available"] for asset in gold_assets)
     assert any(asset["symbol"] == "BRENTOIL" and asset["available"] for asset in oil_assets)

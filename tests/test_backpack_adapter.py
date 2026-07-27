@@ -12,8 +12,8 @@ def test_backpack_symbol_mapping_defaults_and_env(monkeypatch) -> None:
     assert adapter.exchange_symbol("BTC") == "BTC_USDC_PERP"
     assert adapter.exchange_symbol("SOL_USDC") == "SOL_USDC"
 
-    monkeypatch.setenv("BACKPACK_SYMBOL_MAP", "gold=XAU_USDC_PERP")
-    assert adapter.exchange_symbol("gold") == "XAU_USDC_PERP"
+    monkeypatch.setenv("BACKPACK_SYMBOL_MAP", "btc=BTC_USDC_PERP")
+    assert adapter.exchange_symbol("btc") == "BTC_USDC_PERP"
 
 
 def test_backpack_candles_parse_public_klines(monkeypatch) -> None:

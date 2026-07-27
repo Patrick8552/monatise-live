@@ -1929,7 +1929,7 @@ function usesServerMarketCandles(asset = selectedAsset()) {
 function isCommodityAsset(asset = selectedAsset()) {
   const coin = String(asset?.coin || "").toUpperCase();
   const pair = String(asset?.pair || "").toUpperCase();
-  return ["GOLD", "XAU", "XAUUSD", "SILVER", "XAG", "XAGUSD", "OIL", "WTI", "BRENT"].some((symbol) => (
+  return ["SILVER", "XAG", "XAGUSD", "OIL", "WTI", "BRENT"].some((symbol) => (
     coin === symbol || pair === symbol || pair.startsWith(symbol)
   ));
 }
@@ -2579,7 +2579,7 @@ function summarizeLiquidationPayload(payload) {
 function renderPrice(series) {
   const asset = selectedAsset();
   if (usesCryptoMultiFrame(asset) && series.multiTimeframe) {
-    renderXauMultiTimeframePrice(series, asset);
+    renderCryptoMultiTimeframePrice(series, asset);
     return;
   }
   state.priceSeries = series;
@@ -2625,7 +2625,7 @@ function finiteScore(value) {
   return Number.isFinite(number) ? number : 0;
 }
 
-function mergeXauIndicatorStack(primaryStack, confirmationStack, primaryResearch, confirmationResearch) {
+function mergeCryptoIndicatorStack(primaryStack, confirmationStack, primaryResearch, confirmationResearch) {
   const primaryDirection = scoreDirection(finiteScore(primaryStack.score) || finiteScore(primaryResearch.score));
   const confirmationDirection = scoreDirection(finiteScore(confirmationStack.score) || finiteScore(confirmationResearch.score));
   const aligned = primaryDirection !== 0 && primaryDirection === confirmationDirection;
@@ -2662,7 +2662,7 @@ function mergeXauIndicatorStack(primaryStack, confirmationStack, primaryResearch
   };
 }
 
-function renderXauMultiTimeframePrice(series, asset) {
+function renderCryptoMultiTimeframePrice(series, asset) {
   const frames = series.multiTimeframe.series || {};
   const primarySeries = frames[CRYPTO_PRIMARY_ANALYSIS_INTERVAL] || series;
   const confirmationSeries = frames[CRYPTO_CONFIRMATION_INTERVAL] || [];
@@ -2693,7 +2693,7 @@ function renderXauMultiTimeframePrice(series, asset) {
   const confirmationStructure = analyzeMarketStructure(confirmationSeries.length ? confirmationSeries : primarySeries, confirmationResearch);
   const primaryStack = analyzeIndicatorStack(primarySeries, primaryResearch, primaryStructure);
   const confirmationStack = analyzeIndicatorStack(confirmationSeries.length ? confirmationSeries : primarySeries, confirmationResearch, confirmationStructure);
-  const mergedStack = mergeXauIndicatorStack(primaryStack, confirmationStack, primaryResearch, confirmationResearch);
+  const mergedStack = mergeCryptoIndicatorStack(primaryStack, confirmationStack, primaryResearch, confirmationResearch);
 
   const researchScore = clampScore(finiteScore(primaryResearch.score) + finiteScore(confirmationResearch.score), -3, 3);
   const vwapScore = clampScore(finiteScore(primaryResearch.vwapScore) + finiteScore(confirmationResearch.vwapScore), -1, 1);

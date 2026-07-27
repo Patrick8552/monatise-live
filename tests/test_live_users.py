@@ -216,7 +216,7 @@ def test_user_store_saves_profile_name_across_settings_updates() -> None:
             assert settings.client_name == "Ada Desk"
 
             with pytest.raises(ValueError, match="crypto assets only"):
-                store.save_selected_symbol(user.id, "gold")
+                store.save_selected_symbol(user.id, "spx")
 
             settings = store.save_trading_rules(
                 user.id,

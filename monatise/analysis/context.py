@@ -81,16 +81,7 @@ def grid_instruction(indicators: IndicatorSnapshot, event_risk: str = "normal") 
 
 def context_assets(symbol: str, prices: dict[str, float]) -> list[dict]:
     symbol = symbol.upper()
-    if symbol == "GOLD":
-        watch = [
-            ("GOLD", "Gold mark"),
-            ("XAG", "Silver confirmation"),
-            ("xyz:COPPER", "Copper growth proxy"),
-            ("SPX", "Risk proxy"),
-            ("DXY", "Dollar index"),
-            ("US10Y_REAL", "10Y real yield"),
-        ]
-    elif symbol in {"CL", "BRENTOIL"}:
+    if symbol in {"CL", "BRENTOIL"}:
         watch = [
             ("CL", "WTI crude"),
             ("BRENTOIL", "Brent crude"),

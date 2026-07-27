@@ -1,5 +1,7 @@
 import os
 
+import pytest
+
 from monatise.live.config import LIVE_CONFIRMATION, RuntimeConfig
 from monatise.live.server import (
     classify_tradingview_alert,
@@ -14,46 +16,51 @@ from monatise.live.server import (
 def test_tradingview_alert_normalizes_json_payload() -> None:
     alert = normalize_tradingview_alert(
         {
-            "symbol": "FX:EURUSD",
+            "symbol": "BINANCE:BTCUSDT",
             "action": "bullish",
             "confidence": "82.5",
-            "indicator": "Monatise Forex Bias",
+            "indicator": "Monatise Crypto Bias",
             "timeframe": "15m",
             "price": "1.0842",
         }
     )
 
-    assert alert["symbol"] == "EURUSD"
+    assert alert["symbol"] == "BTC"
     assert alert["action"] == "BUY"
     assert alert["confidence"] == 82.5
-    assert alert["indicator"] == "Monatise Forex Bias"
+    assert alert["indicator"] == "Monatise Crypto Bias"
 
 
 def test_tradingview_alert_accepts_plain_text_key_values() -> None:
-    alert = normalize_tradingview_alert("symbol=GBPUSD, action=sell, confidence=91, timeframe=1h")
+    alert = normalize_tradingview_alert("symbol=ETHUSDT, action=sell, confidence=91, timeframe=1h")
 
-    assert alert["symbol"] == "GBPUSD"
+    assert alert["symbol"] == "ETH"
     assert alert["action"] == "SELL"
     assert alert["confidence"] == 91
     assert alert["timeframe"] == "1h"
 
 
 def test_tradingview_alert_clamps_confidence() -> None:
-    alert = normalize_tradingview_alert({"ticker": "USDJPY", "bias": "neutral", "confidence": "120"})
+    alert = normalize_tradingview_alert({"ticker": "SOLUSDT", "bias": "neutral", "confidence": "120"})
 
-    assert alert["symbol"] == "USDJPY"
+    assert alert["symbol"] == "SOL"
     assert alert["action"] == "WAIT"
     assert alert["confidence"] == 100
 
 
-def test_tradingview_alert_normalizes_gold_and_silver_symbols() -> None:
-    gold = normalize_tradingview_alert({"symbol": "OANDA:XAUUSD", "action": "long"})
+def test_tradingview_alert_rejects_gold_and_normalizes_silver() -> None:
+    with pytest.raises(ValueError, match="Gold/XAU setups are not supported"):
+        normalize_tradingview_alert({"symbol": "OANDA:XAUUSD", "action": "long"})
     silver = normalize_tradingview_alert({"symbol": "OANDA:XAGUSD", "action": "short"})
 
-    assert gold["symbol"] == "GOLD"
-    assert gold["action"] == "BUY"
     assert silver["symbol"] == "XAG"
     assert silver["action"] == "SELL"
+
+
+@pytest.mark.parametrize("symbol", ["FX:EURUSD", "GBPUSD", "OANDA:USDJPY", "AUDCAD"])
+def test_tradingview_alert_rejects_forex_symbols(symbol: str) -> None:
+    with pytest.raises(ValueError, match="Forex setups are not supported"):
+        normalize_tradingview_alert({"symbol": symbol, "action": "BUY"})
 
 
 def test_tradingview_alert_normalizes_stock_and_index_symbols() -> None:
@@ -66,10 +73,10 @@ def test_tradingview_alert_normalizes_stock_and_index_symbols() -> None:
     assert index["action"] == "SELL"
 
 
-def test_tradingview_alert_preserves_gold_indicator_stack() -> None:
+def test_tradingview_alert_preserves_crypto_indicator_stack() -> None:
     alert = normalize_tradingview_alert(
         {
-            "symbol": "OANDA:XAUUSD",
+            "symbol": "BINANCE:BTCUSDT",
             "action": "SELL",
             "indicators": {
                 "luxalgo": "sell",
@@ -82,7 +89,7 @@ def test_tradingview_alert_preserves_gold_indicator_stack() -> None:
         }
     )
 
-    assert alert["symbol"] == "GOLD"
+    assert alert["symbol"] == "BTC"
     assert alert["indicators"]["luxalgo"] == "sell"
     assert alert["indicators"]["liquidity_grabs"] == "bearish"
     assert alert["indicators"]["auto_fib"] == "below 0.618"
@@ -94,7 +101,7 @@ def test_tradingview_alert_preserves_gold_indicator_stack() -> None:
 def test_tradingview_alert_classification_is_primary_signal_feed() -> None:
     alert = normalize_tradingview_alert(
         {
-            "symbol": "OANDA:XAUUSD",
+            "symbol": "OANDA:XAGUSD",
             "action": "BUY",
             "confidence": 81,
             "receivedAt": 1_000,
@@ -125,7 +132,7 @@ def test_tradingview_alert_classification_is_primary_signal_feed() -> None:
 def test_tradingview_alert_preserves_setup_grid_and_hedge_fields() -> None:
     alert = normalize_tradingview_alert(
         {
-            "symbol": "OANDA:XAUUSD",
+            "symbol": "BINANCE:BTCUSDT",
             "action": "SELL",
             "price": "4162.45",
             "entry": "4160",
@@ -156,20 +163,20 @@ def test_tradingview_alert_preserves_setup_grid_and_hedge_fields() -> None:
 def test_tradingview_alert_store_survives_restart(tmp_path) -> None:
     store_path = tmp_path / "tradingview-alerts.json"
     alerts = [
-        normalize_tradingview_alert({"symbol": "OANDA:XAUUSD", "action": "SELL", "price": "4162.45"}),
+        normalize_tradingview_alert({"symbol": "BINANCE:ETHUSDT", "action": "SELL", "price": "4162.45"}),
         normalize_tradingview_alert({"symbol": "BINANCE:BTCUSDT", "action": "BUY", "price": "64200"}),
     ]
 
     save_tradingview_alerts(alerts, store_path)
     loaded = load_tradingview_alerts(store_path)
 
-    assert [alert["symbol"] for alert in loaded] == ["GOLD", "BTC"]
+    assert [alert["symbol"] for alert in loaded] == ["ETH", "BTC"]
     assert loaded[0]["priceValue"] == 4162.45
 
 
 def test_tradingview_alert_classification_flags_conflict_and_stale() -> None:
     alert = {
-        "symbol": "EURUSD",
+        "symbol": "BTC",
         "action": "SELL",
         "confidence": 66,
         "receivedAt": 1_000,
@@ -179,7 +186,7 @@ def test_tradingview_alert_classification_flags_conflict_and_stale() -> None:
     fresh = classify_tradingview_alert(alert, now=1_060)
     stale = classify_tradingview_alert(alert, now=1_301)
 
-    assert fresh["route"] == "forex primary signal feed"
+    assert fresh["route"] == "crypto confluence feed"
     assert fresh["state"] == "conflict-watch"
     assert fresh["agreement"] == "conflicting"
     assert stale["state"] == "stale"
@@ -199,11 +206,9 @@ def test_enriched_tradingview_alert_keeps_raw_alert_fields() -> None:
 
 def test_tradingview_classification_routes_watch_assets() -> None:
     silver = classify_tradingview_alert({"symbol": "XAG", "action": "BUY", "confidence": 72, "receivedAt": 1_000}, now=1_010)
-    forex = classify_tradingview_alert({"symbol": "AUDUSD", "action": "SELL", "confidence": 72, "receivedAt": 1_000}, now=1_010)
     etf = classify_tradingview_alert({"symbol": "QQQ", "action": "BUY", "confidence": 72, "receivedAt": 1_000}, now=1_010)
 
     assert silver["route"] == "metals and commodities primary signal feed"
-    assert forex["route"] == "forex primary signal feed"
     assert etf["route"] == "stocks and indices primary signal feed"
 
 
