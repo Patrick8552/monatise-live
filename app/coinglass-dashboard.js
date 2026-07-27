@@ -37,6 +37,15 @@ const ASSET_DEFINITIONS = [
 const ASSETS = Object.fromEntries(ASSET_DEFINITIONS.map((asset) => [asset.coin, asset]));
 
 const els = {
+  feedbackLauncher: document.querySelector("#feedbackLauncher"),
+  feedbackDialog: document.querySelector("#feedbackDialog"),
+  feedbackForm: document.querySelector("#feedbackForm"),
+  feedbackClose: document.querySelector("#feedbackClose"),
+  feedbackRating: document.querySelector("#feedbackRating"),
+  feedbackCategory: document.querySelector("#feedbackCategory"),
+  feedbackMessage: document.querySelector("#feedbackMessage"),
+  feedbackStatus: document.querySelector("#feedbackStatus"),
+  feedbackSubmit: document.querySelector("#feedbackSubmit"),
   apiKeyInput: document.querySelector("#apiKeyInput"),
   assetSearchInput: document.querySelector("#assetSearchInput"),
   assetSearchResults: document.querySelector("#assetSearchResults"),
@@ -4031,6 +4040,41 @@ els.clearSessionButton.addEventListener("click", () => {
   saveSession();
   renderTelemetry();
   setSessionStatus("warn", "Session cleared");
+});
+
+els.feedbackLauncher?.addEventListener("click", () => {
+  els.feedbackStatus.textContent = "";
+  els.feedbackDialog.showModal();
+});
+els.feedbackClose?.addEventListener("click", () => els.feedbackDialog.close());
+els.feedbackDialog?.addEventListener("click", (event) => {
+  if (event.target === els.feedbackDialog) els.feedbackDialog.close();
+});
+els.feedbackForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  els.feedbackSubmit.disabled = true;
+  els.feedbackStatus.textContent = "Sending…";
+  try {
+    const response = await fetch("/api/feedback", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        rating: Number(els.feedbackRating.value),
+        category: els.feedbackCategory.value,
+        message: els.feedbackMessage.value,
+        page: window.location.pathname
+      })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || "Could not send feedback");
+    els.feedbackForm.reset();
+    els.feedbackStatus.textContent = "Thank you — your feedback will shape the next improvement.";
+    setTimeout(() => els.feedbackDialog.close(), 1600);
+  } catch (error) {
+    els.feedbackStatus.textContent = error.message;
+  } finally {
+    els.feedbackSubmit.disabled = false;
+  }
 });
 
 window.addEventListener("resize", () => {

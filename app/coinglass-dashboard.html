@@ -18,7 +18,7 @@
     <link rel="shortcut icon" href="./favicon.ico?v=20260727-brand-v4" type="image/x-icon" />
     <link rel="icon" href="./monatise-yinyang.svg?v=20260727-brand-v3" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./icon-180.png?v=20260727-brand-v2" />
-    <link rel="stylesheet" href="./coinglass-dashboard.css?v=20260727-visible-brand-v6" />
+    <link rel="stylesheet" href="./coinglass-dashboard.css?v=20260727-feedback-v1" />
   </head>
   <body>
     <div class="app-shell">
@@ -548,8 +548,48 @@
         </section>
       </main>
     </div>
+    <button id="feedbackLauncher" class="feedback-launcher" type="button">Send feedback</button>
+    <dialog id="feedbackDialog" class="feedback-dialog" aria-labelledby="feedbackTitle">
+      <form id="feedbackForm">
+        <div class="feedback-head">
+          <div>
+            <p class="eyebrow">Help improve Monatise</p>
+            <h2 id="feedbackTitle">How is the dashboard working for you?</h2>
+          </div>
+          <button id="feedbackClose" class="feedback-close" type="button" aria-label="Close feedback form">×</button>
+        </div>
+        <label>
+          <span>Overall experience</span>
+          <select id="feedbackRating" required>
+            <option value="">Choose a rating</option>
+            <option value="5">5 — Excellent</option>
+            <option value="4">4 — Good</option>
+            <option value="3">3 — Okay</option>
+            <option value="2">2 — Needs work</option>
+            <option value="1">1 — Frustrating</option>
+          </select>
+        </label>
+        <label>
+          <span>What kind of feedback is this?</span>
+          <select id="feedbackCategory" required>
+            <option value="idea">Improvement idea</option>
+            <option value="bug">Something is broken</option>
+            <option value="confusing">Something is confusing</option>
+            <option value="praise">Something works well</option>
+            <option value="other">Other</option>
+          </select>
+        </label>
+        <label>
+          <span>Your feedback</span>
+          <textarea id="feedbackMessage" maxlength="1500" required placeholder="What should we keep, remove, or improve?"></textarea>
+        </label>
+        <p id="feedbackStatus" class="feedback-status" role="status"></p>
+        <button id="feedbackSubmit" class="feedback-submit" type="submit">Send feedback</button>
+        <p class="feedback-privacy">Saved securely to Monatise. Never include API keys or passwords.</p>
+      </form>
+    </dialog>
     <script src="https://cdn.ably.com/lib/ably.min-2.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="./coinglass-dashboard.js?v=20260727-brand-v4"></script>
+    <script src="./coinglass-dashboard.js?v=20260727-feedback-v1"></script>
   </body>
 </html>

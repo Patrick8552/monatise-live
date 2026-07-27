@@ -1027,6 +1027,23 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             except ValueError as error:
                 self._error(400, str(error))
             return
+        if parsed.path == "/api/feedback":
+            try:
+                payload = self._read_json()
+                user = self._current_user()
+                feedback_id = self.store.save_feedback(
+                    user_id=user.id if user else None,
+                    rating=int(payload.get("rating", 0)),
+                    category=str(payload.get("category", "")),
+                    message=str(payload.get("message", "")),
+                    page=str(payload.get("page", "")),
+                )
+                self._json({"accepted": True, "feedbackId": feedback_id})
+            except (TypeError, ValueError, json.JSONDecodeError) as error:
+                self._error(400, str(error))
+            except Exception as error:  # noqa: BLE001
+                self._error(503, f"feedback unavailable: {error}")
+            return
         if parsed.path == "/api/signals":
             user = self._require_user()
             if user is None:
@@ -1402,6 +1419,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             "/api/tradingview/webhook": (120, 60),
             "/api/coinglass/proxy": (60, 60),
             "/api/memecoins": (30, 60),
+            "/api/feedback": (8, 60),
         }
         limit, window = limits.get(path, (60, 60))
         client = self._client_ip()

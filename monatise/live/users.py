@@ -575,6 +575,33 @@ class UserStore:
         settings = self.settings_for_user(user_id)
         return settings.subscription_plan == "private" and settings.subscription_status in {"active", "trialing"}
 
+    def save_feedback(
+        self,
+        *,
+        user_id: int | None,
+        rating: int,
+        category: str,
+        message: str,
+        page: str = "",
+    ) -> int:
+        category = category.strip().lower()
+        message = message.strip()
+        page = page.strip()[:300]
+        if rating not in {1, 2, 3, 4, 5}:
+            raise ValueError("choose a rating from 1 to 5")
+        if category not in {"bug", "idea", "confusing", "praise", "other"}:
+            raise ValueError("choose a valid feedback category")
+        if len(message) < 3:
+            raise ValueError("tell us a little more")
+        if len(message) > 1500:
+            raise ValueError("feedback must be 1,500 characters or fewer")
+        query = "insert into feedback(user_id, rating, category, message, page, created_at) values (?, ?, ?, ?, ?, ?)"
+        if self.postgres:
+            query += " returning id"
+        with self._connect() as conn:
+            cursor = conn.execute(query, (user_id, rating, category, message, page, time.time()))
+            return int(cursor.fetchone()["id"]) if self.postgres else int(cursor.lastrowid)
+
     def settings_for_user(self, user_id: int) -> UserSettings:
         with self._connect() as conn:
             row = conn.execute(
@@ -721,6 +748,15 @@ class UserStore:
                   last_login_at real not null,
                   last_seen_at real not null
                 );
+                create table if not exists feedback(
+                  id integer primary key,
+                  user_id integer references users(id) on delete set null,
+                  rating integer not null check(rating between 1 and 5),
+                  category text not null,
+                  message text not null,
+                  page text not null default '',
+                  created_at real not null
+                );
                 """
             )
             existing = {
@@ -781,6 +817,10 @@ class UserStore:
             """create table if not exists login_hints(
               ip_hash text primary key, user_id bigint not null references users(id) on delete cascade,
               username text not null, last_login_at double precision not null, last_seen_at double precision not null)""",
+            """create table if not exists feedback(
+              id bigserial primary key, user_id bigint references users(id) on delete set null,
+              rating integer not null check(rating between 1 and 5), category text not null,
+              message text not null, page text not null default '', created_at double precision not null)""",
         ]
         with self._connect() as conn:
             for statement in statements:

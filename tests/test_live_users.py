@@ -39,6 +39,55 @@ def test_user_store_authenticates_and_loads_session_user() -> None:
         _restore_key(old_key)
 
 
+def test_user_store_saves_anonymous_and_signed_in_feedback() -> None:
+    old_key = _with_key()
+    try:
+        with tempfile.NamedTemporaryFile() as db:
+            store = UserStore(db.name)
+            user = store.create_user("feedback@example.com", "password123")
+
+            anonymous_id = store.save_feedback(
+                user_id=None,
+                rating=4,
+                category="idea",
+                message="Make signal explanations shorter.",
+                page="/coinglass-dashboard.html",
+            )
+            signed_in_id = store.save_feedback(
+                user_id=user.id,
+                rating=5,
+                category="praise",
+                message="The risk panel is useful.",
+            )
+
+            assert anonymous_id > 0
+            assert signed_in_id > anonymous_id
+            with store._connect() as conn:  # noqa: SLF001
+                rows = conn.execute("select user_id, rating, category from feedback order by id").fetchall()
+            assert rows[0]["user_id"] is None
+            assert rows[0]["rating"] == 4
+            assert rows[1]["user_id"] == user.id
+            assert rows[1]["category"] == "praise"
+    finally:
+        _restore_key(old_key)
+
+
+def test_user_store_rejects_invalid_feedback() -> None:
+    old_key = _with_key()
+    try:
+        with tempfile.NamedTemporaryFile() as db:
+            store = UserStore(db.name)
+
+            with pytest.raises(ValueError, match="rating"):
+                store.save_feedback(user_id=None, rating=0, category="idea", message="Useful idea")
+            with pytest.raises(ValueError, match="category"):
+                store.save_feedback(user_id=None, rating=5, category="secret", message="Useful idea")
+            with pytest.raises(ValueError, match="little more"):
+                store.save_feedback(user_id=None, rating=5, category="idea", message="x")
+    finally:
+        _restore_key(old_key)
+
+
 def test_user_store_remembers_last_profile_for_ip_without_password() -> None:
     old_key = _with_key()
     try:

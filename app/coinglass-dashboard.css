@@ -1494,3 +1494,47 @@ canvas {
   .monitor-grid { grid-template-columns: 1fr 1fr; }
   .monitor-card { min-width: 0; }
 }
+
+.feedback-launcher {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 40;
+  border: 1px solid rgba(82, 214, 255, .55);
+  border-radius: 999px;
+  padding: 11px 17px;
+  background: #52d6ff;
+  color: #071117;
+  font-weight: 850;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, .35);
+}
+
+.feedback-dialog {
+  width: min(92vw, 520px);
+  border: 1px solid rgba(82, 214, 255, .3);
+  border-radius: 20px;
+  padding: 0;
+  background: #111b24;
+  color: var(--text);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, .65);
+}
+
+.feedback-dialog::backdrop { background: rgba(3, 9, 13, .78); backdrop-filter: blur(5px); }
+.feedback-dialog form { display: grid; gap: 15px; padding: 24px; }
+.feedback-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.feedback-head h2 { margin: 4px 0 0; font-size: 1.25rem; }
+.feedback-close { border: 0; background: transparent; color: var(--muted); font-size: 1.8rem; line-height: 1; padding: 0 4px; }
+.feedback-dialog label { display: grid; gap: 7px; }
+.feedback-dialog label > span { color: var(--muted); font-size: .78rem; font-weight: 750; }
+.feedback-dialog select,
+.feedback-dialog textarea { width: 100%; border: 1px solid var(--border); border-radius: 10px; background: #0b141b; color: var(--text); padding: 11px 12px; font: inherit; }
+.feedback-dialog textarea { min-height: 118px; resize: vertical; }
+.feedback-submit { width: 100%; background: var(--cyan); color: #071117; font-weight: 850; }
+.feedback-submit:disabled { opacity: .55; }
+.feedback-status { min-height: 1.2em; margin: 0; color: var(--mint); font-size: .82rem; }
+.feedback-privacy { margin: -5px 0 0; color: var(--muted); font-size: .7rem; text-align: center; }
+
+@media (max-width: 520px) {
+  .feedback-launcher { right: 12px; bottom: 12px; }
+  .feedback-dialog form { padding: 18px; }
+}
