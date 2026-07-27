@@ -82,6 +82,22 @@ button:hover {
   border-radius: 8px 8px 0 0;
 }
 
+.dashboard-brand {
+  align-items: center;
+  display: flex;
+  gap: 16px;
+  min-width: 0;
+}
+
+.dashboard-brand-mark {
+  border: 1px solid rgba(117, 255, 214, 0.28);
+  border-radius: 16px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.24);
+  flex: 0 0 auto;
+  height: 72px;
+  width: 72px;
+}
+
 .dashboard-nav {
   display: flex;
   flex-wrap: wrap;
@@ -1401,6 +1417,12 @@ canvas {
   .topbar {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .dashboard-brand-mark {
+    border-radius: 13px;
+    height: 58px;
+    width: 58px;
   }
 
   .session-strip {

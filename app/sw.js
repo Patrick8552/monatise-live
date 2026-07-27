@@ -11,7 +11,7 @@ const SHELL_ASSETS = [
   "./spotify.js?v=20260629-request-access-fix",
   "./game.js?v=20260629-crypto-trainer",
   "./assets/payout-clients.svg",
-  "./coinglass-dashboard.css?v=20260727-client-api-v5",
+  "./coinglass-dashboard.css?v=20260727-visible-brand-v6",
   "./coinglass-dashboard.js?v=20260727-brand-v4",
   "./memecoins.css?v=20260715-memecoins",
   "./memecoins.js?v=20260715-memecoins",
