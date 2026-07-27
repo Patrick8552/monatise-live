@@ -11,7 +11,7 @@
     <link rel="manifest" href="./manifest.webmanifest?v=20260701-yinyang-png" />
     <link rel="icon" href="./icon.svg?v=20260701-yinyang-png" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./icon-180.png?v=20260701-yinyang-png" />
-    <link rel="stylesheet" href="./coinglass-dashboard.css?v=20260727-client-api-v4" />
+    <link rel="stylesheet" href="./coinglass-dashboard.css?v=20260727-client-api-v5" />
   </head>
   <body>
     <div class="app-shell">
@@ -91,7 +91,8 @@
           <div class="integration-grid">
             <label>
               <span>Your CoinGlass API key</span>
-              <input id="apiKeyInput" type="password" autocomplete="off" placeholder="Enter your own CG-API-KEY" />
+              <input id="apiKeyInput" type="password" autocomplete="off" placeholder="Enter your own CG-API-KEY" aria-describedby="coinGlassKeyStorageNote" />
+              <small id="coinGlassKeyStorageNote" class="key-storage-note">Saved automatically on this device. Enter it once.</small>
             </label>
             <label>
               <span>Ably</span>
@@ -539,6 +540,6 @@
     </div>
     <script src="https://cdn.ably.com/lib/ably.min-2.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="./coinglass-dashboard.js?v=20260727-client-api-v4"></script>
+    <script src="./coinglass-dashboard.js?v=20260727-client-api-v5"></script>
   </body>
 </html>

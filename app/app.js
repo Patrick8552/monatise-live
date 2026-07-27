@@ -587,7 +587,7 @@ function setPasswordAutocomplete(isRegister) {
 
 function setupAppInstall() {
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("./sw.js?v=20260727-dashboard-first-v7").catch(() => {});
+    navigator.serviceWorker.register("./sw.js?v=20260727-client-api-v5").catch(() => {});
   }
   window.addEventListener("beforeinstallprompt", (event) => {
     event.preventDefault();

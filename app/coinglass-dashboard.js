@@ -308,7 +308,7 @@ function saveSession() {
 
 function setupDashboardInstall() {
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("./sw.js?v=20260724-crypto-framework-v2").catch(() => {});
+    navigator.serviceWorker.register("./sw.js?v=20260727-client-api-v5").catch(() => {});
   }
   window.addEventListener("beforeinstallprompt", (event) => {
     event.preventDefault();

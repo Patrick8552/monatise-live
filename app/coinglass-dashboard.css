@@ -1445,6 +1445,12 @@ canvas {
   text-transform: uppercase;
 }
 
+.key-storage-note {
+  color: var(--mint);
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
 .monitor-panel {
   min-height: 0;
 }
