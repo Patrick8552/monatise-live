@@ -1043,6 +1043,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                     page=page,
                 )
                 email_delivered = True
+                email_error = ""
                 try:
                     send_feedback_email(
                         feedback_id=feedback_id,
@@ -1052,9 +1053,13 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                         page=page,
                         username=user.username if user else "Anonymous user",
                     )
-                except EmailDeliveryError:
+                except EmailDeliveryError as error:
                     email_delivered = False
-                self._json({"accepted": True, "feedbackId": feedback_id, "emailDelivered": email_delivered})
+                    email_error = str(error)
+                response = {"accepted": True, "feedbackId": feedback_id, "emailDelivered": email_delivered}
+                if email_error:
+                    response["emailError"] = email_error
+                self._json(response)
             except (TypeError, ValueError, json.JSONDecodeError) as error:
                 self._error(400, str(error))
             except Exception as error:  # noqa: BLE001
