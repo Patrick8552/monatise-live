@@ -1533,6 +1533,7 @@ canvas {
 .feedback-submit:disabled { opacity: .55; }
 .feedback-status { min-height: 1.2em; margin: 0; color: var(--mint); font-size: .82rem; }
 .feedback-privacy { margin: -5px 0 0; color: var(--muted); font-size: .7rem; text-align: center; }
+.feedback-privacy a { color: var(--cyan); font-weight: 750; }
 
 @media (max-width: 520px) {
   .feedback-launcher { right: 12px; bottom: 12px; }

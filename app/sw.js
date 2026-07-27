@@ -1,17 +1,17 @@
-const CACHE_NAME = "monatise-shell-20260727-feedback-v1";
+const CACHE_NAME = "monatise-shell-20260727-feedback-v2";
 const SHELL_ASSETS = [
   "./",
   "./cg.html",
   "./dashboard/",
   "./game.html",
   "./memecoins.html",
-  "./coinglass-dashboard.html?v=20260727-client-api-v5",
+  "./coinglass-dashboard.html?v=20260727-feedback-v2",
   "./styles.css?v=20260727-dashboard-first-v7",
   "./app.js?v=20260727-brand-v4",
   "./spotify.js?v=20260629-request-access-fix",
   "./game.js?v=20260629-crypto-trainer",
   "./assets/payout-clients.svg",
-  "./coinglass-dashboard.css?v=20260727-feedback-v1",
+  "./coinglass-dashboard.css?v=20260727-feedback-v2",
   "./coinglass-dashboard.js?v=20260727-feedback-v1",
   "./memecoins.css?v=20260715-memecoins",
   "./memecoins.js?v=20260715-memecoins",
