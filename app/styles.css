@@ -5452,3 +5452,27 @@ button.primary:hover {
   #chat { display: none; }
   .tradingview-panel { min-height: 340px; }
 }
+
+.preferred-analysis {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.preferred-analysis strong {
+  background: rgba(116, 228, 242, 0.12);
+  border: 1px solid rgba(116, 228, 242, 0.28);
+  border-radius: 999px;
+  color: #74e4f2;
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  padding: 7px 10px;
+  text-transform: uppercase;
+}
+
+.preferred-analysis span {
+  color: rgba(238, 244, 251, 0.6);
+  font-size: 0.78rem;
+}
