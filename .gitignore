@@ -6,3 +6,7 @@ venv/
 .env
 .DS_Store
 work/
+node_modules/
+test-results/
+.lighthouseci/
+artifacts/

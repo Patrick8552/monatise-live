@@ -142,6 +142,9 @@ const els = {
   signalJournal: document.querySelector("#signalJournal"),
   performanceSummary: document.querySelector("#performanceSummary"),
   performanceBreakdown: document.querySelector("#performanceBreakdown"),
+  performanceChart: document.querySelector("#performanceChart"),
+  performanceStatusFilter: document.querySelector("#performanceStatusFilter"),
+  performanceMarketFilter: document.querySelector("#performanceMarketFilter"),
   signalWindowSelect: document.querySelector("#signalWindowSelect"),
   saveSpotifyButton: document.querySelector("#saveSpotifyButton"),
   runtimeLog: document.querySelector("#runtimeLog"),
@@ -968,6 +971,7 @@ function renderPerformanceSummary(summary = null) {
   if (!summary) {
     els.performanceSummary.textContent = "Performance statistics begin after reviewed signals resolve.";
     if (els.performanceBreakdown) els.performanceBreakdown.innerHTML = "";
+    if (els.performanceChart) els.performanceChart.innerHTML = "";
     return;
   }
   const winRate = summary.winRate == null ? "not enough resolved signals" : `${Number(summary.winRate).toFixed(1)}% win rate`;
@@ -983,6 +987,18 @@ function renderPerformanceSummary(summary = null) {
           <em>${market.tracked} tracked · ${market.wins}W/${market.losses}L</em>
         </article>`).join("")
       : "";
+  }
+  if (els.performanceChart) {
+    const values = [
+      ["Wins", Number(summary.wins || 0), "win"],
+      ["Losses", Number(summary.losses || 0), "loss"],
+      ["Open", Math.max(0, Number(summary.tracked || 0) - Number(summary.decided || 0)), "open"]
+    ];
+    const maximum = Math.max(1, ...values.map((item) => item[1]));
+    els.performanceChart.setAttribute("aria-label", values.map(([label, value]) => `${label}: ${value}`).join(", "));
+    els.performanceChart.innerHTML = values.map(([label, value, className]) => `<div class="performance-bar ${className}">
+      <span>${label}</span><div><i style="width:${Math.max(4, (value / maximum) * 100)}%"></i></div><strong>${value}</strong>
+    </div>`).join("");
   }
 }
 
@@ -1181,9 +1197,20 @@ function refreshSignalJournal() {
   return entries;
 }
 
+function filteredSignalJournal(entries) {
+  const status = els.performanceStatusFilter?.value || "ALL";
+  const market = (els.performanceMarketFilter?.value || "").trim().toUpperCase();
+  return entries.filter((entry) => {
+    const entryStatus = String(entry.status || "").toUpperCase();
+    const statusMatches = status === "ALL" || (status === "OPEN" ? ["PENDING", "TRIGGERED"].includes(entryStatus) : entryStatus === status);
+    return statusMatches && (!market || String(entry.symbol || "").toUpperCase().includes(market));
+  });
+}
+
 function renderSignalJournal(entries = loadSignalJournal()) {
   if (!els.signalJournal) return;
   const graded = entries.map((entry) => gradeSignalEntry(entry));
+  const visible = filteredSignalJournal(graded);
   const tracked = graded.length;
   const wins = graded.filter((entry) => entry.status === "WIN").length;
   const losses = graded.filter((entry) => entry.status === "LOSS").length;
@@ -1191,8 +1218,8 @@ function renderSignalJournal(entries = loadSignalJournal()) {
   if (els.journalStats) {
     els.journalStats.textContent = `${tracked} tracked · ${wins}W/${losses}L · ${pending} open`;
   }
-  els.signalJournal.innerHTML = graded.length
-    ? graded
+  els.signalJournal.innerHTML = visible.length
+    ? visible
         .slice(-12)
         .reverse()
         .map(
@@ -1216,7 +1243,7 @@ function renderSignalJournal(entries = loadSignalJournal()) {
           }
         )
         .join("")
-    : '<article class="pending"><span>No saved signals</span><strong>Review a signal to start tracking</strong><em>Outcomes update from later candles.</em></article>';
+    : `<article class="pending"><span>No matching signals</span><strong>${graded.length ? "Adjust the performance filters" : "Review a signal to start tracking"}</strong><em>Outcomes update from later candles.</em></article>`;
 }
 
 function saveReviewedSignal() {
@@ -5566,6 +5593,10 @@ document.querySelectorAll("[data-chat-prompt]").forEach((button) => {
     pushChatMessage("user", prompt);
     pushChatMessage("assistant", answerSignalChat(prompt));
   });
+});
+
+[els.performanceStatusFilter, els.performanceMarketFilter].forEach((control) => {
+  control?.addEventListener("input", () => renderSignalJournal(loadSignalJournal()));
 });
 els.armStrategyButton.addEventListener("click", () => {
   pendingArmReview = true;

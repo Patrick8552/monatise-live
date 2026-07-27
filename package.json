@@ -1,0 +1,12 @@
+{
+  "name": "monatise-ui-quality",
+  "private": true,
+  "scripts": {
+    "test:visual": "playwright test",
+    "test:lighthouse": "lhci autorun"
+  },
+  "devDependencies": {
+    "@lhci/cli": "^0.15.1",
+    "@playwright/test": "^1.54.1"
+  }
+}

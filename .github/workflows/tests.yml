@@ -26,3 +26,23 @@ jobs:
 
       - name: Run tests
         run: uv run pytest
+
+  ui-quality:
+    name: UI quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install UI tooling
+        run: npm ci
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Run responsive UI checks
+        run: npm run test:visual
+      - name: Run Lighthouse budgets
+        run: npm run test:lighthouse

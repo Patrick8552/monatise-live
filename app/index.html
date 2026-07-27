@@ -11,10 +11,11 @@
     <link rel="manifest" href="./manifest.webmanifest?v=20260701-yinyang-png" />
     <link rel="icon" href="./icon.svg?v=20260701-yinyang-png" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./icon-180.png?v=20260701-yinyang-png" />
-    <link rel="stylesheet" href="./styles.css?v=20260727-performance-v1" />
+    <link rel="stylesheet" href="./styles.css?v=20260727-command-center-v2" />
   </head>
   <body class="auth-required">
-    <main class="shell">
+    <a class="skip-link" href="#mainContent">Skip to dashboard</a>
+    <main id="mainContent" class="shell">
       <header class="topbar">
         <div class="brand-lockup">
           <img class="brand-logo" src="./icon.svg?v=20260701-yinyang-png" alt="Monatise yin yang logo" />
@@ -32,14 +33,14 @@
         <div class="desk-preferences" aria-label="console preferences">
           <label>
             <span>Theme</span>
-            <select id="themeModeSelect">
+            <select id="themeModeSelect" aria-label="Dashboard theme">
               <option value="light">Light</option>
               <option value="dark">Dark</option>
             </select>
           </label>
           <label>
             <span>Language</span>
-            <select id="languageSelect">
+            <select id="languageSelect" aria-label="Dashboard language">
               <option value="en">English</option>
               <option value="fr">Français</option>
               <option value="es">Español</option>
@@ -81,17 +82,11 @@
 
       <nav class="desk-jump-nav" aria-label="desk sections">
         <a href="#trade">Signal Builder</a>
-        <a href="#wealth">CIO Brief</a>
         <a href="#risk">Quality Gate</a>
-        <a href="#activation">Activation</a>
-        <a href="#operator">Operator</a>
         <a href="#markets">Market Intel</a>
-        <a href="#trainer">Crypto Trainer</a>
-        <a href="#hedge">Hedge Layer</a>
         <a href="#chat">AI Chat</a>
-        <a href="#account">Private Access</a>
-        <a href="#about">About</a>
         <a href="#activity">Activity</a>
+        <a href="#account">Private Access</a>
       </nav>
 
       <section class="command-strip" aria-label="live decision surface">
@@ -117,6 +112,11 @@
             <span>Drawdown Cap</span>
             <strong id="decisionDrawdown">5.00%</strong>
           </article>
+        </div>
+        <div class="command-actions" aria-label="Primary dashboard actions">
+          <a class="command-primary" href="#trade">Build Signal</a>
+          <a href="#markets">Scan Markets</a>
+          <a href="#activity">Review Performance</a>
         </div>
       </section>
 
@@ -151,7 +151,7 @@
               <p class="eyebrow">Signal builder</p>
               <h2>Generate a crypto signal before any execution decision.</h2>
             </div>
-            <button id="resetButton" type="button" title="Reset to defaults">Reset</button>
+            <button id="resetButton" type="button" title="Reset to defaults" aria-label="Reset signal builder to defaults">Reset</button>
           </div>
 
           <div class="section-grid trade-grid">
@@ -886,8 +886,25 @@
                 <span id="journalStats">0 tracked</span>
               </div>
               <div id="performanceSummary" class="rules-summary">Performance statistics begin after reviewed signals resolve.</div>
+              <div class="performance-filters" aria-label="Signal performance filters">
+                <label>
+                  Outcome
+                  <select id="performanceStatusFilter" aria-label="Filter signal journal by outcome">
+                    <option value="ALL">All outcomes</option>
+                    <option value="OPEN">Open</option>
+                    <option value="WIN">Wins</option>
+                    <option value="LOSS">Losses</option>
+                    <option value="WATCH">Watch</option>
+                  </select>
+                </label>
+                <label>
+                  Market
+                  <input id="performanceMarketFilter" type="search" placeholder="BTC, ETH…" aria-label="Filter signal journal by market" />
+                </label>
+              </div>
+              <div id="performanceChart" class="performance-chart" aria-label="Signal outcome distribution" role="img"></div>
               <div id="performanceBreakdown" class="performance-breakdown" aria-label="Signal performance by market"></div>
-              <div id="signalJournal" class="signal-journal"></div>
+              <div id="signalJournal" class="signal-journal" aria-live="polite"></div>
             </section>
 
             <section class="panel audit-panel">
@@ -904,6 +921,6 @@
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="./spotify.js?v=20260629-request-access-fix"></script>
-    <script src="./app.js?v=20260727-performance-v1"></script>
+    <script src="./app.js?v=20260727-command-center-v2"></script>
   </body>
 </html>
