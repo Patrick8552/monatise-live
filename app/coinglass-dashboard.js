@@ -4070,7 +4070,7 @@ els.feedbackForm?.addEventListener("submit", async (event) => {
     els.feedbackForm.reset();
     els.feedbackStatus.textContent = payload.emailDelivered
       ? "Thank you — your feedback was saved and emailed to Monatise."
-      : "Thank you — your feedback was saved. Email delivery will be retried by the team.";
+      : "Thank you — your feedback was saved, but the email notification could not be delivered.";
     setTimeout(() => els.feedbackDialog.close(), 1600);
   } catch (error) {
     els.feedbackStatus.textContent = error.message;
