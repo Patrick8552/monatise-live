@@ -95,6 +95,39 @@ def send_trading_alert_email(alert: dict) -> int:
     return len(recipients)
 
 
+def send_feedback_email(
+    *,
+    feedback_id: int,
+    rating: int,
+    category: str,
+    message_text: str,
+    page: str,
+    username: str = "Anonymous user",
+) -> str:
+    recipient = secret_value("MONATISE_FEEDBACK_EMAIL", "monatiseaesthetics@gmail.com").strip()
+    if not recipient:
+        raise EmailDeliveryError("feedback email recipient is not configured")
+    message = EmailMessage()
+    message["From"] = smtp_settings().sender
+    message["To"] = recipient
+    message["Subject"] = f"Monatise feedback #{feedback_id}: {rating}/5 {category.title()}"
+    message.set_content(
+        "\n".join(
+            [
+                f"Feedback ID: {feedback_id}",
+                f"Rating: {rating}/5",
+                f"Category: {category}",
+                f"User: {username}",
+                f"Page: {page or '--'}",
+                "",
+                message_text,
+            ]
+        )
+    )
+    send_email(message)
+    return recipient
+
+
 def send_email(message: EmailMessage) -> None:
     settings = smtp_settings()
     _apply_provider_headers(message, settings)

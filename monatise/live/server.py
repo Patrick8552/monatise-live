@@ -20,7 +20,7 @@ from monatise.adapters.hyperliquid import HyperliquidAdapter
 from monatise.adapters.memecoins import discover_pumpfun, inspect_memecoin
 from monatise.adapters.quiver import QuiverAdapter, normalize_quiver_symbol
 from monatise.live.config import LIVE_CONFIRMATION, RuntimeConfig
-from monatise.live.emailer import EmailDeliveryError, expose_dev_reset_code, send_login_code, send_password_reset_code, send_trading_alert_email
+from monatise.live.emailer import EmailDeliveryError, expose_dev_reset_code, send_feedback_email, send_login_code, send_password_reset_code, send_trading_alert_email
 from monatise.live.performance import SignalPerformanceStore
 from monatise.live.secrets import secret_value
 from monatise.live.service import JsonEncoder, TradingService
@@ -1031,14 +1031,30 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             try:
                 payload = self._read_json()
                 user = self._current_user()
+                rating = int(payload.get("rating", 0))
+                category = str(payload.get("category", ""))
+                message = str(payload.get("message", ""))
+                page = str(payload.get("page", ""))
                 feedback_id = self.store.save_feedback(
                     user_id=user.id if user else None,
-                    rating=int(payload.get("rating", 0)),
-                    category=str(payload.get("category", "")),
-                    message=str(payload.get("message", "")),
-                    page=str(payload.get("page", "")),
+                    rating=rating,
+                    category=category,
+                    message=message,
+                    page=page,
                 )
-                self._json({"accepted": True, "feedbackId": feedback_id})
+                email_delivered = True
+                try:
+                    send_feedback_email(
+                        feedback_id=feedback_id,
+                        rating=rating,
+                        category=category,
+                        message_text=message,
+                        page=page,
+                        username=user.username if user else "Anonymous user",
+                    )
+                except EmailDeliveryError:
+                    email_delivered = False
+                self._json({"accepted": True, "feedbackId": feedback_id, "emailDelivered": email_delivered})
             except (TypeError, ValueError, json.JSONDecodeError) as error:
                 self._error(400, str(error))
             except Exception as error:  # noqa: BLE001

@@ -47,6 +47,30 @@ def test_alert_recipients_parse_comma_list(monkeypatch) -> None:
     assert emailer._alert_recipients() == ["ops@example.com", "trader@example.com"]
 
 
+def test_feedback_email_uses_monatise_contact_by_default(monkeypatch) -> None:
+    sent = []
+    monkeypatch.setenv("MONATISE_SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("MONATISE_SMTP_FROM", "Monatise <no-reply@example.com>")
+    monkeypatch.delenv("MONATISE_FEEDBACK_EMAIL", raising=False)
+    monkeypatch.setattr(emailer, "send_email", sent.append)
+
+    recipient = emailer.send_feedback_email(
+        feedback_id=42,
+        rating=4,
+        category="idea",
+        message_text="Make the dashboard easier to scan.",
+        page="/coinglass-dashboard.html",
+        username="trader@example.com",
+    )
+
+    assert recipient == "monatiseaesthetics@gmail.com"
+    assert len(sent) == 1
+    assert sent[0]["To"] == "monatiseaesthetics@gmail.com"
+    assert sent[0]["Subject"] == "Monatise feedback #42: 4/5 Idea"
+    assert "Make the dashboard easier to scan." in sent[0].get_content()
+    assert "trader@example.com" in sent[0].get_content()
+
+
 def test_safe_error_detail_redacts_credentials() -> None:
     settings = emailer.SmtpSettings(
         host="smtp.resend.com",

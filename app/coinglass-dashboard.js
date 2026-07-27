@@ -4068,7 +4068,9 @@ els.feedbackForm?.addEventListener("submit", async (event) => {
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.error || "Could not send feedback");
     els.feedbackForm.reset();
-    els.feedbackStatus.textContent = "Thank you — your feedback will shape the next improvement.";
+    els.feedbackStatus.textContent = payload.emailDelivered
+      ? "Thank you — your feedback was saved and emailed to Monatise."
+      : "Thank you — your feedback was saved. Email delivery will be retried by the team.";
     setTimeout(() => els.feedbackDialog.close(), 1600);
   } catch (error) {
     els.feedbackStatus.textContent = error.message;
