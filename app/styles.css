@@ -4569,3 +4569,29 @@ button:disabled {
     height: 150px;
   }
 }
+.performance-breakdown {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.65rem;
+  margin: 0.75rem 0;
+}
+
+.performance-breakdown article {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+}
+
+.performance-breakdown span,
+.performance-breakdown em {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-style: normal;
+}
+
+.performance-breakdown strong {
+  font-size: 1.05rem;
+}

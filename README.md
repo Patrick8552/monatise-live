@@ -218,21 +218,41 @@ See [deploy/render-hosting.md](deploy/render-hosting.md) for details.
 ## Quick Start
 
 ```bash
-python3 examples/run_simulation.py
+uv sync --extra dev --extra live
+uv run python examples/run_simulation.py
 ```
 
 Or through the CLI:
 
 ```bash
-python3 -m monatise.cli examples/sample_prices.csv
+uv run monatise examples/sample_prices.csv
 ```
+
+## PostgreSQL signal validation
+
+When `DATABASE_URL` (or `MONATISE_DATABASE_URL`) is present, authentication,
+preferences, encrypted private-sync credentials, and the signal-performance
+ledger use PostgreSQL. Every review-ready generated setup is upserted into the
+ledger; later candle refreshes update its trigger, expiry, stop, and target
+outcomes. The dashboard reports sample size, win rate, expectancy in R, maximum
+drawdown in R, and results by asset/timeframe.
+
+Existing SQLite production data must be copied and verified before its disk is
+removed. The migration command is intentionally non-destructive:
+
+```bash
+uv run python scripts/migrate_sqlite_to_postgres.py /data/monatise-users.db "$DATABASE_URL"
+```
+
+Keep the SQLite disk as rollback storage until user counts, login, settings,
+credential decryption, signal counts, and a fresh backup have all been verified.
 
 ## Tests
 
 GitHub runs the pytest suite on pushes and pull requests to `main`.
 
 ```bash
-python3 -m pytest
+uv run pytest
 ```
 
 The legacy runner delegates to pytest:

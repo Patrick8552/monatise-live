@@ -21,6 +21,7 @@ from monatise.adapters.memecoins import discover_pumpfun, inspect_memecoin
 from monatise.adapters.quiver import QuiverAdapter, normalize_quiver_symbol
 from monatise.live.config import LIVE_CONFIRMATION, RuntimeConfig
 from monatise.live.emailer import EmailDeliveryError, expose_dev_reset_code, send_login_code, send_password_reset_code, send_trading_alert_email
+from monatise.live.performance import SignalPerformanceStore
 from monatise.live.secrets import secret_value
 from monatise.live.service import JsonEncoder, TradingService
 from monatise.live.users import REMEMBERED_SESSION_SECONDS, SESSION_SECONDS, User, UserCredentials, UserStore, encryption_key_configured
@@ -68,6 +69,7 @@ PROTECTED_GET_PATHS = {
     "/api/tradingview/signals",
     "/api/coinglass/context",
     "/api/quiver/context",
+    "/api/performance",
 }
 PLATFORM_GET_PREFIXES = (
     "/api/coinglass/proxy/",
@@ -84,6 +86,7 @@ PLATFORM_POST_PATHS = {
     "/api/trading-rules",
     "/api/start",
     "/api/stop",
+    "/api/signals",
 }
 
 
@@ -588,6 +591,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
     tenants: TenantServices
     market_feed: MarketFeed
     store: UserStore
+    performance_store: SignalPerformanceStore
     config: RuntimeConfig
     app_dir: Path
     rate_limits: dict[str, list[float]] = {}
@@ -948,6 +952,21 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                     }
                 )
             return
+        if parsed.path == "/api/performance":
+            user = self._require_user()
+            if user is None:
+                return
+            try:
+                records = self.performance_store.records(user_id=user.id, limit=200)
+                self._json(
+                    {
+                        "summary": self.performance_store.summary(user_id=user.id),
+                        "records": [record.payload() for record in records],
+                    }
+                )
+            except Exception as error:  # noqa: BLE001
+                self._error(503, f"performance ledger unavailable: {error}")
+            return
         super().do_GET()
 
     def do_POST(self) -> None:  # noqa: N802
@@ -1007,6 +1026,24 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                 self._json(user_payload(user, settings, self.store))
             except ValueError as error:
                 self._error(400, str(error))
+            return
+        if parsed.path == "/api/signals":
+            user = self._require_user()
+            if user is None:
+                return
+            try:
+                payload = self._read_json()
+                record = self.performance_store.save(payload, user_id=user.id)
+                self._json(
+                    {
+                        "record": record.payload(),
+                        "summary": self.performance_store.summary(user_id=user.id),
+                    }
+                )
+            except (TypeError, ValueError, json.JSONDecodeError) as error:
+                self._error(400, str(error))
+            except Exception as error:  # noqa: BLE001
+                self._error(503, f"performance ledger unavailable: {error}")
             return
         if parsed.path == "/api/login":
             payload = self._read_json()
@@ -1389,6 +1426,7 @@ def main() -> int:
     if config.mode == "live" and config.network == "mainnet" and not encryption_key_configured():
         raise RuntimeError("MONATISE_ENCRYPTION_KEY is required for live mainnet credential storage")
     store = UserStore()
+    performance_store = SignalPerformanceStore()
     tenants = TenantServices(config, store)
     market_feed = MarketFeed(replace(config, account_address="", secret_key=""))
     app_dir = Path(__file__).resolve().parents[2] / "app"
@@ -1397,6 +1435,7 @@ def main() -> int:
         pass
 
     Handler.store = store
+    Handler.performance_store = performance_store
     Handler.tenants = tenants
     Handler.market_feed = market_feed
     Handler.config = config
@@ -1410,6 +1449,7 @@ def main() -> int:
     print(f"Monatise backend running at http://{host}:{port}", flush=True)
     print(f"mode={config.mode} network={config.network} multi_user=true", flush=True)
     print(f"auth_db={store.path}", flush=True)
+    print(f"signal_db={performance_store.backend}", flush=True)
     server.serve_forever()
     return 0
 

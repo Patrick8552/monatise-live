@@ -80,6 +80,9 @@ class UserSettings:
 
 
 def default_auth_db_path() -> str:
+    database_url = os.getenv("DATABASE_URL") or os.getenv("MONATISE_DATABASE_URL")
+    if database_url:
+        return database_url
     configured = os.getenv("MONATISE_AUTH_DB")
     if configured:
         return configured
@@ -125,10 +128,29 @@ def _spotify_playlist_urls(value: str) -> tuple[str, str]:
     return f"https://open.spotify.com/playlist/{playlist_id}", f"https://open.spotify.com/embed/playlist/{playlist_id}"
 
 
+class _PostgresConnection:
+    """Small DB-API compatibility layer for the existing parameterized queries."""
+
+    def __init__(self, connection) -> None:  # noqa: ANN001
+        self.connection = connection
+
+    def __enter__(self):  # noqa: ANN204
+        self.connection.__enter__()
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> bool:  # noqa: ANN001
+        return bool(self.connection.__exit__(exc_type, exc_value, traceback))
+
+    def execute(self, query: str, params: tuple = ()):  # noqa: ANN201
+        return self.connection.execute(query.replace("?", "%s"), params)
+
+
 class UserStore:
     def __init__(self, path: str | None = None) -> None:
         self.path = path or default_auth_db_path()
-        Path(self.path).parent.mkdir(parents=True, exist_ok=True)
+        self.postgres = self.path.startswith(("postgres://", "postgresql://"))
+        if not self.postgres:
+            Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self._fernet = Fernet(_fernet_key())
         self._init_db()
 
@@ -138,13 +160,14 @@ class UserStore:
         salt, digest = _hash_password(password)
         with self._connect() as conn:
             try:
-                cursor = conn.execute(
-                    "insert into users(username, password_salt, password_hash, created_at) values (?, ?, ?, ?)",
-                    (username, salt, digest, time.time()),
-                )
-            except sqlite3.IntegrityError as error:
+                query = "insert into users(username, password_salt, password_hash, created_at) values (?, ?, ?, ?)"
+                if self.postgres:
+                    query += " returning id"
+                cursor = conn.execute(query, (username, salt, digest, time.time()))
+                user_id = int(cursor.fetchone()["id"]) if self.postgres else int(cursor.lastrowid)
+            except self._integrity_errors as error:
                 raise ValueError("username already exists") from error
-        return User(id=int(cursor.lastrowid), username=username)
+        return User(id=user_id, username=username)
 
     def authenticate(self, username: str, password: str) -> User | None:
         username = username.strip().lower()
@@ -613,12 +636,28 @@ class UserStore:
             row = conn.execute("select 1 from credentials where user_id = ?", (user_id,)).fetchone()
         return row is not None
 
-    def _connect(self) -> sqlite3.Connection:
+    @property
+    def _integrity_errors(self) -> tuple[type[Exception], ...]:
+        if self.postgres:
+            import psycopg
+
+            return (psycopg.IntegrityError,)
+        return (sqlite3.IntegrityError,)
+
+    def _connect(self):  # noqa: ANN202
+        if self.postgres:
+            import psycopg
+            from psycopg.rows import dict_row
+
+            return _PostgresConnection(psycopg.connect(self.path, row_factory=dict_row))
         conn = sqlite3.connect(self.path)
         conn.row_factory = sqlite3.Row
         return conn
 
     def _init_db(self) -> None:
+        if self.postgres:
+            self._init_postgres()
+            return
         with self._connect() as conn:
             conn.executescript(
                 """
@@ -710,6 +749,43 @@ class UserStore:
             conn.execute(
                 "update user_settings set signal_session_window = 'always' where signal_session_window = 'london_new_york'"
             )
+
+    def _init_postgres(self) -> None:
+        statements = [
+            """create table if not exists users(
+              id bigserial primary key, username text not null unique, password_salt text not null,
+              password_hash text not null, created_at double precision not null)""",
+            """create table if not exists sessions(
+              token text primary key, user_id bigint not null references users(id) on delete cascade,
+              expires_at double precision not null)""",
+            """create table if not exists password_resets(
+              user_id bigint primary key references users(id) on delete cascade, code_salt text not null,
+              code_hash text not null, expires_at double precision not null, created_at double precision not null)""",
+            """create table if not exists login_codes(
+              user_id bigint primary key references users(id) on delete cascade, code_salt text not null,
+              code_hash text not null, expires_at double precision not null, created_at double precision not null)""",
+            """create table if not exists credentials(
+              user_id bigint primary key references users(id) on delete cascade, account_address text not null,
+              encrypted_secret_key text not null, updated_at double precision not null)""",
+            """create table if not exists user_settings(
+              user_id bigint primary key references users(id) on delete cascade,
+              client_name text not null default '', selected_symbol text not null,
+              spotify_playlist_url text not null default '', spotify_playlist_embed_url text not null default '',
+              subscription_plan text not null, subscription_status text not null,
+              chart_interval text not null default '1h', signal_session_window text not null default 'always',
+              leverage double precision not null default 10, order_quote_size double precision not null default 25,
+              max_order_notional double precision not null default 25, max_total_notional double precision not null default 5000,
+              max_position_value double precision not null default 5000, session_guard_minutes integer not null default 60,
+              stale_grid_cancel integer not null default 1, london_commodity_only integer not null default 1,
+              max_daily_loss_pct double precision not null default 0.05, updated_at double precision not null)""",
+            """create table if not exists login_hints(
+              ip_hash text primary key, user_id bigint not null references users(id) on delete cascade,
+              username text not null, last_login_at double precision not null, last_seen_at double precision not null)""",
+        ]
+        with self._connect() as conn:
+            for statement in statements:
+                conn.execute(statement)
+            conn.execute("update user_settings set signal_session_window = 'always' where signal_session_window = 'london_new_york'")
 
     @staticmethod
     def _validate_username_password(username: str, password: str) -> None:

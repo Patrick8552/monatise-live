@@ -140,6 +140,8 @@ const els = {
   sessionGuardSelect: document.querySelector("#sessionGuardSelect"),
   secretKeyInput: document.querySelector("#secretKeyInput"),
   signalJournal: document.querySelector("#signalJournal"),
+  performanceSummary: document.querySelector("#performanceSummary"),
+  performanceBreakdown: document.querySelector("#performanceBreakdown"),
   signalWindowSelect: document.querySelector("#signalWindowSelect"),
   saveSpotifyButton: document.querySelector("#saveSpotifyButton"),
   runtimeLog: document.querySelector("#runtimeLog"),
@@ -222,6 +224,7 @@ let pendingArmReview = false;
 let deferredInstallPrompt = null;
 let latestTradingViewSignal = null;
 let latestTradingViewSignalSignature = "";
+const autoPersistedSignalIds = new Set();
 let candleCsvBuffer = sampleCsv;
 let tradingRules = {
   chartInterval: "1h",
@@ -926,6 +929,13 @@ function signalJournalKey() {
   return "monatiseSignalJournal:v1";
 }
 
+function signalRecordId(signal = {}) {
+  return [signal.symbol, signal.interval, signal.direction, signal.entry, signal.stop, signal.targetOne, signal.createdAt || "current"]
+    .map((value) => String(value ?? "").replace(/[^a-zA-Z0-9_.:-]/g, ""))
+    .join(":")
+    .slice(0, 220);
+}
+
 function loadSignalJournal() {
   try {
     const parsed = JSON.parse(localStorage.getItem(signalJournalKey()) || "[]");
@@ -937,6 +947,62 @@ function loadSignalJournal() {
 
 function saveSignalJournal(entries) {
   localStorage.setItem(signalJournalKey(), JSON.stringify(entries.slice(-80)));
+}
+
+async function persistSignalRecord(entry) {
+  if (!currentUser.authenticated || !entry?.id) return null;
+  try {
+    const response = await jsonPost("/api/signals", entry);
+    if (!response.ok) throw new Error(await responseError(response));
+    const payload = await response.json();
+    renderPerformanceSummary(payload.summary);
+    return payload.record || null;
+  } catch (error) {
+    addAuditEvent("journal sync warning", "Signal remains saved on this device", error.message);
+    return null;
+  }
+}
+
+function renderPerformanceSummary(summary = null) {
+  if (!els.performanceSummary) return;
+  if (!summary) {
+    els.performanceSummary.textContent = "Performance statistics begin after reviewed signals resolve.";
+    if (els.performanceBreakdown) els.performanceBreakdown.innerHTML = "";
+    return;
+  }
+  const winRate = summary.winRate == null ? "not enough resolved signals" : `${Number(summary.winRate).toFixed(1)}% win rate`;
+  const expectancy = summary.expectancyR == null ? "expectancy pending" : `${Number(summary.expectancyR).toFixed(2)}R expectancy`;
+  const drawdown = summary.maxDrawdownR == null ? "drawdown pending" : `${Number(summary.maxDrawdownR).toFixed(2)}R max drawdown`;
+  els.performanceSummary.textContent = `${summary.tracked} tracked · ${summary.decided} decided · ${winRate} · ${expectancy} · ${drawdown}`;
+  if (els.performanceBreakdown) {
+    const markets = Array.isArray(summary.byMarket) ? summary.byMarket : [];
+    els.performanceBreakdown.innerHTML = markets.length
+      ? markets.slice(0, 8).map((market) => `<article>
+          <span>${market.symbol} · ${market.interval}</span>
+          <strong>${market.winRate == null ? "Pending" : `${Number(market.winRate).toFixed(1)}%`}</strong>
+          <em>${market.tracked} tracked · ${market.wins}W/${market.losses}L</em>
+        </article>`).join("")
+      : "";
+  }
+}
+
+async function loadPerformanceLedger() {
+  if (!currentUser.authenticated) return null;
+  try {
+    const response = await apiFetch("/api/performance", { cache: "no-store" });
+    if (!response.ok) throw new Error(await responseError(response));
+    const payload = await response.json();
+    const remote = Array.isArray(payload.records) ? payload.records : [];
+    if (remote.length) {
+      saveSignalJournal(remote.slice().reverse());
+      renderSignalJournal(remote);
+    }
+    renderPerformanceSummary(payload.summary);
+    return payload;
+  } catch (error) {
+    renderPerformanceSummary(null);
+    return null;
+  }
 }
 
 function terminalSignalStatus(status) {
@@ -1111,6 +1177,7 @@ function refreshSignalJournal() {
   const entries = loadSignalJournal().map((entry) => gradeSignalEntry(entry));
   saveSignalJournal(entries);
   renderSignalJournal(entries);
+  entries.filter((entry) => entry.id).forEach((entry) => void persistSignalRecord(entry));
   return entries;
 }
 
@@ -1156,7 +1223,7 @@ function saveReviewedSignal() {
   if (!lastSignalCandidate || !["LONG", "SHORT", "WATCH"].includes(lastSignalCandidate.direction)) return null;
   const entry = gradeSignalEntry({
     ...lastSignalCandidate,
-    id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    id: lastSignalCandidate.id || signalRecordId(lastSignalCandidate),
     setupGrade: journalSetupScore(lastSignalCandidate),
     status: lastSignalCandidate.direction === "WATCH" ? "WATCH" : "PENDING",
     outcomeDetail: lastSignalCandidate.direction === "WATCH" ? "Watchlist idea saved; no executable trigger." : "Waiting for later candles."
@@ -1164,6 +1231,7 @@ function saveReviewedSignal() {
   const entries = [...loadSignalJournal(), entry].slice(-80);
   saveSignalJournal(entries);
   renderSignalJournal(entries);
+  void persistSignalRecord(entry);
   return entry;
 }
 
@@ -2497,6 +2565,22 @@ function renderExecutionTicket(orders = [], options = {}) {
     timing: timing.status,
     trigger: signal.trigger
   };
+  lastSignalCandidate.id = signalRecordId(lastSignalCandidate);
+  if (canReview && currentUser.authenticated && !autoPersistedSignalIds.has(lastSignalCandidate.id)) {
+    autoPersistedSignalIds.add(lastSignalCandidate.id);
+    void persistSignalRecord({
+      ...lastSignalCandidate,
+      setupGrade: journalSetupScore(lastSignalCandidate),
+      status: "PENDING",
+      outcomeDetail: "Generated automatically; waiting for entry, target, stop, or expiry.",
+      evidence: {
+        fvgBias: lastSignalCandidate.fvgBias,
+        fibTrend: lastSignalCandidate.fibTrend,
+        timing: lastSignalCandidate.timing,
+        trustSummary: lastSignalCandidate.trustSummary
+      }
+    });
+  }
   lastTicketSnapshot = {
     asset: selectedAsset,
     blocks,
@@ -3371,6 +3455,8 @@ function renderAuth(me) {
   applyTradingRules(me.tradingRules || tradingRules);
   const changedAsset = applySelectedAsset(me.selectedSymbol, { load: Boolean(me.authenticated) });
   const loggedIn = Boolean(me.authenticated);
+  if (loggedIn) void loadPerformanceLedger();
+  else renderPerformanceSummary(null);
   const paid = true;
   document.body.classList.remove("auth-required");
   document.body.classList.remove("payment-required");
