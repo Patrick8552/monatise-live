@@ -5047,3 +5047,270 @@ button.primary {
   .wealth-command,
   .desk-section { border-radius: 18px; }
 }
+
+/* Monatise Nexus — responsive market intelligence system */
+:root {
+  --bg: #eef2f7;
+  --ink: #101723;
+  --muted: #637083;
+  --panel: #ffffff;
+  --line: #dbe2eb;
+  --buy: #10a77a;
+  --sell: #e44d67;
+  --accent: #5d5fef;
+  --graph: #3578ff;
+  --violet: #7357e8;
+  --cyan: #08a8c4;
+  --coral: #e06e48;
+  --deep: #101723;
+  --soft: #f5f7fb;
+  --shadow: 0 18px 50px rgba(24, 39, 75, 0.08);
+  --terminal: #0c1420;
+  --terminal-2: #162131;
+}
+
+body[data-theme="dark"] {
+  --bg: #08101b;
+  --ink: #eef4fb;
+  --muted: #91a0b5;
+  --panel: #101b29;
+  --line: #223247;
+  --soft: #0d1724;
+  --deep: #eef4fb;
+  --shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
+  --terminal: #050b13;
+  --terminal-2: #101b29;
+}
+
+body,
+body[data-theme="dark"] {
+  background:
+    radial-gradient(circle at 92% 3%, rgba(93, 95, 239, 0.11), transparent 28rem),
+    radial-gradient(circle at 5% 32%, rgba(8, 168, 196, 0.07), transparent 24rem),
+    var(--bg);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.brand-lockup h1,
+.command-heading h2,
+.wealth-command h2,
+.section-head h2 {
+  font-family: inherit;
+}
+
+.topbar {
+  background: rgba(9, 17, 29, 0.97);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 0 0 18px 18px;
+  box-shadow: 0 14px 40px rgba(4, 10, 18, 0.16);
+  gap: 16px;
+}
+
+.topbar::after {
+  background: linear-gradient(90deg, #5d5fef, #08a8c4, #10a77a);
+  height: 2px;
+  left: 0;
+  right: 0;
+}
+
+.brand-logo {
+  border-color: rgba(255, 255, 255, 0.16);
+  border-radius: 14px;
+}
+
+.brand-lockup h1 {
+  font-size: clamp(1.9rem, 2.7vw, 3rem);
+  font-weight: 750;
+  letter-spacing: -0.055em;
+}
+
+.desk-nav a:hover,
+.desk-nav button:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.preferred-api-banner {
+  border-bottom-color: var(--line);
+  font-size: 0.78rem;
+}
+
+.ops-ribbon article,
+.ops-ribbon article:nth-child(n) {
+  border-color: var(--line);
+}
+
+.ops-ribbon strong {
+  font-family: inherit;
+  font-weight: 750;
+}
+
+.desk-jump-nav {
+  background: color-mix(in srgb, var(--panel) 90%, transparent);
+  border-color: var(--line);
+  border-radius: 14px;
+  box-shadow: 0 10px 34px rgba(24, 39, 75, 0.07);
+  max-width: min(100%, 900px);
+  scrollbar-width: none;
+}
+
+.desk-jump-nav::-webkit-scrollbar { display: none; }
+
+.desk-jump-nav a {
+  border-radius: 9px;
+  flex: 0 0 auto;
+}
+
+.desk-jump-nav a:hover,
+.desk-jump-nav a:focus-visible {
+  background: var(--accent);
+  color: #ffffff;
+}
+
+.command-strip {
+  background:
+    radial-gradient(circle at 86% 8%, rgba(93, 95, 239, 0.42), transparent 24rem),
+    radial-gradient(circle at 55% 120%, rgba(8, 168, 196, 0.19), transparent 30rem),
+    linear-gradient(135deg, #08111e, #111d2d 58%, #0b1725);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 22px;
+  box-shadow: 0 28px 80px rgba(10, 22, 39, 0.22);
+  min-height: 440px;
+}
+
+.command-strip::after {
+  border-color: rgba(98, 211, 226, 0.14);
+  box-shadow: 0 0 0 70px rgba(93, 95, 239, 0.035), 0 0 0 140px rgba(8, 168, 196, 0.025);
+}
+
+.command-heading > span {
+  border-color: rgba(99, 219, 235, 0.3);
+  color: #74e4f2;
+}
+
+.command-heading h2 {
+  font-size: clamp(3rem, 6.6vw, 7rem);
+  font-weight: 760;
+  letter-spacing: -0.075em;
+  line-height: 0.89;
+}
+
+.command-heading p {
+  color: rgba(238, 244, 251, 0.7);
+  max-width: 660px;
+}
+
+.command-state {
+  backdrop-filter: blur(18px);
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+.command-actions .command-primary {
+  background: #716ff6;
+  border-color: #716ff6;
+  color: #ffffff;
+}
+
+.command-actions a:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.command-actions .command-primary:hover {
+  background: #8583ff;
+}
+
+.wealth-command,
+.desk-section {
+  background: color-mix(in srgb, var(--panel) 94%, transparent);
+  border-color: var(--line);
+  border-radius: 18px;
+}
+
+.wealth-command h2 {
+  font-size: clamp(1.9rem, 3.5vw, 3.4rem);
+  font-weight: 740;
+}
+
+.opportunity-score {
+  background: linear-gradient(145deg, #101a29, #17263a);
+  color: #ffffff;
+}
+
+.section-head h2 {
+  font-size: clamp(1.55rem, 2.5vw, 2.5rem);
+  font-weight: 720;
+}
+
+.panel {
+  background: var(--panel);
+  border-color: var(--line);
+  border-radius: 14px;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+}
+
+button.primary:hover {
+  background: color-mix(in srgb, var(--accent) 86%, white);
+}
+
+@media (min-width: 1500px) {
+  .command-strip { grid-template-columns: minmax(0, 1.55fr) minmax(300px, .65fr); }
+  .desk-sections { gap: 22px; }
+}
+
+@media (max-width: 1180px) {
+  .topbar { align-items: flex-start; flex-wrap: wrap; }
+  .brand-lockup { flex: 1 1 260px; }
+  .desk-nav { justify-content: flex-end; }
+  .desk-preferences { margin-left: auto; }
+  .status-strip { flex: 1 0 100%; justify-content: flex-start; }
+  .command-strip { padding: clamp(32px, 5vw, 58px); }
+}
+
+@media (max-width: 820px) {
+  .shell { padding-inline: 12px; }
+  .topbar { display: grid; grid-template-columns: 1fr auto; }
+  .brand-lockup { grid-column: 1; }
+  .desk-preferences { grid-column: 2; grid-row: 1; }
+  .desk-nav { grid-column: 1 / -1; justify-content: flex-start; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
+  .status-strip { display: none; }
+  .ops-ribbon { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .command-strip { grid-template-columns: 1fr; min-height: 0; }
+  .command-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .command-actions { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .wealth-command { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 560px) {
+  .shell { padding-inline: 8px; }
+  .topbar { grid-template-columns: 1fr; padding: 14px; }
+  .brand-logo { height: 44px; width: 44px; }
+  .brand-lockup h1 { font-size: 2rem; }
+  .brand-lockup .eyebrow { font-size: .62rem; }
+  .desk-preferences { grid-column: 1; grid-row: auto; margin: 0; justify-content: flex-start; }
+  .desk-preferences label { flex: 1; justify-content: space-between; }
+  .desk-nav { gap: 6px; }
+  .desk-nav a,
+  .desk-nav button { font-size: .68rem; white-space: nowrap; }
+  .preferred-api-banner { align-items: flex-start; display: grid; gap: 4px; }
+  .ops-ribbon article { padding: 12px; }
+  .ops-ribbon strong { font-size: .9rem; }
+  .desk-jump-nav { margin-block: 12px; }
+  .command-strip { border-radius: 16px; padding: 28px 18px; }
+  .command-heading h2 { font-size: clamp(2.65rem, 14vw, 4rem); margin: 22px 0; }
+  .command-heading p { font-size: .94rem; }
+  .command-state { padding: 18px; }
+  .command-metrics { gap: 0; }
+  .command-metrics article { min-width: 0; padding: 12px; }
+  .command-metrics strong { font-size: .9rem; overflow-wrap: anywhere; }
+  .command-actions { grid-template-columns: 1fr; }
+  .wealth-command,
+  .desk-section { padding: 18px; }
+  .section-grid,
+  .trade-grid { min-width: 0; }
+  .panel { min-width: 0; }
+}
