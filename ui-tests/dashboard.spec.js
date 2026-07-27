@@ -3,6 +3,7 @@ const { test, expect } = require("@playwright/test");
 test("command centre is usable without horizontal overflow", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("main")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Decision Command Center" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Build Signal" })).toBeVisible();
   await expect(page.getByLabel("Signal performance filters")).toBeAttached();
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);

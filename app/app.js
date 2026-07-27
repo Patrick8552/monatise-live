@@ -400,17 +400,11 @@ function applyLanguagePreference(language = selectedLanguage) {
   const jumps = document.querySelectorAll(".desk-jump-nav a");
   [
     t("signalBuilder"),
-    t("cioBrief"),
     "Quality Gate",
-    t("activation"),
-    t("operator"),
     t("marketIntel"),
-    "Crypto Trainer",
-    t("hedgeLayer"),
     t("aiChat"),
-    t("privateAccess"),
-    t("about"),
-    t("activity")
+    t("activity"),
+    t("privateAccess")
   ].forEach((label, index) => {
     if (jumps[index]) jumps[index].textContent = label;
   });
@@ -593,7 +587,7 @@ function setPasswordAutocomplete(isRegister) {
 
 function setupAppInstall() {
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("./sw.js?v=20260724-contact-v2").catch(() => {});
+    navigator.serviceWorker.register("./sw.js?v=20260727-command-center-v3").catch(() => {});
   }
   window.addEventListener("beforeinstallprompt", (event) => {
     event.preventDefault();

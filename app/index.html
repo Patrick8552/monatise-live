@@ -11,7 +11,7 @@
     <link rel="manifest" href="./manifest.webmanifest?v=20260701-yinyang-png" />
     <link rel="icon" href="./icon.svg?v=20260701-yinyang-png" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./icon-180.png?v=20260701-yinyang-png" />
-    <link rel="stylesheet" href="./styles.css?v=20260727-command-center-v2" />
+    <link rel="stylesheet" href="./styles.css?v=20260727-command-center-v3" />
   </head>
   <body class="auth-required">
     <a class="skip-link" href="#mainContent">Skip to dashboard</a>
@@ -90,8 +90,13 @@
       </nav>
 
       <section class="command-strip" aria-label="live decision surface">
+        <div class="command-heading">
+          <span>New workspace</span>
+          <h2>Decision Command Center</h2>
+          <p>One view for signal readiness, risk, market scans, and measured outcomes.</p>
+        </div>
         <div class="command-state">
-          <span>Signal</span>
+          <span>Current decision</span>
           <strong id="decisionState">Desk preparing</strong>
           <em id="decisionDetail">Create a signal profile to save preferences.</em>
         </div>
@@ -921,6 +926,6 @@
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="./spotify.js?v=20260629-request-access-fix"></script>
-    <script src="./app.js?v=20260727-command-center-v2"></script>
+    <script src="./app.js?v=20260727-command-center-v3"></script>
   </body>
 </html>

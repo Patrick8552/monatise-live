@@ -477,7 +477,8 @@ label .range-readout {
 .command-strip {
   align-items: stretch;
   background:
-    linear-gradient(135deg, rgba(17, 24, 23, 0.98), rgba(30, 42, 40, 0.96)),
+    radial-gradient(circle at 12% 10%, rgba(0, 184, 217, 0.3), transparent 34%),
+    linear-gradient(135deg, #0b2025, #162d2c 54%, #243228),
     var(--terminal);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 8px;
@@ -485,14 +486,28 @@ label .range-readout {
   color: #f9fffb;
   display: grid;
   gap: 12px;
-  grid-template-columns: minmax(250px, 0.7fr) minmax(0, 1.3fr) minmax(155px, 0.42fr);
+  grid-template-columns: minmax(230px, 0.8fr) minmax(210px, 0.65fr) minmax(0, 1.3fr) minmax(155px, 0.42fr);
   margin: 0 auto 14px;
   max-width: 1560px;
-  padding: 12px;
+  padding: 18px;
   position: sticky;
   top: 10px;
   z-index: 7;
 }
+
+.command-heading { align-content: center; display: grid; gap: 6px; }
+.command-heading > span {
+  background: linear-gradient(90deg, var(--cyan), #67e5ae);
+  border-radius: 999px;
+  color: #071716;
+  font-size: .66rem;
+  font-weight: 950;
+  justify-self: start;
+  padding: 5px 9px;
+  text-transform: uppercase;
+}
+.command-heading h2 { color: #fff; font-size: clamp(1.25rem, 2vw, 1.75rem); line-height: 1.05; }
+.command-heading p { color: rgba(249,255,251,.68); font-size: .75rem; line-height: 1.4; margin: 0; }
 
 .command-actions { display: grid; gap: 7px; }
 .command-actions a {

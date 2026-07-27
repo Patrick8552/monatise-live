@@ -1,4 +1,4 @@
-const CACHE_NAME = "monatise-shell-20260727-command-center-v2";
+const CACHE_NAME = "monatise-shell-20260727-command-center-v3";
 const SHELL_ASSETS = [
   "./",
   "./cg.html",
@@ -6,8 +6,8 @@ const SHELL_ASSETS = [
   "./game.html",
   "./memecoins.html",
   "./coinglass-dashboard.html?v=20260724-crypto-framework-v2",
-  "./styles.css?v=20260727-command-center-v2",
-  "./app.js?v=20260727-command-center-v2",
+  "./styles.css?v=20260727-command-center-v3",
+  "./app.js?v=20260727-command-center-v3",
   "./spotify.js?v=20260629-request-access-fix",
   "./game.js?v=20260629-crypto-trainer",
   "./assets/payout-clients.svg",
