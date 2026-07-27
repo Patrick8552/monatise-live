@@ -1,4 +1,4 @@
-const CACHE_NAME = "monatise-shell-20260727-brand-v3";
+const CACHE_NAME = "monatise-shell-20260727-brand-v4";
 const SHELL_ASSETS = [
   "./",
   "./cg.html",
@@ -7,16 +7,17 @@ const SHELL_ASSETS = [
   "./memecoins.html",
   "./coinglass-dashboard.html?v=20260727-client-api-v5",
   "./styles.css?v=20260727-dashboard-first-v7",
-  "./app.js?v=20260727-brand-v3",
+  "./app.js?v=20260727-brand-v4",
   "./spotify.js?v=20260629-request-access-fix",
   "./game.js?v=20260629-crypto-trainer",
   "./assets/payout-clients.svg",
   "./coinglass-dashboard.css?v=20260727-client-api-v5",
-  "./coinglass-dashboard.js?v=20260727-brand-v3",
+  "./coinglass-dashboard.js?v=20260727-brand-v4",
   "./memecoins.css?v=20260715-memecoins",
   "./memecoins.js?v=20260715-memecoins",
   "./manifest.webmanifest?v=20260727-brand-v2",
-  "./favicon.ico?v=20260727-brand-v3",
+  "./favicon.ico?v=20260727-brand-v4",
+  "./og.png?v=20260727-brand-v4",
   "./monatise-yinyang.svg?v=20260727-brand-v3",
   "./icon-180.png?v=20260727-brand-v2",
   "./icon-192.png?v=20260727-brand-v2",
