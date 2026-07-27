@@ -11,7 +11,7 @@
     <link rel="manifest" href="./manifest.webmanifest?v=20260701-yinyang-png" />
     <link rel="icon" href="./icon.svg?v=20260701-yinyang-png" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./icon-180.png?v=20260701-yinyang-png" />
-    <link rel="stylesheet" href="./coinglass-dashboard.css?v=20260717-market-primary" />
+    <link rel="stylesheet" href="./coinglass-dashboard.css?v=20260727-minimal-dashboard-v3" />
   </head>
   <body>
     <div class="app-shell">
@@ -114,9 +114,9 @@
 
         <section class="source-band" aria-label="Optional premium data status">
           <div>
-            <span>Preferred signal-quality API</span>
-            <strong id="coinGlassStatus">Checking CoinGlass</strong>
-            <small id="coinGlassStatusDetail">CoinGlass is Monatise's preferred API for trade-signal quality. Hyperliquid remains the fallback when CoinGlass is unavailable.</small>
+              <span>CoinGlass · Preferred analysis API</span>
+              <strong id="coinGlassStatus">Checking CoinGlass</strong>
+              <small id="coinGlassStatusDetail">Primary signal-quality analysis. Hyperliquid is the fallback.</small>
           </div>
           <div>
             <span>Price reference</span>
@@ -129,10 +129,10 @@
         <section class="panel monitor-panel wide" aria-label="Autonomous market asset monitor">
           <div class="panel-head">
             <div>
-              <h2>Autonomous Asset Monitor</h2>
-              <p id="monitorStatus">Loading the Hyperliquid asset universe</p>
+                <h2>Market watch</h2>
+                <p id="monitorStatus">Loading four key markets</p>
             </div>
-            <span class="pill">auto scan</span>
+            <span class="pill">4 markets</span>
           </div>
           <div id="monitorGrid" class="monitor-grid"></div>
         </section>
@@ -539,6 +539,6 @@
     </div>
     <script src="https://cdn.ably.com/lib/ably.min-2.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="./coinglass-dashboard.js?v=20260724-crypto-framework-v2"></script>
+    <script src="./coinglass-dashboard.js?v=20260727-minimal-dashboard-v3"></script>
   </body>
 </html>

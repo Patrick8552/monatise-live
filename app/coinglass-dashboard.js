@@ -2151,7 +2151,7 @@ function renderMonitorGrid() {
   if (!els.monitorGrid) return;
   const results = Object.values(state.monitor.results)
     .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
-    .slice(0, 36);
+    .slice(0, 4);
   els.monitorGrid.innerHTML = results.length
     ? results.map((item) => {
         const pct = Number(item.changePct);
