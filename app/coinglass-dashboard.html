@@ -11,7 +11,7 @@
     <link rel="manifest" href="./manifest.webmanifest?v=20260701-yinyang-png" />
     <link rel="icon" href="./icon.svg?v=20260701-yinyang-png" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./icon-180.png?v=20260701-yinyang-png" />
-    <link rel="stylesheet" href="./coinglass-dashboard.css?v=20260727-minimal-dashboard-v3" />
+    <link rel="stylesheet" href="./coinglass-dashboard.css?v=20260727-client-api-v4" />
   </head>
   <body>
     <div class="app-shell">
@@ -90,8 +90,8 @@
           <summary>Integrations</summary>
           <div class="integration-grid">
             <label>
-              <span>CoinGlass premium add-on</span>
-              <input id="apiKeyInput" type="password" autocomplete="off" placeholder="optional local CG-API-KEY" />
+              <span>Your CoinGlass API key</span>
+              <input id="apiKeyInput" type="password" autocomplete="off" placeholder="Enter your own CG-API-KEY" />
             </label>
             <label>
               <span>Ably</span>
@@ -116,14 +116,14 @@
           <div>
               <span>CoinGlass · Preferred analysis API</span>
               <strong id="coinGlassStatus">Checking CoinGlass</strong>
-              <small id="coinGlassStatusDetail">Primary signal-quality analysis. Hyperliquid is the fallback.</small>
+              <small id="coinGlassStatusDetail">Add your own CoinGlass API key for preferred analysis. The key stays in this browser; Hyperliquid remains available as fallback.</small>
           </div>
           <div>
             <span>Price reference</span>
             <strong id="coinGlassPriceRef">BTCUSDT · futures price history</strong>
             <small id="coinGlassRouteRef">/api/futures/price/history · exchange Binance · analysis 30m · view 1h</small>
           </div>
-          <button id="openIntegrationsButton" type="button" class="ghost-button">Connect CoinGlass</button>
+          <button id="openIntegrationsButton" type="button" class="ghost-button">Add Your CoinGlass Key</button>
         </section>
 
         <section class="panel monitor-panel wide" aria-label="Autonomous market asset monitor">
@@ -539,6 +539,6 @@
     </div>
     <script src="https://cdn.ably.com/lib/ably.min-2.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="./coinglass-dashboard.js?v=20260727-minimal-dashboard-v3"></script>
+    <script src="./coinglass-dashboard.js?v=20260727-client-api-v4"></script>
   </body>
 </html>

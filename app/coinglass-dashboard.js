@@ -2013,7 +2013,7 @@ function updateCoinGlassSourceStatus(message = "") {
   els.coinGlassRouteRef.textContent = usesServerMarketCandles(asset)
     ? `/api/candles · symbol ${asset.coin} · ${usesCryptoMultiFrame(asset) ? `analysis ${CRYPTO_ANALYSIS_INTERVALS.join(" + ")}` : `view ${viewInterval}`}`
     : `/api/futures/price/history · exchange ${exchange} · analysis ${ANALYSIS_INTERVAL} · view ${viewInterval}`;
-  els.openIntegrationsButton.textContent = serverReady ? "CoinGlass Connected" : localKey ? "Update CoinGlass Key" : "Connect CoinGlass";
+  els.openIntegrationsButton.textContent = serverReady ? "CoinGlass Connected" : localKey ? "Update Your CoinGlass Key" : "Add Your CoinGlass Key";
 }
 
 function syncTradingView(asset = selectedAsset()) {
