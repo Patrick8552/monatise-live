@@ -1455,7 +1455,7 @@ def main() -> int:
     server = ThreadingHTTPServer((host, port), Handler)
     print(f"Monatise backend running at http://{host}:{port}", flush=True)
     print(f"mode={config.mode} network={config.network} multi_user=true", flush=True)
-    print(f"auth_db={store.path}", flush=True)
+    print(f"auth_db={'postgresql' if store.postgres else 'sqlite-migration-bridge'}", flush=True)
     print(f"signal_db={performance_store.backend}", flush=True)
     server.serve_forever()
     return 0
