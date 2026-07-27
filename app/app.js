@@ -587,7 +587,7 @@ function setPasswordAutocomplete(isRegister) {
 
 function setupAppInstall() {
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("./sw.js?v=20260727-monatise-nexus-v5").catch(() => {});
+    navigator.serviceWorker.register("./sw.js?v=20260727-minimal-desk-v6").catch(() => {});
   }
   window.addEventListener("beforeinstallprompt", (event) => {
     event.preventDefault();
@@ -4417,6 +4417,7 @@ async function loadCoinGlassContext(options = {}) {
 
 function renderMarkets() {
   els.marketStrip.innerHTML = markets
+    .slice(0, 4)
     .map(
       (asset) => `<button type="button" data-symbol="${asset.symbol}" class="${asset.symbol === selectedAsset ? "active" : ""}">
         <strong>${assetLabel(asset.symbol)}</strong>
@@ -5508,10 +5509,10 @@ function render() {
   });
   const visibleMark = currentMarketPrice() || (live ? Number(live.price) : mark);
   els.markPrice.textContent = money(visibleMark);
-  els.marketTitle.textContent = `${selectedAsset}-USD signal map`;
+  els.marketTitle.textContent = `${selectedAsset}-USD overview`;
   els.liquiditySource.textContent = usingTradingViewGrid
-    ? "TradingView is driving the visible price, signal, grid, and hedge. No exchange orders."
-    : "TradingView drives watch-asset signals; CoinGlass and Hyperliquid remain secondary context. No exchange orders.";
+    ? "TradingView signal active. No orders are placed here."
+    : "Live market analysis. No orders are placed here.";
   els.runState.textContent = state.activeIndex >= state.candles.length ? "Complete" : "Ready";
   renderTradingViewChart();
   renderCoinGlassServices();

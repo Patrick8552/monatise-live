@@ -11,7 +11,7 @@
     <link rel="manifest" href="./manifest.webmanifest?v=20260701-yinyang-png" />
     <link rel="icon" href="./icon.svg?v=20260701-yinyang-png" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./icon-180.png?v=20260701-yinyang-png" />
-    <link rel="stylesheet" href="./styles.css?v=20260727-monatise-nexus-v5" />
+    <link rel="stylesheet" href="./styles.css?v=20260727-minimal-desk-v6" />
   </head>
   <body class="auth-required">
     <a class="skip-link" href="#mainContent">Skip to dashboard</a>
@@ -81,19 +81,17 @@
       </section>
 
       <nav class="desk-jump-nav" aria-label="desk sections">
-        <a href="#trade">Signal Builder</a>
-        <a href="#risk">Quality Gate</a>
-        <a href="#markets">Market Intel</a>
-        <a href="#chat">AI Chat</a>
-        <a href="#activity">Activity</a>
-        <a href="#account">Private Access</a>
+        <a href="#trade">Signal</a>
+        <a href="#markets">Markets</a>
+        <a href="#activity">Performance</a>
+        <a href="#account">Account</a>
       </nav>
 
       <section class="command-strip" aria-label="live decision surface">
         <div class="command-heading">
-          <span>Monatise intelligence layer</span>
-          <h2 aria-label="Decision Command Center">See the market.<br />Shape the decision.</h2>
-          <p>Live market structure, signal quality, exposure, and performance—resolved into one focused decision system.</p>
+          <span>Market intelligence</span>
+          <h2 aria-label="Decision Command Center">Clear signals.<br />Defined risk.</h2>
+          <p>One focused view for your next market decision.</p>
         </div>
         <div class="command-state">
           <span>Current decision</span>
@@ -120,8 +118,8 @@
         </div>
         <div class="command-actions" aria-label="Primary dashboard actions">
           <a class="command-primary" href="#trade">Build Signal</a>
-          <a href="#markets">Scan Markets</a>
-          <a href="#activity">Review Performance</a>
+          <a href="#markets">Markets</a>
+          <a href="#activity">Performance</a>
         </div>
       </section>
 
@@ -154,7 +152,7 @@
           <div class="section-head">
             <div>
               <p class="eyebrow">Signal builder</p>
-              <h2>Generate a crypto signal before any execution decision.</h2>
+              <h2>Build a signal.</h2>
             </div>
             <button id="resetButton" type="button" title="Reset to defaults" aria-label="Reset signal builder to defaults">Reset</button>
           </div>
@@ -304,7 +302,7 @@
           <div class="section-head">
             <div>
               <p class="eyebrow">Quality gate</p>
-              <h2>Publish only when structure, context, and session rules agree.</h2>
+              <h2>Check signal quality.</h2>
             </div>
             <div class="backend-box compact-backend" aria-label="backend signal status">
               <span>Backend</span>
@@ -492,7 +490,7 @@
         <section id="markets" class="desk-section">
           <div class="section-head">
             <div>
-              <p class="eyebrow">Monatise market intelligence</p>
+              <p class="eyebrow">Markets</p>
               <h2 id="marketTitle">BTC-USD control center</h2>
             </div>
             <div class="price-pill">
@@ -502,7 +500,7 @@
           </div>
 
           <section class="market-stage" aria-label="market visualization">
-            <p id="liquiditySource" class="liquidity-source">CoinGlass is Monatise's preferred API for trade-signal quality. Hyperliquid provides fallback candles and market context when CoinGlass is unavailable. Monatise does not place orders from this screen.</p>
+            <p id="liquiditySource" class="liquidity-source">Live analysis. No orders are placed from this screen.</p>
             <div id="coinglassServices" class="coinglass-services" aria-label="Optional premium market context">
               <article>
                 <span>Funding</span>
@@ -524,12 +522,6 @@
                 <strong id="coinGlassFearGreed">Waiting</strong>
                 <em>Sentiment</em>
               </article>
-            </div>
-            <div id="market3dMap" class="market-3d-map" aria-label="3D live market signal field">
-              <div class="market-3d-overlay">
-                <strong id="market3dTitle">BTC signal field</strong>
-                <span id="market3dMeta">Always-on window · Hyperliquid analysis</span>
-              </div>
             </div>
             <section class="tradingview-panel" aria-label="live TradingView chart">
               <div class="panel-head">
@@ -577,7 +569,7 @@
           <div class="section-head">
             <div>
               <p class="eyebrow">Crypto trainer</p>
-              <h2>Practice Long, Short, and Wait decisions with Hyperliquid context and optional CoinGlass data.</h2>
+              <h2>Practice signal decisions.</h2>
             </div>
             <a class="button-link" href="./game.html">Open Trainer</a>
           </div>
@@ -602,7 +594,7 @@
           <div class="section-head">
             <div>
               <p class="eyebrow">Automatic profile</p>
-              <h2>Your desk is ready without a login.</h2>
+              <h2>Your account.</h2>
             </div>
           </div>
 
@@ -859,7 +851,7 @@
           <div class="section-head">
             <div>
               <p class="eyebrow">Activity</p>
-              <h2>Review generated signals, equity lens, and runtime state.</h2>
+              <h2>Review performance.</h2>
             </div>
           </div>
 
@@ -926,6 +918,6 @@
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="./spotify.js?v=20260629-request-access-fix"></script>
-    <script src="./app.js?v=20260727-monatise-nexus-v5"></script>
+    <script src="./app.js?v=20260727-minimal-desk-v6"></script>
   </body>
 </html>
