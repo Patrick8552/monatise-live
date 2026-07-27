@@ -26,19 +26,7 @@ from monatise.live.service import JsonEncoder, TradingService
 from monatise.live.users import REMEMBERED_SESSION_SECONDS, SESSION_SECONDS, User, UserCredentials, UserStore, encryption_key_configured
 
 STOCK_WATCHLIST = ("SPX", "NDX", "NASDAQ", "QQQ", "SPY", "AAPL", "TSLA", "NVDA")
-METALS_WATCHLIST = {"GOLD", "XAU", "XAUUSD", "XAG", "XAGUSD", "SILVER"}
-FOREX_QUOTES = {"USD", "EUR", "GBP", "JPY", "CHF", "CAD", "AUD", "NZD"}
-GOLD_ANALYSIS_INDICATORS = (
-    {"name": "LuxAlgo", "role": "historical colored market-structure context"},
-    {"name": "Liquidity Swings", "settings": "14; Wick Extremity", "role": "swing liquidity and wick-extremity mapping"},
-    {"name": "Equal Highs and Lows", "settings": "1; 200; Solid", "role": "resting-liquidity targets"},
-    {"name": "Liquidity Grabs | Flux Charts", "role": "liquidity sweep and grab confirmation"},
-    {"name": "Dynamic Trend", "settings": "21; 0.3; 0.85; 8; 1.7; 1.4; 2.2; EMA", "role": "dynamic trend and regime context"},
-    {"name": "Auto Fib Retracement", "settings": "3; 10", "role": "retracement, extension, target, and invalidation geometry"},
-    {"name": "Daily VWAP", "settings": "8; 30", "role": "daily fair-value and mean-reversion context"},
-    {"name": "Volume Profile / Fixed Range", "settings": "150; 24; 70; 2", "role": "high-volume nodes, low-volume gaps, and value area"},
-    {"name": "HTF Levels PRO", "settings": "50; 1; Dashed", "role": "higher-timeframe support, resistance, and liquidity levels"},
-)
+METALS_WATCHLIST = {"XAG", "XAGUSD", "SILVER"}
 TRADINGVIEW_ACTIONS = {
     "BUY": "BUY",
     "BULL": "BUY",
@@ -149,9 +137,6 @@ def _normalize_alert_symbol(value: str) -> str:
     symbol = "".join(character for character in raw if character.isalnum())
     aliases = {
         "IXIC": "NASDAQ",
-        "XAU": "GOLD",
-        "XAUUSD": "GOLD",
-        "GOLDUSD": "GOLD",
         "XAGUSD": "XAG",
         "SILVER": "XAG",
         "SILVERUSD": "XAG",
@@ -165,6 +150,23 @@ def _normalize_alert_symbol(value: str) -> str:
     return symbol[:16]
 
 
+def _is_removed_gold_symbol(value: str) -> bool:
+    raw = str(value).upper().strip()
+    if ":" in raw:
+        raw = raw.rsplit(":", 1)[-1]
+    symbol = "".join(character for character in raw if character.isalnum())
+    return symbol in {"GOLD", "XAU", "XAUUSD", "GOLDUSD"}
+
+
+def _is_removed_forex_symbol(value: str) -> bool:
+    raw = str(value).upper().strip()
+    if ":" in raw:
+        raw = raw.rsplit(":", 1)[-1]
+    symbol = "".join(character for character in raw if character.isalpha())
+    currencies = {"USD", "EUR", "GBP", "JPY", "CHF", "CAD", "AUD", "NZD"}
+    return len(symbol) == 6 and symbol[:3] in currencies and symbol[3:] in currencies and symbol[:3] != symbol[3:]
+
+
 def _normalize_alert_action(value: str) -> str:
     return TRADINGVIEW_ACTIONS.get(str(value).strip().upper(), "WAIT")
 
@@ -173,20 +175,9 @@ def _tradingview_route(symbol: str) -> str:
     symbol = str(symbol or "").upper().strip()
     if symbol in METALS_WATCHLIST:
         return "metals and commodities primary signal feed"
-    if _is_forex_symbol(symbol):
-        return "forex primary signal feed"
     if symbol in STOCK_WATCHLIST:
         return "stocks and indices primary signal feed"
     return "crypto confluence feed"
-
-
-def _is_forex_symbol(symbol: str) -> bool:
-    if len(symbol) != 6 or not symbol.isalpha():
-        return False
-    base = symbol[:3]
-    quote = symbol[3:]
-    return base in FOREX_QUOTES and quote in FOREX_QUOTES and base != quote
-
 
 def _float_payload(payload: dict, *keys: str) -> float | None:
     for key in keys:
@@ -346,7 +337,12 @@ def normalize_tradingview_alert(payload: dict | str) -> dict:
             payload["symbol"] = parts[0]
         if "action" not in payload and len(parts) > 1:
             payload["action"] = parts[1]
-    symbol = _normalize_alert_symbol(str(payload.get("symbol") or payload.get("ticker") or payload.get("pair") or ""))
+    raw_symbol = str(payload.get("symbol") or payload.get("ticker") or payload.get("pair") or "")
+    if _is_removed_gold_symbol(raw_symbol):
+        raise ValueError("Gold/XAU setups are not supported")
+    if _is_removed_forex_symbol(raw_symbol):
+        raise ValueError("Forex setups are not supported")
+    symbol = _normalize_alert_symbol(raw_symbol)
     action = _normalize_alert_action(str(payload.get("action") or payload.get("signal") or payload.get("bias") or "WAIT"))
     try:
         confidence = max(0.0, min(100.0, float(payload.get("confidence", 0))))
@@ -641,32 +637,19 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                         "deploymentWrites": False,
                     },
                 }
-                if symbol == "GOLD":
-                    payload.update(
-                        {
-                            "source": "TradingView webhook alerts",
-                            "mark": alerts[0].get("price") if alerts else None,
-                            "goldAnalysisIndicators": list(GOLD_ANALYSIS_INDICATORS),
-                            "indicator": None,
-                            "instruction": "Use the latest locked TradingView Gold setup; no alert means wait.",
-                            "analysis": None,
-                            "fvg": None,
-                        }
-                    )
-                else:
-                    candles, source = _market_candles(self.config, symbol, limit, interval)
-                    mark = candles[-1].close
-                    indicators = indicator_snapshot(candles)
-                    payload.update(
-                        {
-                            "source": source,
-                            "mark": mark,
-                            "indicator": indicators.__dict__,
-                            "instruction": grid_instruction(indicators),
-                            "analysis": analyze_fibonacci(symbol, interval, candles, mark=mark).to_dict(),
-                            "fvg": analyze_fvg(symbol, interval, candles, mark=mark).to_dict(),
-                        }
-                    )
+                candles, source = _market_candles(self.config, symbol, limit, interval)
+                mark = candles[-1].close
+                indicators = indicator_snapshot(candles)
+                payload.update(
+                    {
+                        "source": source,
+                        "mark": mark,
+                        "indicator": indicators.__dict__,
+                        "instruction": grid_instruction(indicators),
+                        "analysis": analyze_fibonacci(symbol, interval, candles, mark=mark).to_dict(),
+                        "fvg": analyze_fvg(symbol, interval, candles, mark=mark).to_dict(),
+                    }
+                )
                 self._json(payload)
             except Exception as error:  # noqa: BLE001
                 self._error(502, str(error))
@@ -990,7 +973,11 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                 payload: dict | str = json.loads(body.decode("utf-8")) if body else {}
             except json.JSONDecodeError:
                 payload = body.decode("utf-8", errors="replace")
-            alert = normalize_tradingview_alert(payload)
+            try:
+                alert = normalize_tradingview_alert(payload)
+            except ValueError as error:
+                self._error(422, str(error))
+                return
             enriched_alert = enrich_tradingview_alert(alert)
             with self.tradingview_lock:
                 type(self).tradingview_alerts = [alert, *type(self).tradingview_alerts[: TRADINGVIEW_ALERT_LIMIT - 1]]

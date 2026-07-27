@@ -24,6 +24,12 @@ COINGLASS_SYMBOLS = {
 }
 PREFERRED_EXCHANGES = ("Binance", "Gate", "MEXC", "Bybit", "OKX", "Hyperliquid")
 PAIR_CACHE_TTL_SECONDS = 900
+FIAT_CURRENCIES = {"USD", "EUR", "GBP", "JPY", "CHF", "CAD", "AUD", "NZD"}
+
+
+def _is_forex_symbol(symbol: str) -> bool:
+    clean = "".join(character for character in str(symbol).upper() if character.isalpha())
+    return len(clean) == 6 and clean[:3] in FIAT_CURRENCIES and clean[3:] in FIAT_CURRENCIES and clean[:3] != clean[3:]
 
 
 class CoinGlassAdapter:
@@ -86,7 +92,7 @@ class CoinGlassAdapter:
             for row in pairs.get(exchange, []):
                 symbol = str(row.get("base_asset", "")).upper()
                 instrument = str(row.get("instrument_id", ""))
-                if not symbol or not instrument or symbol in by_symbol:
+                if not symbol or not instrument or symbol in by_symbol or _is_forex_symbol(symbol):
                     continue
                 by_symbol[symbol] = {
                     "symbol": symbol,
@@ -117,6 +123,8 @@ class CoinGlassAdapter:
         return payload.get("data", [])
 
     def _coin(self, symbol: str) -> str:
+        if _is_forex_symbol(symbol):
+            raise ValueError("Forex markets are not supported")
         coin = symbol.split("-", 1)[0].upper()
         return coin
 

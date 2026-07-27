@@ -161,8 +161,8 @@ MONATISE_SMTP_SSL=false
 When `MONATISE_ALERT_EMAILS` is set, accepted TradingView webhooks also send
 email notifications through the same SMTP provider.
 
-TradingView indicator alerts can be added as a forex, metals, indices, stocks,
-and crypto confluence feed. Do not enter TradingView login credentials into
+TradingView indicator alerts can be added as a metals, indices, stocks, and
+crypto confluence feed. Do not enter TradingView login credentials into
 Monatise; TradingView Premium connects through alert webhooks. Configure
 Render with:
 
@@ -177,7 +177,7 @@ https://monatise-live.onrender.com/api/tradingview/webhook?token=YOUR_SECRET
 ```
 
 Accepted TradingView alerts are classified as the primary signal feed for
-metals, forex, stocks, indices, and other watch assets. A fresh alert can drive
+metals, stocks, indices, and other watch assets. A fresh alert can drive
 the displayed price, setup, grid levels, and hedge plan, but it still cannot
 directly place live orders. TradingView uses a 5-minute freshness check and a
 15-minute setup lock, while Monatise keeps execution behind risk limits,
@@ -208,38 +208,10 @@ Use a JSON alert message like:
 }
 ```
 
-Recommended TradingView symbols include `OANDA:XAUUSD` for Gold, `OANDA:XAGUSD`
-for Silver, `TVC:SPX`, `TVC:NDX`, `NASDAQ:AAPL`, `NASDAQ:TSLA`, and
+Recommended TradingView symbols include `OANDA:XAGUSD` for Silver, `TVC:SPX`,
+`TVC:NDX`, `NASDAQ:AAPL`, `NASDAQ:TSLA`, and
 `NASDAQ:NVDA`. Monatise normalizes exchange-prefixed alert symbols before
 matching them to its watchlist.
-
-For Gold, include the TradingView indicator stack in the alert body when your
-Pine alert has those states available:
-
-```json
-{
-  "symbol": "{{ticker}}",
-  "action": "SELL",
-  "confidence": 78,
-  "indicator": "Gold TradingView stack",
-  "timeframe": "{{interval}}",
-  "price": "{{close}}",
-  "indicators": {
-    "luxalgo": "sell",
-    "historical_color": "bearish",
-    "liquidity_swings": "lower high",
-    "wick_extremity": "bearish rejection",
-    "equal_highs_lows": "equal highs swept",
-    "liquidity_grabs": "bearish grab",
-    "dynamic_trend_pivot": "below pivot",
-    "auto_fib": "below 0.618",
-    "daily_vwap": "below",
-    "volume_profile": "below value area",
-    "htf_levels": "below resistance",
-    "rsi_sma_cross": "cross down"
-  }
-}
-```
 
 See [deploy/render-hosting.md](deploy/render-hosting.md) for details.
 
