@@ -51,7 +51,8 @@ def migrate_sqlite_to_postgres(sqlite_path: str, database_url: str) -> dict[str,
                 f"insert into {table} ({names}) values ({placeholders}) "
                 f"on conflict ({conflict_column}) do update set {updates}"
             )
-            destination.executemany(query, [tuple(row[column] for column in columns) for row in rows])
+            with destination.cursor() as cursor:
+                cursor.executemany(query, [tuple(row[column] for column in columns) for row in rows])
             counts[table] = len(rows)
         destination.execute(
             "select setval(pg_get_serial_sequence('users', 'id'), "
