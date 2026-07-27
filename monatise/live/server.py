@@ -1425,6 +1425,13 @@ def main() -> int:
     config = RuntimeConfig.from_env()
     if config.mode == "live" and config.network == "mainnet" and not encryption_key_configured():
         raise RuntimeError("MONATISE_ENCRYPTION_KEY is required for live mainnet credential storage")
+    database_url = os.getenv("DATABASE_URL") or os.getenv("MONATISE_DATABASE_URL")
+    migration_source = os.getenv("MONATISE_MIGRATE_SQLITE_PATH", "").strip()
+    if database_url and migration_source:
+        from monatise.live.migration import migrate_sqlite_to_postgres
+
+        counts = migrate_sqlite_to_postgres(migration_source, database_url)
+        print(f"sqlite_migration={counts}", flush=True)
     store = UserStore()
     performance_store = SignalPerformanceStore()
     tenants = TenantServices(config, store)
