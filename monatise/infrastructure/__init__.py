@@ -1,0 +1,1 @@
+"""Shared Monatise infrastructure layer."""
