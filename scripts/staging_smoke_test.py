@@ -31,7 +31,7 @@ def run(base_url: str) -> list[str]:
     if ready_code != 200 or ready.get("status") != "ready":
         failures.append("readiness failed")
     dependencies = ready.get("dependencies", {})
-    for dependency in ("postgresql", "redis", "migrations", "event_bus", "state_manager", "audit_repository", "scheduler", "pipeline_orchestrator", "governance"):
+    for dependency in ("postgresql", "redis", "migrations", "event_bus", "state_manager", "audit_repository", "audit_integrity", "scheduler", "pipeline_orchestrator", "governance", "coinglass"):
         if dependencies.get(dependency, {}).get("status") != "ok":
             failures.append(f"{dependency} is not ready")
     registry = dependencies.get("engine_registry", {})
@@ -40,7 +40,7 @@ def run(base_url: str) -> list[str]:
     if ready.get("mode") != "paper" or ready.get("execution_enabled") is not False:
         failures.append("paper-only execution invariant failed")
     notifications = dependencies.get("notifications", {})
-    if notifications.get("telegram") != "notification_only" or notifications.get("openclaw") != "non_executable":
+    if notifications.get("telegram") not in {"configured_notification_only", "unavailable_optional"} or notifications.get("openclaw") not in {"configured_non_executable", "unavailable_optional"}:
         failures.append("notification execution invariant failed")
     if dependencies.get("governance", {}).get("kill_switch") is not True:
         failures.append("governance kill switch unavailable")

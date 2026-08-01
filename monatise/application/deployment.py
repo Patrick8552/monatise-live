@@ -4,27 +4,77 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import hmac
 import json
 import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from time import perf_counter
+from time import perf_counter, time
 from typing import Any, Mapping
 from uuid import uuid4
+from urllib.request import Request, urlopen
 
 from monatise.application.composition import create_application, create_durable_infrastructure
+from monatise.application.staging_analysis import build_paper_analysis_run, sanitized_result
 from monatise.application.registry import CANONICAL_ENGINE_ORDER
 from monatise.application.persistence import PostgresDocumentStore
+from monatise.application.workflows import TelegramNotifier
+from monatise.adapters.coinglass_production import CoinGlassProductionAdapter
+from monatise.infrastructure.audit_database import AuditAction, AuditActor, AuditRecordType
 
 
 LOGGER = logging.getLogger("monatise.orchestration")
 MIGRATION_LOCK_ID = 4_602_161_943_641_489_731
 FALSE_VALUES = {"0", "false", "no", "off", "disabled", ""}
+COINGLASS_PROVIDER_KEY = "coinglass.market_provider"
 
 
 def _false(value: str | None) -> bool:
     return value is None or value.strip().casefold() in FALSE_VALUES
+
+
+class EnvironmentSecretBoundary:
+    """Minimal secret access boundary; values are never represented or logged."""
+
+    def __init__(self, environment: Mapping[str, str]) -> None:
+        self._environment = environment
+
+    def get(self, key: str) -> str:
+        return self._environment.get(key, "")
+
+
+def register_coinglass_provider(container: Any, environment: Mapping[str, str], **adapter_options: Any) -> CoinGlassProductionAdapter:
+    secrets = EnvironmentSecretBoundary(environment)
+    container.register_instance(
+        COINGLASS_PROVIDER_KEY,
+        CoinGlassProductionAdapter(lambda: secrets.get("COINGLASS_API_KEY"), **adapter_options),
+        metadata={"capability": "read_only_market_intelligence", "execution_enabled": False},
+    )
+    return container.resolve(COINGLASS_PROVIDER_KEY)
+
+
+class TelegramNotificationTransport:
+    """Telegram notification transport with no trading methods or capability."""
+
+    def __init__(self, token_provider: Any) -> None:
+        self._token_provider = token_provider
+
+    async def send_message(self, chat_id: str, text: str) -> None:
+        await asyncio.to_thread(self._send, chat_id, text)
+
+    def _send(self, chat_id: str, text: str) -> None:
+        token = self._token_provider()
+        if not token:
+            raise RuntimeError("Telegram credential is unavailable")
+        body = json.dumps({"chat_id": chat_id, "text": text}, separators=(",", ":")).encode()
+        request = Request(f"https://api.telegram.org/bot{token}/sendMessage", data=body, headers={"content-type": "application/json"}, method="POST")
+        try:
+            with urlopen(request, timeout=15) as response:  # noqa: S310
+                if response.status >= 300:
+                    raise RuntimeError("Telegram delivery was rejected")
+        except Exception as exc:
+            raise RuntimeError("Telegram notification delivery failed") from exc
 
 
 @dataclass(frozen=True)
@@ -167,14 +217,6 @@ class RedisCoordinationStore:
         return bool(await self.client.set(self.key("replay-nonce", nonce), "1", nx=True, ex=ttl_seconds))
 
 
-class _UnavailableMarketProvider:
-    def latest_price(self, symbol: str) -> float:
-        raise RuntimeError("market provider is not invoked during startup")
-
-    def candles(self, symbol: str, limit: int, interval: str = "1m") -> list[Any]:
-        raise RuntimeError("market provider is not invoked during startup")
-
-
 class _UnavailableMacroProvider:
     def context_snapshot(self, symbol: str) -> dict[str, Any]:
         raise RuntimeError("macro provider is not invoked during startup")
@@ -195,6 +237,8 @@ class OrchestrationRuntime:
     leadership: RedisSchedulerLeadership | None = None
     redis_coordination: RedisCoordinationStore | None = None
     migrations: MigrationRunner | None = None
+    coinglass: CoinGlassProductionAdapter | None = None
+    telegram: TelegramNotifier | None = None
     dependencies: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     async def start(self) -> None:
@@ -230,11 +274,18 @@ class OrchestrationRuntime:
             }
             store = PostgresDocumentStore(self.postgres)
             infrastructure = create_durable_infrastructure(store)
+            self.coinglass = register_coinglass_provider(infrastructure.container, self.environment)
             self.application = create_application(
-                market_data_providers={"deployment": _UnavailableMarketProvider()},
+                market_data_providers={"coinglass": self.coinglass},
                 macro_provider=_UnavailableMacroProvider(),
+                derivatives_provider=self.coinglass,
                 infrastructure=infrastructure,
             )
+            telegram_token = self.environment.get("MONATISE_TELEGRAM_BOT_TOKEN", "")
+            telegram_chat = self.environment.get("MONATISE_TELEGRAM_CHAT_ID", "")
+            if telegram_token and telegram_chat:
+                secrets = EnvironmentSecretBoundary(self.environment)
+                self.telegram = TelegramNotifier(TelegramNotificationTransport(lambda: secrets.get("MONATISE_TELEGRAM_BOT_TOKEN")), telegram_chat)
             self.leadership = RedisSchedulerLeadership(
                 self.redis, namespace=self.environment.get("MONATISE_REDIS_NAMESPACE", "monatise:paper-staging")
             )
@@ -253,7 +304,23 @@ class OrchestrationRuntime:
                 "status": "ok", "count": len(self.application.registry.ordered()), "order": list(CANONICAL_ENGINE_ORDER)
             }
             self.dependencies["governance"] = {"status": "ok", "kill_switch": True}
-            self.dependencies["notifications"] = {"status": "ok", "telegram": "notification_only", "openclaw": "non_executable"}
+            configured = bool(self.environment.get("COINGLASS_API_KEY", "").strip())
+            self.dependencies["coinglass"] = {
+                "status": "ok" if configured else "error",
+                "configured": configured,
+                "latest_request": "not_yet_requested",
+            }
+            self.dependencies["notifications"] = {
+                "status": "ok",
+                "telegram": "configured_notification_only" if self.environment.get("MONATISE_TELEGRAM_BOT_TOKEN") and self.environment.get("MONATISE_TELEGRAM_CHAT_ID") else "unavailable_optional",
+                "openclaw": "configured_non_executable" if self.environment.get("MONATISE_OPENCLAW_TOKEN") else "unavailable_optional",
+            }
+            audit_errors = await infrastructure.audit.verify_integrity()
+            self.dependencies["audit_integrity"] = {
+                "status": "ok" if not audit_errors else "error",
+                "verification": "verified" if not audit_errors else "failed",
+                "error_count": len(audit_errors),
+            }
         except Exception as exc:
             self.dependencies["startup"] = {"status": "error", "reason": type(exc).__name__}
             await self.shutdown()
@@ -278,10 +345,15 @@ class OrchestrationRuntime:
             await self.postgres_pool.close()
 
     def readiness(self) -> tuple[bool, dict[str, Any]]:
+        if self.coinglass is not None:
+            health = self.coinglass.health()
+            self.dependencies.setdefault("coinglass", {})["latest_request"] = (
+                "healthy" if health.healthy else ("failed" if health.consecutive_failures else "not_yet_requested")
+            )
         registry_ok = bool(self.application and tuple(item.name for item in self.application.registry.ordered()) == CANONICAL_ENGINE_ORDER)
         mandatory = (
             "configuration", "postgresql", "migrations", "redis", "event_bus", "state_manager",
-            "audit_repository", "scheduler", "engine_registry", "pipeline_orchestrator", "governance", "notifications",
+            "audit_repository", "audit_integrity", "scheduler", "engine_registry", "pipeline_orchestrator", "governance", "notifications", "coinglass",
         )
         ready = registry_ok and self.safety is not None and all(self.dependencies.get(key, {}).get("status") == "ok" for key in mandatory)
         return ready, {
@@ -290,6 +362,26 @@ class OrchestrationRuntime:
             "mode": "paper",
             "dependencies": self.dependencies,
         }
+
+    async def analyse(self, symbol: str, correlation_id: str | None = None, scenario: str = "live") -> dict[str, Any]:
+        if self.application is None:
+            raise RuntimeError("orchestration runtime is unavailable")
+        result = await self.application.orchestrator.run(build_paper_analysis_run(symbol, correlation_id=correlation_id, scenario=scenario))
+        if self.telegram is not None:
+            try:
+                await self.telegram.deliver(result)
+            except Exception as exc:
+                await self.application.infrastructure.audit.append(
+                    record_type=AuditRecordType.SYSTEM,
+                    action=AuditAction.FAILED,
+                    actor=AuditActor("monatise-notifier", "application"),
+                    source="monatise.telegram",
+                    payload={"event": "notification_delivery_failed", "error_type": type(exc).__name__, "run_id": result.run_id},
+                    correlation_id=result.correlation_id,
+                    symbol=result.symbol,
+                )
+                LOGGER.warning("Telegram notification delivery failed", extra={"error_type": type(exc).__name__, "run_id": result.run_id})
+        return sanitized_result(result)
 
 
 class OrchestrationASGI:
@@ -320,11 +412,50 @@ class OrchestrationASGI:
         elif path == "/health/ready":
             ready, payload = self.runtime.readiness()
             code = 200 if ready else 503
+        elif path == "/api/staging/analyse" and scope.get("method", "GET").upper() == "POST":
+            code, payload = await self._analyse(scope, receive)
         else:
             code, payload = 404, {"status": "not_found"}
         body = json.dumps(payload, separators=(",", ":")).encode()
         await send({"type": "http.response.start", "status": code, "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())]})
         await send({"type": "http.response.body", "body": body})
+
+    async def _analyse(self, scope: dict[str, Any], receive: Any) -> tuple[int, dict[str, Any]]:
+        environment = self.runtime.environment
+        if environment.get("MONATISE_ENVIRONMENT", "").strip().casefold() != "staging":
+            return 404, {"status": "not_found"}
+        body = b""
+        while True:
+            message = await receive()
+            body += message.get("body", b"")
+            if len(body) > 16_384:
+                return 413, {"status": "request_too_large"}
+            if not message.get("more_body", False):
+                break
+        headers = {key.decode().casefold(): value.decode() for key, value in scope.get("headers", ())}
+        token = environment.get("MONATISE_STAGING_API_TOKEN", "")
+        timestamp = headers.get("x-monatise-timestamp", "")
+        signature = headers.get("x-monatise-signature", "")
+        try:
+            fresh = abs(time() - int(timestamp)) <= 300
+        except ValueError:
+            fresh = False
+        expected = hmac.new(token.encode(), timestamp.encode() + b"." + body, hashlib.sha256).hexdigest() if token else ""
+        if not token or not fresh or not hmac.compare_digest(signature, expected):
+            return 401, {"status": "unauthorized"}
+        if self.runtime.redis_coordination and not await self.runtime.redis_coordination.claim_nonce(signature):
+            return 409, {"status": "duplicate_request"}
+        try:
+            request = json.loads(body or b"{}")
+            if not isinstance(request, dict) or set(request) - {"symbol", "correlation_id", "scenario"}:
+                return 400, {"status": "invalid_request", "reason": "only symbol, correlation_id, and scenario are accepted"}
+            result = await self.runtime.analyse(str(request.get("symbol", "")), request.get("correlation_id"), str(request.get("scenario", "live")))
+            return 200, result
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            return 400, {"status": "invalid_request", "reason": str(exc)}
+        except Exception as exc:
+            LOGGER.exception("staging analysis failed", extra={"error_type": type(exc).__name__})
+            return 503, {"status": "analysis_unavailable", "error_type": type(exc).__name__}
 
 
 app = OrchestrationASGI()

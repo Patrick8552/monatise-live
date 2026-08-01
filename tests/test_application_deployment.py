@@ -6,8 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from monatise.application.deployment import MigrationRunner, OrchestrationASGI, OrchestrationRuntime, PaperSafetyConfiguration, RedisSchedulerLeadership
+from monatise.application.deployment import COINGLASS_PROVIDER_KEY, MigrationRunner, OrchestrationASGI, OrchestrationRuntime, PaperSafetyConfiguration, RedisSchedulerLeadership, register_coinglass_provider
 from monatise.application.registry import CANONICAL_ENGINE_ORDER
+from monatise.infrastructure.dependency_injection import Container
 
 
 def test_paper_safety_defaults_are_immutable_and_disabled():
@@ -127,6 +128,14 @@ def test_runtime_requires_managed_dependencies_without_exposing_urls():
     with pytest.raises(RuntimeError, match="PostgreSQL configuration is unavailable"):
         asyncio.run(runtime.start())
     assert "postgresql://" not in json.dumps(runtime.dependencies)
+
+
+def test_real_coinglass_adapter_is_resolved_through_di_without_exposing_key():
+    container = Container()
+    adapter = register_coinglass_provider(container, {"COINGLASS_API_KEY": "never-render-this"}, transport=lambda *_: {"code": 0, "data": []})
+    assert container.resolve(COINGLASS_PROVIDER_KEY) is adapter
+    assert container.registrations[0].metadata["execution_enabled"] is False
+    assert "never-render-this" not in repr(container.registrations)
 
 
 class _MigrationCursor:

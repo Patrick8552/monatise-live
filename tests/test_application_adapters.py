@@ -66,6 +66,24 @@ def test_coinglass_retries_generic_transport_failures():
     assert len(attempts) == 2
 
 
+def test_coinglass_supplies_canonical_price_candles():
+    def transport(path, params, timeout):
+        assert path.endswith("/price/history")
+        assert params["symbol"] == "BTCUSDT"
+        return {"code": 0, "data": [{"time": 1_700_000_000_000, "open": "10", "high": "12", "low": "9", "close": "11", "volume_usd": "100"}]}
+
+    adapter = CoinGlassProductionAdapter(lambda: "secret", transport=transport, requests_per_second=100000)
+    candle = adapter.candles("BTC", 2)[0]
+    assert candle.close == 11
+    assert adapter.latest_price("BTC") == 11
+
+
+def test_coinglass_malformed_candle_fails_closed():
+    adapter = CoinGlassProductionAdapter(lambda: "secret", transport=lambda *_: {"code": 0, "data": [{"time": 1}]}, requests_per_second=100000)
+    with pytest.raises(Exception, match="malformed candle"):
+        adapter.candles("BTC", 2)
+
+
 def test_telegram_message_has_no_execution_capability():
     sent = []
 
