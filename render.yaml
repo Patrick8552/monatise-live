@@ -97,3 +97,71 @@ services:
         value: always
       - key: MONATISE_ALLOW_LIVE_ORDERS
         value: false
+
+  # Isolated paper-only orchestration staging. This does not replace or
+  # repoint the legacy monatise-live service above.
+  - type: web
+    name: monatise-paper-staging
+    runtime: python
+    plan: starter
+    region: oregon
+    buildCommand: pip install .
+    startCommand: uvicorn monatise.application.deployment:app --host 0.0.0.0 --port $PORT --workers 1 --timeout-graceful-shutdown 30
+    healthCheckPath: /health/ready
+    autoDeployTrigger: off
+    envVars:
+      - key: MONATISE_MODE
+        value: paper
+      - key: MONATISE_ENVIRONMENT
+        value: staging
+      - key: MONATISE_NETWORK
+        value: paper
+      - key: MONATISE_EXECUTION_ENABLED
+        value: false
+      - key: MONATISE_AUTONOMOUS_EXECUTION
+        value: false
+      - key: MONATISE_EXECUTION_ADAPTER_ENABLED
+        value: false
+      - key: MONATISE_OPENCLAW_EXECUTION_ALLOWED
+        value: false
+      - key: MONATISE_TELEGRAM_EXECUTION_ALLOWED
+        value: false
+      - key: MONATISE_ALLOW_LIVE_ORDERS
+        value: false
+      - key: MONATISE_GOVERNANCE_KILL_SWITCH_ENABLED
+        value: true
+      - key: MONATISE_AUDIT_LOGGING_ENABLED
+        value: true
+      - key: MONATISE_REDIS_NAMESPACE
+        value: monatise:paper-staging
+      - key: MONATISE_DATABASE_URL
+        fromDatabase:
+          name: monatise-paper-staging-postgres
+          property: connectionString
+      - key: MONATISE_REDIS_URL
+        fromService:
+          type: keyvalue
+          name: monatise-paper-staging-redis
+          property: connectionString
+      - key: COINGLASS_API_KEY
+        sync: false
+      - key: MONATISE_TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: MONATISE_TELEGRAM_CHAT_ID
+        sync: false
+      - key: MONATISE_OPENCLAW_TOKEN
+        sync: false
+
+  - type: keyvalue
+    name: monatise-paper-staging-redis
+    plan: starter
+    region: oregon
+    ipAllowList: []
+    maxmemoryPolicy: noeviction
+
+databases:
+  - name: monatise-paper-staging-postgres
+    plan: basic-256mb
+    region: oregon
+    databaseName: monatise_paper_staging
+    user: monatise_staging

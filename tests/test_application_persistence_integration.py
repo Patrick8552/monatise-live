@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import pytest
 
+from monatise.application.deployment import OrchestrationRuntime
 from monatise.application.persistence import PostgresDocumentStore, RedisDocumentStore, connect_postgres_store, connect_redis_store
 
 
@@ -44,4 +45,31 @@ def test_redis_document_contract_against_real_service():
             await store.delete("state", "one")
         finally:
             await client.aclose()
+    asyncio.run(scenario())
+
+
+@pytest.mark.skipif(
+    not os.getenv("MONATISE_TEST_DATABASE_URL") or not os.getenv("MONATISE_TEST_REDIS_URL"),
+    reason="PostgreSQL and Redis test URLs are not configured",
+)
+def test_orchestration_runtime_service_backed_startup_and_shutdown():
+    async def scenario():
+        runtime = OrchestrationRuntime(environment={
+            "MONATISE_ENVIRONMENT": "test",
+            "MONATISE_MODE": "paper",
+            "MONATISE_NETWORK": "paper",
+            "MONATISE_DATABASE_URL": os.environ["MONATISE_TEST_DATABASE_URL"],
+            "MONATISE_REDIS_URL": os.environ["MONATISE_TEST_REDIS_URL"],
+            "MONATISE_REDIS_NAMESPACE": f"monatise:test:runtime:{uuid4()}",
+        })
+        await runtime.start()
+        try:
+            ready, payload = runtime.readiness()
+            assert ready is True
+            assert payload["execution_enabled"] is False
+            assert payload["dependencies"]["engine_registry"]["count"] == 20
+            assert payload["dependencies"]["scheduler"]["leader"] is True
+        finally:
+            await runtime.shutdown()
+
     asyncio.run(scenario())
