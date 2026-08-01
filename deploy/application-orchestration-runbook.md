@@ -53,6 +53,12 @@ The legacy `monatise-live` service remains separate and continues to use
 `monatise.application.deployment:app` ASGI entrypoint. This stabilization change
 does not repoint production; promotion is a later, explicit decision.
 
+Create the staging Blueprint using the explicit Blueprint Path
+`render.staging.yaml`. Do not create it from the root `render.yaml`: that file
+owns the legacy production service and associating it with a new Blueprint would
+change production settings. The staging-only file contains no production
+resource.
+
 Staging requires `MONATISE_DATABASE_URL` and `MONATISE_REDIS_URL` from
 network-accessible managed services. It must never use localhost/Homebrew Redis,
 inherit live/mainnet values, or receive exchange account addresses, private keys,
