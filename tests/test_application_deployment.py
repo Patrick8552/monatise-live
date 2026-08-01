@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 
 import pytest
 
@@ -157,3 +158,16 @@ def test_migrations_use_advisory_lock_and_record_version(tmp_path):
     assert "monatise_schema_migrations" in rendered
     assert runner.current is True
     assert runner.version == "001_test"
+
+
+def test_render_blueprints_keep_production_and_staging_isolated():
+    repository = Path(__file__).parents[1]
+    production = (repository / "render.yaml").read_text(encoding="utf-8")
+    staging = (repository / "render.staging.yaml").read_text(encoding="utf-8")
+    assert "name: monatise-live" in production
+    assert "name: monatise-paper-staging" not in production
+    assert "name: monatise-paper-staging" in staging
+    assert "name: monatise-paper-staging-postgres" in staging
+    assert "name: monatise-paper-staging-redis" in staging
+    assert "name: monatise-live" not in staging
+    assert "autoDeployTrigger: off" in staging
