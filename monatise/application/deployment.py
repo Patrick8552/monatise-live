@@ -305,9 +305,11 @@ class OrchestrationRuntime:
             }
             self.dependencies["governance"] = {"status": "ok", "kill_switch": True}
             configured = bool(self.environment.get("COINGLASS_API_KEY", "").strip())
+            coinglass_required = deployment_environment != "test"
             self.dependencies["coinglass"] = {
-                "status": "ok" if configured else "error",
+                "status": "ok" if configured or not coinglass_required else "error",
                 "configured": configured,
+                "required": coinglass_required,
                 "latest_request": "not_yet_requested",
             }
             self.dependencies["notifications"] = {
