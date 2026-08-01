@@ -12,6 +12,7 @@ authors = [{ name = "Monatise" }]
 dependencies = [
   "cryptography>=42.0.0",
   "psycopg[binary]>=3.2,<4",
+  "redis>=5.2,<7",
 ]
 
 [project.optional-dependencies]

@@ -10,6 +10,32 @@ jobs:
   pytest:
     name: Pytest
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: monatise_test
+          POSTGRES_USER: monatise
+          POSTGRES_PASSWORD: monatise_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U monatise -d monatise_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      MONATISE_TEST_DATABASE_URL: postgresql://monatise:monatise_test@127.0.0.1:5432/monatise_test
+      MONATISE_TEST_REDIS_URL: redis://127.0.0.1:6379/15
 
     steps:
       - name: Checkout
