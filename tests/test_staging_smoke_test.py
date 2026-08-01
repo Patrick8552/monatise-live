@@ -14,10 +14,10 @@ SPEC.loader.exec_module(smoke)
 
 def _ready_payload():
     dependencies = {name: {"status": "ok"} for name in (
-        "postgresql", "redis", "migrations", "event_bus", "state_manager", "audit_repository", "scheduler", "pipeline_orchestrator",
+        "postgresql", "redis", "migrations", "event_bus", "state_manager", "audit_repository", "audit_integrity", "scheduler", "pipeline_orchestrator", "coinglass",
     )}
     dependencies["engine_registry"] = {"status": "ok", "count": 20, "order": list(CANONICAL_ENGINE_ORDER)}
-    dependencies["notifications"] = {"status": "ok", "telegram": "notification_only", "openclaw": "non_executable"}
+    dependencies["notifications"] = {"status": "ok", "telegram": "unavailable_optional", "openclaw": "configured_non_executable"}
     dependencies["governance"] = {"status": "ok", "kill_switch": True}
     return {"status": "ready", "mode": "paper", "execution_enabled": False, "dependencies": dependencies}
 

@@ -15,7 +15,7 @@ def test_coinglass_normalizes_six_derivatives_datasets_and_caches():
         "open-interest": {"openInterest": "100"},
         "funding-rate": {"fundingRate": "0.01"},
         "liquidation": {"liquidationUsd": "20"},
-        "taker-buy-sell": {"cvd": "12"},
+        "aggregated-cvd": {"cvd": "12"},
         "volume": {"volumeUsd": "300"},
         "orderbook": {"imbalance": "0.2"},
     }
@@ -30,6 +30,28 @@ def test_coinglass_normalizes_six_derivatives_datasets_and_caches():
     adapter.derivatives_snapshot("BTC-USDT")
     assert len(calls) == 6
     assert adapter.health().healthy
+
+
+def test_coinglass_uses_official_dataset_parameters_and_normalizes_native_fields():
+    calls = {}
+    responses = {
+        "open-interest": [{"open_interest_usd": "100"}],
+        "funding-rate": [{"close": "0.01"}],
+        "liquidation": [{"liquidation_usd": "20"}],
+        "taker-buy-sell": [{"aggregated_buy_volume_usd": "180", "aggregated_sell_volume_usd": "120"}],
+        "orderbook": [{"aggregated_bids_usd": "60", "aggregated_asks_usd": "40"}],
+        "aggregated-cvd": [{"cum_vol_delta": "12"}],
+    }
+
+    def transport(path, params, timeout):
+        calls[path] = params
+        return {"code": 0, "data": next(value for key, value in responses.items() if key in path)}
+
+    adapter = CoinGlassProductionAdapter(lambda: "secret", transport=transport, requests_per_second=100000)
+    assert adapter.derivatives_snapshot("BTC") == {"open_interest": 100.0, "funding_rate": 0.01, "liquidation_volume": 20.0, "derivatives_volume": 300.0, "order_book_imbalance": 0.2, "cvd": 12.0}
+    assert calls[adapter.ENDPOINTS["funding_rate"]] == {"symbol": "BTC", "interval": "1h", "limit": "2"}
+    assert calls[adapter.ENDPOINTS["order_book"]]["exchange_list"] == "Binance"
+    assert calls[adapter.ENDPOINTS["order_book"]]["symbol"] == "BTC"
 
 
 def test_coinglass_rejects_forex():
@@ -64,6 +86,24 @@ def test_coinglass_retries_generic_transport_failures():
     adapter = CoinGlassProductionAdapter(lambda: "secret", transport=transport, maximum_attempts=2, requests_per_second=100000)
     assert adapter.open_interest("BTCUSD")["openInterest"] == 10
     assert len(attempts) == 2
+
+
+def test_coinglass_supplies_canonical_price_candles():
+    def transport(path, params, timeout):
+        assert path.endswith("/price/history")
+        assert params["symbol"] == "BTCUSDT"
+        return {"code": 0, "data": [{"time": 1_700_000_000_000, "open": "10", "high": "12", "low": "9", "close": "11", "volume_usd": "100"}]}
+
+    adapter = CoinGlassProductionAdapter(lambda: "secret", transport=transport, requests_per_second=100000)
+    candle = adapter.candles("BTC", 2)[0]
+    assert candle.close == 11
+    assert adapter.latest_price("BTC") == 11
+
+
+def test_coinglass_malformed_candle_fails_closed():
+    adapter = CoinGlassProductionAdapter(lambda: "secret", transport=lambda *_: {"code": 0, "data": [{"time": 1}]}, requests_per_second=100000)
+    with pytest.raises(Exception, match="malformed candle"):
+        adapter.candles("BTC", 2)
 
 
 def test_telegram_message_has_no_execution_capability():

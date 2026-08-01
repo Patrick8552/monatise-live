@@ -53,6 +53,8 @@ services:
         sync: false
       - key: MONATISE_OPENCLAW_TOKEN
         sync: false
+      - key: MONATISE_STAGING_API_TOKEN
+        sync: false
 
   - type: keyvalue
     name: monatise-paper-staging-redis
