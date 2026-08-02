@@ -9,6 +9,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
+from datetime import timedelta
 from pathlib import Path
 from time import perf_counter, time
 from typing import Any, Mapping
@@ -22,6 +23,7 @@ from monatise.application.persistence import PostgresDocumentStore
 from monatise.application.workflows import TelegramNotifier
 from monatise.adapters.coinglass_production import CoinGlassProductionAdapter
 from monatise.infrastructure.audit_database import AuditAction, AuditActor, AuditRecordType
+from monatise.infrastructure.task_scheduler import JobDefinition, RetryPolicy, ScheduleType
 from monatise.engines.macro.rules import CRYPTO_MACRO_RULES
 
 
@@ -29,10 +31,36 @@ LOGGER = logging.getLogger("monatise.orchestration")
 MIGRATION_LOCK_ID = 4_602_161_943_641_489_731
 FALSE_VALUES = {"0", "false", "no", "off", "disabled", ""}
 COINGLASS_PROVIDER_KEY = "coinglass.market_provider"
+SCHEDULED_ANALYSIS_JOB_PREFIX = "scheduled-analysis"
+SCHEDULED_ANALYSIS_DEFAULT_SYMBOLS = ("BTC", "ETH", "SOL")
 
 
 def _false(value: str | None) -> bool:
     return value is None or value.strip().casefold() in FALSE_VALUES
+
+
+def _true(value: str | None) -> bool:
+    return value is not None and value.strip().casefold() in {"1", "true", "yes", "on", "enabled"}
+
+
+def scheduled_analysis_configuration(environment: Mapping[str, str]) -> tuple[tuple[str, ...], int] | None:
+    """Return the production analysis schedule without granting execution capability."""
+    if not _true(environment.get("MONATISE_SCHEDULED_ANALYSIS_ENABLED")):
+        return None
+    raw_symbols = environment.get("MONATISE_SCHEDULED_ANALYSIS_SYMBOLS", ",".join(SCHEDULED_ANALYSIS_DEFAULT_SYMBOLS))
+    symbols = tuple(dict.fromkeys(part.strip().upper() for part in raw_symbols.split(",") if part.strip()))
+    unsupported = tuple(symbol for symbol in symbols if symbol not in SCHEDULED_ANALYSIS_DEFAULT_SYMBOLS)
+    if not symbols:
+        raise ValueError("scheduled analysis requires at least one symbol")
+    if unsupported:
+        raise ValueError("unsupported scheduled analysis symbols: " + ", ".join(unsupported))
+    try:
+        interval_seconds = int(environment.get("MONATISE_SCHEDULED_ANALYSIS_INTERVAL_SECONDS", "900"))
+    except ValueError as exc:
+        raise ValueError("scheduled analysis interval must be an integer") from exc
+    if not 60 <= interval_seconds <= 86_400:
+        raise ValueError("scheduled analysis interval must be between 60 and 86400 seconds")
+    return symbols, interval_seconds
 
 
 class EnvironmentSecretBoundary:
@@ -277,6 +305,35 @@ class OrchestrationRuntime:
     telegram: TelegramNotifier | None = None
     dependencies: dict[str, dict[str, Any]] = field(default_factory=dict)
 
+    async def _register_scheduled_analysis(self) -> tuple[str, ...]:
+        configuration = scheduled_analysis_configuration(self.environment)
+        if configuration is None:
+            return ()
+        if self.application is None:
+            raise RuntimeError("orchestration runtime is unavailable")
+        symbols, interval_seconds = configuration
+        scheduler = self.application.infrastructure.scheduler
+        job_ids: list[str] = []
+        for symbol in symbols:
+            job_id = f"{SCHEDULED_ANALYSIS_JOB_PREFIX}-{symbol.casefold()}"
+
+            async def task(asset: str = symbol) -> dict[str, Any]:
+                return await self.analyse(asset, source="monatise.scheduler")
+
+            await scheduler.register(JobDefinition(
+                job_id=job_id,
+                name=f"Scheduled paper analysis for {symbol}",
+                task=task,
+                schedule_type=ScheduleType.INTERVAL,
+                interval=timedelta(seconds=interval_seconds),
+                timeout_seconds=min(float(interval_seconds), 300.0),
+                retry_policy=RetryPolicy(maximum_attempts=2, delay_seconds=5.0, maximum_delay_seconds=30.0),
+                tags=("scheduled", "crypto", "analysis", "paper-only"),
+                metadata={"symbol": symbol, "execution_enabled": False, "notification_policy": "validated_signals_only"},
+            ))
+            job_ids.append(job_id)
+        return tuple(job_ids)
+
     async def start(self) -> None:
         LOGGER.info("validating paper-only orchestration configuration")
         self.safety = PaperSafetyConfiguration.from_environment(self.environment)
@@ -330,6 +387,7 @@ class OrchestrationRuntime:
             if telegram_token and telegram_chat:
                 secrets = EnvironmentSecretBoundary(self.environment)
                 self.telegram = TelegramNotifier(TelegramNotificationTransport(lambda: secrets.get("MONATISE_TELEGRAM_BOT_TOKEN")), telegram_chat)
+            scheduled_jobs = await self._register_scheduled_analysis()
             self.leadership = RedisSchedulerLeadership(
                 self.redis, namespace=self.environment.get("MONATISE_REDIS_NAMESPACE", "monatise:paper-staging")
             )
@@ -344,6 +402,11 @@ class OrchestrationRuntime:
             for name in ("event_bus", "state_manager", "audit_repository", "scheduler", "pipeline_orchestrator"):
                 self.dependencies[name] = {"status": "ok"}
             self.dependencies["scheduler"]["leader"] = leader
+            self.dependencies["scheduler"]["scheduled_analysis"] = {
+                "enabled": bool(scheduled_jobs),
+                "jobs": list(scheduled_jobs),
+                "execution_enabled": False,
+            }
             self.dependencies["engine_registry"] = {
                 "status": "ok", "count": len(self.application.registry.ordered()), "order": list(CANONICAL_ENGINE_ORDER)
             }
@@ -437,7 +500,14 @@ class OrchestrationRuntime:
                 symbol=symbol.strip().upper(),
             )
         result = await self.application.orchestrator.run(build_paper_analysis_run(symbol, correlation_id=correlation_id, scenario=scenario, source=source))
-        if self.telegram is not None:
+        decision = result.context.outputs.get("decision")
+        classification = getattr(getattr(decision, "classification", None), "value", None)
+        validated_signal = (
+            getattr(result.status, "value", result.status) == "completed"
+            and classification in {"trend", "grid"}
+            and all(stage in result.context.outputs for stage in ("risk_validation", "capital_allocation", "execution_policy", "governance_loss_control"))
+        )
+        if self.telegram is not None and validated_signal:
             try:
                 await self.telegram.deliver(result)
             except Exception as exc:
