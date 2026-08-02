@@ -68,10 +68,13 @@ def test_staging_route_is_disabled_in_production():
 def test_production_serves_frontend_homepage_and_assets(tmp_path):
     (tmp_path / "index.html").write_text("<!doctype html><title>Monatise</title>")
     (tmp_path / "app.js").write_text("window.MONATISE = true;")
+    (tmp_path / "dashboard").mkdir()
+    (tmp_path / "dashboard" / "index.html").write_text("<!doctype html><title>Market Dashboard</title>")
     app = ProductionASGI(Runtime(), static_dir=tmp_path)
 
     homepage = get(app, "/")
     asset = get(app, "/app.js")
+    dashboard = get(app, "/dashboard/")
 
     assert homepage[0]["status"] == 200
     assert b"Monatise" in homepage[1]["body"]
@@ -82,6 +85,8 @@ def test_production_serves_frontend_homepage_and_assets(tmp_path):
         b"application/javascript; charset=utf-8",
         b"text/javascript; charset=utf-8",
     }
+    assert dashboard[0]["status"] == 200
+    assert b"Market Dashboard" in dashboard[1]["body"]
 
 
 def test_production_frontend_does_not_shadow_api_or_allow_traversal(tmp_path):
