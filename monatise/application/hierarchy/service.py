@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import logging
 from typing import Any, Awaitable, Callable
 
 from monatise.application.hierarchy.coordinator import ShadowComparison, ShadowHierarchyCoordinator
 from monatise.application.hierarchy.evaluator import HierarchyLayerEvaluator, ShadowEvaluation
 from monatise.application.hierarchy.lifecycle import HierarchyRepository
 from monatise.application.hierarchy.models import TriggerState
+
+
+LOGGER = logging.getLogger("monatise.hierarchy")
 
 
 class ShadowHierarchyService:
@@ -36,7 +40,9 @@ class ShadowHierarchyService:
 
         duplicate = False
         trigger_id: str | None = None
-        if evaluation.trigger_5m is not None and evaluation.trigger_5m.state is TriggerState.TRIGGER_CONFIRMED:
+        eligible = evaluation.validation is not None and evaluation.validation.eligible_for_shadow_decision
+        publication_available = self.coordinator.configuration.telegram_publish_enabled and self.publisher is not None
+        if eligible and publication_available and evaluation.trigger_5m is not None and evaluation.trigger_5m.state is TriggerState.TRIGGER_CONFIRMED:
             claimed, trigger_id = await self.coordinator.claim_closed_trigger(
                 trigger=evaluation.trigger_5m,
                 setup_id=evaluation.setup_15m.identity.context_id,
@@ -46,13 +52,18 @@ class ShadowHierarchyService:
 
         published = False
         publication_failed = False
-        eligible = evaluation.validation is not None and evaluation.validation.eligible_for_shadow_decision
-        if eligible and not duplicate and trigger_id is not None and self.coordinator.configuration.telegram_publish_enabled and self.publisher is not None:
+        if eligible and publication_available and not duplicate and trigger_id is not None:
             try:
                 await self.publisher(self._format_notification(evaluation))
+                await self.repository.record_publication(symbol=symbol, trigger_id=trigger_id, occurred_at=now, succeeded=True)
                 published = True
-            except Exception:
+            except Exception as exc:
                 publication_failed = True
+                try:
+                    await self.repository.record_publication(symbol=symbol, trigger_id=trigger_id, occurred_at=now, succeeded=False, error_type=type(exc).__name__)
+                except Exception:
+                    LOGGER.exception("failed to persist hierarchical Telegram publication failure", extra={"symbol": symbol.upper(), "trigger_id": trigger_id})
+                LOGGER.exception("hierarchical Telegram publication failed", extra={"symbol": symbol.upper(), "trigger_id": trigger_id})
 
         hierarchical_outcome = (
             "duplicate" if duplicate else

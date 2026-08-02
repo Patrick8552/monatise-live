@@ -105,6 +105,27 @@ def test_runtime_registers_fail_closed_hierarchy_shadow_jobs_without_publication
     assert runtime.dependencies["hierarchy_shadow"]["enabled"] is True
 
 
+def test_runtime_reports_requested_hierarchy_publication_without_publisher_as_error():
+    class Scheduler:
+        async def register(self, definition): pass
+
+    runtime = OrchestrationRuntime(environment={
+        "MONATISE_HIERARCHICAL_SHADOW_ENABLED": "true",
+        "MONATISE_HIERARCHICAL_TELEGRAM_PUBLISH_ENABLED": "true",
+        "MONATISE_SCHEDULED_ANALYSIS_SYMBOLS": "BTC",
+    })
+    runtime.application = SimpleNamespace(infrastructure=SimpleNamespace(scheduler=Scheduler()))
+    runtime.coinglass = SimpleNamespace()
+
+    asyncio.run(runtime._register_hierarchy_shadow(SimpleNamespace()))
+
+    status = runtime.dependencies["hierarchy_shadow"]
+    assert status["status"] == "error"
+    assert status["telegram_publish_enabled"] is True
+    assert status["telegram_publisher_configured"] is False
+    assert status["telegram_publication_operational"] is False
+
+
 def test_runtime_notifies_only_completed_risk_validated_signals():
     delivered = []
 

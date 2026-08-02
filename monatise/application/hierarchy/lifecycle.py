@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import asdict, dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import Any, Protocol
 
@@ -107,9 +107,28 @@ class HierarchyRepository:
         async with await self.symbol_lock(symbol):
             existing = await self.store.get("hierarchy_trigger_claims", identity)
             if existing is not None:
-                return False, identity
+                status = existing.value.get("status", "published" if existing.value.get("published") else "pending")
+                lease_until = datetime.fromisoformat(existing.value["lease_until"]) if existing.value.get("lease_until") else None
+                if status == "published" or (status == "pending" and lease_until is not None and occurred_at < lease_until):
+                    return False, identity
+                attempts = int(existing.value.get("attempts", 1)) + 1
+                try:
+                    await self.store.put(
+                        "hierarchy_trigger_claims",
+                        identity,
+                        {"status": "pending", "evaluated": True, "published": False, "occurred_at": occurred_at.isoformat(), "lease_until": (occurred_at + timedelta(minutes=2)).isoformat(), "attempts": attempts},
+                        expected_version=existing.version,
+                    )
+                except RuntimeError:
+                    return False, identity
+                return True, identity
             try:
-                await self.store.put("hierarchy_trigger_claims", identity, {"evaluated": True, "published": False, "occurred_at": occurred_at.isoformat()}, expected_version=0)
+                await self.store.put(
+                    "hierarchy_trigger_claims",
+                    identity,
+                    {"status": "pending", "evaluated": True, "published": False, "occurred_at": occurred_at.isoformat(), "lease_until": (occurred_at + timedelta(minutes=2)).isoformat(), "attempts": 1},
+                    expected_version=0,
+                )
             except RuntimeError:
                 return False, identity
             await self._append_event(LifecycleEvent(
@@ -118,6 +137,27 @@ class HierarchyRepository:
                 metadata={"trigger_id": identity},
             ))
             return True, identity
+
+    async def record_publication(self, *, symbol: str, trigger_id: str, occurred_at: datetime, succeeded: bool, error_type: str | None = None) -> None:
+        async with await self.symbol_lock(symbol):
+            current = await self.store.get("hierarchy_trigger_claims", trigger_id)
+            if current is None:
+                raise RuntimeError("trigger publication claim is unavailable")
+            value = dict(current.value)
+            value.update({
+                "status": "published" if succeeded else "failed",
+                "published": succeeded,
+                "publication_updated_at": occurred_at.isoformat(),
+                "error_type": error_type,
+            })
+            value.pop("lease_until", None)
+            await self.store.put("hierarchy_trigger_claims", trigger_id, value, expected_version=current.version)
+            await self._append_event(LifecycleEvent(
+                deterministic_id("event", {"type": "publication", "trigger": trigger_id, "attempt": value.get("attempts"), "status": value["status"]}),
+                LifecycleEventType.PUBLICATION_RECORDED, symbol.upper(), occurred_at, None,
+                reason="telegram_delivery_succeeded" if succeeded else "telegram_delivery_failed",
+                metadata={"trigger_id": trigger_id, "status": value["status"], "attempt": value.get("attempts"), "error_type": error_type},
+            ))
 
     async def reconstruct(self, symbol: str) -> tuple[dict[str, Any], ...]:
         events = await self.store.read_stream("hierarchy_lifecycle")

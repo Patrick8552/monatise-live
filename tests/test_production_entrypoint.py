@@ -159,7 +159,7 @@ def test_production_readiness_accepts_healthy_scheduler_contender_during_cutover
             "configuration", "postgresql", "migrations", "redis", "event_bus",
             "state_manager", "audit_repository", "audit_integrity", "audit_logging",
             "scheduler", "engine_registry", "pipeline_orchestrator", "governance",
-            "notifications", "coinglass", "macro_provider",
+            "notifications", "coinglass", "macro_provider", "hierarchy_shadow",
         )
     }
     runtime.dependencies["scheduler"]["leader"] = False

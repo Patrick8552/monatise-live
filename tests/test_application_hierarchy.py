@@ -129,9 +129,16 @@ def test_repository_is_append_only_and_trigger_claim_is_idempotent():
         first = await repository.claim_trigger(symbol="BTC", candle_close_time=NOW, setup_id="setup-1", direction="long", trigger_type="reclaim", strategy_version="v1", occurred_at=NOW)
         second = await repository.claim_trigger(symbol="BTC", candle_close_time=NOW, setup_id="setup-1", direction="long", trigger_type="reclaim", strategy_version="v1", occurred_at=NOW)
         assert first[0] is True and second == (False, first[1])
+        await repository.record_publication(symbol="BTC", trigger_id=first[1], occurred_at=NOW, succeeded=False, error_type="TimeoutError")
+        retry = await repository.claim_trigger(symbol="BTC", candle_close_time=NOW, setup_id="setup-1", direction="long", trigger_type="reclaim", strategy_version="v1", occurred_at=NOW)
+        assert retry == (True, first[1])
+        await repository.record_publication(symbol="BTC", trigger_id=first[1], occurred_at=NOW, succeeded=True)
+        published_duplicate = await repository.claim_trigger(symbol="BTC", candle_close_time=NOW, setup_id="setup-1", direction="long", trigger_type="reclaim", strategy_version="v1", occurred_at=NOW)
+        assert published_duplicate == (False, first[1])
         events = await repository.reconstruct("BTC")
         assert [event["event_type"] for event in events].count("context_superseded") == 1
         assert [event["event_type"] for event in events].count("trigger_evaluated") == 1
+        assert [event["event_type"] for event in events].count("publication_recorded") == 2
 
     asyncio.run(scenario())
 
@@ -329,6 +336,53 @@ def test_confirmed_hierarchy_produces_valid_shadow_bundle_and_risk_bridge():
     message = ShadowHierarchyService._format_notification(result)
     assert "Expires 2026-08-02 12:15:20 UTC" in message
     assert "Valid for 15 min" in message
+
+    async def publication_scenario():
+        store = MemoryStore()
+        repository = HierarchyRepository(store)
+
+        class Coordinator:
+            configuration = HierarchyConfiguration(enabled=True, telegram_publish_enabled=True)
+
+            async def collect_due(self, symbol, *, watching, observed_at):
+                return {"5m": snapshots["5m"]}
+
+            async def claim_closed_trigger(self, *, trigger, setup_id, trigger_type):
+                return await repository.claim_trigger(
+                    symbol=trigger.identity.symbol,
+                    candle_close_time=trigger.source_close_time,
+                    setup_id=setup_id,
+                    direction=trigger.direction,
+                    trigger_type=trigger_type,
+                    strategy_version=trigger.identity.strategy_version,
+                    occurred_at=trigger.evaluated_at,
+                )
+
+            async def record_comparison(self, comparison):
+                await repository.record_shadow_comparison(__import__("dataclasses").asdict(comparison))
+
+        class Evaluator:
+            def watching(self, symbol): return True
+            def evaluate(self, symbol, current, *, evaluated_at, macro_degraded): return result
+
+        attempts = []
+
+        async def publisher(text):
+            attempts.append(text)
+            if len(attempts) == 1:
+                raise TimeoutError("temporary Telegram failure")
+
+        service = ShadowHierarchyService(Coordinator(), Evaluator(), repository, publisher=publisher)
+        failed = await service.tick("BTC", observed_at=NOW)
+        retried = await service.tick("BTC", observed_at=NOW + timedelta(seconds=1))
+        duplicate = await service.tick("BTC", observed_at=NOW + timedelta(seconds=2))
+
+        assert failed["telegram_publication_failed"] is True
+        assert retried["telegram_published"] is True
+        assert duplicate["duplicate_blocked"] is True
+        assert len(attempts) == 2
+
+    asyncio.run(publication_scenario())
 
     old_setup_id = result.setup_15m.identity.context_id
     refreshed = evaluator.evaluate("BTC", {"4h": snapshots["4h"]}, evaluated_at=NOW + timedelta(minutes=16), macro_degraded=True)

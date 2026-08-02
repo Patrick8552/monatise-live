@@ -379,9 +379,13 @@ class OrchestrationRuntime:
             ))
             job_ids.append(job_id)
         self.dependencies["hierarchy_shadow"] = {
-            "status": "ok", "enabled": True, "jobs": list(job_ids),
+            "status": "error" if configuration.telegram_publish_enabled and publisher is None else "ok",
+            "enabled": True, "jobs": list(job_ids),
             "strategy_version": configuration.strategy_version,
-            "telegram_publish_enabled": configuration.telegram_publish_enabled, "execution_enabled": False,
+            "telegram_publish_enabled": configuration.telegram_publish_enabled,
+            "telegram_publisher_configured": publisher is not None,
+            "telegram_publication_operational": configuration.telegram_publish_enabled and publisher is not None,
+            "execution_enabled": False,
         }
         return tuple(job_ids)
 
@@ -523,7 +527,7 @@ class OrchestrationRuntime:
         registry_ok = bool(self.application and tuple(item.name for item in self.application.registry.ordered()) == CANONICAL_ENGINE_ORDER)
         mandatory = (
             "configuration", "postgresql", "migrations", "redis", "event_bus", "state_manager",
-            "audit_repository", "audit_integrity", "audit_logging", "scheduler", "engine_registry", "pipeline_orchestrator", "governance", "notifications", "coinglass", "macro_provider",
+            "audit_repository", "audit_integrity", "audit_logging", "scheduler", "engine_registry", "pipeline_orchestrator", "governance", "notifications", "coinglass", "macro_provider", "hierarchy_shadow",
         )
         mandatory_ok = all(
             self.dependencies.get(key, {}).get("status") == "ok"
