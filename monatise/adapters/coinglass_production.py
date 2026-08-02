@@ -42,6 +42,16 @@ class CoinGlassProductionAdapter:
     }
 
     PAIRS = {"BTC": "BTCUSDT", "ETH": "ETHUSDT", "SOL": "SOLUSDT"}
+    DASHBOARD_PATHS = {
+        "/api/article/list": {"start_time", "end_time", "language", "page", "per_page"},
+        "/api/futures/funding-rate/exchange-list": set(),
+        "/api/futures/liquidation/aggregated-map": {"symbol", "range"},
+        "/api/futures/liquidation/aggregated-history": {"symbol", "interval", "limit"},
+        "/api/futures/liquidation/max-pain": {"range"},
+        "/api/futures/open-interest/exchange-list": {"symbol"},
+        "/api/futures/price/history": {"exchange", "symbol", "interval", "limit"},
+        "/api/index/fear-greed-history": set(),
+    }
 
     def __init__(self, credential_provider: Callable[[], str], *, base_url: str = "https://open-api-v4.coinglass.com", timeout_seconds: float = 15.0, maximum_attempts: int = 3, requests_per_second: float = 4.0, cache_ttl_seconds: float = 30.0, transport: Callable[[str, dict[str, str], float], dict[str, Any]] | None = None, observer: Callable[[str, dict[str, Any]], None] | None = None) -> None:
         if maximum_attempts < 1 or timeout_seconds <= 0 or requests_per_second <= 0 or cache_ttl_seconds < 0:
@@ -123,6 +133,42 @@ class CoinGlassProductionAdapter:
 
     def cvd(self, symbol: str) -> Any:
         return self._fetch("cvd", symbol)
+
+    def dashboard_query(self, path: str, params: dict[str, str]) -> dict[str, Any]:
+        """Execute one allowlisted, read-only dashboard query with server credentials."""
+        allowed = self.DASHBOARD_PATHS.get(path)
+        if allowed is None:
+            raise ValueError("unsupported CoinGlass dashboard dataset")
+        if set(params) - allowed or any(len(key) > 32 or len(value) > 128 for key, value in params.items()):
+            raise ValueError("invalid CoinGlass dashboard parameters")
+        cache_key = f"dashboard:{path}:{tuple(sorted(params.items()))}"
+        now = time.monotonic()
+        with self._lock:
+            cached = self._cache.get(cache_key)
+            if cached and now - cached[0] <= self._ttl:
+                self._observe("coinglass.cache_hit", {"dataset": path})
+                return deepcopy(cached[1])
+        last_error: Exception | None = None
+        for attempt in range(1, self._attempts + 1):
+            try:
+                self._rate_limit()
+                payload = self._transport(path, dict(params), self._timeout)
+                if not isinstance(payload, dict) or str(payload.get("code")) not in {"0", "200"}:
+                    raise CoinGlassError(str(payload.get("msg") or payload.get("message") or "CoinGlass rejected request") if isinstance(payload, dict) else "CoinGlass returned an invalid response")
+                with self._lock:
+                    self._cache[cache_key] = (time.monotonic(), deepcopy(payload))
+                    self._last_success = time.time()
+                    self._failures = 0
+                self._observe("coinglass.request", {"dataset": path, "attempt": attempt, "success": True})
+                return deepcopy(payload)
+            except Exception as exc:
+                last_error = exc
+                with self._lock:
+                    self._failures += 1
+                self._observe("coinglass.request", {"dataset": path, "attempt": attempt, "success": False, "error": type(exc).__name__})
+                if attempt < self._attempts:
+                    time.sleep(min(2.0, 0.2 * 2 ** (attempt - 1)) + random.uniform(0, 0.05))
+        raise CoinGlassError("CoinGlass dashboard request failed") from last_error
 
     def derivatives_snapshot(self, symbol: str) -> dict[str, float | None]:
         symbol = self._crypto_symbol(symbol)

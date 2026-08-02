@@ -7,12 +7,15 @@ import hmac
 import json
 import logging
 import mimetypes
+import asyncio
+from datetime import datetime, timezone
 from pathlib import Path
 import secrets
 from time import time
 from typing import Any
 from urllib.parse import parse_qs
 
+from monatise.adapters.coinglass_production import CoinGlassProductionAdapter
 from monatise.application.deployment import OrchestrationASGI, OrchestrationRuntime
 
 
@@ -53,11 +56,36 @@ class ProductionRuntime(OrchestrationRuntime):
 
 
 class ProductionASGI(OrchestrationASGI):
+    MARKET_SYMBOLS = {"BTC", "ETH", "SOL", "XRP", "DOGE", "BNB"}
+    MARKET_INTERVALS = {"1m", "3m", "5m", "15m", "30m", "1h", "4h", "1d"}
+
     def __init__(self, runtime: OrchestrationRuntime | None = None, static_dir: Path | None = None) -> None:
         super().__init__(runtime or ProductionRuntime())
         self.static_dir = (static_dir or Path(__file__).resolve().parents[2] / "app").resolve()
+        self._market_rate_windows: dict[str, tuple[int, int]] = {}
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+        path = scope.get("path", "")
+        if scope.get("type") == "http" and path in {"/api/market/candles", "/api/operator"}:
+            if scope.get("method", "GET").upper() != "GET":
+                await self._respond(send, 405, {"status": "method_not_allowed"})
+                return
+            if path == "/api/market/candles" and self._market_rate_limited(scope):
+                await self._respond(send, 429, {"status": "rate_limited"})
+                return
+            code, payload = await (self._market_candles(scope) if path == "/api/market/candles" else self._operator_status())
+            await self._respond(send, code, payload)
+            return
+        if scope.get("type") == "http" and path.startswith("/api/coinglass/proxy/"):
+            if scope.get("method", "GET").upper() != "GET":
+                await self._respond(send, 405, {"status": "method_not_allowed"})
+                return
+            if self._market_rate_limited(scope):
+                await self._respond(send, 429, {"status": "rate_limited"})
+                return
+            code, payload = await self._coinglass_dashboard(scope)
+            await self._respond(send, code, payload)
+            return
         if scope.get("type") == "http" and scope.get("path") == "/api/analysis":
             if scope.get("method", "GET").upper() != "POST":
                 await self._respond(send, 405, {"status": "method_not_allowed"})
@@ -75,6 +103,68 @@ class ProductionASGI(OrchestrationASGI):
         if scope.get("type") == "http" and await self._serve_frontend(scope, send):
             return
         await super().__call__(scope, receive, send)
+
+    def _market_rate_limited(self, scope: dict[str, Any], *, maximum: int = 120) -> bool:
+        client = scope.get("client") or ("unknown", 0)
+        address = str(client[0])
+        window = int(time()) // 60
+        previous_window, count = self._market_rate_windows.get(address, (window, 0))
+        if previous_window != window:
+            count = 0
+        count += 1
+        self._market_rate_windows[address] = (window, count)
+        if len(self._market_rate_windows) > 2048:
+            self._market_rate_windows = {key: value for key, value in self._market_rate_windows.items() if value[0] == window}
+        return count > maximum
+
+    async def _operator_status(self) -> tuple[int, dict[str, Any]]:
+        configured = self.runtime.coinglass is not None and bool(self.runtime.environment.get("COINGLASS_API_KEY", "").strip())
+        return 200, {
+            "integrations": {"coinglass": {"configured": configured, "exchange": "Binance"}},
+            "execution_enabled": False,
+        }
+
+    async def _market_candles(self, scope: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        query = parse_qs(scope.get("query_string", b"").decode())
+        symbol = str(query.get("symbol", ["BTC"])[0]).strip().upper()
+        interval = str(query.get("interval", ["15m"])[0]).strip()
+        try:
+            limit = int(query.get("limit", ["96"])[0])
+        except ValueError:
+            return 400, {"status": "invalid_request", "reason": "limit must be an integer"}
+        if symbol not in self.MARKET_SYMBOLS or interval not in self.MARKET_INTERVALS or not 2 <= limit <= 200:
+            return 400, {"status": "invalid_request", "reason": "unsupported symbol, interval, or limit"}
+        if self.runtime.coinglass is None:
+            return 503, {"status": "unavailable", "dataset": "candles"}
+        try:
+            candles = await asyncio.to_thread(self.runtime.coinglass.candles, symbol, limit, interval)
+        except Exception as exc:
+            LOGGER.warning("market candles unavailable", extra={"symbol": symbol, "interval": interval, "error_type": type(exc).__name__})
+            return 503, {"status": "unavailable", "dataset": "candles", "source": "coinglass", "error_type": type(exc).__name__}
+        rows = []
+        for candle in candles:
+            timestamp = datetime.fromisoformat(candle.timestamp.replace("Z", "+00:00"))
+            if timestamp.tzinfo is None:
+                timestamp = timestamp.replace(tzinfo=timezone.utc)
+            rows.append({"time": int(timestamp.timestamp() * 1000), "open": candle.open, "high": candle.high, "low": candle.low, "close": candle.close, "volume": candle.volume})
+        return 200, {"status": "ready", "symbol": symbol, "interval": interval, "source": "CoinGlass", "candles": rows, "execution_enabled": False}
+
+    async def _coinglass_dashboard(self, scope: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        if self.runtime.coinglass is None:
+            return 503, {"status": "unavailable", "source": "coinglass"}
+        prefix = "/api/coinglass/proxy"
+        upstream_path = scope.get("path", "")[len(prefix):]
+        if upstream_path not in CoinGlassProductionAdapter.DASHBOARD_PATHS:
+            return 400, {"status": "invalid_request", "reason": "unsupported CoinGlass dashboard dataset"}
+        query = {key: str(values[0]) for key, values in parse_qs(scope.get("query_string", b"").decode()).items() if values}
+        try:
+            payload = await asyncio.to_thread(self.runtime.coinglass.dashboard_query, upstream_path, query)
+        except ValueError as exc:
+            return 400, {"status": "invalid_request", "reason": str(exc)}
+        except Exception as exc:
+            LOGGER.warning("CoinGlass dashboard dataset unavailable", extra={"path": upstream_path, "error_type": type(exc).__name__})
+            return 503, {"status": "unavailable", "source": "coinglass", "dataset": upstream_path, "error_type": type(exc).__name__}
+        return 200, payload
 
     async def _openclaw_status(self, scope: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         token = self.runtime.environment.get("MONATISE_OPENCLAW_TOKEN", "").strip()

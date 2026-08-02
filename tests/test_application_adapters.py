@@ -106,6 +106,23 @@ def test_coinglass_malformed_candle_fails_closed():
         adapter.candles("BTC", 2)
 
 
+def test_coinglass_dashboard_queries_are_allowlisted_cached_and_server_side():
+    calls = []
+    def transport(path, params, timeout):
+        calls.append((path, params))
+        return {"code": 0, "data": [{"symbol": params.get("symbol")}]}
+
+    adapter = CoinGlassProductionAdapter(lambda: "server-secret", transport=transport, requests_per_second=100000)
+    first = adapter.dashboard_query("/api/futures/open-interest/exchange-list", {"symbol": "BTC"})
+    second = adapter.dashboard_query("/api/futures/open-interest/exchange-list", {"symbol": "BTC"})
+    assert first == second == {"code": 0, "data": [{"symbol": "BTC"}]}
+    assert len(calls) == 1
+    with pytest.raises(ValueError, match="unsupported"):
+        adapter.dashboard_query("/api/private/account", {})
+    with pytest.raises(ValueError, match="parameters"):
+        adapter.dashboard_query("/api/futures/open-interest/exchange-list", {"api_key": "browser-secret"})
+
+
 def test_telegram_message_has_no_execution_capability():
     sent = []
 

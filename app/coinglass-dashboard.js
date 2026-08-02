@@ -2020,7 +2020,7 @@ function updateCoinGlassSourceStatus(message = "") {
     ? `${asset.tv} · Monatise market candles`
     : `${asset.pair} · CoinGlass futures price history`;
   els.coinGlassRouteRef.textContent = usesServerMarketCandles(asset)
-    ? `/api/candles · symbol ${asset.coin} · ${usesCryptoMultiFrame(asset) ? `analysis ${CRYPTO_ANALYSIS_INTERVALS.join(" + ")}` : `view ${viewInterval}`}`
+    ? `/api/market/candles · symbol ${asset.coin} · ${usesCryptoMultiFrame(asset) ? `analysis ${CRYPTO_ANALYSIS_INTERVALS.join(" + ")}` : `view ${viewInterval}`}`
     : `/api/futures/price/history · exchange ${exchange} · analysis ${ANALYSIS_INTERVAL} · view ${viewInterval}`;
   els.openIntegrationsButton.textContent = serverReady ? "CoinGlass Connected" : localKey ? "Update Your CoinGlass Key" : "Add Your CoinGlass Key";
 }
@@ -2074,7 +2074,7 @@ async function fetchServerMarketCandles(asset, interval, limit = "96") {
   const payload = await timedFetch(
     `${asset.coin} ${interval} market candles`,
     "Monatise market feed",
-    `/api/candles?${params}`,
+    `/api/market/candles?${params}`,
     {}
   );
   const rows = (Array.isArray(payload.candles) ? payload.candles : []).map((row) => ({
