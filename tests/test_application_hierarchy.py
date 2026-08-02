@@ -164,20 +164,20 @@ def test_shadow_coordinator_waits_for_confirmed_candles_and_records_revisions():
     asyncio.run(scenario())
 
 
-def test_shadow_configuration_cannot_enable_telegram():
-    with pytest.raises(ValueError, match="Telegram publication"):
-        HierarchyConfiguration(enabled=True, telegram_publish_enabled=True)
+def test_shadow_configuration_can_enable_notifications_without_execution():
+    configuration = HierarchyConfiguration(enabled=True, telegram_publish_enabled=True)
+    assert configuration.telegram_publish_enabled is True
 
 
-def test_environment_configuration_is_disabled_by_default_and_fail_closed_for_publication():
+def test_environment_configuration_is_disabled_by_default_and_allows_notification_only_publication():
     assert HierarchyConfiguration.from_environment({}).enabled is False
     configured = HierarchyConfiguration.from_environment({
         "MONATISE_HIERARCHICAL_SHADOW_ENABLED": "true",
         "MONATISE_HIERARCHICAL_STRATEGY_VERSION": "v2",
     })
     assert configured.enabled is True and configured.strategy_version == "v2"
-    with pytest.raises(ValueError, match="Telegram publication"):
-        HierarchyConfiguration.from_environment({"MONATISE_HIERARCHICAL_TELEGRAM_PUBLISH_ENABLED": "true"})
+    publish = HierarchyConfiguration.from_environment({"MONATISE_HIERARCHICAL_TELEGRAM_PUBLISH_ENABLED": "true"})
+    assert publish.telegram_publish_enabled is True
 
 
 def test_canonical_adapter_blocks_stale_or_low_reward_evidence_and_bridges_risk_values():

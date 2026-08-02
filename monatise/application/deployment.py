@@ -351,7 +351,8 @@ class OrchestrationRuntime:
             configuration=configuration,
             provenance=Provenance("coinglass", "binance", "dynamic-crypto-usdt", "v4", "hierarchy-candle-v1"),
         )
-        self.hierarchy_service = ShadowHierarchyService(self.hierarchy, HierarchyLayerEvaluator(configuration=configuration), repository)
+        publisher = self.telegram.hierarchy_shadow_notification if self.telegram is not None else None
+        self.hierarchy_service = ShadowHierarchyService(self.hierarchy, HierarchyLayerEvaluator(configuration=configuration), repository, publisher=publisher)
         scheduler = self.application.infrastructure.scheduler
         job_ids: list[str] = []
         raw_symbols = self.environment.get("MONATISE_SCHEDULED_ANALYSIS_SYMBOLS", "BTC,ETH,SOL")
@@ -374,13 +375,13 @@ class OrchestrationRuntime:
                 timeout_seconds=55,
                 retry_policy=RetryPolicy(maximum_attempts=2, delay_seconds=5, maximum_delay_seconds=15),
                 tags=("hierarchy", "shadow", "analysis-only"),
-                metadata={"symbol": symbol, "shadow": True, "telegram_publish_enabled": False, "execution_enabled": False},
+                metadata={"symbol": symbol, "shadow": True, "telegram_publish_enabled": configuration.telegram_publish_enabled, "execution_enabled": False},
             ))
             job_ids.append(job_id)
         self.dependencies["hierarchy_shadow"] = {
             "status": "ok", "enabled": True, "jobs": list(job_ids),
             "strategy_version": configuration.strategy_version,
-            "telegram_publish_enabled": False, "execution_enabled": False,
+            "telegram_publish_enabled": configuration.telegram_publish_enabled, "execution_enabled": False,
         }
         return tuple(job_ids)
 
