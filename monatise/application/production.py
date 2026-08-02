@@ -79,6 +79,8 @@ class ProductionASGI(OrchestrationASGI):
             candidate.relative_to(self.static_dir)
         except ValueError:
             return False
+        if candidate.is_dir():
+            candidate = candidate / "index.html"
         if not candidate.is_file():
             return False
 
