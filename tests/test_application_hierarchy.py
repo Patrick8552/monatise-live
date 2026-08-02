@@ -326,6 +326,9 @@ def test_confirmed_hierarchy_produces_valid_shadow_bundle_and_risk_bridge():
     assert result.validation is not None and result.validation.eligible_for_shadow_decision is True
     assert result.bundle.risk_inputs.reference_entry == 120
     assert result.execution_enabled is False
+    message = ShadowHierarchyService._format_notification(result)
+    assert "Expires 2026-08-02 12:15:20 UTC" in message
+    assert "Valid for 15 min" in message
 
     old_setup_id = result.setup_15m.identity.context_id
     refreshed = evaluator.evaluate("BTC", {"4h": snapshots["4h"]}, evaluated_at=NOW + timedelta(minutes=16), macro_degraded=True)
