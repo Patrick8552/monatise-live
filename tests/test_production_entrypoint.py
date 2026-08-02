@@ -28,6 +28,9 @@ class Runtime:
     async def analyse(self, symbol, **kwargs):
         self.calls.append((symbol, kwargs))
         return {"symbol": symbol, "execution_enabled": False, "audit_reference": "run", "state_reference": "run"}
+    async def verify_hierarchy_telegram(self):
+        self.calls.append(("notification_test", {}))
+        return {"decision_id": "decision-1", "publication_id": "publication-1", "telegram_message_id": 123, "status": "SENT", "execution_enabled": False, "blocked_publication_created": False}
 
 
 def request(app, path, payload, *, token="control-secret"):
@@ -78,6 +81,22 @@ def test_production_analysis_is_authenticated_symbol_only_and_non_executable():
 
 def test_staging_route_is_disabled_in_production():
     assert request(ProductionASGI(Runtime()), "/api/staging/analyse", {"symbol": "BTC"})[0] == 404
+
+
+def test_notification_verification_is_authenticated_explicit_and_non_executable():
+    runtime = Runtime()
+    app = ProductionASGI(runtime)
+
+    assert request(app, "/api/notifications/test", {"confirmation": "TEST_NOTIFICATION_ONLY"}, token="wrong")[0] == 401
+    assert request(app, "/api/notifications/test", {"confirmation": "wrong"})[0] == 400
+    code, payload = request(app, "/api/notifications/test", {"confirmation": "TEST_NOTIFICATION_ONLY"})
+
+    assert code == 200
+    assert payload["status"] == "SENT"
+    assert payload["telegram_message_id"] == 123
+    assert payload["execution_enabled"] is False
+    assert payload["blocked_publication_created"] is False
+    assert runtime.calls == [("notification_test", {})]
 
 
 def test_openclaw_status_restores_read_only_legacy_contract():

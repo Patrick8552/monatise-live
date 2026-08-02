@@ -9,7 +9,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from time import perf_counter, time
 from typing import Any, Mapping
@@ -583,6 +583,70 @@ class OrchestrationRuntime:
                 )
                 LOGGER.warning("Telegram notification delivery failed", extra={"error_type": type(exc).__name__, "run_id": result.run_id})
         return sanitized_result(result, macro_mode=self.dependencies.get("macro_provider", {}).get("mode", "unknown"))
+
+    async def verify_hierarchy_telegram(self) -> dict[str, Any]:
+        """Send one controlled notification and persist positive/negative audit evidence."""
+        if self.application is None or self.postgres is None or self.telegram is None:
+            raise RuntimeError("notification verification dependencies are unavailable")
+        ready, _ = self.readiness()
+        scheduler_active = bool(self.leadership and self.leadership.is_leader)
+        hierarchy = self.dependencies.get("hierarchy_shadow", {})
+        if not ready or not scheduler_active or not hierarchy.get("telegram_publication_operational"):
+            raise RuntimeError("notification verification preconditions are not satisfied")
+
+        created_at = datetime.now(timezone.utc)
+        test_id = uuid4().hex
+        decision_id = f"test-decision-{test_id}"
+        publication_id = f"test-publication-{test_id}"
+        blocked_decision_id = f"test-blocked-{test_id}"
+        chat_id = self.environment.get("MONATISE_TELEGRAM_CHAT_ID", "")
+        destination = f"telegram:{hashlib.sha256(chat_id.encode()).hexdigest()[:12]}"
+        strategy_version = str(hierarchy.get("strategy_version", "hierarchy-shadow-v1"))
+        store = PostgresDocumentStore(self.postgres)
+
+        decision = {
+            "test_id": test_id, "decision_id": decision_id, "outcome": "VALID_SIGNAL",
+            "strategy_version": strategy_version, "execution_enabled": False, "created_at": created_at.isoformat(),
+        }
+        await store.put("hierarchy_notification_test_decisions", decision_id, decision, expected_version=0)
+        await self.application.infrastructure.audit.append(
+            record_type=AuditRecordType.DECISION, action=AuditAction.APPROVED,
+            actor=AuditActor("monatise-notification-verifier", "application"), source="monatise.hierarchy.notification_test",
+            payload=decision, correlation_id=test_id,
+        )
+        LOGGER.info("telegram publish requested publication_id=%s decision_id=%s destination=%s execution_enabled=false", publication_id, decision_id, destination)
+        message = (
+            "MONATISE TEST NOTIFICATION — SYSTEM TEST ONLY\n"
+            f"Strategy: {strategy_version}\nService: ready\nScheduler: active\n"
+            "Hierarchical Telegram: enabled\nExecution: disabled\n"
+            f"Timestamp: {created_at.strftime('%Y-%m-%d %H:%M:%S UTC')}\nPublication: {publication_id}"
+        )
+        telegram_message_id = await self.telegram.hierarchy_shadow_notification(message)
+        publication = {
+            "test_id": test_id, "decision_id": decision_id, "publication_id": publication_id,
+            "destination": destination, "status": "SENT", "telegram_message_id": telegram_message_id,
+            "created_at": created_at.isoformat(), "strategy_version": strategy_version, "execution_enabled": False,
+        }
+        await store.put("hierarchy_notification_test_publications", publication_id, publication, expected_version=0)
+        await self.application.infrastructure.audit.append(
+            record_type=AuditRecordType.INTEGRATION, action=AuditAction.CREATED,
+            actor=AuditActor("monatise-notification-verifier", "application"), source="monatise.telegram.notification_test",
+            payload=publication, correlation_id=test_id, causation_id=decision_id,
+        )
+        LOGGER.info("telegram publish succeeded publication_id=%s telegram_message_id=%s destination=%s execution_enabled=false", publication_id, telegram_message_id, destination)
+
+        blocked = {
+            "test_id": test_id, "decision_id": blocked_decision_id, "outcome": "BLOCKED",
+            "reason": "controlled_negative_path", "strategy_version": strategy_version,
+            "execution_enabled": False, "created_at": created_at.isoformat(), "publication_created": False,
+        }
+        await store.put("hierarchy_notification_test_decisions", blocked_decision_id, blocked, expected_version=0)
+        await self.application.infrastructure.audit.append(
+            record_type=AuditRecordType.DECISION, action=AuditAction.BLOCKED,
+            actor=AuditActor("monatise-notification-verifier", "application"), source="monatise.hierarchy.notification_test",
+            payload=blocked, correlation_id=test_id,
+        )
+        return {**publication, "blocked_decision_id": blocked_decision_id, "blocked_publication_created": False, "scheduler_active": True}
 
 
 class OrchestrationASGI:

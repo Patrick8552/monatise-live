@@ -72,6 +72,13 @@ class ProductionASGI(OrchestrationASGI):
             code, payload = await self._openclaw_status(scope)
             await self._respond(send, code, payload)
             return
+        if scope.get("type") == "http" and scope.get("path") == "/api/notifications/test":
+            if scope.get("method", "GET").upper() != "POST":
+                await self._respond(send, 405, {"status": "method_not_allowed"})
+                return
+            code, payload = await self._notification_test(scope, receive)
+            await self._respond(send, code, payload)
+            return
         if scope.get("type") == "http" and await self._serve_frontend(scope, send):
             return
         await super().__call__(scope, receive, send)
@@ -114,6 +121,39 @@ class ProductionASGI(OrchestrationASGI):
                 "deploymentWrites": False,
             },
         }
+
+    async def _notification_test(self, scope: dict[str, Any], receive: Any) -> tuple[int, dict[str, Any]]:
+        body = b""
+        while True:
+            message = await receive()
+            body += message.get("body", b"")
+            if len(body) > 1024:
+                return 413, {"status": "request_too_large"}
+            if not message.get("more_body", False):
+                break
+        headers = {key.decode().casefold(): value.decode() for key, value in scope.get("headers", ())}
+        timestamp = headers.get("x-monatise-timestamp", "")
+        signature = headers.get("x-monatise-signature", "")
+        token = self.runtime.environment.get("MONATISE_OPENCLAW_TOKEN", "")
+        try:
+            fresh = abs(time() - int(timestamp)) <= 300
+        except ValueError:
+            fresh = False
+        expected = hmac.new(token.encode(), timestamp.encode() + b"." + body, hashlib.sha256).hexdigest() if token else ""
+        if not token or not fresh or not hmac.compare_digest(signature, expected):
+            return 401, {"status": "unauthorized"}
+        if self.runtime.redis_coordination and not await self.runtime.redis_coordination.claim_nonce(signature):
+            return 409, {"status": "duplicate_request"}
+        try:
+            request = json.loads(body or b"{}")
+            if request != {"confirmation": "TEST_NOTIFICATION_ONLY"}:
+                return 400, {"status": "invalid_request"}
+            return 200, await self.runtime.verify_hierarchy_telegram()
+        except json.JSONDecodeError:
+            return 400, {"status": "invalid_request"}
+        except Exception as exc:
+            LOGGER.exception("notification verification failed", extra={"error_type": type(exc).__name__})
+            return 503, {"status": "notification_verification_failed", "error_type": type(exc).__name__}
 
     async def _serve_frontend(self, scope: dict[str, Any], send: Any) -> bool:
         method = scope.get("method", "GET").upper()
