@@ -52,10 +52,12 @@ class ShadowHierarchyService:
 
         published = False
         publication_failed = False
+        telegram_message_id: int | None = None
         if eligible and publication_available and not duplicate and trigger_id is not None:
             try:
-                await self.publisher(self._format_notification(evaluation))
-                await self.repository.record_publication(symbol=symbol, trigger_id=trigger_id, occurred_at=now, succeeded=True)
+                delivery_result = await self.publisher(self._format_notification(evaluation, publication_id=trigger_id))
+                telegram_message_id = self._telegram_message_id(delivery_result)
+                await self.repository.record_publication(symbol=symbol, trigger_id=trigger_id, occurred_at=now, succeeded=True, telegram_message_id=telegram_message_id)
                 published = True
             except Exception as exc:
                 publication_failed = True
@@ -78,9 +80,9 @@ class ShadowHierarchyService:
             forming_candle_blocked=any("closed_candle_unavailable" in reason for reason in evaluation.reasons),
             duplicate_blocked=duplicate,
         ))
-        return self._result(symbol, tuple(snapshots), evaluation, duplicate=duplicate, published=published, publication_failed=publication_failed)
+        return self._result(symbol, tuple(snapshots), evaluation, duplicate=duplicate, published=published, publication_failed=publication_failed, publication_id=trigger_id, telegram_message_id=telegram_message_id)
 
-    def _result(self, symbol: str, layers: tuple[str, ...], evaluation: ShadowEvaluation | None, *, duplicate: bool, published: bool = False, publication_failed: bool = False) -> dict[str, Any]:
+    def _result(self, symbol: str, layers: tuple[str, ...], evaluation: ShadowEvaluation | None, *, duplicate: bool, published: bool = False, publication_failed: bool = False, publication_id: str | None = None, telegram_message_id: int | None = None) -> dict[str, Any]:
         return {
             "symbol": symbol.upper(),
             "layers_observed": list(layers),
@@ -93,11 +95,13 @@ class ShadowHierarchyService:
             "telegram_publish_enabled": self.coordinator.configuration.telegram_publish_enabled,
             "telegram_published": published,
             "telegram_publication_failed": publication_failed,
+            "publication_id": publication_id,
+            "telegram_message_id": telegram_message_id,
             "execution_enabled": False,
         }
 
     @staticmethod
-    def _format_notification(evaluation: ShadowEvaluation) -> str:
+    def _format_notification(evaluation: ShadowEvaluation, *, publication_id: str) -> str:
         bundle = evaluation.bundle
         if bundle is None:
             raise ValueError("notification requires a validated evidence bundle")
@@ -111,8 +115,17 @@ class ShadowHierarchyService:
             f"{bundle.symbol} | {direction} | 4H + 1H aligned | 15M setup confirmed | 5M trigger confirmed\n"
             f"Entry {risk.reference_entry:.8g} | Stop {risk.final_stop:.8g} | Target {risk.target_liquidity:.8g} | R:R {risk.calculated_reward_to_risk:.2f}\n"
             f"Expires {expiry} | Valid for {validity_minutes} min\n"
-            f"Strategy {bundle.strategy_version} | Evidence {bundle.bundle_id[:12]}"
+            f"Strategy {bundle.strategy_version} | Evidence {bundle.bundle_id[:12]} | Publication {publication_id[:16]}"
         )
+
+    @staticmethod
+    def _telegram_message_id(delivery_result: Any) -> int | None:
+        if isinstance(delivery_result, int) and not isinstance(delivery_result, bool):
+            return delivery_result
+        if isinstance(delivery_result, dict):
+            value = delivery_result.get("message_id")
+            return value if isinstance(value, int) and not isinstance(value, bool) else None
+        return None
 
     @property
     def execution_enabled(self) -> bool:
