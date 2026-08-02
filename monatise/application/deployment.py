@@ -614,7 +614,7 @@ class OrchestrationRuntime:
             actor=AuditActor("monatise-notification-verifier", "application"), source="monatise.hierarchy.notification_test",
             payload=decision, correlation_id=test_id,
         )
-        LOGGER.info("telegram publish requested publication_id=%s decision_id=%s destination=%s execution_enabled=false", publication_id, decision_id, destination)
+        LOGGER.warning("telegram publish requested publication_id=%s decision_id=%s destination=%s execution_enabled=false", publication_id, decision_id, destination)
         message = (
             "MONATISE TEST NOTIFICATION — SYSTEM TEST ONLY\n"
             f"Strategy: {strategy_version}\nService: ready\nScheduler: active\n"
@@ -633,7 +633,7 @@ class OrchestrationRuntime:
             actor=AuditActor("monatise-notification-verifier", "application"), source="monatise.telegram.notification_test",
             payload=publication, correlation_id=test_id, causation_id=decision_id,
         )
-        LOGGER.info("telegram publish succeeded publication_id=%s telegram_message_id=%s destination=%s execution_enabled=false", publication_id, telegram_message_id, destination)
+        LOGGER.warning("telegram publish succeeded publication_id=%s telegram_message_id=%s destination=%s execution_enabled=false", publication_id, telegram_message_id, destination)
 
         blocked = {
             "test_id": test_id, "decision_id": blocked_decision_id, "outcome": "BLOCKED",
