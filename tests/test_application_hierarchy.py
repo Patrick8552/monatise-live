@@ -135,12 +135,79 @@ def test_repository_is_append_only_and_trigger_claim_is_idempotent():
         assert retry == (False, first[1])
         current = await store.get("hierarchy_trigger_claims", first[1])
         assert current.value["status"] == "delivery_uncertain"
+        assert current.value["reconciliation_required_after"] == (NOW + timedelta(minutes=2)).isoformat()
         published_duplicate = await repository.claim_trigger(symbol="BTC", candle_close_time=NOW, setup_id="setup-1", direction="long", trigger_type="reclaim", strategy_version="v1", occurred_at=NOW)
         assert published_duplicate == (False, first[1])
+        await repository.reconcile_publication(
+            symbol="BTC", trigger_id=first[1], occurred_at=NOW + timedelta(minutes=3),
+            resolution="confirmed_not_delivered", actor="operator:test",
+        )
+        retry_after_reconciliation = await repository.claim_trigger(symbol="BTC", candle_close_time=NOW, setup_id="setup-1", direction="long", trigger_type="reclaim", strategy_version="v1", occurred_at=NOW + timedelta(minutes=3))
+        assert retry_after_reconciliation == (True, first[1])
         events = await repository.reconstruct("BTC")
         assert [event["event_type"] for event in events].count("context_superseded") == 1
         assert [event["event_type"] for event in events].count("trigger_evaluated") == 1
         assert [event["event_type"] for event in events].count("publication_recorded") == 1
+        assert [event["event_type"] for event in events].count("publication_reconciled") == 1
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("resolution,telegram_message_id,expected_status", [
+    ("delivered", 731, "published"),
+    ("abandoned", None, "abandoned"),
+])
+def test_publication_reconciliation_blocks_unsafe_retries(resolution, telegram_message_id, expected_status):
+    async def scenario():
+        store = MemoryStore()
+        repository = HierarchyRepository(store)
+        claimed, trigger_id = await repository.claim_trigger(
+            symbol="BTC", candle_close_time=NOW, setup_id="setup-reconcile", direction="long",
+            trigger_type="reclaim", strategy_version="v1", occurred_at=NOW,
+        )
+        assert claimed is True
+        await repository.begin_publication(symbol="BTC", trigger_id=trigger_id, occurred_at=NOW)
+        await repository.reconcile_publication(
+            symbol="BTC", trigger_id=trigger_id, occurred_at=NOW + timedelta(minutes=3),
+            resolution=resolution, telegram_message_id=telegram_message_id, actor="operator:test",
+        )
+        record = await store.get("hierarchy_trigger_claims", trigger_id)
+        assert record.value["status"] == expected_status
+        assert record.value["reconciled_by"] == "operator:test"
+        retry = await repository.claim_trigger(
+            symbol="BTC", candle_close_time=NOW, setup_id="setup-reconcile", direction="long",
+            trigger_type="reclaim", strategy_version="v1", occurred_at=NOW + timedelta(minutes=4),
+        )
+        assert retry == (False, trigger_id)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("occurred_at,resolution,message_id", [
+    (NOW.replace(tzinfo=None), "delivered", 731),
+    (NOW, "delivered", True),
+    (NOW, "delivered", 0),
+    (NOW, "abandoned", 731),
+])
+def test_invalid_publication_reconciliation_cannot_mutate_state(occurred_at, resolution, message_id):
+    async def scenario():
+        store = MemoryStore()
+        repository = HierarchyRepository(store)
+        claimed, trigger_id = await repository.claim_trigger(
+            symbol="BTC", candle_close_time=NOW, setup_id="setup-invalid", direction="long",
+            trigger_type="reclaim", strategy_version="v1", occurred_at=NOW,
+        )
+        assert claimed is True
+        await repository.begin_publication(symbol="BTC", trigger_id=trigger_id, occurred_at=NOW)
+        before = await store.get("hierarchy_trigger_claims", trigger_id)
+        with pytest.raises(ValueError):
+            await repository.reconcile_publication(
+                symbol="BTC", trigger_id=trigger_id, occurred_at=occurred_at,
+                resolution=resolution, telegram_message_id=message_id, actor="operator:test",
+            )
+        after = await store.get("hierarchy_trigger_claims", trigger_id)
+        assert after.version == before.version
+        assert after.value == before.value
 
     asyncio.run(scenario())
 

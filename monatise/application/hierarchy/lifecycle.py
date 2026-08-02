@@ -16,6 +16,7 @@ class LifecycleEventType(StrEnum):
     TRIGGER_EVALUATED = "trigger_evaluated"
     DECISION_RECORDED = "decision_recorded"
     PUBLICATION_RECORDED = "publication_recorded"
+    PUBLICATION_RECONCILED = "publication_reconciled"
 
 
 @dataclass(frozen=True)
@@ -109,7 +110,7 @@ class HierarchyRepository:
             if existing is not None:
                 status = existing.value.get("status", "published" if existing.value.get("published") else "pending")
                 lease_until = datetime.fromisoformat(existing.value["lease_until"]) if existing.value.get("lease_until") else None
-                if status in {"publishing", "delivery_uncertain", "published"} or (status == "pending" and lease_until is not None and occurred_at < lease_until):
+                if status in {"publishing", "delivery_uncertain", "published", "abandoned"} or (status == "pending" and lease_until is not None and occurred_at < lease_until):
                     return False, identity
                 attempts = int(existing.value.get("attempts", 1)) + 1
                 try:
@@ -150,6 +151,7 @@ class HierarchyRepository:
                 "published": False,
                 "publication_id": trigger_id,
                 "publication_started_at": occurred_at.isoformat(),
+                "reconciliation_required_after": (occurred_at + timedelta(minutes=2)).isoformat(),
             })
             value.pop("lease_until", None)
             await self.store.put("hierarchy_trigger_claims", trigger_id, value, expected_version=current.version)
@@ -172,12 +174,59 @@ class HierarchyRepository:
                 "telegram_message_id": telegram_message_id,
             })
             value.pop("lease_until", None)
+            if succeeded:
+                value.pop("reconciliation_required_after", None)
             await self.store.put("hierarchy_trigger_claims", trigger_id, value, expected_version=current.version)
             await self._append_event(LifecycleEvent(
                 deterministic_id("event", {"type": "publication", "trigger": trigger_id, "attempt": value.get("attempts"), "status": value["status"]}),
                 LifecycleEventType.PUBLICATION_RECORDED, symbol.upper(), occurred_at, None,
-                reason="telegram_delivery_succeeded" if succeeded else "telegram_delivery_failed",
+                reason="telegram_delivery_succeeded" if succeeded else "telegram_delivery_uncertain",
                 metadata={"trigger_id": trigger_id, "publication_id": trigger_id, "telegram_message_id": telegram_message_id, "status": value["status"], "attempt": value.get("attempts"), "error_type": error_type},
+            ))
+
+    async def reconcile_publication(self, *, symbol: str, trigger_id: str, occurred_at: datetime, resolution: str, telegram_message_id: int | None = None, actor: str) -> None:
+        """Resolve an ambiguous delivery without making an automatic resend decision."""
+        if occurred_at.tzinfo is None or occurred_at.utcoffset() is None:
+            raise ValueError("publication reconciliation time must be timezone-aware")
+        normalized_resolution = resolution.strip().casefold()
+        if normalized_resolution not in {"delivered", "confirmed_not_delivered", "abandoned"}:
+            raise ValueError("unsupported publication reconciliation resolution")
+        if not actor.strip():
+            raise ValueError("publication reconciliation requires an actor")
+        if normalized_resolution == "delivered" and (
+            not isinstance(telegram_message_id, int) or isinstance(telegram_message_id, bool) or telegram_message_id <= 0
+        ):
+            raise ValueError("delivered reconciliation requires a positive Telegram message ID")
+        if normalized_resolution != "delivered" and telegram_message_id is not None:
+            raise ValueError("only delivered reconciliation accepts a Telegram message ID")
+        async with await self.symbol_lock(symbol):
+            current = await self.store.get("hierarchy_trigger_claims", trigger_id)
+            if current is None:
+                raise RuntimeError("trigger publication claim is unavailable")
+            current_status = current.value.get("status")
+            if current_status not in {"publishing", "delivery_uncertain"}:
+                raise RuntimeError("publication is not awaiting reconciliation")
+            status = {
+                "delivered": "published",
+                "confirmed_not_delivered": "failed",
+                "abandoned": "abandoned",
+            }[normalized_resolution]
+            value = dict(current.value)
+            value.update({
+                "status": status,
+                "published": normalized_resolution == "delivered",
+                "telegram_message_id": telegram_message_id,
+                "reconciliation_resolution": normalized_resolution,
+                "reconciled_at": occurred_at.isoformat(),
+                "reconciled_by": actor.strip(),
+            })
+            value.pop("reconciliation_required_after", None)
+            await self.store.put("hierarchy_trigger_claims", trigger_id, value, expected_version=current.version)
+            await self._append_event(LifecycleEvent(
+                deterministic_id("event", {"type": "publication_reconciled", "trigger": trigger_id, "resolution": normalized_resolution}),
+                LifecycleEventType.PUBLICATION_RECONCILED, symbol.upper(), occurred_at, None,
+                reason=f"telegram_{normalized_resolution}",
+                metadata={"trigger_id": trigger_id, "publication_id": trigger_id, "telegram_message_id": telegram_message_id, "status": status, "resolution": normalized_resolution, "actor": actor.strip()},
             ))
 
     async def reconstruct(self, symbol: str) -> tuple[dict[str, Any], ...]:
