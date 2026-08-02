@@ -167,12 +167,32 @@ class RedisSchedulerLeadership:
         self.ttl_seconds = ttl_seconds
         self.is_leader = False
         self._renewal: asyncio.Task[None] | None = None
+        self._contender: asyncio.Task[None] | None = None
 
     async def acquire(self) -> bool:
         self.is_leader = bool(await self.client.set(self.key, self.token, nx=True, ex=self.ttl_seconds))
         if self.is_leader:
             self._renewal = asyncio.create_task(self._renew(), name="monatise-scheduler-leadership")
         return self.is_leader
+
+    async def acquire_or_wait(self, on_acquired: Any) -> bool:
+        """Acquire immediately or keep contending until leadership is available."""
+        if await self.acquire():
+            return True
+        self._contender = asyncio.create_task(
+            self._contend(on_acquired), name="monatise-scheduler-contender"
+        )
+        return False
+
+    async def _contend(self, on_acquired: Any) -> None:
+        try:
+            while not self.is_leader:
+                await asyncio.sleep(self.ttl_seconds / 3)
+                if await self.acquire():
+                    await on_acquired()
+                    return
+        except asyncio.CancelledError:
+            raise
 
     async def _renew(self) -> None:
         try:
@@ -186,9 +206,14 @@ class RedisSchedulerLeadership:
             raise
 
     async def release(self) -> None:
+        if self._contender:
+            self._contender.cancel()
+            await asyncio.gather(self._contender, return_exceptions=True)
+            self._contender = None
         if self._renewal:
             self._renewal.cancel()
             await asyncio.gather(self._renewal, return_exceptions=True)
+            self._renewal = None
         if self.is_leader:
             await self.client.eval(self.RELEASE_SCRIPT, 1, self.key, self.token)
         self.is_leader = False
@@ -308,7 +333,7 @@ class OrchestrationRuntime:
             self.redis_coordination = RedisCoordinationStore(
                 self.redis, namespace=self.environment.get("MONATISE_REDIS_NAMESPACE", "monatise:paper-staging")
             )
-            leader = await self.leadership.acquire()
+            leader = await self.leadership.acquire_or_wait(infrastructure.scheduler.start)
             await infrastructure.plugins.start_all()
             if leader:
                 await infrastructure.scheduler.start()
@@ -369,6 +394,8 @@ class OrchestrationRuntime:
             await self.postgres_pool.close()
 
     def readiness(self) -> tuple[bool, dict[str, Any]]:
+        if self.leadership is not None and "scheduler" in self.dependencies:
+            self.dependencies["scheduler"]["leader"] = self.leadership.is_leader
         if self.coinglass is not None:
             health = self.coinglass.health()
             self.dependencies.setdefault("coinglass", {})["latest_request"] = (

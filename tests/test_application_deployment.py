@@ -127,6 +127,23 @@ def test_scheduler_leadership_is_singleton_and_recoverable():
     asyncio.run(scenario())
 
 
+def test_scheduler_non_leader_retries_and_starts_after_release():
+    async def scenario():
+        redis = _Redis()
+        first = RedisSchedulerLeadership(redis, namespace="test", ttl_seconds=0.03)
+        second = RedisSchedulerLeadership(redis, namespace="test", ttl_seconds=0.03)
+        started = asyncio.Event()
+
+        assert await first.acquire() is True
+        assert await second.acquire_or_wait(started.set) is False
+        await first.release()
+        await asyncio.wait_for(started.wait(), timeout=0.2)
+        assert second.is_leader is True
+        await second.release()
+
+    asyncio.run(scenario())
+
+
 def test_runtime_requires_managed_dependencies_without_exposing_urls():
     runtime = OrchestrationRuntime(environment={"MONATISE_MODE": "paper"})
     with pytest.raises(RuntimeError, match="PostgreSQL configuration is unavailable"):
