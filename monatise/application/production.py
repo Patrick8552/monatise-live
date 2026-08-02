@@ -155,7 +155,14 @@ class ProductionASGI(OrchestrationASGI):
                 return 503, {"status": "unavailable", "dataset": "candles", "source": "coinglass+hyperliquid", "error_type": type(fallback_exc).__name__}
         rows = []
         for candle in candles:
-            timestamp = datetime.fromisoformat(candle.timestamp.replace("Z", "+00:00"))
+            raw_timestamp = str(candle.timestamp).strip()
+            if raw_timestamp.isdigit():
+                epoch = int(raw_timestamp)
+                if epoch > 10_000_000_000:
+                    epoch /= 1000
+                timestamp = datetime.fromtimestamp(epoch, tz=timezone.utc)
+            else:
+                timestamp = datetime.fromisoformat(raw_timestamp.replace("Z", "+00:00"))
             if timestamp.tzinfo is None:
                 timestamp = timestamp.replace(tzinfo=timezone.utc)
             rows.append({"time": int(timestamp.timestamp() * 1000), "open": candle.open, "high": candle.high, "low": candle.low, "close": candle.close, "volume": candle.volume})
