@@ -90,10 +90,10 @@ class TelegramNotificationTransport:
     def __init__(self, token_provider: Any) -> None:
         self._token_provider = token_provider
 
-    async def send_message(self, chat_id: str, text: str) -> None:
-        await asyncio.to_thread(self._send, chat_id, text)
+    async def send_message(self, chat_id: str, text: str) -> int:
+        return await asyncio.to_thread(self._send, chat_id, text)
 
-    def _send(self, chat_id: str, text: str) -> None:
+    def _send(self, chat_id: str, text: str) -> int:
         token = self._token_provider()
         if not token:
             raise RuntimeError("Telegram credential is unavailable")
@@ -103,6 +103,11 @@ class TelegramNotificationTransport:
             with urlopen(request, timeout=15) as response:  # noqa: S310
                 if response.status >= 300:
                     raise RuntimeError("Telegram delivery was rejected")
+                payload = json.loads(response.read().decode())
+                message_id = payload.get("result", {}).get("message_id") if payload.get("ok") is True else None
+                if not isinstance(message_id, int):
+                    raise RuntimeError("Telegram response did not include a message ID")
+                return message_id
         except Exception as exc:
             raise RuntimeError("Telegram notification delivery failed") from exc
 

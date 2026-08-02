@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from monatise.application.deployment import COINGLASS_PROVIDER_KEY, MigrationRunner, OrchestrationASGI, OrchestrationRuntime, PaperSafetyConfiguration, RedisSchedulerLeadership, _DegradedMacroProvider, register_coinglass_provider, scheduled_analysis_configuration
+from monatise.application.deployment import COINGLASS_PROVIDER_KEY, MigrationRunner, OrchestrationASGI, OrchestrationRuntime, PaperSafetyConfiguration, RedisSchedulerLeadership, TelegramNotificationTransport, _DegradedMacroProvider, register_coinglass_provider, scheduled_analysis_configuration
 from monatise.application.registry import CANONICAL_ENGINE_ORDER
 from monatise.infrastructure.dependency_injection import Container
 from monatise.engines.macro.rules import CRYPTO_MACRO_RULES
@@ -21,6 +21,19 @@ def test_paper_safety_defaults_are_immutable_and_disabled():
     assert config.mode == "paper"
     assert config.execution_enabled is False
     assert config.governance_kill_switch_enabled is True
+
+
+def test_telegram_transport_returns_provider_message_id(monkeypatch):
+    class Response:
+        status = 200
+        def __enter__(self): return self
+        def __exit__(self, *args): return None
+        def read(self): return b'{"ok":true,"result":{"message_id":321}}'
+
+    monkeypatch.setattr("monatise.application.deployment.urlopen", lambda request, timeout: Response())
+    transport = TelegramNotificationTransport(lambda: "test-token")
+
+    assert asyncio.run(transport.send_message("chat", "hello")) == 321
 
 
 @pytest.mark.parametrize(

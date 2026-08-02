@@ -333,9 +333,10 @@ def test_confirmed_hierarchy_produces_valid_shadow_bundle_and_risk_bridge():
     assert result.validation is not None and result.validation.eligible_for_shadow_decision is True
     assert result.bundle.risk_inputs.reference_entry == 120
     assert result.execution_enabled is False
-    message = ShadowHierarchyService._format_notification(result)
+    message = ShadowHierarchyService._format_notification(result, publication_id="publication-123456789")
     assert "Expires 2026-08-02 12:15:20 UTC" in message
     assert "Valid for 15 min" in message
+    assert "Publication publication-1234" in message
 
     async def publication_scenario():
         store = MemoryStore()
@@ -371,6 +372,7 @@ def test_confirmed_hierarchy_produces_valid_shadow_bundle_and_risk_bridge():
             attempts.append(text)
             if len(attempts) == 1:
                 raise TimeoutError("temporary Telegram failure")
+            return 987654
 
         service = ShadowHierarchyService(Coordinator(), Evaluator(), repository, publisher=publisher)
         failed = await service.tick("BTC", observed_at=NOW)
@@ -379,6 +381,8 @@ def test_confirmed_hierarchy_produces_valid_shadow_bundle_and_risk_bridge():
 
         assert failed["telegram_publication_failed"] is True
         assert retried["telegram_published"] is True
+        assert retried["publication_id"] is not None
+        assert retried["telegram_message_id"] == 987654
         assert duplicate["duplicate_blocked"] is True
         assert len(attempts) == 2
 

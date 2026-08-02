@@ -138,7 +138,7 @@ class HierarchyRepository:
             ))
             return True, identity
 
-    async def record_publication(self, *, symbol: str, trigger_id: str, occurred_at: datetime, succeeded: bool, error_type: str | None = None) -> None:
+    async def record_publication(self, *, symbol: str, trigger_id: str, occurred_at: datetime, succeeded: bool, error_type: str | None = None, telegram_message_id: int | None = None) -> None:
         async with await self.symbol_lock(symbol):
             current = await self.store.get("hierarchy_trigger_claims", trigger_id)
             if current is None:
@@ -149,6 +149,8 @@ class HierarchyRepository:
                 "published": succeeded,
                 "publication_updated_at": occurred_at.isoformat(),
                 "error_type": error_type,
+                "publication_id": trigger_id,
+                "telegram_message_id": telegram_message_id,
             })
             value.pop("lease_until", None)
             await self.store.put("hierarchy_trigger_claims", trigger_id, value, expected_version=current.version)
@@ -156,7 +158,7 @@ class HierarchyRepository:
                 deterministic_id("event", {"type": "publication", "trigger": trigger_id, "attempt": value.get("attempts"), "status": value["status"]}),
                 LifecycleEventType.PUBLICATION_RECORDED, symbol.upper(), occurred_at, None,
                 reason="telegram_delivery_succeeded" if succeeded else "telegram_delivery_failed",
-                metadata={"trigger_id": trigger_id, "status": value["status"], "attempt": value.get("attempts"), "error_type": error_type},
+                metadata={"trigger_id": trigger_id, "publication_id": trigger_id, "telegram_message_id": telegram_message_id, "status": value["status"], "attempt": value.get("attempts"), "error_type": error_type},
             ))
 
     async def reconstruct(self, symbol: str) -> tuple[dict[str, Any], ...]:
