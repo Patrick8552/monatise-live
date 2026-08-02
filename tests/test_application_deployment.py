@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
-from monatise.application.deployment import COINGLASS_PROVIDER_KEY, MigrationRunner, OrchestrationASGI, OrchestrationRuntime, PaperSafetyConfiguration, RedisSchedulerLeadership, register_coinglass_provider
+from monatise.application.deployment import COINGLASS_PROVIDER_KEY, MigrationRunner, OrchestrationASGI, OrchestrationRuntime, PaperSafetyConfiguration, RedisSchedulerLeadership, _DegradedMacroProvider, register_coinglass_provider
 from monatise.application.registry import CANONICAL_ENGINE_ORDER
 from monatise.infrastructure.dependency_injection import Container
+from monatise.engines.macro.rules import CRYPTO_MACRO_RULES
+from monatise.engines.macro import MacroEngine
+from monatise.engines.macro.models import MacroRequest, MacroRiskState
 
 
 def test_paper_safety_defaults_are_immutable_and_disabled():
@@ -136,6 +140,19 @@ def test_real_coinglass_adapter_is_resolved_through_di_without_exposing_key():
     assert container.resolve(COINGLASS_PROVIDER_KEY) is adapter
     assert container.registrations[0].metadata["execution_enabled"] is False
     assert "never-render-this" not in repr(container.registrations)
+
+
+def test_degraded_macro_provider_marks_every_factor_unavailable_without_fabrication():
+    provider = _DegradedMacroProvider()
+    snapshot = provider.context_snapshot("BTC")
+    assert snapshot
+    assert set(snapshot) == {rule.factor for rule in CRYPTO_MACRO_RULES}
+    assert all(value is None for value in snapshot.values())
+    assert provider.economic_events() == []
+    assessment = MacroEngine(provider).assess(MacroRequest("BTC", datetime.now(timezone.utc)))
+    assert assessment.risk_state is MacroRiskState.ELEVATED
+    assert assessment.blocks_new_analysis is False
+    assert assessment.conviction == 0
 
 
 class _MigrationCursor:

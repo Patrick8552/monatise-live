@@ -22,6 +22,7 @@ from monatise.application.persistence import PostgresDocumentStore
 from monatise.application.workflows import TelegramNotifier
 from monatise.adapters.coinglass_production import CoinGlassProductionAdapter
 from monatise.infrastructure.audit_database import AuditAction, AuditActor, AuditRecordType
+from monatise.engines.macro.rules import CRYPTO_MACRO_RULES
 
 
 LOGGER = logging.getLogger("monatise.orchestration")
@@ -225,6 +226,16 @@ class _UnavailableMacroProvider:
         return []
 
 
+class _DegradedMacroProvider:
+    """Explicitly unavailable staging factors; never fabricates macro values."""
+
+    def context_snapshot(self, symbol: str) -> dict[str, None]:
+        return {rule.factor: None for rule in CRYPTO_MACRO_RULES}
+
+    def economic_events(self) -> list[Any]:
+        return []
+
+
 @dataclass
 class OrchestrationRuntime:
     environment: Mapping[str, str] = field(default_factory=lambda: os.environ)
@@ -275,9 +286,14 @@ class OrchestrationRuntime:
             store = PostgresDocumentStore(self.postgres)
             infrastructure = create_durable_infrastructure(store)
             self.coinglass = register_coinglass_provider(infrastructure.container, self.environment)
+            degraded_macro_enabled = deployment_environment == "test" or (
+                deployment_environment == "staging"
+                and not _false(self.environment.get("MONATISE_ALLOW_DEGRADED_MACRO"))
+            )
+            macro_provider = _DegradedMacroProvider() if degraded_macro_enabled else _UnavailableMacroProvider()
             self.application = create_application(
                 market_data_providers={"coinglass": self.coinglass},
-                macro_provider=_UnavailableMacroProvider(),
+                macro_provider=macro_provider,
                 derivatives_provider=self.coinglass,
                 infrastructure=infrastructure,
             )
@@ -304,6 +320,12 @@ class OrchestrationRuntime:
                 "status": "ok", "count": len(self.application.registry.ordered()), "order": list(CANONICAL_ENGINE_ORDER)
             }
             self.dependencies["governance"] = {"status": "ok", "kill_switch": True}
+            self.dependencies["macro_provider"] = {
+                "status": "ok" if degraded_macro_enabled else "error",
+                "mode": "degraded_unavailable_factors" if degraded_macro_enabled else "unavailable",
+                "blocks_on_missing_data": not degraded_macro_enabled,
+                "event_calendar": "empty",
+            }
             configured = bool(self.environment.get("COINGLASS_API_KEY", "").strip())
             coinglass_required = deployment_environment != "test"
             self.dependencies["coinglass"] = {
@@ -355,7 +377,7 @@ class OrchestrationRuntime:
         registry_ok = bool(self.application and tuple(item.name for item in self.application.registry.ordered()) == CANONICAL_ENGINE_ORDER)
         mandatory = (
             "configuration", "postgresql", "migrations", "redis", "event_bus", "state_manager",
-            "audit_repository", "audit_integrity", "scheduler", "engine_registry", "pipeline_orchestrator", "governance", "notifications", "coinglass",
+            "audit_repository", "audit_integrity", "scheduler", "engine_registry", "pipeline_orchestrator", "governance", "notifications", "coinglass", "macro_provider",
         )
         ready = registry_ok and self.safety is not None and all(self.dependencies.get(key, {}).get("status") == "ok" for key in mandatory)
         return ready, {
