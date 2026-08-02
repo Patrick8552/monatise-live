@@ -32,8 +32,6 @@ class HierarchyConfiguration:
     confirmation_retry_seconds: int = 5
 
     def __post_init__(self) -> None:
-        if self.telegram_publish_enabled:
-            raise ValueError("hierarchical Telegram publication is unavailable during shadow implementation")
         values = (self.candle_limit, self.macro_refresh_seconds, self.regime_refresh_seconds, self.strategy_refresh_seconds, self.setup_refresh_seconds, self.trigger_poll_seconds, self.maximum_provider_requests_per_cycle, self.confirmation_retry_seconds)
         if any(value <= 0 for value in values):
             raise ValueError("hierarchy configuration values must be positive")
@@ -86,7 +84,7 @@ class ShadowComparison:
 
 
 class ShadowHierarchyCoordinator:
-    """Collects and versions evidence only; it has no publication or execution capability."""
+    """Collects and versions evidence without granting execution capability."""
 
     TIMEFRAMES = ("4h", "1h", "15m", "5m")
 

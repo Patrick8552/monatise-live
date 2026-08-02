@@ -44,6 +44,11 @@ class TelegramNotifier:
     async def audit_notification(self, message: str) -> Any:
         return await self._alert("AUDIT", message)
 
+    async def hierarchy_shadow_notification(self, message: str) -> Any:
+        if not message.strip():
+            raise ValueError("notification message is required")
+        return await self._transport.send_message(self._chat_id, message)
+
     async def _alert(self, category: str, message: str) -> Any:
         if not message.strip():
             raise ValueError("notification message is required")

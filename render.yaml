@@ -47,7 +47,7 @@ services:
       - key: MONATISE_HIERARCHICAL_SHADOW_ENABLED
         value: true
       - key: MONATISE_HIERARCHICAL_TELEGRAM_PUBLISH_ENABLED
-        value: false
+        value: true
       - key: MONATISE_HIERARCHICAL_STRATEGY_VERSION
         value: hierarchy-shadow-v1
       - key: MONATISE_DATABASE_URL
