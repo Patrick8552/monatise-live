@@ -56,6 +56,37 @@ def test_staging_route_is_disabled_in_production():
     assert request(ProductionASGI(Runtime()), "/api/staging/analyse", {"symbol": "BTC"})[0] == 404
 
 
+def test_production_readiness_accepts_healthy_scheduler_contender_during_cutover():
+    runtime = ProductionRuntime(environment={})
+    runtime.safety = SimpleNamespace()
+    runtime.application = SimpleNamespace(
+        registry=SimpleNamespace(
+            ordered=lambda: tuple(SimpleNamespace(name=name) for name in (
+                "market_data", "macro", "regime", "liquidity", "liquidity_sweep",
+                "supply_demand", "reclaim", "market_structure", "fibonacci_liquidity",
+                "order_flow", "decision", "rsi", "risk_validation", "capital_allocation",
+                "execution_policy", "portfolio_intelligence", "reporting_intelligence",
+                "intelligence_learning", "integration", "governance_loss_control",
+            ))
+        )
+    )
+    runtime.dependencies = {
+        key: {"status": "degraded" if key == "macro_provider" else "ok"}
+        for key in (
+            "configuration", "postgresql", "migrations", "redis", "event_bus",
+            "state_manager", "audit_repository", "audit_integrity", "audit_logging",
+            "scheduler", "engine_registry", "pipeline_orchestrator", "governance",
+            "notifications", "coinglass", "macro_provider",
+        )
+    }
+    runtime.dependencies["scheduler"]["leader"] = False
+
+    ready, payload = runtime.readiness()
+
+    assert ready is True
+    assert payload["dependencies"]["scheduler"]["leader"] is False
+
+
 def test_production_runtime_requires_explicit_environment_and_macro_flag():
     with pytest.raises(ValueError, match="must be production"):
         asyncio.run(ProductionRuntime(environment={}).start())
