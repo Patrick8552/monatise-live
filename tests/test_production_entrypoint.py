@@ -51,6 +51,21 @@ def get(app, path, *, method="GET"):
     return messages
 
 
+def openclaw_status(app, *, token="control-secret", query="symbol=BTC&interval=1h"):
+    messages = []
+    async def receive(): return {"type": "http.request", "body": b"", "more_body": False}
+    async def send(message): messages.append(message)
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/api/openclaw/status",
+        "query_string": query.encode(),
+        "headers": [(b"authorization", f"Bearer {token}".encode())],
+    }
+    asyncio.run(app(scope, receive, send))
+    return messages[0]["status"], json.loads(messages[1]["body"])
+
+
 def test_production_analysis_is_authenticated_symbol_only_and_non_executable():
     runtime = Runtime()
     app = ProductionASGI(runtime)
@@ -63,6 +78,33 @@ def test_production_analysis_is_authenticated_symbol_only_and_non_executable():
 
 def test_staging_route_is_disabled_in_production():
     assert request(ProductionASGI(Runtime()), "/api/staging/analyse", {"symbol": "BTC"})[0] == 404
+
+
+def test_openclaw_status_restores_read_only_legacy_contract():
+    runtime = Runtime()
+    runtime.telegram = object()
+    code, payload = openclaw_status(ProductionASGI(runtime))
+
+    assert code == 200
+    assert payload["ok"] is True
+    assert payload["access"] == "openclaw_read_only"
+    assert payload["analysis"]["execution_enabled"] is False
+    assert payload["capabilities"] == {
+        "readOnly": True,
+        "analysis": True,
+        "telegramNotification": True,
+        "liveOrders": False,
+        "configurationWrites": False,
+        "deploymentWrites": False,
+    }
+    assert runtime.calls == [("BTC", {"source": "monatise.openclaw"})]
+
+
+def test_openclaw_status_rejects_wrong_or_missing_credentials():
+    runtime = Runtime()
+    assert openclaw_status(ProductionASGI(runtime), token="wrong")[0] == 401
+    runtime.environment["MONATISE_OPENCLAW_TOKEN"] = ""
+    assert openclaw_status(ProductionASGI(runtime))[0] == 503
 
 
 def test_production_serves_frontend_homepage_and_assets(tmp_path):

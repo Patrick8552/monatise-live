@@ -365,7 +365,7 @@ class OrchestrationRuntime:
             self.dependencies["notifications"] = {
                 "status": "ok",
                 "telegram": "configured_notification_only" if self.environment.get("MONATISE_TELEGRAM_BOT_TOKEN") and self.environment.get("MONATISE_TELEGRAM_CHAT_ID") else "unavailable_optional",
-                "openclaw": "configured_non_executable" if self.environment.get("MONATISE_OPENCLAW_TOKEN") else "unavailable_optional",
+                "openclaw": "configured_analysis_only" if self.environment.get("MONATISE_OPENCLAW_TOKEN") else "unavailable_optional",
             }
             self.dependencies["audit_logging"] = {"status": "ok", "enabled": True}
             audit_errors = await infrastructure.audit.verify_integrity()

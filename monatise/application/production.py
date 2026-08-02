@@ -8,8 +8,10 @@ import json
 import logging
 import mimetypes
 from pathlib import Path
+import secrets
 from time import time
 from typing import Any
+from urllib.parse import parse_qs
 
 from monatise.application.deployment import OrchestrationASGI, OrchestrationRuntime
 
@@ -63,9 +65,55 @@ class ProductionASGI(OrchestrationASGI):
             code, payload = await self._production_analysis(scope, receive)
             await self._respond(send, code, payload)
             return
+        if scope.get("type") == "http" and scope.get("path") == "/api/openclaw/status":
+            if scope.get("method", "GET").upper() != "GET":
+                await self._respond(send, 405, {"status": "method_not_allowed"})
+                return
+            code, payload = await self._openclaw_status(scope)
+            await self._respond(send, code, payload)
+            return
         if scope.get("type") == "http" and await self._serve_frontend(scope, send):
             return
         await super().__call__(scope, receive, send)
+
+    async def _openclaw_status(self, scope: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        token = self.runtime.environment.get("MONATISE_OPENCLAW_TOKEN", "").strip()
+        if not token:
+            return 503, {"status": "unavailable", "reason": "openclaw_not_configured"}
+        headers = {key.decode().casefold(): value.decode() for key, value in scope.get("headers", ())}
+        scheme, _, supplied = headers.get("authorization", "").partition(" ")
+        if scheme.casefold() != "bearer" or not secrets.compare_digest(supplied.strip(), token):
+            return 401, {"status": "unauthorized"}
+
+        query = parse_qs(scope.get("query_string", b"").decode())
+        symbol = str(query.get("symbol", [self.runtime.environment.get("MONATISE_SYMBOL", "BTC")])[0]).strip().upper()
+        interval = str(query.get("interval", ["1h"])[0]).strip() or "1h"
+        if not symbol:
+            return 400, {"status": "invalid_request", "reason": "symbol is required"}
+        try:
+            analysis = await self.runtime.analyse(symbol, source="monatise.openclaw")
+        except (TypeError, ValueError) as exc:
+            return 400, {"status": "invalid_request", "reason": str(exc)}
+        except Exception as exc:
+            LOGGER.exception("OpenClaw analysis failed", extra={"error_type": type(exc).__name__})
+            return 503, {"status": "analysis_unavailable", "error_type": type(exc).__name__}
+        return 200, {
+            "ok": True,
+            "service": "monatise-live",
+            "access": "openclaw_read_only",
+            "symbol": symbol,
+            "interval": interval,
+            "analysis": analysis,
+            "execution_enabled": False,
+            "capabilities": {
+                "readOnly": True,
+                "analysis": True,
+                "telegramNotification": self.runtime.telegram is not None,
+                "liveOrders": False,
+                "configurationWrites": False,
+                "deploymentWrites": False,
+            },
+        }
 
     async def _serve_frontend(self, scope: dict[str, Any], send: Any) -> bool:
         method = scope.get("method", "GET").upper()
