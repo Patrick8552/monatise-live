@@ -82,7 +82,7 @@ const context = vm.createContext({
   "signalHasExecutablePlan",
   "money",
   "formatLotSize",
-  "forexLotLabel",
+  "quantityNotionalLabel",
   "tradeSizingFromSignal",
   "gradeSignalEntry"
 ].forEach((name) => vm.runInContext(extractFunction(name), context));
@@ -149,7 +149,7 @@ assert.equal(longGrid.entry, 99, "long trend grid should prefer valid pullback F
 const sizing = context.tradeSizingFromSignal(longSignal, 10000, 0.05);
 assert.ok(sizing.notional > 0, "sizing should produce notional for executable signal");
 assert.ok(sizing.stopLoss <= 25.000001, "sizing should respect alert risk budget");
-assert.ok(sizing.quantityLabel.includes("lot"), "sizing should be displayed in forex lots");
+assert.ok(sizing.quantityLabel.includes("notional"), "sizing should be displayed as position notional");
 
 const ambiguousBeforeEntry = context.gradeSignalEntry(
   {
