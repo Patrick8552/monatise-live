@@ -42,6 +42,15 @@ def request(app, path, payload, *, token="control-secret"):
     return messages[0]["status"], json.loads(messages[1]["body"])
 
 
+def get(app, path, *, method="GET"):
+    messages = []
+    async def receive(): return {"type": "http.request", "body": b"", "more_body": False}
+    async def send(message): messages.append(message)
+    scope = {"type": "http", "method": method, "path": path, "headers": []}
+    asyncio.run(app(scope, receive, send))
+    return messages
+
+
 def test_production_analysis_is_authenticated_symbol_only_and_non_executable():
     runtime = Runtime()
     app = ProductionASGI(runtime)
@@ -54,6 +63,33 @@ def test_production_analysis_is_authenticated_symbol_only_and_non_executable():
 
 def test_staging_route_is_disabled_in_production():
     assert request(ProductionASGI(Runtime()), "/api/staging/analyse", {"symbol": "BTC"})[0] == 404
+
+
+def test_production_serves_frontend_homepage_and_assets(tmp_path):
+    (tmp_path / "index.html").write_text("<!doctype html><title>Monatise</title>")
+    (tmp_path / "app.js").write_text("window.MONATISE = true;")
+    app = ProductionASGI(Runtime(), static_dir=tmp_path)
+
+    homepage = get(app, "/")
+    asset = get(app, "/app.js")
+
+    assert homepage[0]["status"] == 200
+    assert b"Monatise" in homepage[1]["body"]
+    assert dict(homepage[0]["headers"])[b"content-type"] == b"text/html; charset=utf-8"
+    assert asset[0]["status"] == 200
+    assert asset[1]["body"] == b"window.MONATISE = true;"
+    assert dict(asset[0]["headers"])[b"content-type"] in {
+        b"application/javascript; charset=utf-8",
+        b"text/javascript; charset=utf-8",
+    }
+
+
+def test_production_frontend_does_not_shadow_api_or_allow_traversal(tmp_path):
+    (tmp_path / "index.html").write_text("Monatise")
+    app = ProductionASGI(Runtime(), static_dir=tmp_path)
+
+    assert get(app, "/api/missing")[0]["status"] == 404
+    assert get(app, "/../pyproject.toml")[0]["status"] == 404
 
 
 def test_production_readiness_accepts_healthy_scheduler_contender_during_cutover():
