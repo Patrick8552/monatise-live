@@ -82,6 +82,29 @@ def test_runtime_registers_paper_only_analysis_jobs_for_each_configured_symbol()
     assert all("paper-only" in item.tags for item in scheduler.definitions)
 
 
+def test_runtime_registers_fail_closed_hierarchy_shadow_jobs_without_publication():
+    class Scheduler:
+        def __init__(self): self.definitions = []
+        async def register(self, definition): self.definitions.append(definition)
+
+    scheduler = Scheduler()
+    runtime = OrchestrationRuntime(environment={
+        "MONATISE_HIERARCHICAL_SHADOW_ENABLED": "true",
+        "MONATISE_SCHEDULED_ANALYSIS_SYMBOLS": "BTC,ETH",
+    })
+    runtime.application = SimpleNamespace(infrastructure=SimpleNamespace(scheduler=scheduler))
+    runtime.coinglass = SimpleNamespace()
+
+    job_ids = asyncio.run(runtime._register_hierarchy_shadow(SimpleNamespace()))
+
+    assert job_ids == ("hierarchy-shadow-btc", "hierarchy-shadow-eth")
+    assert all(item.interval.total_seconds() == 60 for item in scheduler.definitions)
+    assert all(item.metadata["shadow"] is True for item in scheduler.definitions)
+    assert all(item.metadata["telegram_publish_enabled"] is False for item in scheduler.definitions)
+    assert all(item.metadata["execution_enabled"] is False for item in scheduler.definitions)
+    assert runtime.dependencies["hierarchy_shadow"]["enabled"] is True
+
+
 def test_runtime_notifies_only_completed_risk_validated_signals():
     delivered = []
 

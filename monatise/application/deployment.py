@@ -21,6 +21,7 @@ from monatise.application.staging_analysis import build_paper_analysis_run, sani
 from monatise.application.registry import CANONICAL_ENGINE_ORDER
 from monatise.application.persistence import PostgresDocumentStore
 from monatise.application.workflows import TelegramNotifier
+from monatise.application.hierarchy import HierarchyConfiguration, HierarchyLayerEvaluator, HierarchyRepository, Provenance, ShadowHierarchyCoordinator, ShadowHierarchyService
 from monatise.adapters.coinglass_production import CoinGlassProductionAdapter
 from monatise.infrastructure.audit_database import AuditAction, AuditActor, AuditRecordType
 from monatise.infrastructure.task_scheduler import JobDefinition, RetryPolicy, ScheduleType
@@ -304,6 +305,8 @@ class OrchestrationRuntime:
     coinglass: CoinGlassProductionAdapter | None = None
     telegram: TelegramNotifier | None = None
     dependencies: dict[str, dict[str, Any]] = field(default_factory=dict)
+    hierarchy: ShadowHierarchyCoordinator | None = None
+    hierarchy_service: ShadowHierarchyService | None = None
 
     async def _register_scheduled_analysis(self) -> tuple[str, ...]:
         configuration = scheduled_analysis_configuration(self.environment)
@@ -332,6 +335,53 @@ class OrchestrationRuntime:
                 metadata={"symbol": symbol, "execution_enabled": False, "notification_policy": "validated_signals_only"},
             ))
             job_ids.append(job_id)
+        return tuple(job_ids)
+
+    async def _register_hierarchy_shadow(self, store: PostgresDocumentStore) -> tuple[str, ...]:
+        configuration = HierarchyConfiguration.from_environment(self.environment)
+        if not configuration.enabled:
+            self.dependencies["hierarchy_shadow"] = {"status": "ok", "enabled": False, "execution_enabled": False}
+            return ()
+        if self.application is None or self.coinglass is None:
+            raise RuntimeError("hierarchical shadow dependencies are unavailable")
+        repository = HierarchyRepository(store)
+        self.hierarchy = ShadowHierarchyCoordinator(
+            self.coinglass,
+            repository,
+            configuration=configuration,
+            provenance=Provenance("coinglass", "binance", "dynamic-crypto-usdt", "v4", "hierarchy-candle-v1"),
+        )
+        self.hierarchy_service = ShadowHierarchyService(self.hierarchy, HierarchyLayerEvaluator(configuration=configuration), repository)
+        scheduler = self.application.infrastructure.scheduler
+        job_ids: list[str] = []
+        raw_symbols = self.environment.get("MONATISE_SCHEDULED_ANALYSIS_SYMBOLS", "BTC,ETH,SOL")
+        symbols = tuple(dict.fromkeys(item.strip().upper() for item in raw_symbols.split(",") if item.strip()))
+        for symbol in symbols:
+            job_id = f"hierarchy-shadow-{symbol.casefold()}"
+
+            async def shadow_tick(asset: str = symbol) -> dict[str, Any]:
+                return await self.hierarchy_service.tick(
+                    asset,
+                    macro_degraded=self.dependencies.get("macro_provider", {}).get("status") == "degraded",
+                )
+
+            await scheduler.register(JobDefinition(
+                job_id=job_id,
+                name=f"Hierarchical shadow evidence for {symbol}",
+                task=shadow_tick,
+                schedule_type=ScheduleType.INTERVAL,
+                interval=timedelta(seconds=60),
+                timeout_seconds=55,
+                retry_policy=RetryPolicy(maximum_attempts=2, delay_seconds=5, maximum_delay_seconds=15),
+                tags=("hierarchy", "shadow", "analysis-only"),
+                metadata={"symbol": symbol, "shadow": True, "telegram_publish_enabled": False, "execution_enabled": False},
+            ))
+            job_ids.append(job_id)
+        self.dependencies["hierarchy_shadow"] = {
+            "status": "ok", "enabled": True, "jobs": list(job_ids),
+            "strategy_version": configuration.strategy_version,
+            "telegram_publish_enabled": False, "execution_enabled": False,
+        }
         return tuple(job_ids)
 
     async def start(self) -> None:
@@ -388,6 +438,7 @@ class OrchestrationRuntime:
                 secrets = EnvironmentSecretBoundary(self.environment)
                 self.telegram = TelegramNotifier(TelegramNotificationTransport(lambda: secrets.get("MONATISE_TELEGRAM_BOT_TOKEN")), telegram_chat)
             scheduled_jobs = await self._register_scheduled_analysis()
+            await self._register_hierarchy_shadow(store)
             self.leadership = RedisSchedulerLeadership(
                 self.redis, namespace=self.environment.get("MONATISE_REDIS_NAMESPACE", "monatise:paper-staging")
             )
