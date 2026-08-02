@@ -121,6 +121,20 @@ def test_market_dashboard_routes_reject_unsupported_queries():
     assert get(app, "/api/coinglass/proxy/not-allowed")[0]["status"] == 400
 
 
+def test_market_candles_fall_back_without_enabling_execution():
+    runtime = Runtime()
+    runtime.coinglass.candles = lambda *_: (_ for _ in ()).throw(RuntimeError("plan restriction"))
+    runtime.market_fallback = SimpleNamespace(
+        candles=lambda symbol, limit, interval: [Candle("2026-08-02T12:00:00+00:00", 100, 110, 90, 106, 900)]
+    )
+    response = get(ProductionASGI(runtime), "/api/market/candles", query="symbol=BTC&interval=15m&limit=96")
+    payload = json.loads(response[1]["body"])
+    assert response[0]["status"] == 200
+    assert payload["source"] == "Hyperliquid candleSnapshot"
+    assert payload["candles"][0]["close"] == 106
+    assert payload["execution_enabled"] is False
+
+
 def test_market_dashboard_data_routes_are_rate_limited_per_client():
     app = ProductionASGI(Runtime())
     app._market_rate_windows["203.0.113.10"] = (int(time.time()) // 60, 120)
