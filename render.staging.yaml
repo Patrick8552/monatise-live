@@ -34,6 +34,8 @@ services:
         value: true
       - key: MONATISE_AUDIT_LOGGING_ENABLED
         value: true
+      - key: MONATISE_ALLOW_DEGRADED_MACRO
+        value: true
       - key: MONATISE_REDIS_NAMESPACE
         value: monatise:paper-staging
       - key: MONATISE_DATABASE_URL

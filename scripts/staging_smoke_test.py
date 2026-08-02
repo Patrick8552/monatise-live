@@ -31,7 +31,7 @@ def run(base_url: str) -> list[str]:
     if ready_code != 200 or ready.get("status") != "ready":
         failures.append("readiness failed")
     dependencies = ready.get("dependencies", {})
-    for dependency in ("postgresql", "redis", "migrations", "event_bus", "state_manager", "audit_repository", "audit_integrity", "scheduler", "pipeline_orchestrator", "governance", "coinglass"):
+    for dependency in ("postgresql", "redis", "migrations", "event_bus", "state_manager", "audit_repository", "audit_integrity", "scheduler", "pipeline_orchestrator", "governance", "coinglass", "macro_provider"):
         if dependencies.get(dependency, {}).get("status") != "ok":
             failures.append(f"{dependency} is not ready")
     registry = dependencies.get("engine_registry", {})
@@ -44,6 +44,9 @@ def run(base_url: str) -> list[str]:
         failures.append("notification execution invariant failed")
     if dependencies.get("governance", {}).get("kill_switch") is not True:
         failures.append("governance kill switch unavailable")
+    macro = dependencies.get("macro_provider", {})
+    if macro.get("mode") == "degraded_unavailable_factors" and macro.get("blocks_on_missing_data") is not False:
+        failures.append("degraded macro mode is not configured to continue safely")
     return failures
 
 
