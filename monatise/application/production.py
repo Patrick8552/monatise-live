@@ -41,11 +41,11 @@ class ProductionRuntime(OrchestrationRuntime):
         await super().start()
 
     def readiness(self) -> tuple[bool, dict[str, Any]]:
-        ready, payload = super().readiness()
-        if not payload.get("dependencies", {}).get("scheduler", {}).get("leader", False):
-            payload["status"] = "not_ready"
-            return False, payload
-        return ready, payload
+        # During a zero-downtime deploy the live instance owns the scheduler
+        # lock until Render cuts traffic over.  The replacement is a healthy
+        # contender and acquires leadership after the old instance shuts down;
+        # requiring this process to be leader would deadlock every redeploy.
+        return super().readiness()
 
 
 class ProductionASGI(OrchestrationASGI):
