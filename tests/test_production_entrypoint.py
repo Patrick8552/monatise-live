@@ -202,7 +202,18 @@ def test_degraded_macro_is_disclosed_and_audited_for_every_production_analysis()
 
 def test_production_blueprint_is_analysis_only_and_isolated():
     text = (Path(__file__).parents[1] / "render.yaml").read_text()
-    required = ["name: monatise-live", "monatise.application.production:app", "autoDeployTrigger: off", "MONATISE_MODE", "MONATISE_ENVIRONMENT", "MONATISE_ALLOW_DEGRADED_MACRO", "monatise:production-analysis"]
+    required = [
+        "name: monatise-live",
+        "monatise.application.production:app",
+        "autoDeployTrigger: off",
+        "MONATISE_MODE",
+        "MONATISE_ENVIRONMENT",
+        "MONATISE_ALLOW_DEGRADED_MACRO",
+        "monatise:production-analysis",
+        "MONATISE_HIERARCHICAL_SHADOW_ENABLED",
+        "MONATISE_HIERARCHICAL_TELEGRAM_PUBLISH_ENABLED",
+        "hierarchy-shadow-v1",
+    ]
     assert all(value in text for value in required)
     forbidden = ["mainnet", "value: live", "BACKPACK_API_KEY", "MONATISE_STAGING_API_TOKEN", "monatise-paper-staging"]
     assert all(value not in text for value in forbidden)
