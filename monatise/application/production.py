@@ -17,6 +17,7 @@ LOGGER = logging.getLogger("monatise.production")
 
 class ProductionRuntime(OrchestrationRuntime):
     async def start(self) -> None:
+        LOGGER.info("validating production safety configuration")
         if self.environment.get("MONATISE_ENVIRONMENT", "").strip().casefold() != "production":
             raise ValueError("MONATISE_ENVIRONMENT must be production")
         if self.environment.get("MONATISE_ALLOW_DEGRADED_MACRO", "").strip().casefold() not in {"1", "true", "yes", "on"}:
@@ -36,6 +37,7 @@ class ProductionRuntime(OrchestrationRuntime):
         invalid = [key for key, value in required.items() if self.environment.get(key, "").strip().casefold() != value]
         if invalid:
             raise ValueError("production safety configuration is missing or invalid: " + ", ".join(invalid))
+        LOGGER.info("production safety configuration validated")
         await super().start()
 
     def readiness(self) -> tuple[bool, dict[str, Any]]:

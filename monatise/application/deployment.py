@@ -278,6 +278,7 @@ class OrchestrationRuntime:
     dependencies: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     async def start(self) -> None:
+        LOGGER.info("validating paper-only orchestration configuration")
         self.safety = PaperSafetyConfiguration.from_environment(self.environment)
         self.dependencies["configuration"] = {"status": "ok", "frozen": True}
         database_url = self.environment.get("MONATISE_DATABASE_URL") or self.environment.get("DATABASE_URL")
@@ -290,6 +291,7 @@ class OrchestrationRuntime:
         try:
             from psycopg_pool import AsyncConnectionPool
             from redis.asyncio import Redis
+            LOGGER.info("opening managed PostgreSQL pool")
             started = perf_counter()
             self.postgres_pool = AsyncConnectionPool(database_url, min_size=1, max_size=4, open=False, kwargs={"autocommit": True})
             await self.postgres_pool.open(wait=True, timeout=15)
@@ -300,6 +302,7 @@ class OrchestrationRuntime:
             await self.migrations.run()
             self.dependencies["migrations"] = {"status": "ok", "version": self.migrations.version}
             started = perf_counter()
+            LOGGER.info("opening managed Redis connection")
             self.redis = Redis.from_url(redis_url, decode_responses=True)
             if not await self.redis.ping():
                 raise RuntimeError("Redis ping failed")
