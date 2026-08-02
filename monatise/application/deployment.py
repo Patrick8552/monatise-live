@@ -312,7 +312,7 @@ class OrchestrationRuntime:
             infrastructure = create_durable_infrastructure(store)
             self.coinglass = register_coinglass_provider(infrastructure.container, self.environment)
             degraded_macro_enabled = deployment_environment == "test" or (
-                deployment_environment == "staging"
+                deployment_environment in {"staging", "production"}
                 and not _false(self.environment.get("MONATISE_ALLOW_DEGRADED_MACRO"))
             )
             macro_provider = _DegradedMacroProvider() if degraded_macro_enabled else _UnavailableMacroProvider()
@@ -346,7 +346,7 @@ class OrchestrationRuntime:
             }
             self.dependencies["governance"] = {"status": "ok", "kill_switch": True}
             self.dependencies["macro_provider"] = {
-                "status": "ok" if degraded_macro_enabled else "error",
+                "status": "degraded" if degraded_macro_enabled else "error",
                 "mode": "degraded_unavailable_factors" if degraded_macro_enabled else "unavailable",
                 "blocks_on_missing_data": not degraded_macro_enabled,
                 "event_calendar": "empty",
@@ -364,6 +364,7 @@ class OrchestrationRuntime:
                 "telegram": "configured_notification_only" if self.environment.get("MONATISE_TELEGRAM_BOT_TOKEN") and self.environment.get("MONATISE_TELEGRAM_CHAT_ID") else "unavailable_optional",
                 "openclaw": "configured_non_executable" if self.environment.get("MONATISE_OPENCLAW_TOKEN") else "unavailable_optional",
             }
+            self.dependencies["audit_logging"] = {"status": "ok", "enabled": True}
             audit_errors = await infrastructure.audit.verify_integrity()
             self.dependencies["audit_integrity"] = {
                 "status": "ok" if not audit_errors else "error",
@@ -404,9 +405,14 @@ class OrchestrationRuntime:
         registry_ok = bool(self.application and tuple(item.name for item in self.application.registry.ordered()) == CANONICAL_ENGINE_ORDER)
         mandatory = (
             "configuration", "postgresql", "migrations", "redis", "event_bus", "state_manager",
-            "audit_repository", "audit_integrity", "scheduler", "engine_registry", "pipeline_orchestrator", "governance", "notifications", "coinglass", "macro_provider",
+            "audit_repository", "audit_integrity", "audit_logging", "scheduler", "engine_registry", "pipeline_orchestrator", "governance", "notifications", "coinglass", "macro_provider",
         )
-        ready = registry_ok and self.safety is not None and all(self.dependencies.get(key, {}).get("status") == "ok" for key in mandatory)
+        mandatory_ok = all(
+            self.dependencies.get(key, {}).get("status") == "ok"
+            or (key == "macro_provider" and self.dependencies.get(key, {}).get("status") == "degraded")
+            for key in mandatory
+        )
+        ready = registry_ok and self.safety is not None and mandatory_ok
         return ready, {
             "status": "ready" if ready else "not_ready",
             "execution_enabled": False,
@@ -414,10 +420,20 @@ class OrchestrationRuntime:
             "dependencies": self.dependencies,
         }
 
-    async def analyse(self, symbol: str, correlation_id: str | None = None, scenario: str = "live") -> dict[str, Any]:
+    async def analyse(self, symbol: str, correlation_id: str | None = None, scenario: str = "live", *, source: str = "monatise.staging") -> dict[str, Any]:
         if self.application is None:
             raise RuntimeError("orchestration runtime is unavailable")
-        result = await self.application.orchestrator.run(build_paper_analysis_run(symbol, correlation_id=correlation_id, scenario=scenario))
+        if self.dependencies.get("macro_provider", {}).get("status") == "degraded":
+            await self.application.infrastructure.audit.append(
+                record_type=AuditRecordType.CONFIGURATION,
+                action=AuditAction.REVIEWED,
+                actor=AuditActor("monatise-runtime", "application"),
+                source="monatise.macro",
+                payload={"event": "degraded_macro_used", "mode": "unavailable_factors", "confidence": 0},
+                correlation_id=correlation_id,
+                symbol=symbol.strip().upper(),
+            )
+        result = await self.application.orchestrator.run(build_paper_analysis_run(symbol, correlation_id=correlation_id, scenario=scenario, source=source))
         if self.telegram is not None:
             try:
                 await self.telegram.deliver(result)
@@ -432,7 +448,7 @@ class OrchestrationRuntime:
                     symbol=result.symbol,
                 )
                 LOGGER.warning("Telegram notification delivery failed", extra={"error_type": type(exc).__name__, "run_id": result.run_id})
-        return sanitized_result(result)
+        return sanitized_result(result, macro_mode=self.dependencies.get("macro_provider", {}).get("mode", "unknown"))
 
 
 class OrchestrationASGI:

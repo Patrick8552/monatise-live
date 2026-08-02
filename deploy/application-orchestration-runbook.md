@@ -48,10 +48,11 @@ additive migrations.
 
 ### Render paper staging
 
-The legacy `monatise-live` service remains separate and continues to use
-`scripts/serve_live.py`. The `monatise-paper-staging` service uses the dedicated
-`monatise.application.deployment:app` ASGI entrypoint. This stabilization change
-does not repoint production; promotion is a later, explicit decision.
+The `monatise-paper-staging` service uses the dedicated
+`monatise.application.deployment:app` ASGI entrypoint. Production promotion is
+defined separately in `render.yaml` and
+`deploy/production-analysis-promotion-runbook.md`; it must remain manual and
+rollback-protected.
 
 Create the staging Blueprint using the explicit Blueprint Path
 `render.staging.yaml`. Do not create it from the root `render.yaml`: that file
