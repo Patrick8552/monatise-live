@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping, Protocol
@@ -130,7 +131,12 @@ class ShadowHierarchyCoordinator:
     async def _collect_timeframe(self, symbol: str, timeframe: str, now: datetime) -> TimeframeSnapshot:
         key = (symbol.upper(), timeframe)
         previous = self._observed_hashes.get(key, {})
-        raw = self.provider.candles(symbol.upper(), self.configuration.candle_limit, timeframe)
+        raw = await asyncio.to_thread(
+            self.provider.candles,
+            symbol.upper(),
+            self.configuration.candle_limit,
+            timeframe,
+        )
         provenance = replace(self.provenance, instrument=f"{symbol.upper()}USDT") if self.provenance.instrument == "dynamic-crypto-usdt" else self.provenance
         normalized = self.normalizer.normalize_series(raw, symbol=symbol, timeframe=timeframe, received_at=now, provenance=provenance, previous_hashes=previous)
         revisions: list[str] = []
