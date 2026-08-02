@@ -54,11 +54,10 @@ class ShadowHierarchyService:
         publication_failed = False
         telegram_message_id: int | None = None
         if eligible and publication_available and not duplicate and trigger_id is not None:
+            await self.repository.begin_publication(symbol=symbol, trigger_id=trigger_id, occurred_at=now)
             try:
                 delivery_result = await self.publisher(self._format_notification(evaluation, publication_id=trigger_id))
                 telegram_message_id = self._telegram_message_id(delivery_result)
-                await self.repository.record_publication(symbol=symbol, trigger_id=trigger_id, occurred_at=now, succeeded=True, telegram_message_id=telegram_message_id)
-                published = True
             except Exception as exc:
                 publication_failed = True
                 try:
@@ -66,6 +65,15 @@ class ShadowHierarchyService:
                 except Exception:
                     LOGGER.exception("failed to persist hierarchical Telegram publication failure", extra={"symbol": symbol.upper(), "trigger_id": trigger_id})
                 LOGGER.exception("hierarchical Telegram publication failed", extra={"symbol": symbol.upper(), "trigger_id": trigger_id})
+            else:
+                # Do not reinterpret a post-delivery persistence failure as a
+                # transport failure: the provider has already accepted it.
+                published = True
+                try:
+                    await self.repository.record_publication(symbol=symbol, trigger_id=trigger_id, occurred_at=now, succeeded=True, telegram_message_id=telegram_message_id)
+                except Exception:
+                    publication_failed = True
+                    LOGGER.exception("Telegram delivered but publication receipt persistence failed", extra={"symbol": symbol.upper(), "trigger_id": trigger_id, "telegram_message_id": telegram_message_id})
 
         hierarchical_outcome = (
             "duplicate" if duplicate else

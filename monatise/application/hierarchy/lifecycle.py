@@ -109,7 +109,7 @@ class HierarchyRepository:
             if existing is not None:
                 status = existing.value.get("status", "published" if existing.value.get("published") else "pending")
                 lease_until = datetime.fromisoformat(existing.value["lease_until"]) if existing.value.get("lease_until") else None
-                if status == "published" or (status == "pending" and lease_until is not None and occurred_at < lease_until):
+                if status in {"publishing", "delivery_uncertain", "published"} or (status == "pending" and lease_until is not None and occurred_at < lease_until):
                     return False, identity
                 attempts = int(existing.value.get("attempts", 1)) + 1
                 try:
@@ -138,6 +138,22 @@ class HierarchyRepository:
             ))
             return True, identity
 
+    async def begin_publication(self, *, symbol: str, trigger_id: str, occurred_at: datetime) -> None:
+        """Durably close automatic retries before crossing the Telegram boundary."""
+        async with await self.symbol_lock(symbol):
+            current = await self.store.get("hierarchy_trigger_claims", trigger_id)
+            if current is None or current.value.get("status") != "pending":
+                raise RuntimeError("trigger publication claim is not pending")
+            value = dict(current.value)
+            value.update({
+                "status": "publishing",
+                "published": False,
+                "publication_id": trigger_id,
+                "publication_started_at": occurred_at.isoformat(),
+            })
+            value.pop("lease_until", None)
+            await self.store.put("hierarchy_trigger_claims", trigger_id, value, expected_version=current.version)
+
     async def record_publication(self, *, symbol: str, trigger_id: str, occurred_at: datetime, succeeded: bool, error_type: str | None = None, telegram_message_id: int | None = None) -> None:
         async with await self.symbol_lock(symbol):
             current = await self.store.get("hierarchy_trigger_claims", trigger_id)
@@ -145,7 +161,10 @@ class HierarchyRepository:
                 raise RuntimeError("trigger publication claim is unavailable")
             value = dict(current.value)
             value.update({
-                "status": "published" if succeeded else "failed",
+                # A transport exception may occur after Telegram accepted the
+                # request, so failed attempts require reconciliation and must
+                # never be retried automatically.
+                "status": "published" if succeeded else "delivery_uncertain",
                 "published": succeeded,
                 "publication_updated_at": occurred_at.isoformat(),
                 "error_type": error_type,
