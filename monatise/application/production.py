@@ -6,6 +6,8 @@ import hashlib
 import hmac
 import json
 import logging
+import mimetypes
+from pathlib import Path
 from time import time
 from typing import Any
 
@@ -49,8 +51,9 @@ class ProductionRuntime(OrchestrationRuntime):
 
 
 class ProductionASGI(OrchestrationASGI):
-    def __init__(self, runtime: OrchestrationRuntime | None = None) -> None:
+    def __init__(self, runtime: OrchestrationRuntime | None = None, static_dir: Path | None = None) -> None:
         super().__init__(runtime or ProductionRuntime())
+        self.static_dir = (static_dir or Path(__file__).resolve().parents[2] / "app").resolve()
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         if scope.get("type") == "http" and scope.get("path") == "/api/analysis":
@@ -60,7 +63,37 @@ class ProductionASGI(OrchestrationASGI):
             code, payload = await self._production_analysis(scope, receive)
             await self._respond(send, code, payload)
             return
+        if scope.get("type") == "http" and await self._serve_frontend(scope, send):
+            return
         await super().__call__(scope, receive, send)
+
+    async def _serve_frontend(self, scope: dict[str, Any], send: Any) -> bool:
+        method = scope.get("method", "GET").upper()
+        path = scope.get("path", "/")
+        if method not in {"GET", "HEAD"} or path.startswith(("/api/", "/health/")):
+            return False
+
+        relative_path = "index.html" if path == "/" else path.lstrip("/")
+        candidate = (self.static_dir / relative_path).resolve()
+        try:
+            candidate.relative_to(self.static_dir)
+        except ValueError:
+            return False
+        if not candidate.is_file():
+            return False
+
+        body = candidate.read_bytes()
+        content_type = mimetypes.guess_type(candidate.name)[0] or "application/octet-stream"
+        if content_type.startswith("text/") or content_type in {"application/javascript", "application/json", "image/svg+xml"}:
+            content_type += "; charset=utf-8"
+        headers = [
+            (b"content-type", content_type.encode()),
+            (b"content-length", str(len(body)).encode()),
+            (b"x-content-type-options", b"nosniff"),
+        ]
+        await send({"type": "http.response.start", "status": 200, "headers": headers})
+        await send({"type": "http.response.body", "body": b"" if method == "HEAD" else body})
+        return True
 
     @staticmethod
     async def _respond(send: Any, code: int, payload: dict[str, Any]) -> None:
