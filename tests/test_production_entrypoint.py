@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 from monatise.application.production import ProductionASGI, ProductionRuntime
+from monatise.core.models import Candle
 
 
 class Coordination:
@@ -25,7 +26,12 @@ class Runtime:
         self.environment = {
             "MONATISE_ENVIRONMENT": "production",
             "MONATISE_OPENCLAW_TOKEN": "control-secret",
+            "COINGLASS_API_KEY": "server-secret",
         }
+        self.coinglass = SimpleNamespace(
+            candles=lambda symbol, limit, interval: [Candle("2026-08-02T12:00:00+00:00", 100, 110, 90, 105, 1000)],
+            dashboard_query=lambda path, query: {"code": "0", "data": [{"path": path, "symbol": query.get("symbol")}]},
+        )
         self.redis_coordination = Coordination()
         self.calls = []
     async def analyse(self, symbol, **kwargs):
@@ -47,11 +53,11 @@ def request(app, path, payload, *, token=None):
     return messages[0]["status"], json.loads(messages[1]["body"])
 
 
-def get(app, path, *, method="GET"):
+def get(app, path, *, method="GET", query="", client=("127.0.0.1", 1234)):
     messages = []
     async def receive(): return {"type": "http.request", "body": b"", "more_body": False}
     async def send(message): messages.append(message)
-    scope = {"type": "http", "method": method, "path": path, "headers": []}
+    scope = {"type": "http", "method": method, "path": path, "query_string": query.encode(), "headers": [], "client": client}
     asyncio.run(app(scope, receive, send))
     return messages
 
@@ -87,6 +93,39 @@ def test_staging_route_is_disabled_in_production():
 
 def test_notification_verification_route_is_not_exposed():
     assert request(ProductionASGI(Runtime()), "/api/notifications/test", {"confirmation": "TEST_NOTIFICATION_ONLY"})[0] == 404
+
+
+def test_market_dashboard_uses_server_backed_read_only_data_routes():
+    app = ProductionASGI(Runtime())
+    candles = get(app, "/api/market/candles", query="symbol=BTC&interval=15m&limit=96")
+    assert candles[0]["status"] == 200
+    candle_payload = json.loads(candles[1]["body"])
+    assert candle_payload["status"] == "ready"
+    assert candle_payload["source"] == "CoinGlass"
+    assert candle_payload["candles"][0]["time"] == 1785672000000
+    assert candle_payload["execution_enabled"] is False
+
+    operator = get(app, "/api/operator")
+    assert json.loads(operator[1]["body"])["integrations"]["coinglass"]["configured"] is True
+
+    dataset = get(app, "/api/coinglass/proxy/api/futures/open-interest/exchange-list", query="symbol=BTC")
+    assert dataset[0]["status"] == 200
+    assert json.loads(dataset[1]["body"])["data"][0]["symbol"] == "BTC"
+
+
+def test_market_dashboard_routes_reject_unsupported_queries():
+    app = ProductionASGI(Runtime())
+    assert get(app, "/api/market/candles", query="symbol=EURUSD&interval=15m&limit=96")[0]["status"] == 400
+    assert get(app, "/api/market/candles", query="symbol=BTC&interval=2h&limit=96")[0]["status"] == 400
+    assert get(app, "/api/market/candles", query="symbol=BTC&interval=15m&limit=2000")[0]["status"] == 400
+    assert get(app, "/api/coinglass/proxy/not-allowed")[0]["status"] == 400
+
+
+def test_market_dashboard_data_routes_are_rate_limited_per_client():
+    app = ProductionASGI(Runtime())
+    app._market_rate_windows["203.0.113.10"] = (int(time.time()) // 60, 120)
+    response = get(app, "/api/market/candles", query="symbol=BTC&interval=15m&limit=96", client=("203.0.113.10", 80))
+    assert response[0]["status"] == 429
 
 
 def test_openclaw_status_restores_read_only_legacy_contract():
