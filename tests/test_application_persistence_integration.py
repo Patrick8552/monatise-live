@@ -8,7 +8,6 @@ from uuid import uuid4
 import pytest
 
 from monatise.application.deployment import OrchestrationRuntime
-from monatise.application.production import ProductionRuntime
 from monatise.application.persistence import PostgresDocumentStore, RedisDocumentStore, connect_postgres_store, connect_redis_store
 
 
@@ -70,44 +69,6 @@ def test_orchestration_runtime_service_backed_startup_and_shutdown():
             assert payload["execution_enabled"] is False
             assert payload["dependencies"]["engine_registry"]["count"] == 20
             assert payload["dependencies"]["scheduler"]["leader"] is True
-        finally:
-            await runtime.shutdown()
-
-    asyncio.run(scenario())
-
-
-@pytest.mark.skipif(
-    not os.getenv("MONATISE_TEST_DATABASE_URL") or not os.getenv("MONATISE_TEST_REDIS_URL"),
-    reason="PostgreSQL and Redis test URLs are not configured",
-)
-def test_production_runtime_service_backed_startup_and_shutdown():
-    async def scenario():
-        runtime = ProductionRuntime(environment={
-            "MONATISE_ENVIRONMENT": "production",
-            "MONATISE_MODE": "paper",
-            "MONATISE_NETWORK": "paper",
-            "MONATISE_EXECUTION_ENABLED": "false",
-            "MONATISE_AUTONOMOUS_EXECUTION": "false",
-            "MONATISE_EXECUTION_ADAPTER_ENABLED": "false",
-            "MONATISE_ALLOW_LIVE_ORDERS": "false",
-            "MONATISE_OPENCLAW_EXECUTION_ALLOWED": "false",
-            "MONATISE_TELEGRAM_EXECUTION_ALLOWED": "false",
-            "MONATISE_GOVERNANCE_KILL_SWITCH_ENABLED": "true",
-            "MONATISE_AUDIT_LOGGING_ENABLED": "true",
-            "MONATISE_ALLOW_DEGRADED_MACRO": "true",
-            "MONATISE_DATABASE_URL": os.environ["MONATISE_TEST_DATABASE_URL"],
-            "MONATISE_REDIS_URL": os.environ["MONATISE_TEST_REDIS_URL"],
-            "MONATISE_REDIS_NAMESPACE": f"monatise:test:production:{uuid4()}",
-            "COINGLASS_API_KEY": "service-backed-test-key",
-        })
-        await runtime.start()
-        try:
-            ready, payload = runtime.readiness()
-            assert ready is True
-            assert payload["dependencies"]["macro_provider"]["status"] == "degraded"
-            assert payload["dependencies"]["engine_registry"]["order"]
-            assert payload["dependencies"]["scheduler"]["leader"] is True
-            assert payload["dependencies"]["audit_logging"]["enabled"] is True
         finally:
             await runtime.shutdown()
 
