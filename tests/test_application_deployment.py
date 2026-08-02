@@ -4,10 +4,11 @@ import asyncio
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from monatise.application.deployment import COINGLASS_PROVIDER_KEY, MigrationRunner, OrchestrationASGI, OrchestrationRuntime, PaperSafetyConfiguration, RedisSchedulerLeadership, _DegradedMacroProvider, register_coinglass_provider
+from monatise.application.deployment import COINGLASS_PROVIDER_KEY, MigrationRunner, OrchestrationASGI, OrchestrationRuntime, PaperSafetyConfiguration, RedisSchedulerLeadership, _DegradedMacroProvider, register_coinglass_provider, scheduled_analysis_configuration
 from monatise.application.registry import CANONICAL_ENGINE_ORDER
 from monatise.infrastructure.dependency_injection import Container
 from monatise.engines.macro.rules import CRYPTO_MACRO_RULES
@@ -39,6 +40,80 @@ def test_paper_safety_defaults_are_immutable_and_disabled():
 def test_paper_safety_rejects_unsafe_environment(environment):
     with pytest.raises(ValueError, match="unsafe orchestration configuration"):
         PaperSafetyConfiguration.from_environment(environment)
+
+
+def test_scheduled_analysis_configuration_is_explicit_bounded_and_crypto_only():
+    assert scheduled_analysis_configuration({}) is None
+    assert scheduled_analysis_configuration({
+        "MONATISE_SCHEDULED_ANALYSIS_ENABLED": "true",
+        "MONATISE_SCHEDULED_ANALYSIS_SYMBOLS": "BTC, ETH, BTC",
+        "MONATISE_SCHEDULED_ANALYSIS_INTERVAL_SECONDS": "300",
+    }) == (("BTC", "ETH"), 300)
+    with pytest.raises(ValueError, match="unsupported scheduled analysis symbols"):
+        scheduled_analysis_configuration({
+            "MONATISE_SCHEDULED_ANALYSIS_ENABLED": "true",
+            "MONATISE_SCHEDULED_ANALYSIS_SYMBOLS": "XAUUSD",
+        })
+    with pytest.raises(ValueError, match="between 60 and 86400"):
+        scheduled_analysis_configuration({
+            "MONATISE_SCHEDULED_ANALYSIS_ENABLED": "true",
+            "MONATISE_SCHEDULED_ANALYSIS_INTERVAL_SECONDS": "30",
+        })
+
+
+def test_runtime_registers_paper_only_analysis_jobs_for_each_configured_symbol():
+    class Scheduler:
+        def __init__(self): self.definitions = []
+        async def register(self, definition): self.definitions.append(definition)
+
+    scheduler = Scheduler()
+    runtime = OrchestrationRuntime(environment={
+        "MONATISE_SCHEDULED_ANALYSIS_ENABLED": "true",
+        "MONATISE_SCHEDULED_ANALYSIS_SYMBOLS": "BTC,SOL",
+        "MONATISE_SCHEDULED_ANALYSIS_INTERVAL_SECONDS": "600",
+    })
+    runtime.application = SimpleNamespace(infrastructure=SimpleNamespace(scheduler=scheduler))
+
+    job_ids = asyncio.run(runtime._register_scheduled_analysis())
+
+    assert job_ids == ("scheduled-analysis-btc", "scheduled-analysis-sol")
+    assert [item.interval.total_seconds() for item in scheduler.definitions] == [600, 600]
+    assert all(item.metadata["execution_enabled"] is False for item in scheduler.definitions)
+    assert all("paper-only" in item.tags for item in scheduler.definitions)
+
+
+def test_runtime_notifies_only_completed_risk_validated_signals():
+    delivered = []
+
+    class Orchestrator:
+        def __init__(self): self.completed = False
+        async def run(self, run):
+            outputs = {"decision": SimpleNamespace(classification=SimpleNamespace(value="trend"))}
+            if self.completed:
+                outputs.update({name: object() for name in (
+                    "risk_validation", "capital_allocation", "execution_policy", "governance_loss_control",
+                )})
+            return SimpleNamespace(
+                run_id="run-1", correlation_id=run.correlation_id, symbol=run.symbol,
+                status=SimpleNamespace(value="completed" if self.completed else "blocked"),
+                blocked_by=None if self.completed else "risk_validation",
+                context=SimpleNamespace(outputs=outputs),
+                statistics=SimpleNamespace(completed_stages=20 if self.completed else 12),
+            )
+
+    class Telegram:
+        async def deliver(self, result): delivered.append(result.run_id)
+
+    orchestrator = Orchestrator()
+    runtime = OrchestrationRuntime(environment={})
+    runtime.application = SimpleNamespace(orchestrator=orchestrator)
+    runtime.telegram = Telegram()
+
+    asyncio.run(runtime.analyse("BTC", source="monatise.scheduler"))
+    assert delivered == []
+    orchestrator.completed = True
+    asyncio.run(runtime.analyse("BTC", source="monatise.scheduler"))
+    assert delivered == ["run-1"]
 
 
 class _ReadyRuntime:
