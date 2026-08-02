@@ -31,7 +31,7 @@ from monatise.engines.supply_demand.models import ZoneRequest
 SUPPORTED_STAGING_SYMBOLS = frozenset({"BTC", "ETH", "SOL"})
 
 
-def build_paper_analysis_run(symbol: str, *, correlation_id: str | None = None, scenario: str = "live") -> AnalysisRun:
+def build_paper_analysis_run(symbol: str, *, correlation_id: str | None = None, scenario: str = "live", source: str = "monatise.staging") -> AnalysisRun:
     normalized = symbol.strip().upper()
     if normalized not in SUPPORTED_STAGING_SYMBOLS:
         raise ValueError("supported staging symbols are BTC, ETH, and SOL")
@@ -96,10 +96,10 @@ def build_paper_analysis_run(symbol: str, *, correlation_id: str | None = None, 
         "governance_loss_control": lambda c: GovernanceRequest(LossControlSnapshot(100_000, 100_000, 100_000, 0, 0, 0, 0, 0, kill_switch_active=scenario == "governance_block"), output(c, "risk_validation"), output(c, "capital_allocation"), output(c, "execution_policy"), output(c, "portfolio_intelligence"), now),
     }
     kwargs = {"correlation_id": correlation_id} if correlation_id else {}
-    return AnalysisRun(normalized, inputs, metadata=PipelineExecutionMetadata(source="monatise.staging", retry_delay_seconds=0.1), **kwargs)
+    return AnalysisRun(normalized, inputs, metadata=PipelineExecutionMetadata(source=source, retry_delay_seconds=0.1), **kwargs)
 
 
-def sanitized_result(result: Any) -> dict[str, Any]:
+def sanitized_result(result: Any, *, macro_mode: str = "unknown") -> dict[str, Any]:
     decision = result.context.outputs.get("decision")
     classification = getattr(getattr(decision, "classification", None), "value", None)
     return {
@@ -114,4 +114,8 @@ def sanitized_result(result: Any) -> dict[str, Any]:
         "allocation_produced": "capital_allocation" in result.context.outputs,
         "execution_policy_produced": "execution_policy" in result.context.outputs,
         "execution_enabled": False,
+        "macro_mode": macro_mode,
+        "macro_confidence_degraded": macro_mode == "degraded_unavailable_factors",
+        "audit_reference": result.run_id,
+        "state_reference": result.run_id,
     }

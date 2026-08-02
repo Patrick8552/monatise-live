@@ -1,99 +1,71 @@
+# Production-facing analysis-only Blueprint. The previous Render deployment
+# remains available for rollback until this definition is manually promoted.
 services:
   - type: web
     name: monatise-live
-    runtime: docker
+    runtime: python
     plan: starter
     region: oregon
-    dockerfilePath: ./deploy/Dockerfile
-    dockerContext: .
-    healthCheckPath: /api/health
-    autoDeployTrigger: commit
-    disk:
-      name: monatise-auth-data
-      mountPath: /data
-      sizeGB: 1
+    buildCommand: pip install .
+    startCommand: uvicorn monatise.application.production:app --host 0.0.0.0 --port $PORT --workers 1 --timeout-graceful-shutdown 30
+    healthCheckPath: /health/ready
+    autoDeployTrigger: off
     envVars:
       - key: MONATISE_MODE
-        value: live
+        value: paper
+      - key: MONATISE_ENVIRONMENT
+        value: production
       - key: MONATISE_NETWORK
-        value: mainnet
-      - key: MONATISE_HOST
-        value: 0.0.0.0
-      - key: MONATISE_PUBLIC_URL
-        value: https://monatise-live.onrender.com
-      - key: MONATISE_AUTH_DB
-        value: /data/monatise-users.db
-      - key: MONATISE_ENCRYPTION_KEY
-        sync: false
-      - key: MONATISE_SYMBOL
-        value: BTC
-      - key: MONATISE_DATA_FEED
-        value: hyperliquid
-      - key: MONATISE_OPENCLAW_TOKEN
-        sync: false
-      - key: MONATISE_EXCHANGE
-        value: hyperliquid
-      - key: COINGLASS_API_KEY
-        sync: false
-      - key: MONATISE_SMTP_HOST
-        sync: false
-      - key: MONATISE_SMTP_PROVIDER
-        sync: false
-      - key: MONATISE_SMTP_FROM
-        sync: false
-      - key: MONATISE_SMTP_PORT
-        value: 587
-      - key: MONATISE_SMTP_USERNAME
-        sync: false
-      - key: MONATISE_SMTP_PASSWORD
-        sync: false
-      - key: MONATISE_SMTP_STREAM
-        sync: false
-      - key: MONATISE_ALERT_EMAILS
-        sync: false
-      - key: MONATISE_SMTP_SSL
+        value: paper
+      - key: MONATISE_EXECUTION_ENABLED
         value: false
-      - key: MONATISE_SMTP_STARTTLS
-        value: true
-      - key: MONATISE_TRADINGVIEW_WEBHOOK_TOKEN
-        sync: false
-      - key: BACKPACK_REST_BASE
-        value: https://api.backpack.exchange
-      - key: BACKPACK_API_KEY
-        sync: false
-      - key: BACKPACK_SECRET_KEY
-        sync: false
-      - key: BACKPACK_SYMBOL_MAP
-        value: BTC=BTC_USDC_PERP,ETH=ETH_USDC_PERP,SOL=SOL_USDC_PERP
-      - key: COINGLASS_EXCHANGE
-        value: Binance
-      - key: COINGLASS_EXCHANGE_LIST
-        value: Binance,OKX,Bybit
-      - key: MONATISE_ASSETS
-        value: BTC,ETH,SOL,HYPE,BNB,XRP,DOGE
-      - key: MONATISE_BUILDER_DEXES
-        value: xyz
-      - key: MONATISE_EXECUTION_MODE
-        value: disabled
-      - key: MONATISE_LEVERAGE
-        value: 10
-      - key: MONATISE_ORDER_QUOTE_SIZE
-        value: 25
-      - key: MONATISE_MAX_ORDER_NOTIONAL
-        value: 25
-      - key: MONATISE_MAX_TOTAL_NOTIONAL
-        value: 150
-      - key: MONATISE_MAX_BASE_INVENTORY
-        value: 0.1
-      - key: MONATISE_MAX_DAILY_LOSS
-        value: 25
-      - key: MONATISE_MAX_MARK_MOVE_PCT
-        value: 0.03
-      - key: MONATISE_MAX_POSITION_VALUE
-        value: 250
-      - key: MONATISE_ORDER_REFRESH_SECONDS
-        value: 30
-      - key: MONATISE_SIGNAL_SESSION_WINDOW
-        value: always
+      - key: MONATISE_AUTONOMOUS_EXECUTION
+        value: false
+      - key: MONATISE_EXECUTION_ADAPTER_ENABLED
+        value: false
       - key: MONATISE_ALLOW_LIVE_ORDERS
         value: false
+      - key: MONATISE_OPENCLAW_EXECUTION_ALLOWED
+        value: false
+      - key: MONATISE_TELEGRAM_EXECUTION_ALLOWED
+        value: false
+      - key: MONATISE_GOVERNANCE_KILL_SWITCH_ENABLED
+        value: true
+      - key: MONATISE_AUDIT_LOGGING_ENABLED
+        value: true
+      # Temporary until a real production macro provider is integrated.
+      - key: MONATISE_ALLOW_DEGRADED_MACRO
+        value: true
+      - key: MONATISE_REDIS_NAMESPACE
+        value: monatise:production-analysis
+      - key: MONATISE_DATABASE_URL
+        fromDatabase:
+          name: monatise-live-postgres
+          property: connectionString
+      - key: MONATISE_REDIS_URL
+        fromService:
+          type: keyvalue
+          name: monatise-live-redis
+          property: connectionString
+      - key: COINGLASS_API_KEY
+        sync: false
+      - key: MONATISE_TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: MONATISE_TELEGRAM_CHAT_ID
+        sync: false
+      - key: MONATISE_OPENCLAW_TOKEN
+        sync: false
+
+  - type: keyvalue
+    name: monatise-live-redis
+    plan: starter
+    region: oregon
+    ipAllowList: []
+    maxmemoryPolicy: noeviction
+
+databases:
+  - name: monatise-live-postgres
+    plan: basic-256mb
+    region: oregon
+    databaseName: monatise_live
+    user: monatise_production
