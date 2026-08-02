@@ -44,6 +44,12 @@ services:
         value: BTC,ETH,SOL
       - key: MONATISE_SCHEDULED_ANALYSIS_INTERVAL_SECONDS
         value: 900
+      - key: MONATISE_HIERARCHICAL_SHADOW_ENABLED
+        value: true
+      - key: MONATISE_HIERARCHICAL_TELEGRAM_PUBLISH_ENABLED
+        value: false
+      - key: MONATISE_HIERARCHICAL_STRATEGY_VERSION
+        value: hierarchy-shadow-v1
       - key: MONATISE_DATABASE_URL
         fromDatabase:
           name: monatise-live-postgres
