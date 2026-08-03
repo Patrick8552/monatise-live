@@ -240,6 +240,8 @@ class TaskScheduler:
         self,
         definition: JobDefinition,
     ) -> JobResult:
+        async with self._lock:
+            scheduled_for = self._next_run.get(definition.job_id)
         result = await self._execute(definition)
 
         async with self._lock:
@@ -248,8 +250,10 @@ class TaskScheduler:
                 self._next_run[definition.job_id] = None
             else:
                 self._states[definition.job_id] = JobState.SCHEDULED
-                self._next_run[definition.job_id] = (
-                    datetime.now(timezone.utc) + definition.interval
+                self._next_run[definition.job_id] = self._next_interval_slot(
+                    definition,
+                    scheduled_for,
+                    datetime.now(timezone.utc),
                 )
 
         return result
@@ -385,6 +389,20 @@ class TaskScheduler:
         if definition.schedule_type is ScheduleType.ONCE:
             return None
         return datetime.now(timezone.utc) + definition.interval
+
+    @staticmethod
+    def _next_interval_slot(
+        definition: JobDefinition,
+        scheduled_for: datetime | None,
+        now: datetime,
+    ) -> datetime:
+        interval = definition.interval
+        if interval is None:
+            raise ValueError("interval job is missing its interval")
+        next_run = (scheduled_for or now) + interval
+        while next_run <= now:
+            next_run += interval
+        return next_run
 
     @staticmethod
     def _as_utc(value: datetime | None) -> datetime | None:

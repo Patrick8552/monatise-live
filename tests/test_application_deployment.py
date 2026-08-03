@@ -276,6 +276,41 @@ def test_scheduler_non_leader_retries_and_starts_after_release():
     asyncio.run(scenario())
 
 
+def test_scheduler_stops_and_recontends_after_leadership_loss():
+    async def scenario():
+        redis = _Redis()
+        leadership = RedisSchedulerLeadership(redis, namespace="test", ttl_seconds=0.03)
+        restarted = asyncio.Event()
+        stopped = asyncio.Event()
+
+        assert await leadership.acquire_or_wait(restarted.set, stopped.set) is True
+        redis.value = "another-leader"
+        await asyncio.wait_for(stopped.wait(), timeout=0.2)
+        await asyncio.sleep(0)
+
+        assert leadership.is_leader is False
+        assert leadership._contender is not None  # noqa: SLF001
+        await leadership.release()
+
+    asyncio.run(scenario())
+
+
+def test_coinglass_request_failure_makes_runtime_not_ready():
+    runtime = OrchestrationRuntime()
+    runtime.dependencies["coinglass"] = {"status": "ok"}
+    runtime.coinglass = SimpleNamespace(
+        health=lambda: SimpleNamespace(healthy=False, consecutive_failures=3)
+    )
+
+    ready, payload = runtime.readiness()
+
+    assert ready is False
+    assert payload["dependencies"]["coinglass"] == {
+        "status": "error",
+        "latest_request": "failed",
+    }
+
+
 def test_runtime_requires_managed_dependencies_without_exposing_urls():
     runtime = OrchestrationRuntime(environment={"MONATISE_MODE": "paper"})
     with pytest.raises(RuntimeError, match="PostgreSQL configuration is unavailable"):
