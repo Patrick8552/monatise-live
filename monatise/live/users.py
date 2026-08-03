@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import math
 import os
 import secrets
 import sqlite3
@@ -496,6 +497,8 @@ class UserStore:
         order_quote_size = settings.order_quote_size if order_quote_size is None else float(order_quote_size)
         max_total_notional = settings.max_total_notional if max_total_notional is None else float(max_total_notional)
         max_position_value = settings.max_position_value if max_position_value is None else float(max_position_value)
+        if not all(math.isfinite(value) for value in (order_quote_size, max_total_notional, max_position_value)):
+            raise ValueError("trading limits must be finite numbers")
         if order_quote_size <= 0:
             raise ValueError("per-order size must be positive")
         if max_total_notional <= 0:

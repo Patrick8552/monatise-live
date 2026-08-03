@@ -9,6 +9,7 @@ from monatise.live.secrets import secret_value
 LIVE_CONFIRMATION = "EXECUTION_DISABLED"
 COINGLASS_STARTUP_INTERVALS = {"1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "1w"}
 COINGLASS_STARTUP_INTERVAL_LABEL = "1m, 3m, 5m, 15m, 30m, 1h, 2h, 4h, 6h, 8h, 12h, 1d, or 1w"
+HYPERLIQUID_CANDLE_INTERVALS = COINGLASS_STARTUP_INTERVALS - {"6h"}
 
 
 @dataclass(frozen=True)
@@ -149,5 +150,7 @@ class RuntimeConfig:
             raise ValueError("MONATISE_SESSION_GUARD_MINUTES must be 5, 15, 30, 60, or 90")
         if self.chart_interval not in COINGLASS_STARTUP_INTERVALS:
             raise ValueError(f"MONATISE_CHART_INTERVAL must be one of {COINGLASS_STARTUP_INTERVAL_LABEL}")
+        if self.data_feed == "hyperliquid" and self.chart_interval not in HYPERLIQUID_CANDLE_INTERVALS:
+            raise ValueError(f"{self.chart_interval} candles are not supported by Hyperliquid")
         if self.signal_session_window != "always":
             raise ValueError("MONATISE_SIGNAL_SESSION_WINDOW is fixed to always")

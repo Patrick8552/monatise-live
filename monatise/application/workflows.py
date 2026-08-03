@@ -56,12 +56,58 @@ class TelegramNotifier:
 
     @staticmethod
     def format(result: PipelineResult) -> str:
-        suffix = f" | blocked by {result.blocked_by}" if result.blocked_by else ""
-        return f"Monatise crypto analysis: {result.symbol} | {result.status.value} | stages {result.statistics.completed_stages}/20{suffix} | run {result.run_id}"
+        outputs = result.context.outputs
+        decision = outputs.get("decision")
+        risk = outputs.get("risk_validation")
+        market = outputs.get("market_data")
+
+        if decision is None or risk is None:
+            suffix = f" | blocked by {result.blocked_by}" if result.blocked_by else ""
+            return (
+                f"Monatise analysis: {result.symbol} | {result.status.value} | "
+                f"stages {result.statistics.completed_stages}/20{suffix} | run {result.run_id}"
+            )
+
+        direction = _enum_value(getattr(decision, "direction", "none")).upper()
+        classification = _enum_value(getattr(decision, "classification", "no_trade")).upper()
+        conviction = float(getattr(decision, "conviction", 0.0) or 0.0)
+        entry = getattr(risk, "validated_entry", None)
+        stop = getattr(risk, "validated_invalidation", None)
+        target = getattr(risk, "validated_target", None)
+        reward_risk = getattr(risk, "reward_risk", None)
+        expires_at = getattr(risk, "signal_expires_at", None)
+        quality = getattr(market, "quality", None)
+        source = getattr(quality, "source", "CoinGlass")
+        reasons = tuple(getattr(decision, "reasons", ()) or ())[:3]
+
+        lines = [
+            f"Monatise signal: {result.symbol} {direction} ({classification})",
+            f"Confidence: {conviction * 100:.0f}%",
+            f"Entry: {_price(entry)} | Stop: {_price(stop)} | Target: {_price(target)}",
+        ]
+        if reward_risk is not None:
+            lines.append(f"Reward/risk: {float(reward_risk):.2f}")
+        if expires_at is not None:
+            lines.append(f"Expires: {expires_at.astimezone(timezone.utc):%Y-%m-%d %H:%M UTC}")
+        lines.append(f"Data: {source} | Status: {result.status.value}")
+        if reasons:
+            lines.append("Why: " + "; ".join(str(reason) for reason in reasons))
+        lines.append(f"Run: {result.run_id}")
+        return "\n".join(lines)
 
     @property
     def execution_enabled(self) -> bool:
         return False
+
+
+def _enum_value(value: Any) -> str:
+    return str(getattr(value, "value", value))
+
+
+def _price(value: Any) -> str:
+    if value is None:
+        return "pending"
+    return f"{float(value):,.8f}".rstrip("0").rstrip(".")
 
 
 @dataclass(frozen=True)

@@ -9,7 +9,7 @@ services:
     buildCommand: pip install .
     startCommand: uvicorn monatise.application.production:app --host 0.0.0.0 --port $PORT --workers 1 --timeout-graceful-shutdown 30
     healthCheckPath: /health/ready
-    autoDeployTrigger: off
+    autoDeployTrigger: checksPass
     envVars:
       - key: MONATISE_MODE
         value: paper

@@ -73,6 +73,24 @@ def test_openclaw_bearer_token_is_required(monkeypatch) -> None:
     assert handler.authorization_error[0] == 401
 
 
+def test_client_ip_ignores_forwarded_header_from_untrusted_peer(monkeypatch) -> None:
+    monkeypatch.delenv("MONATISE_TRUSTED_PROXY_IPS", raising=False)
+    handler = MonatiseHandler.__new__(MonatiseHandler)
+    handler.client_address = ("203.0.113.10", 1234)
+    handler.headers = {"X-Forwarded-For": "198.51.100.99"}
+
+    assert handler._client_ip() == "203.0.113.10"
+
+
+def test_client_ip_accepts_forwarded_header_only_from_configured_proxy(monkeypatch) -> None:
+    monkeypatch.setenv("MONATISE_TRUSTED_PROXY_IPS", "127.0.0.1,10.0.0.5")
+    handler = MonatiseHandler.__new__(MonatiseHandler)
+    handler.client_address = ("10.0.0.5", 1234)
+    handler.headers = {"X-Forwarded-For": "198.51.100.99, 10.0.0.5"}
+
+    assert handler._client_ip() == "198.51.100.99"
+
+
 def test_dashboard_and_service_worker_disable_stale_browser_caching(monkeypatch) -> None:
     monkeypatch.setattr("http.server.SimpleHTTPRequestHandler.end_headers", lambda self: None)
     handler = MonatiseHandler.__new__(MonatiseHandler)

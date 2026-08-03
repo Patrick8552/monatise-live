@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
@@ -137,6 +138,40 @@ def test_telegram_message_has_no_execution_capability():
     asyncio.run(notifier.deliver(result))
     assert "blocked by risk_validation" in sent[0][1]
     assert notifier.execution_enabled is False
+
+
+def test_telegram_completed_signal_contains_actionable_levels_and_coinglass_source():
+    run = AnalysisRun("BTC", {})
+    now = run.requested_at
+    outputs = {
+        "decision": SimpleNamespace(
+            direction=SimpleNamespace(value="long"),
+            classification=SimpleNamespace(value="trend"),
+            conviction=0.78,
+            reasons=("bullish structure confirmed", "positive derivatives flow"),
+        ),
+        "risk_validation": SimpleNamespace(
+            validated_entry=65000.0,
+            validated_invalidation=63500.0,
+            validated_target=68000.0,
+            reward_risk=2.0,
+            signal_expires_at=now,
+        ),
+        "market_data": SimpleNamespace(quality=SimpleNamespace(source="CoinGlass futures price history")),
+    }
+    result = PipelineResult(
+        run.run_id, run.correlation_id, "BTC", PipelineStage.COMPLETED,
+        PipelineContext(run, outputs), PipelineStatistics(1, {}, {}, 20), None, None, now, now,
+    )
+
+    message = TelegramNotifier.format(result)
+
+    assert "BTC LONG (TREND)" in message
+    assert "Entry: 65,000" in message
+    assert "Stop: 63,500" in message
+    assert "Target: 68,000" in message
+    assert "Confidence: 78%" in message
+    assert "CoinGlass futures price history" in message
 
 
 def test_notification_failure_does_not_corrupt_completed_pipeline_result():

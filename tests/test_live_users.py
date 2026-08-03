@@ -361,6 +361,34 @@ def test_user_store_saves_grid_sizing_rules() -> None:
         _restore_key(old_key)
 
 
+@pytest.mark.parametrize("field", ["order_quote_size", "max_total_notional", "max_position_value"])
+def test_user_store_rejects_non_finite_grid_sizing(field: str) -> None:
+    old_key = _with_key()
+    try:
+        with tempfile.NamedTemporaryFile() as db:
+            store = UserStore(db.name)
+            user = store.create_user("finite-rules@example.com", "password123")
+            values = {
+                "order_quote_size": 25.0,
+                "max_total_notional": 5000.0,
+                "max_position_value": 5000.0,
+            }
+            values[field] = float("nan")
+
+            with pytest.raises(ValueError, match="finite"):
+                store.save_trading_rules(
+                    user.id,
+                    chart_interval="1h",
+                    london_commodity_only=False,
+                    max_daily_loss_pct=0.05,
+                    session_guard_minutes=60,
+                    stale_grid_cancel=True,
+                    **values,
+                )
+    finally:
+        _restore_key(old_key)
+
+
 def test_user_store_rejects_order_size_above_total_open_grid() -> None:
     old_key = _with_key()
     try:
