@@ -42,3 +42,5 @@ def test_parse_candle_and_interval_validation() -> None:
     assert candle.timestamp == "123"
     assert candle.volume == 2
     assert _interval_millis("15m") == 900_000
+    assert _interval_millis("30m") == 1_800_000
+    assert _interval_millis("1w") == 604_800_000

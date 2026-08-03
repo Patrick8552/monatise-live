@@ -1,5 +1,7 @@
 import os
 
+import pytest
+
 from monatise.live.config import LIVE_CONFIRMATION, RuntimeConfig
 
 
@@ -58,6 +60,15 @@ def test_startup_lower_chart_interval_is_valid() -> None:
     config = RuntimeConfig(chart_interval="1m")
 
     config.validate()
+
+
+def test_coinglass_keeps_full_interval_selection() -> None:
+    RuntimeConfig(data_feed="coinglass", chart_interval="6h").validate()
+
+
+def test_hyperliquid_rejects_interval_unsupported_by_its_candle_api() -> None:
+    with pytest.raises(ValueError, match="not supported by Hyperliquid"):
+        RuntimeConfig(data_feed="hyperliquid", chart_interval="6h").validate()
 
 
 def test_env_signal_window_defaults_to_always() -> None:

@@ -1456,8 +1456,16 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
         return False
 
     def _client_ip(self) -> str:
-        forwarded = self.headers.get("X-Forwarded-For", "")
-        return forwarded.split(",", 1)[0].strip() or self.client_address[0]
+        peer = self.client_address[0]
+        trusted_proxies = {
+            value.strip()
+            for value in os.getenv("MONATISE_TRUSTED_PROXY_IPS", "").split(",")
+            if value.strip()
+        }
+        if peer in trusted_proxies:
+            forwarded = self.headers.get("X-Forwarded-For", "")
+            return forwarded.split(",", 1)[0].strip() or peer
+        return peer
 
 
 def main() -> int:
