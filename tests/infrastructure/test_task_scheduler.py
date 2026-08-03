@@ -205,6 +205,28 @@ def test_manual_interval_run_remains_scheduled() -> None:
     asyncio.run(run())
 
 
+def test_interval_slot_is_anchored_to_prior_schedule() -> None:
+    scheduled_for = datetime(2026, 8, 3, 12, 0, tzinfo=timezone.utc)
+    definition = JobDefinition(
+        job_id="fixed-cadence",
+        name="Fixed cadence",
+        task=lambda: None,
+        schedule_type=ScheduleType.INTERVAL,
+        interval=timedelta(minutes=15),
+    )
+
+    assert TaskScheduler._next_interval_slot(  # noqa: SLF001
+        definition,
+        scheduled_for,
+        scheduled_for + timedelta(seconds=30),
+    ) == scheduled_for + timedelta(minutes=15)
+    assert TaskScheduler._next_interval_slot(  # noqa: SLF001
+        definition,
+        scheduled_for,
+        scheduled_for + timedelta(minutes=31),
+    ) == scheduled_for + timedelta(minutes=45)
+
+
 def test_background_loop_runs_one_time_job() -> None:
     async def run() -> None:
         scheduler = TaskScheduler(poll_interval_seconds=0.001)

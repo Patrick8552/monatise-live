@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
+import inspect
 import json
 import logging
 import os
@@ -202,6 +203,9 @@ class RedisSchedulerLeadership:
         self.is_leader = False
         self._renewal: asyncio.Task[None] | None = None
         self._contender: asyncio.Task[None] | None = None
+        self._on_acquired: Any | None = None
+        self._on_lost: Any | None = None
+        self._released = False
 
     async def acquire(self) -> bool:
         self.is_leader = bool(await self.client.set(self.key, self.token, nx=True, ex=self.ttl_seconds))
@@ -209,8 +213,11 @@ class RedisSchedulerLeadership:
             self._renewal = asyncio.create_task(self._renew(), name="monatise-scheduler-leadership")
         return self.is_leader
 
-    async def acquire_or_wait(self, on_acquired: Any) -> bool:
+    async def acquire_or_wait(self, on_acquired: Any, on_lost: Any | None = None) -> bool:
         """Acquire immediately or keep contending until leadership is available."""
+        self._on_acquired = on_acquired
+        self._on_lost = on_lost
+        self._released = False
         if await self.acquire():
             return True
         self._contender = asyncio.create_task(
@@ -223,7 +230,9 @@ class RedisSchedulerLeadership:
             while not self.is_leader:
                 await asyncio.sleep(self.ttl_seconds / 3)
                 if await self.acquire():
-                    await on_acquired()
+                    callback_result = on_acquired()
+                    if inspect.isawaitable(callback_result):
+                        await callback_result
                     return
         except asyncio.CancelledError:
             raise
@@ -235,11 +244,21 @@ class RedisSchedulerLeadership:
                 renewed = await self.client.eval(self.RENEW_SCRIPT, 1, self.key, self.token, self.ttl_seconds)
                 if not renewed:
                     self.is_leader = False
+                    if self._on_lost is not None:
+                        callback_result = self._on_lost()
+                        if inspect.isawaitable(callback_result):
+                            await callback_result
+                    if not self._released and self._on_acquired is not None:
+                        self._contender = asyncio.create_task(
+                            self._contend(self._on_acquired),
+                            name="monatise-scheduler-contender",
+                        )
                     return
         except asyncio.CancelledError:
             raise
 
     async def release(self) -> None:
+        self._released = True
         if self._contender:
             self._contender.cancel()
             await asyncio.gather(self._contender, return_exceptions=True)
@@ -455,7 +474,10 @@ class OrchestrationRuntime:
             self.redis_coordination = RedisCoordinationStore(
                 self.redis, namespace=self.environment.get("MONATISE_REDIS_NAMESPACE", "monatise:paper-staging")
             )
-            leader = await self.leadership.acquire_or_wait(infrastructure.scheduler.start)
+            leader = await self.leadership.acquire_or_wait(
+                infrastructure.scheduler.start,
+                infrastructure.scheduler.stop,
+            )
             await infrastructure.plugins.start_all()
             if leader:
                 await infrastructure.scheduler.start()
@@ -526,9 +548,11 @@ class OrchestrationRuntime:
             self.dependencies["scheduler"]["leader"] = self.leadership.is_leader
         if self.coinglass is not None:
             health = self.coinglass.health()
-            self.dependencies.setdefault("coinglass", {})["latest_request"] = (
+            coinglass_dependency = self.dependencies.setdefault("coinglass", {})
+            coinglass_dependency["latest_request"] = (
                 "healthy" if health.healthy else ("failed" if health.consecutive_failures else "not_yet_requested")
             )
+            coinglass_dependency["status"] = "error" if health.consecutive_failures else "ok"
         registry_ok = bool(self.application and tuple(item.name for item in self.application.registry.ordered()) == CANONICAL_ENGINE_ORDER)
         mandatory = (
             "configuration", "postgresql", "migrations", "redis", "event_bus", "state_manager",

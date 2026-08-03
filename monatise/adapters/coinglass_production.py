@@ -35,7 +35,7 @@ class CoinGlassProductionAdapter:
         "price_history": "/api/futures/price/history",
         "open_interest": "/api/futures/open-interest/exchange-list",
         "funding_rate": "/api/futures/funding-rate/oi-weight-history",
-        "liquidations": "/api/futures/liquidation/exchange-list",
+        "liquidations": "/api/futures/liquidation/aggregated-history",
         "volume": "/api/futures/aggregated-taker-buy-sell-volume/history",
         "order_book": "/api/futures/orderbook/aggregated-ask-bids-history",
         "cvd": "/api/futures/aggregated-cvd/history",
@@ -230,7 +230,12 @@ class CoinGlassProductionAdapter:
         if dataset == "funding_rate":
             return {"symbol": coin, "interval": "1h", "limit": "2"}
         if dataset == "liquidations":
-            return {"symbol": coin, "range": "1h"}
+            return {
+                "exchange_list": "Binance",
+                "symbol": coin,
+                "interval": "1h",
+                "limit": "2",
+            }
         if dataset in {"volume", "cvd"}:
             return {"exchange_list": "Binance", "symbol": coin, "interval": "1h", "limit": "2"}
         if dataset == "order_book":

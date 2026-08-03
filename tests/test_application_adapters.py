@@ -51,6 +51,12 @@ def test_coinglass_uses_official_dataset_parameters_and_normalizes_native_fields
     adapter = CoinGlassProductionAdapter(lambda: "secret", transport=transport, requests_per_second=100000)
     assert adapter.derivatives_snapshot("BTC") == {"open_interest": 100.0, "funding_rate": 0.01, "liquidation_volume": 20.0, "derivatives_volume": 300.0, "order_book_imbalance": 0.2, "cvd": 12.0}
     assert calls[adapter.ENDPOINTS["funding_rate"]] == {"symbol": "BTC", "interval": "1h", "limit": "2"}
+    assert calls[adapter.ENDPOINTS["liquidations"]] == {
+        "exchange_list": "Binance",
+        "symbol": "BTC",
+        "interval": "1h",
+        "limit": "2",
+    }
     assert calls[adapter.ENDPOINTS["order_book"]]["exchange_list"] == "Binance"
     assert calls[adapter.ENDPOINTS["order_book"]]["symbol"] == "BTC"
 
