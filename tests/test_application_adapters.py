@@ -130,6 +130,23 @@ def test_coinglass_dashboard_queries_are_allowlisted_cached_and_server_side():
         adapter.dashboard_query("/api/futures/open-interest/exchange-list", {"api_key": "browser-secret"})
 
 
+def test_coinglass_dashboard_liquidations_accepts_required_exchange_list():
+    captured = []
+
+    def transport(path, params, timeout):
+        captured.append((path, params, timeout))
+        return {"code": 0, "data": [{"liquidation_usd": "20"}]}
+
+    adapter = CoinGlassProductionAdapter(lambda: "server-secret", transport=transport, requests_per_second=100000)
+    payload = adapter.dashboard_query(
+        "/api/futures/liquidation/aggregated-history",
+        {"exchange_list": "Binance", "symbol": "BTC", "interval": "1h", "limit": "2"},
+    )
+
+    assert payload["data"][0]["liquidation_usd"] == "20"
+    assert captured[0][1]["exchange_list"] == "Binance"
+
+
 def test_telegram_message_has_no_execution_capability():
     sent = []
 

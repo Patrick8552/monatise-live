@@ -46,7 +46,7 @@ class CoinGlassProductionAdapter:
         "/api/article/list": {"start_time", "end_time", "language", "page", "per_page"},
         "/api/futures/funding-rate/exchange-list": set(),
         "/api/futures/liquidation/aggregated-map": {"symbol", "range"},
-        "/api/futures/liquidation/aggregated-history": {"symbol", "interval", "limit"},
+        "/api/futures/liquidation/aggregated-history": {"exchange_list", "symbol", "interval", "limit"},
         "/api/futures/liquidation/max-pain": {"range"},
         "/api/futures/open-interest/exchange-list": {"symbol"},
         "/api/futures/price/history": {"exchange", "symbol", "interval", "limit"},
