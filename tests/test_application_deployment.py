@@ -347,6 +347,16 @@ def test_real_coinglass_adapter_is_resolved_through_di_without_exposing_key():
     assert "never-render-this" not in repr(container.registrations)
 
 
+def test_runtime_registers_configured_market_fallback_after_coinglass():
+    primary = object()
+    fallback = object()
+    runtime = OrchestrationRuntime()
+    runtime.coinglass = primary
+    runtime.market_fallback = fallback
+
+    assert runtime.market_data_providers() == {"coinglass": primary, "hyperliquid": fallback}
+
+
 def test_degraded_macro_provider_marks_every_factor_unavailable_without_fabrication():
     provider = _DegradedMacroProvider()
     snapshot = provider.context_snapshot("BTC")

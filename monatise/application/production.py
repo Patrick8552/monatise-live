@@ -71,6 +71,12 @@ class ProductionASGI(OrchestrationASGI):
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         path = scope.get("path", "")
+        if scope.get("type") == "http" and path == "/api/health":
+            if scope.get("method", "GET").upper() not in {"GET", "HEAD"}:
+                await self._respond(send, 405, {"status": "method_not_allowed"})
+                return
+            await self._respond(send, 200, {"ok": True, "status": "alive", "execution_enabled": False})
+            return
         if scope.get("type") == "http" and path in {"/api/market/candles", "/api/operator"}:
             if scope.get("method", "GET").upper() != "GET":
                 await self._respond(send, 405, {"status": "method_not_allowed"})

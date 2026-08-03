@@ -332,6 +332,15 @@ class OrchestrationRuntime:
     hierarchy: ShadowHierarchyCoordinator | None = None
     hierarchy_service: ShadowHierarchyService | None = None
 
+    def market_data_providers(self) -> dict[str, Any]:
+        if self.coinglass is None:
+            raise RuntimeError("CoinGlass market provider is unavailable")
+        providers: dict[str, Any] = {"coinglass": self.coinglass}
+        fallback = getattr(self, "market_fallback", None)
+        if fallback is not None:
+            providers["hyperliquid"] = fallback
+        return providers
+
     async def _register_scheduled_analysis(self) -> tuple[str, ...]:
         configuration = scheduled_analysis_configuration(self.environment)
         if configuration is None:
@@ -456,7 +465,7 @@ class OrchestrationRuntime:
             )
             macro_provider = _DegradedMacroProvider() if degraded_macro_enabled else _UnavailableMacroProvider()
             self.application = create_application(
-                market_data_providers={"coinglass": self.coinglass},
+                market_data_providers=self.market_data_providers(),
                 macro_provider=macro_provider,
                 derivatives_provider=self.coinglass,
                 infrastructure=infrastructure,
