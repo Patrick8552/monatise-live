@@ -16,9 +16,7 @@ from typing import Any
 from urllib.parse import parse_qs
 
 from monatise.adapters.coinglass_production import CoinGlassProductionAdapter
-from monatise.adapters.hyperliquid import HyperliquidAdapter
 from monatise.application.deployment import OrchestrationASGI, OrchestrationRuntime
-from monatise.live.config import RuntimeConfig
 
 
 LOGGER = logging.getLogger("monatise.production")
@@ -46,7 +44,6 @@ class ProductionRuntime(OrchestrationRuntime):
         invalid = [key for key, value in required.items() if self.environment.get(key, "").strip().casefold() != value]
         if invalid:
             raise ValueError("production safety configuration is missing or invalid: " + ", ".join(invalid))
-        self.market_fallback = HyperliquidAdapter(RuntimeConfig.from_env())
         LOGGER.info("production safety configuration validated")
         await super().start()
 
@@ -151,16 +148,8 @@ class ProductionASGI(OrchestrationASGI):
         try:
             candles = await asyncio.to_thread(self.runtime.coinglass.candles, symbol, limit, interval)
         except Exception as exc:
-            fallback = getattr(self.runtime, "market_fallback", None)
-            if fallback is None:
-                LOGGER.warning("market candles unavailable", extra={"symbol": symbol, "interval": interval, "error_type": type(exc).__name__})
-                return 503, {"status": "unavailable", "dataset": "candles", "source": "coinglass", "error_type": type(exc).__name__}
-            try:
-                candles = await asyncio.to_thread(fallback.candles, symbol, limit, interval)
-                source = "Hyperliquid candleSnapshot"
-            except Exception as fallback_exc:
-                LOGGER.warning("market candles unavailable from primary and fallback", extra={"symbol": symbol, "interval": interval, "primary_error_type": type(exc).__name__, "fallback_error_type": type(fallback_exc).__name__})
-                return 503, {"status": "unavailable", "dataset": "candles", "source": "coinglass+hyperliquid", "error_type": type(fallback_exc).__name__}
+            LOGGER.warning("market candles unavailable", extra={"symbol": symbol, "interval": interval, "error_type": type(exc).__name__})
+            return 503, {"status": "unavailable", "dataset": "candles", "source": "coinglass", "error_type": type(exc).__name__}
         rows = []
         for candle in candles:
             raw_timestamp = str(candle.timestamp).strip()

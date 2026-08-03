@@ -449,20 +449,12 @@ def operator_status_payload(config: RuntimeConfig) -> dict:
 
 
 def _market_data_adapter(config: RuntimeConfig, symbol: str):  # noqa: ANN202
-    if config.data_feed == "hyperliquid":
-        return HyperliquidAdapter(config), "Hyperliquid candleSnapshot"
     return CoinGlassAdapter(config), "CoinGlass futures price history"
 
 
 def _market_candles(config: RuntimeConfig, symbol: str, limit: int, interval: str):  # noqa: ANN202
     adapter, source = _market_data_adapter(config, symbol)
-    try:
-        return adapter.candles(symbol, limit, interval=interval), source
-    except (CoinGlassPlanError, RuntimeError) as error:
-        if "CoinGlass" not in source:
-            raise
-        fallback = HyperliquidAdapter(config)
-        return fallback.candles(symbol, limit, interval=interval), f"Hyperliquid candleSnapshot (CoinGlass unavailable: {error})"
+    return adapter.candles(symbol, limit, interval=interval), source
 
 
 class TenantServices:
@@ -675,16 +667,8 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             return
         if parsed.path == "/api/assets":
             try:
-                if self.config.data_feed == "hyperliquid":
-                    assets = [{"symbol": symbol, "exchange": "Hyperliquid", "instrument": symbol, "tradable": True} for symbol in self.config.assets]
-                    source = "configured Hyperliquid assets"
-                else:
-                    try:
-                        assets = CoinGlassAdapter(self.config).supported_assets()
-                        source = "CoinGlass futures exchange pairs"
-                    except Exception as error:  # noqa: BLE001
-                        assets = [{"symbol": symbol, "exchange": "Hyperliquid", "instrument": symbol, "tradable": True} for symbol in self.config.assets]
-                        source = f"configured Hyperliquid assets (CoinGlass unavailable: {error})"
+                assets = CoinGlassAdapter(self.config).supported_assets()
+                source = "CoinGlass futures exchange pairs"
                 self._json({"assets": assets, "count": len(assets), "source": source})
             except Exception as error:  # noqa: BLE001
                 self._error(502, str(error))

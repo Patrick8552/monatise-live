@@ -2013,9 +2013,9 @@ function updateCoinGlassSourceStatus(message = "") {
   els.coinGlassStatus.textContent = serverReady ? "Preferred API connected" : localKey ? "Preferred API key saved" : "Preferred API · not connected";
   els.coinGlassStatusDetail.textContent = ready
     ? message || (serverReady
-      ? `CoinGlass is Monatise's preferred API for trade-signal quality${state.operator?.integrations?.coinglass?.exchange ? ` via ${state.operator.integrations.coinglass.exchange}` : ""}. Hyperliquid remains the fallback.`
+      ? `CoinGlass is Monatise's only API for trade-signal quality${state.operator?.integrations?.coinglass?.exchange ? ` via ${state.operator.integrations.coinglass.exchange}` : ""}.`
       : "CoinGlass is Monatise's preferred API for trade-signal quality. Its local key is saved for this browser.")
-    : "CoinGlass is Monatise's preferred API for trade-signal quality. Hyperliquid fallback analysis remains available.";
+    : "CoinGlass is Monatise's only market-data API. Analysis is unavailable until CoinGlass is connected.";
   els.coinGlassPriceRef.textContent = usesServerMarketCandles(asset)
     ? `${asset.tv} · Monatise market candles`
     : `${asset.pair} · CoinGlass futures price history`;
@@ -3264,19 +3264,14 @@ function renderLiquidations(result) {
 }
 
 async function renderLiquidationsLocked(error) {
-  try {
-    const fallback = await getHyperliquidBookLiquidity();
-    renderLiquidations(fallback);
-  } catch (fallbackError) {
-    els.liqSource.textContent = "CoinGlass liquidation map and Hyperliquid book unavailable";
-    els.maxPain.textContent = `${error.message}; ${fallbackError.message}`.slice(0, 160);
-    els.liqBias.textContent = "Liquidity pending";
-    els.liqBias.className = "";
-    state.market.liquidationBias = null;
-    state.market.liquidationLevels = [];
-    state.market.liquiditySource = "";
-    drawCanvasNotice(els.liqCanvas, "Liquidity data unavailable", `${error.message}; ${fallbackError.message}`);
-  }
+  els.liqSource.textContent = "CoinGlass liquidation map unavailable";
+  els.maxPain.textContent = error.message.slice(0, 160);
+  els.liqBias.textContent = "Liquidity pending";
+  els.liqBias.className = "";
+  state.market.liquidationBias = null;
+  state.market.liquidationLevels = [];
+  state.market.liquiditySource = "";
+  drawCanvasNotice(els.liqCanvas, "CoinGlass liquidity data unavailable", error.message);
 }
 
 function renderFearGreed(rows) {
@@ -3366,10 +3361,6 @@ function marketFundingContext(market = state.market) {
   if (Number.isFinite(cg)) {
     return { label: "CoinGlass funding", live: true, source: "CoinGlass", value: cg };
   }
-  const hyper = Number(market.hyperFunding);
-  if (Number.isFinite(hyper)) {
-    return { label: "Hyperliquid funding fallback", live: true, source: "Hyperliquid", value: hyper };
-  }
   return { label: "Funding", live: false, source: "", value: null };
 }
 
@@ -3377,10 +3368,6 @@ function marketOpenInterestContext(market = state.market) {
   const cgChange = Number(market.oiChange);
   if (Number.isFinite(cgChange)) {
     return { label: "CoinGlass open interest", live: true, source: "CoinGlass", type: "change", value: cgChange };
-  }
-  const hyperOi = Number(market.hyperOpenInterest);
-  if (Number.isFinite(hyperOi) && hyperOi > 0) {
-    return { label: "Hyperliquid OI fallback", live: true, source: "Hyperliquid", type: "level", value: hyperOi };
   }
   return { label: "Open interest", live: false, source: "", type: "", value: null };
 }

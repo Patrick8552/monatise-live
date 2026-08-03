@@ -5,7 +5,7 @@ Status: canonical production system
 - Production repository: `monatise-live`
 - Production host: Render
 - Primary signal-quality data API: CoinGlass
-- Fallback when CoinGlass is unavailable: Hyperliquid public market data
+- Market data: CoinGlass only; analysis fails closed when CoinGlass is unavailable
 - Order execution: globally disabled
 - Weekend trade generation: disabled
 - Payments: no Stripe or USDC payment flow

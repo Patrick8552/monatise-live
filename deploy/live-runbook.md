@@ -10,7 +10,7 @@ deployment definition.
 - The application-level `RuntimeConfig.live_enabled` property always returns false.
 - Starting the trading service returns an analysis-only warning and never starts
   an order loop.
-- CoinGlass is the preferred primary source; Hyperliquid public data is fallback.
+- CoinGlass is the only analysis market-data source; provider failures stop analysis.
 - No trade signals are generated on weekends.
 
 ## Verification
