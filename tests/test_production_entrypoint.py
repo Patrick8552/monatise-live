@@ -268,7 +268,7 @@ def test_production_blueprint_is_analysis_only_and_isolated():
     required = [
         "name: monatise-live",
         "monatise.application.production:app",
-        "autoDeployTrigger: off",
+        "autoDeployTrigger: checksPass",
         "MONATISE_MODE",
         "MONATISE_ENVIRONMENT",
         "MONATISE_ALLOW_DEGRADED_MACRO",
