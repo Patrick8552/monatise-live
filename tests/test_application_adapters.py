@@ -113,6 +113,13 @@ def test_coinglass_price_failure_marks_essential_feed_unhealthy():
     assert adapter.health().consecutive_failures == 1
 
 
+def test_coinglass_counts_an_exhausted_request_not_each_retry_attempt():
+    adapter = CoinGlassProductionAdapter(lambda: "secret", transport=lambda *_: (_ for _ in ()).throw(RuntimeError("down")), maximum_attempts=3, requests_per_second=100000)
+    with pytest.raises(RuntimeError):
+        adapter.candles("BTC", 2)
+    assert adapter.health().consecutive_failures == 1
+
+
 def test_coinglass_retries_generic_transport_failures():
     attempts = []
 
