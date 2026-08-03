@@ -16,6 +16,7 @@ class LifecycleEventType(StrEnum):
     TRIGGER_EVALUATED = "trigger_evaluated"
     DECISION_RECORDED = "decision_recorded"
     PUBLICATION_RECORDED = "publication_recorded"
+    PUBLICATION_RECONCILIATION_REQUIRED = "publication_reconciliation_required"
     PUBLICATION_RECONCILED = "publication_reconciled"
 
 
@@ -39,6 +40,7 @@ class LifecycleEvent:
 class LifecycleStore(Protocol):
     async def put(self, namespace: str, key: str, value: dict[str, Any], **kwargs: Any) -> Any: ...
     async def get(self, namespace: str, key: str) -> Any | None: ...
+    async def list_namespace(self, namespace: str) -> tuple[Any, ...]: ...
     async def append(self, stream: str, value: dict[str, Any]) -> None: ...
     async def read_stream(self, stream: str) -> tuple[dict[str, Any], ...]: ...
 
@@ -110,14 +112,14 @@ class HierarchyRepository:
             if existing is not None:
                 status = existing.value.get("status", "published" if existing.value.get("published") else "pending")
                 lease_until = datetime.fromisoformat(existing.value["lease_until"]) if existing.value.get("lease_until") else None
-                if status in {"publishing", "delivery_uncertain", "published", "abandoned"} or (status == "pending" and lease_until is not None and occurred_at < lease_until):
+                if status in {"publishing", "delivery_uncertain", "reconciliation_required", "published", "abandoned"} or (status == "pending" and lease_until is not None and occurred_at < lease_until):
                     return False, identity
                 attempts = int(existing.value.get("attempts", 1)) + 1
                 try:
                     await self.store.put(
                         "hierarchy_trigger_claims",
                         identity,
-                        {"status": "pending", "evaluated": True, "published": False, "occurred_at": occurred_at.isoformat(), "lease_until": (occurred_at + timedelta(minutes=2)).isoformat(), "attempts": attempts},
+                        {"status": "pending", "evaluated": True, "published": False, "symbol": symbol.strip().upper(), "occurred_at": occurred_at.isoformat(), "lease_until": (occurred_at + timedelta(minutes=2)).isoformat(), "attempts": attempts},
                         expected_version=existing.version,
                     )
                 except RuntimeError:
@@ -127,7 +129,7 @@ class HierarchyRepository:
                 await self.store.put(
                     "hierarchy_trigger_claims",
                     identity,
-                    {"status": "pending", "evaluated": True, "published": False, "occurred_at": occurred_at.isoformat(), "lease_until": (occurred_at + timedelta(minutes=2)).isoformat(), "attempts": 1},
+                    {"status": "pending", "evaluated": True, "published": False, "symbol": symbol.strip().upper(), "occurred_at": occurred_at.isoformat(), "lease_until": (occurred_at + timedelta(minutes=2)).isoformat(), "attempts": 1},
                     expected_version=0,
                 )
             except RuntimeError:
@@ -184,6 +186,36 @@ class HierarchyRepository:
                 metadata={"trigger_id": trigger_id, "publication_id": trigger_id, "telegram_message_id": telegram_message_id, "status": value["status"], "attempt": value.get("attempts"), "error_type": error_type},
             ))
 
+    async def flag_stale_publications(self, *, occurred_at: datetime) -> tuple[str, ...]:
+        """Surface ambiguous deliveries after their deadline without retrying them."""
+        if occurred_at.tzinfo is None or occurred_at.utcoffset() is None:
+            raise ValueError("publication reconciliation scan time must be timezone-aware")
+        flagged: list[str] = []
+        for record in await self.store.list_namespace("hierarchy_trigger_claims"):
+            value = dict(record.value)
+            if value.get("status") not in {"publishing", "delivery_uncertain"}:
+                continue
+            raw_deadline = value.get("reconciliation_required_after")
+            if not raw_deadline or occurred_at < datetime.fromisoformat(raw_deadline):
+                continue
+            trigger_id = record.key
+            symbol = str(value.get("symbol") or "UNKNOWN").strip().upper()
+            async with await self.symbol_lock(symbol):
+                current = await self.store.get("hierarchy_trigger_claims", trigger_id)
+                if current is None or current.version != record.version or current.value.get("status") not in {"publishing", "delivery_uncertain"}:
+                    continue
+                updated = dict(current.value)
+                updated.update({"status": "reconciliation_required", "reconciliation_flagged_at": occurred_at.isoformat()})
+                await self.store.put("hierarchy_trigger_claims", trigger_id, updated, expected_version=current.version)
+                await self._append_event(LifecycleEvent(
+                    deterministic_id("event", {"type": "publication_reconciliation_required", "trigger": trigger_id}),
+                    LifecycleEventType.PUBLICATION_RECONCILIATION_REQUIRED, symbol, occurred_at, None,
+                    reason="telegram_delivery_requires_operator_reconciliation",
+                    metadata={"trigger_id": trigger_id, "publication_id": trigger_id, "previous_status": current.value.get("status")},
+                ))
+                flagged.append(trigger_id)
+        return tuple(flagged)
+
     async def reconcile_publication(self, *, symbol: str, trigger_id: str, occurred_at: datetime, resolution: str, telegram_message_id: int | None = None, actor: str) -> None:
         """Resolve an ambiguous delivery without making an automatic resend decision."""
         if occurred_at.tzinfo is None or occurred_at.utcoffset() is None:
@@ -204,7 +236,7 @@ class HierarchyRepository:
             if current is None:
                 raise RuntimeError("trigger publication claim is unavailable")
             current_status = current.value.get("status")
-            if current_status not in {"publishing", "delivery_uncertain"}:
+            if current_status not in {"publishing", "delivery_uncertain", "reconciliation_required"}:
                 raise RuntimeError("publication is not awaiting reconciliation")
             status = {
                 "delivered": "published",

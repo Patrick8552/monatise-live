@@ -120,14 +120,16 @@ def test_runtime_registers_fail_closed_hierarchy_shadow_jobs_without_publication
 
 def test_runtime_reports_requested_hierarchy_publication_without_publisher_as_error():
     class Scheduler:
-        async def register(self, definition): pass
+        def __init__(self): self.definitions = []
+        async def register(self, definition): self.definitions.append(definition)
 
+    scheduler = Scheduler()
     runtime = OrchestrationRuntime(environment={
         "MONATISE_HIERARCHICAL_SHADOW_ENABLED": "true",
         "MONATISE_HIERARCHICAL_TELEGRAM_PUBLISH_ENABLED": "true",
         "MONATISE_SCHEDULED_ANALYSIS_SYMBOLS": "BTC",
     })
-    runtime.application = SimpleNamespace(infrastructure=SimpleNamespace(scheduler=Scheduler()))
+    runtime.application = SimpleNamespace(infrastructure=SimpleNamespace(scheduler=scheduler))
     runtime.coinglass = SimpleNamespace()
 
     asyncio.run(runtime._register_hierarchy_shadow(SimpleNamespace()))
@@ -137,6 +139,12 @@ def test_runtime_reports_requested_hierarchy_publication_without_publisher_as_er
     assert status["telegram_publish_enabled"] is True
     assert status["telegram_publisher_configured"] is False
     assert status["telegram_publication_operational"] is False
+    reconciliation = next(item for item in scheduler.definitions if item.job_id == "hierarchy-publication-reconciliation")
+    assert reconciliation.metadata == {
+        "operator_resolution_required": True,
+        "automatic_resend": False,
+        "execution_enabled": False,
+    }
 
 
 def test_runtime_notifies_only_completed_risk_validated_signals():

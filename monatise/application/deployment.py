@@ -407,6 +407,27 @@ class OrchestrationRuntime:
                 metadata={"symbol": symbol, "shadow": True, "telegram_publish_enabled": configuration.telegram_publish_enabled, "execution_enabled": False},
             ))
             job_ids.append(job_id)
+        if configuration.telegram_publish_enabled:
+            reconciliation_job_id = "hierarchy-publication-reconciliation"
+
+            async def reconcile_publications() -> dict[str, Any]:
+                flagged = await repository.flag_stale_publications(occurred_at=datetime.now(timezone.utc))
+                if flagged:
+                    LOGGER.warning("hierarchical Telegram publications require operator reconciliation: %s", ",".join(flagged))
+                return {"reconciliation_required": list(flagged), "automatic_resend": False}
+
+            await scheduler.register(JobDefinition(
+                job_id=reconciliation_job_id,
+                name="Flag stale hierarchical Telegram publications",
+                task=reconcile_publications,
+                schedule_type=ScheduleType.INTERVAL,
+                interval=timedelta(seconds=60),
+                timeout_seconds=30,
+                retry_policy=RetryPolicy(maximum_attempts=2, delay_seconds=5, maximum_delay_seconds=15),
+                tags=("hierarchy", "telegram", "reconciliation"),
+                metadata={"operator_resolution_required": True, "automatic_resend": False, "execution_enabled": False},
+            ))
+            job_ids.append(reconciliation_job_id)
         self.dependencies["hierarchy_shadow"] = {
             "status": "error" if configuration.telegram_publish_enabled and publisher is None else "ok",
             "enabled": True, "jobs": list(job_ids),
