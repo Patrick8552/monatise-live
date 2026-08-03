@@ -11,7 +11,7 @@ import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
 import secrets
-from time import time
+from time import monotonic, time
 from typing import Any
 from urllib.parse import parse_qs
 
@@ -66,6 +66,8 @@ class ProductionASGI(OrchestrationASGI):
         super().__init__(runtime or ProductionRuntime())
         self.static_dir = (static_dir or Path(__file__).resolve().parents[2] / "app").resolve()
         self._market_rate_windows: dict[str, tuple[int, int]] = {}
+        self._openclaw_cache: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
+        self._openclaw_inflight: dict[tuple[str, str], asyncio.Task[dict[str, Any]]] = {}
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         path = scope.get("path", "")
@@ -199,8 +201,9 @@ class ProductionASGI(OrchestrationASGI):
         interval = str(query.get("interval", ["1h"])[0]).strip() or "1h"
         if not symbol:
             return 400, {"status": "invalid_request", "reason": "symbol is required"}
+        cache_key = (symbol, interval)
         try:
-            analysis = await self.runtime.analyse(symbol, source="monatise.openclaw")
+            analysis, cache_hit = await self._cached_openclaw_analysis(cache_key)
         except (TypeError, ValueError) as exc:
             return 400, {"status": "invalid_request", "reason": str(exc)}
         except Exception as exc:
@@ -213,6 +216,7 @@ class ProductionASGI(OrchestrationASGI):
             "symbol": symbol,
             "interval": interval,
             "analysis": analysis,
+            "cache_hit": cache_hit,
             "execution_enabled": False,
             "capabilities": {
                 "readOnly": True,
@@ -223,6 +227,30 @@ class ProductionASGI(OrchestrationASGI):
                 "deploymentWrites": False,
             },
         }
+
+    async def _cached_openclaw_analysis(self, cache_key: tuple[str, str]) -> tuple[dict[str, Any], bool]:
+        raw_ttl = self.runtime.environment.get("MONATISE_OPENCLAW_CACHE_TTL_SECONDS", "300")
+        try:
+            ttl_seconds = min(max(float(raw_ttl), 0.0), 900.0)
+        except ValueError:
+            ttl_seconds = 300.0
+        cached = self._openclaw_cache.get(cache_key)
+        now = monotonic()
+        if cached is not None and now - cached[0] < ttl_seconds:
+            return cached[1], True
+
+        task = self._openclaw_inflight.get(cache_key)
+        joined_existing = task is not None
+        if task is None:
+            task = asyncio.create_task(self.runtime.analyse(cache_key[0], source="monatise.openclaw"))
+            self._openclaw_inflight[cache_key] = task
+        try:
+            analysis = await asyncio.shield(task)
+        finally:
+            if task.done() and self._openclaw_inflight.get(cache_key) is task:
+                self._openclaw_inflight.pop(cache_key, None)
+        self._openclaw_cache[cache_key] = (monotonic(), analysis)
+        return analysis, joined_existing
 
     async def _serve_frontend(self, scope: dict[str, Any], send: Any) -> bool:
         method = scope.get("method", "GET").upper()
