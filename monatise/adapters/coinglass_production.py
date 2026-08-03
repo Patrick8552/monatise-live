@@ -217,12 +217,12 @@ class CoinGlassProductionAdapter:
                 return deepcopy(data)
             except Exception as exc:
                 last_error = exc
-                if dataset == "price_history":
-                    with self._lock:
-                        self._critical_failures += 1
                 self._observe("coinglass.request", {"dataset": dataset, "attempt": attempt, "success": False, "error": type(exc).__name__})
                 if attempt < self._attempts:
                     time.sleep(min(2.0, 0.2 * 2 ** (attempt - 1)) + random.uniform(0, 0.05))
+        if dataset == "price_history":
+            with self._lock:
+                self._critical_failures += 1
         raise CoinGlassError(f"CoinGlass {dataset} request failed") from last_error
 
     def _dataset_params(self, dataset: str, coin: str) -> dict[str, str]:

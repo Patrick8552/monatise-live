@@ -549,10 +549,12 @@ class OrchestrationRuntime:
         if self.coinglass is not None:
             health = self.coinglass.health()
             coinglass_dependency = self.dependencies.setdefault("coinglass", {})
+            unavailable = health.consecutive_failures >= 3
             coinglass_dependency["latest_request"] = (
-                "healthy" if health.healthy else ("failed" if health.consecutive_failures else "not_yet_requested")
+                "healthy" if health.healthy else ("failed" if unavailable else ("degraded" if health.consecutive_failures else "not_yet_requested"))
             )
-            coinglass_dependency["status"] = "error" if health.consecutive_failures else "ok"
+            coinglass_dependency["status"] = "error" if unavailable else "ok"
+            coinglass_dependency["consecutive_failures"] = health.consecutive_failures
         registry_ok = bool(self.application and tuple(item.name for item in self.application.registry.ordered()) == CANONICAL_ENGINE_ORDER)
         mandatory = (
             "configuration", "postgresql", "migrations", "redis", "event_bus", "state_manager",

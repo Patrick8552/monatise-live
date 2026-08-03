@@ -308,6 +308,27 @@ def test_coinglass_request_failure_makes_runtime_not_ready():
     assert payload["dependencies"]["coinglass"] == {
         "status": "error",
         "latest_request": "failed",
+        "consecutive_failures": 3,
+    }
+
+
+def test_single_coinglass_request_failure_is_degraded_but_still_ready():
+    runtime = OrchestrationRuntime()
+    runtime.safety = SimpleNamespace()
+    runtime.application = SimpleNamespace(registry=SimpleNamespace(ordered=lambda: tuple(SimpleNamespace(name=name) for name in CANONICAL_ENGINE_ORDER)))
+    runtime.dependencies = {key: {"status": "ok"} for key in (
+        "configuration", "postgresql", "migrations", "redis", "event_bus", "state_manager",
+        "audit_repository", "audit_integrity", "audit_logging", "scheduler", "engine_registry",
+        "pipeline_orchestrator", "governance", "notifications", "coinglass", "hierarchy_shadow",
+    )}
+    runtime.dependencies["macro_provider"] = {"status": "degraded"}
+    runtime.coinglass = SimpleNamespace(health=lambda: SimpleNamespace(healthy=False, consecutive_failures=1))
+
+    ready, payload = runtime.readiness()
+
+    assert ready is True
+    assert payload["dependencies"]["coinglass"] == {
+        "status": "ok", "latest_request": "degraded", "consecutive_failures": 1,
     }
 
 
