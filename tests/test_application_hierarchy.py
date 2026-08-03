@@ -44,6 +44,9 @@ class MemoryStore:
     async def get(self, namespace, key):
         return self.documents.get((namespace, key))
 
+    async def list_namespace(self, namespace):
+        return tuple(record for (item_namespace, _), record in self.documents.items() if item_namespace == namespace)
+
     async def put(self, namespace, key, value, **kwargs):
         current = self.documents.get((namespace, key))
         actual = current.version if current else 0
@@ -179,6 +182,32 @@ def test_publication_reconciliation_blocks_unsafe_retries(resolution, telegram_m
             trigger_type="reclaim", strategy_version="v1", occurred_at=NOW + timedelta(minutes=4),
         )
         assert retry == (False, trigger_id)
+
+    asyncio.run(scenario())
+
+
+def test_stale_publications_are_flagged_for_operator_reconciliation_without_retry():
+    async def scenario():
+        store = MemoryStore()
+        repository = HierarchyRepository(store)
+        claimed, trigger_id = await repository.claim_trigger(
+            symbol="BTC", candle_close_time=NOW, setup_id="setup-stale", direction="long",
+            trigger_type="reclaim", strategy_version="v1", occurred_at=NOW,
+        )
+        assert claimed is True
+        await repository.begin_publication(symbol="BTC", trigger_id=trigger_id, occurred_at=NOW)
+        assert await repository.flag_stale_publications(occurred_at=NOW + timedelta(minutes=1)) == ()
+        assert await repository.flag_stale_publications(occurred_at=NOW + timedelta(minutes=2)) == (trigger_id,)
+        assert await repository.flag_stale_publications(occurred_at=NOW + timedelta(minutes=3)) == ()
+        record = await store.get("hierarchy_trigger_claims", trigger_id)
+        assert record.value["status"] == "reconciliation_required"
+        retry = await repository.claim_trigger(
+            symbol="BTC", candle_close_time=NOW, setup_id="setup-stale", direction="long",
+            trigger_type="reclaim", strategy_version="v1", occurred_at=NOW + timedelta(minutes=3),
+        )
+        assert retry == (False, trigger_id)
+        events = await repository.reconstruct("BTC")
+        assert [event["event_type"] for event in events].count("publication_reconciliation_required") == 1
 
     asyncio.run(scenario())
 

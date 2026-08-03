@@ -38,6 +38,7 @@ class AsyncRedisClient(Protocol):
 class DocumentStore(Protocol):
     async def put(self, namespace: str, key: str, value: dict[str, Any], **kwargs: Any) -> "DurableRecord": ...
     async def get(self, namespace: str, key: str) -> "DurableRecord | None": ...
+    async def list_namespace(self, namespace: str) -> tuple["DurableRecord", ...]: ...
     async def delete(self, namespace: str, key: str) -> None: ...
     async def append(self, stream: str, value: dict[str, Any]) -> None: ...
     async def read_stream(self, stream: str) -> tuple[dict[str, Any], ...]: ...
@@ -97,6 +98,20 @@ class PostgresDocumentStore:
         version = row["version"] if isinstance(row, dict) or hasattr(row, "keys") else row[1]
         value = raw_value if isinstance(raw_value, dict) else json.loads(raw_value)
         return DurableRecord(namespace, key, value, int(version))
+
+    async def list_namespace(self, namespace: str) -> tuple[DurableRecord, ...]:
+        rows = await self._fetch(
+            f"SELECT document_key, value, version FROM {self._table} WHERE namespace=$1 ORDER BY document_key",
+            namespace,
+        )
+        records = []
+        for row in rows:
+            key = row["document_key"] if isinstance(row, dict) or hasattr(row, "keys") else row[0]
+            raw_value = row["value"] if isinstance(row, dict) or hasattr(row, "keys") else row[1]
+            version = row["version"] if isinstance(row, dict) or hasattr(row, "keys") else row[2]
+            value = raw_value if isinstance(raw_value, dict) else json.loads(raw_value)
+            records.append(DurableRecord(namespace, key, value, int(version)))
+        return tuple(records)
 
     async def delete(self, namespace: str, key: str) -> None:
         await self._execute(f"DELETE FROM {self._table} WHERE namespace=$1 AND document_key=$2", namespace, key)
