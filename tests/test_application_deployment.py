@@ -347,20 +347,19 @@ def test_real_coinglass_adapter_is_resolved_through_di_without_exposing_key():
     assert "never-render-this" not in repr(container.registrations)
 
 
-def test_runtime_registers_configured_market_fallback_after_coinglass():
+def test_runtime_uses_only_coinglass_for_market_data():
     primary = object()
-    fallback = object()
     runtime = OrchestrationRuntime()
     runtime.coinglass = primary
-    runtime.market_fallback = fallback
 
-    assert runtime.market_data_providers() == {"coinglass": primary, "hyperliquid": fallback}
+    assert runtime.market_data_providers() == {"coinglass": primary}
 
 
-def test_staging_blueprint_installs_live_market_fallback_dependency():
+def test_staging_blueprint_installs_only_core_dependencies():
     blueprint = (Path(__file__).resolve().parents[1] / "render.staging.yaml").read_text()
 
-    assert "buildCommand: pip install '.[live]'" in blueprint
+    assert "buildCommand: pip install ." in blueprint
+    assert "[live]" not in blueprint
 
 
 def test_degraded_macro_provider_marks_every_factor_unavailable_without_fabrication():

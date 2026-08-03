@@ -121,19 +121,18 @@ def test_market_dashboard_routes_reject_unsupported_queries():
     assert get(app, "/api/coinglass/proxy/not-allowed")[0]["status"] == 400
 
 
-def test_market_candles_fall_back_without_enabling_execution():
+def test_market_candles_fail_closed_when_coinglass_is_unavailable():
     runtime = Runtime()
     runtime.coinglass.candles = lambda *_: (_ for _ in ()).throw(RuntimeError("plan restriction"))
-    runtime.market_fallback = SimpleNamespace(
-        candles=lambda symbol, limit, interval: [Candle("1785672000000", 100, 110, 90, 106, 900)]
-    )
     response = get(ProductionASGI(runtime), "/api/market/candles", query="symbol=BTC&interval=15m&limit=96")
     payload = json.loads(response[1]["body"])
-    assert response[0]["status"] == 200
-    assert payload["source"] == "Hyperliquid candleSnapshot"
-    assert payload["candles"][0]["close"] == 106
-    assert payload["candles"][0]["time"] == 1785672000000
-    assert payload["execution_enabled"] is False
+    assert response[0]["status"] == 503
+    assert payload == {
+        "status": "unavailable",
+        "dataset": "candles",
+        "source": "coinglass",
+        "error_type": "RuntimeError",
+    }
 
 
 def test_market_dashboard_data_routes_are_rate_limited_per_client():

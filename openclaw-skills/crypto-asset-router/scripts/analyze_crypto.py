@@ -7,7 +7,7 @@ from pathlib import Path
 
 SUPPORTED={"BTC","ETH","SOL","HYPE","XRP","BNB","DOGE","ADA","LINK","AVAX","SUI"}
 FORBIDDEN={"EUR","GBP","JPY","AUD","CAD","CHF","GOLD","XAU","OIL","CL","SPX","NDX"}
-COINGLASS_NOTICE="Coinglass is Monatise's main primary API for excellent signal quality; Hyperliquid is the fallback when Coinglass is unavailable."
+COINGLASS_NOTICE="CoinGlass is the only permitted Monatise market-data provider."
 def now(): return datetime.now(timezone.utc)
 def stamp(value): return value.isoformat().replace("+00:00","Z")
 def normalize(raw):
@@ -43,21 +43,18 @@ def analyze(asset,interval="1h",payload=None,current_time=None):
     if payload is None:
         try: payload=fetch(asset,interval)
         except Exception as exc: payload={}; warnings.append(type(exc).__name__)
-    source=str(payload.get("source") or ""); coinglass=source.lower().startswith("coinglass"); hyperliquid="hyperliquid" in source.lower()
+    source=str(payload.get("source") or ""); coinglass=source.lower().startswith("coinglass")
     fib=payload.get("analysis") or {}; fvg=payload.get("fvg") or {}; indicator=payload.get("indicator") or {}; mark=payload.get("mark"); candles=int(fib.get("candle_count") or 0)
     complete=sum(x is not None for x in (mark,fib.get("trend"),fvg.get("bias"),indicator.get("trend"),indicator.get("atr_pct"))); quality=round(100*complete/5)
     direction=_direction(fib,fvg,indicator); entry,stop,targets=_levels(fib,indicator,direction)
     weekend=generated.weekday()>=5
-    fallback_ready=hyperliquid and candles>=50 and quality==100 and direction!="NO_TRADE" and entry is not None
     primary_ready=coinglass and candles>=50 and quality==100 and direction!="NO_TRADE" and entry is not None
     if weekend: decision="NO_TRADE"; reason="WEEKEND_NO_TRADE"
     elif primary_ready: decision=direction; reason=f"VALID_{direction}_SETUP"; quality=min(100,quality)
-    elif fallback_ready: decision=direction; reason=f"VALID_{direction}_HYPERLIQUID_FALLBACK"; quality=min(82,quality); warnings.append(COINGLASS_NOTICE)
-    elif not coinglass and not hyperliquid: decision="NO_TRADE"; reason="PROVIDER_UNAVAILABLE"
+    elif not coinglass: decision="NO_TRADE"; reason="PROVIDER_UNAVAILABLE"; warnings.append(COINGLASS_NOTICE)
     elif candles<50: decision="NO_TRADE"; reason="MISSING_CANDLES"
     else: decision="NO_TRADE"; reason="CONFLICTING_STRUCTURE_AND_MARKET_CONTEXT"
-    if hyperliquid and not coinglass and COINGLASS_NOTICE not in warnings: warnings.append(COINGLASS_NOTICE)
-    conviction=(84 if primary_ready else 74 if fallback_ready else min(69,round(quality*.65)))
+    conviction=(84 if primary_ready else min(69,round(quality*.65)))
     evidence=[f"Market source: {source or 'unavailable'}.",f"Candle count: {candles}.",f"Structure trend: {fib.get('trend') or 'unavailable'}.",f"Indicator trend: {indicator.get('trend') or 'unavailable'}.",f"FVG bias: {fvg.get('bias') or 'unavailable'}."]
     if weekend: evidence.append("Weekend policy blocks trade generation on Saturday and Sunday UTC.")
     actionable=decision in {"LONG","SHORT"}

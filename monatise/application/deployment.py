@@ -24,8 +24,6 @@ from monatise.application.persistence import PostgresDocumentStore
 from monatise.application.workflows import TelegramNotifier
 from monatise.application.hierarchy import HierarchyConfiguration, HierarchyLayerEvaluator, HierarchyRepository, Provenance, ShadowHierarchyCoordinator, ShadowHierarchyService
 from monatise.adapters.coinglass_production import CoinGlassProductionAdapter
-from monatise.adapters.hyperliquid import HyperliquidAdapter
-from monatise.live.config import RuntimeConfig
 from monatise.infrastructure.audit_database import AuditAction, AuditActor, AuditRecordType
 from monatise.infrastructure.task_scheduler import JobDefinition, RetryPolicy, ScheduleType
 from monatise.engines.macro.rules import CRYPTO_MACRO_RULES
@@ -337,11 +335,7 @@ class OrchestrationRuntime:
     def market_data_providers(self) -> dict[str, Any]:
         if self.coinglass is None:
             raise RuntimeError("CoinGlass market provider is unavailable")
-        providers: dict[str, Any] = {"coinglass": self.coinglass}
-        fallback = getattr(self, "market_fallback", None)
-        if fallback is not None:
-            providers["hyperliquid"] = fallback
-        return providers
+        return {"coinglass": self.coinglass}
 
     async def _register_scheduled_analysis(self) -> tuple[str, ...]:
         configuration = scheduled_analysis_configuration(self.environment)
@@ -461,8 +455,6 @@ class OrchestrationRuntime:
             store = PostgresDocumentStore(self.postgres)
             infrastructure = create_durable_infrastructure(store)
             self.coinglass = register_coinglass_provider(infrastructure.container, self.environment)
-            if deployment_environment == "staging" and getattr(self, "market_fallback", None) is None:
-                self.market_fallback = HyperliquidAdapter(RuntimeConfig.from_env())
             degraded_macro_enabled = deployment_environment == "test" or (
                 deployment_environment in {"staging", "production"}
                 and not _false(self.environment.get("MONATISE_ALLOW_DEGRADED_MACRO"))
