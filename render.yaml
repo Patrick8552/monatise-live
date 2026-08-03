@@ -8,7 +8,9 @@ services:
     region: oregon
     buildCommand: pip install .
     startCommand: uvicorn monatise.application.production:app --host 0.0.0.0 --port $PORT --workers 1 --timeout-graceful-shutdown 30
-    healthCheckPath: /health/ready
+    # Keep the serving instance alive during transient upstream degradation;
+    # detailed dependency readiness remains available at /health/ready.
+    healthCheckPath: /health/live
     autoDeployTrigger: checksPass
     envVars:
       - key: MONATISE_MODE
@@ -44,6 +46,8 @@ services:
         value: BTC,ETH,SOL
       - key: MONATISE_SCHEDULED_ANALYSIS_INTERVAL_SECONDS
         value: 900
+      - key: MONATISE_OPENCLAW_CACHE_TTL_SECONDS
+        value: 300
       - key: MONATISE_HIERARCHICAL_SHADOW_ENABLED
         value: true
       - key: MONATISE_HIERARCHICAL_TELEGRAM_PUBLISH_ENABLED

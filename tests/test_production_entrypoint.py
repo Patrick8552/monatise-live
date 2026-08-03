@@ -163,6 +163,21 @@ def test_openclaw_status_restores_read_only_legacy_contract():
     assert runtime.calls == [("BTC", {"source": "monatise.openclaw"})]
 
 
+def test_openclaw_status_reuses_recent_analysis_by_symbol_and_interval():
+    runtime = Runtime()
+    runtime.telegram = None
+    app = ProductionASGI(runtime)
+
+    first_code, first = openclaw_status(app)
+    second_code, second = openclaw_status(app)
+
+    assert first_code == second_code == 200
+    assert first["cache_hit"] is False
+    assert second["cache_hit"] is True
+    assert first["analysis"] == second["analysis"]
+    assert runtime.calls == [("BTC", {"source": "monatise.openclaw"})]
+
+
 def test_openclaw_status_rejects_wrong_or_missing_credentials():
     runtime = Runtime()
     assert openclaw_status(ProductionASGI(runtime), token="wrong")[0] == 401
@@ -269,6 +284,8 @@ def test_production_blueprint_is_analysis_only_and_isolated():
         "name: monatise-live",
         "monatise.application.production:app",
         "autoDeployTrigger: checksPass",
+        "healthCheckPath: /health/live",
+        "MONATISE_OPENCLAW_CACHE_TTL_SECONDS",
         "MONATISE_MODE",
         "MONATISE_ENVIRONMENT",
         "MONATISE_ALLOW_DEGRADED_MACRO",
