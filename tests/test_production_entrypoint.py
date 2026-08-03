@@ -97,7 +97,7 @@ def test_notification_verification_route_is_not_exposed():
 
 def test_market_dashboard_uses_server_backed_read_only_data_routes():
     app = ProductionASGI(Runtime())
-    candles = get(app, "/api/market/candles", query="symbol=BTC&interval=15m&limit=96")
+    candles = get(app, "/api/market/candles", query="symbol=BTC&interval=30m&limit=96")
     assert candles[0]["status"] == 200
     candle_payload = json.loads(candles[1]["body"])
     assert candle_payload["status"] == "ready"
@@ -116,7 +116,7 @@ def test_market_dashboard_uses_server_backed_read_only_data_routes():
 def test_market_dashboard_routes_reject_unsupported_queries():
     app = ProductionASGI(Runtime())
     assert get(app, "/api/market/candles", query="symbol=EURUSD&interval=15m&limit=96")[0]["status"] == 400
-    assert get(app, "/api/market/candles", query="symbol=BTC&interval=2h&limit=96")[0]["status"] == 400
+    assert get(app, "/api/market/candles", query="symbol=BTC&interval=15m&limit=96")[0]["status"] == 400
     assert get(app, "/api/market/candles", query="symbol=BTC&interval=15m&limit=2000")[0]["status"] == 400
     assert get(app, "/api/coinglass/proxy/not-allowed")[0]["status"] == 400
 
@@ -124,7 +124,7 @@ def test_market_dashboard_routes_reject_unsupported_queries():
 def test_market_candles_fail_closed_when_coinglass_is_unavailable():
     runtime = Runtime()
     runtime.coinglass.candles = lambda *_: (_ for _ in ()).throw(RuntimeError("plan restriction"))
-    response = get(ProductionASGI(runtime), "/api/market/candles", query="symbol=BTC&interval=15m&limit=96")
+    response = get(ProductionASGI(runtime), "/api/market/candles", query="symbol=BTC&interval=30m&limit=96")
     payload = json.loads(response[1]["body"])
     assert response[0]["status"] == 503
     assert payload == {

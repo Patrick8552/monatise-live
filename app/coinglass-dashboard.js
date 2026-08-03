@@ -14,9 +14,9 @@ const TRADER_ACCOUNT_STORAGE = "monatise-trader-account-size";
 const TRADER_RISK_STORAGE = "monatise-trader-risk-pct";
 const LOCKED_SIGNAL_STORAGE = "monatise-locked-signal";
 const ANALYSIS_INTERVAL = "30m";
-const CRYPTO_ANALYSIS_INTERVALS = ["15m", "5m"];
-const CRYPTO_PRIMARY_ANALYSIS_INTERVAL = "15m";
-const CRYPTO_CONFIRMATION_INTERVAL = "5m";
+const CRYPTO_ANALYSIS_INTERVALS = ["1h", "30m"];
+const CRYPTO_PRIMARY_ANALYSIS_INTERVAL = "1h";
+const CRYPTO_CONFIRMATION_INTERVAL = "30m";
 const DEFAULT_VIEW_INTERVAL = "1h";
 const MIN_CONTEXT_SIGNAL_CONFIDENCE = 50;
 const MIN_ENTRY_NOTIFICATION_CONFIDENCE = 65;
@@ -1364,7 +1364,7 @@ function renderSetupGrid(signal) {
     : "VWAP / structure";
   els.setupInvalidationStrip.className = `setup-invalidation-strip ${isDirectional ? "active" : ""}`;
   els.setupGridValidity.textContent = signal.snapshotTime
-    ? `15m snapshot · valid until ${signal.reassessTime}`
+    ? `1h snapshot · valid until ${signal.reassessTime}`
     : `Generated ${signal.time}`;
 }
 
@@ -2145,7 +2145,7 @@ async function getPrice() {
   const interval = ANALYSIS_INTERVAL;
   const rows = await getPriceForAsset(asset);
   els.priceSource.textContent = usesServerMarketCandles(asset)
-    ? `${rows.source || "Monatise market feed"} · ${asset.tv} · ${usesCryptoMultiFrame(asset) ? "15m structure + 5m execution candles" : `${rows.interval || els.intervalSelect.value || DEFAULT_VIEW_INTERVAL} TradingView-aligned candles`}`
+    ? `${rows.source || "Monatise market feed"} · ${asset.tv} · ${usesCryptoMultiFrame(asset) ? "1h structure + 30m confirmation candles" : `${rows.interval || els.intervalSelect.value || DEFAULT_VIEW_INTERVAL} TradingView-aligned candles`}`
     : `CoinGlass futures price history · ${asset.pair} · ${exchange} · analysis ${interval} · view ${els.intervalSelect.value || DEFAULT_VIEW_INTERVAL}`;
   return rows;
 }
@@ -2656,17 +2656,17 @@ function mergeCryptoIndicatorStack(primaryStack, confirmationStack, primaryResea
       detail: `${confirmationStack.summary} · ${confirmationResearch.signal} · ${confirmationResearch.vwapSignal}`
     },
     {
-      name: "15m/5m alignment",
+      name: "1h/30m alignment",
       signal: aligned ? `${bias} ALIGNED` : conflict ? "CONFLICT" : "WAIT",
       score: aligned ? primaryDirection : conflict ? -primaryDirection : 0,
-      detail: aligned ? "5m confirms the 15m crypto structure." : conflict ? "5m is fighting the 15m structure; reduce conviction." : "One timeframe is neutral."
+      detail: aligned ? "30m confirms the 1h crypto structure." : conflict ? "30m is fighting the 1h structure; reduce conviction." : "One timeframe is neutral."
     },
-    ...primaryStack.rows.slice(0, 4).map((row) => ({ ...row, name: `15m ${row.name}` })),
-    ...confirmationStack.rows.slice(0, 4).map((row) => ({ ...row, name: `5m ${row.name}` }))
+    ...primaryStack.rows.slice(0, 4).map((row) => ({ ...row, name: `1h ${row.name}` })),
+    ...confirmationStack.rows.slice(0, 4).map((row) => ({ ...row, name: `30m ${row.name}` }))
   ];
   return {
     score,
-    summary: `Selected crypto 15m + 5m ${bias} stack ${score >= 0 ? "+" : ""}${score}`,
+    summary: `Selected crypto 1h + 30m ${bias} stack ${score >= 0 ? "+" : ""}${score}`,
     rows
   };
 }
@@ -2723,10 +2723,10 @@ function renderCryptoMultiTimeframePrice(series, asset) {
   els.vwapMetric.className = vwapScore > 0 ? "positive" : vwapScore < 0 ? "negative" : "";
   els.vwapSignal.textContent = state.market.vwapSignal;
   els.vwapSignal.className = els.vwapMetric.className;
-  els.vwapDetail.textContent = `15m VWAP ${formatUsd(primaryResearch.vwap)} · 5m VWAP ${formatUsd(confirmationResearch.vwap)} · setup requires both frames.`;
+  els.vwapDetail.textContent = `1h VWAP ${formatUsd(primaryResearch.vwap)} · 30m VWAP ${formatUsd(confirmationResearch.vwap)} · setup requires both frames.`;
   els.scaleAction.textContent = state.market.scaleAction;
   els.scaleAction.className = state.market.scaleAction === "average down" || state.market.scaleAction === "average up" ? "positive" : state.market.scaleAction === "scale out" ? "negative" : "";
-  els.scalePlan.textContent = `Use 15m for direction and invalidation; use 5m for entry timing and pullback confirmation. ${primaryResearch.plan}`;
+  els.scalePlan.textContent = `Use 1h for direction and invalidation; use 30m for confirmation. ${primaryResearch.plan}`;
   els.patternMemory.textContent = `${CRYPTO_PRIMARY_ANALYSIS_INTERVAL} ${primaryResearch.memory} · ${CRYPTO_CONFIRMATION_INTERVAL} ${confirmationResearch.memory}`;
   els.patternDetail.textContent = `${CRYPTO_PRIMARY_ANALYSIS_INTERVAL}: ${primaryResearch.detail} · ${CRYPTO_CONFIRMATION_INTERVAL}: ${confirmationResearch.detail}`;
 
@@ -3404,7 +3404,7 @@ function applyMonatiseFramework() {
   addCheck(checks, "History research", m.researchSignal, m.researchScore > 0 ? 1 : m.researchScore < 0 ? -1 : 0, m.researchSignal ? `${m.researchSignal} · ${m.scaleAction}` : "waiting");
   addCheck(checks, "Indicator stack", m.indicatorSummary, clampScore(m.indicatorScore || 0), m.indicatorSummary || "waiting");
   if (usesCryptoMultiFrame(asset)) {
-    addCheck(checks, "Multi-timeframe", m.analysisFrame, m.analysisFrame === `${CRYPTO_PRIMARY_ANALYSIS_INTERVAL} + ${CRYPTO_CONFIRMATION_INTERVAL}` ? 1 : 0, m.analysisFrame ? `${m.analysisFrame} setup analysis` : "waiting for 15m + 5m");
+    addCheck(checks, "Multi-timeframe", m.analysisFrame, m.analysisFrame === `${CRYPTO_PRIMARY_ANALYSIS_INTERVAL} + ${CRYPTO_CONFIRMATION_INTERVAL}` ? 1 : 0, m.analysisFrame ? `${m.analysisFrame} setup analysis` : "waiting for 1h + 30m");
   }
 
   const liveChecks = checks.filter((check) => check.live).length;

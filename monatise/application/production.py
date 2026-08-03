@@ -57,7 +57,9 @@ class ProductionRuntime(OrchestrationRuntime):
 
 class ProductionASGI(OrchestrationASGI):
     MARKET_SYMBOLS = {"BTC", "ETH", "SOL", "XRP", "DOGE", "BNB"}
-    MARKET_INTERVALS = {"1m", "3m", "5m", "15m", "30m", "1h", "4h", "1d"}
+    # CoinGlass STARTUP supports 30m and coarser candles. Keep this allowlist
+    # aligned with the configured plan so unsupported requests fail clearly.
+    MARKET_INTERVALS = {"30m", "1h", "4h", "1d"}
 
     def __init__(self, runtime: OrchestrationRuntime | None = None, static_dir: Path | None = None) -> None:
         super().__init__(runtime or ProductionRuntime())
