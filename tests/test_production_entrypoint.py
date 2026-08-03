@@ -209,6 +209,14 @@ def test_production_serves_frontend_homepage_and_assets(tmp_path):
     assert b"Market Dashboard" in dashboard[1]["body"]
 
 
+def test_production_restores_public_legacy_health_contract():
+    response = get(ProductionASGI(Runtime()), "/api/health")
+    payload = json.loads(response[1]["body"])
+
+    assert response[0]["status"] == 200
+    assert payload == {"ok": True, "status": "alive", "execution_enabled": False}
+
+
 def test_production_frontend_does_not_shadow_api_or_allow_traversal(tmp_path):
     (tmp_path / "index.html").write_text("Monatise")
     app = ProductionASGI(Runtime(), static_dir=tmp_path)
