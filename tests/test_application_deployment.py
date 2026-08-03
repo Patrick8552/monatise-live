@@ -357,6 +357,12 @@ def test_runtime_registers_configured_market_fallback_after_coinglass():
     assert runtime.market_data_providers() == {"coinglass": primary, "hyperliquid": fallback}
 
 
+def test_staging_blueprint_installs_live_market_fallback_dependency():
+    blueprint = (Path(__file__).resolve().parents[1] / "render.staging.yaml").read_text()
+
+    assert "buildCommand: pip install '.[live]'" in blueprint
+
+
 def test_degraded_macro_provider_marks_every_factor_unavailable_without_fabrication():
     provider = _DegradedMacroProvider()
     snapshot = provider.context_snapshot("BTC")
