@@ -68,7 +68,10 @@ class CoinGlassProductionAdapter:
         self._lock = threading.RLock()
         self._last_request = 0.0
         self._last_success: float | None = None
-        self._failures = 0
+        # Readiness represents the essential market feed, not every optional
+        # enrichment dataset. Some CoinGlass plans legitimately omit order-book
+        # or CVD history while price candles remain fully operational.
+        self._critical_failures = 0
 
     def open_interest(self, symbol: str) -> Any:
         return self._fetch("open_interest", symbol)
@@ -158,13 +161,10 @@ class CoinGlassProductionAdapter:
                 with self._lock:
                     self._cache[cache_key] = (time.monotonic(), deepcopy(payload))
                     self._last_success = time.time()
-                    self._failures = 0
                 self._observe("coinglass.request", {"dataset": path, "attempt": attempt, "success": True})
                 return deepcopy(payload)
             except Exception as exc:
                 last_error = exc
-                with self._lock:
-                    self._failures += 1
                 self._observe("coinglass.request", {"dataset": path, "attempt": attempt, "success": False, "error": type(exc).__name__})
                 if attempt < self._attempts:
                     time.sleep(min(2.0, 0.2 * 2 ** (attempt - 1)) + random.uniform(0, 0.05))
@@ -185,7 +185,7 @@ class CoinGlassProductionAdapter:
 
     def health(self) -> CoinGlassHealth:
         with self._lock:
-            return CoinGlassHealth(self._last_success is not None and self._failures == 0, self._last_success, self._failures, len(self._cache))
+            return CoinGlassHealth(self._last_success is not None and self._critical_failures == 0, self._last_success, self._critical_failures, len(self._cache))
 
     def _fetch(self, dataset: str, symbol: str, *, params: dict[str, str] | None = None) -> Any:
         coin = self._crypto_symbol(symbol)
@@ -211,13 +211,15 @@ class CoinGlassProductionAdapter:
                 with self._lock:
                     self._cache[key] = (time.monotonic(), deepcopy(data))
                     self._last_success = time.time()
-                    self._failures = 0
+                    if dataset == "price_history":
+                        self._critical_failures = 0
                 self._observe("coinglass.request", {"dataset": dataset, "attempt": attempt, "success": True})
                 return deepcopy(data)
             except Exception as exc:
                 last_error = exc
-                with self._lock:
-                    self._failures += 1
+                if dataset == "price_history":
+                    with self._lock:
+                        self._critical_failures += 1
                 self._observe("coinglass.request", {"dataset": dataset, "attempt": attempt, "success": False, "error": type(exc).__name__})
                 if attempt < self._attempts:
                     time.sleep(min(2.0, 0.2 * 2 ** (attempt - 1)) + random.uniform(0, 0.05))

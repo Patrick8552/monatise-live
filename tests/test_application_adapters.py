@@ -81,6 +81,38 @@ def test_coinglass_cache_is_isolated_and_observer_cannot_break_reads():
     assert len(calls) == 1
 
 
+def test_coinglass_optional_dataset_failure_does_not_mark_price_feed_unhealthy():
+    def transport(path, *_):
+        if "price/history" in path:
+            return {"code": 0, "data": [{"time": "2026-08-03T12:00:00+00:00", "open": 100, "high": 110, "low": 90, "close": 105, "volume": 1}]}
+        raise RuntimeError("optional dataset unavailable")
+
+    adapter = CoinGlassProductionAdapter(lambda: "secret", transport=transport, maximum_attempts=1, requests_per_second=100000)
+    assert adapter.candles("BTC", 2)
+    with pytest.raises(RuntimeError):
+        adapter.open_interest("BTC")
+    assert adapter.health().healthy is True
+    assert adapter.health().consecutive_failures == 0
+
+
+def test_coinglass_price_failure_marks_essential_feed_unhealthy():
+    calls = 0
+
+    def transport(path, *_):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return {"code": 0, "data": [{"open_interest_usd": 100}]}
+        raise RuntimeError(f"essential dataset unavailable: {path}")
+
+    adapter = CoinGlassProductionAdapter(lambda: "secret", transport=transport, maximum_attempts=1, requests_per_second=100000)
+    assert adapter.open_interest("BTC")
+    with pytest.raises(RuntimeError):
+        adapter.candles("BTC", 2)
+    assert adapter.health().healthy is False
+    assert adapter.health().consecutive_failures == 1
+
+
 def test_coinglass_retries_generic_transport_failures():
     attempts = []
 
