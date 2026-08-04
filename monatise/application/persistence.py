@@ -242,12 +242,16 @@ class DurableAuditRepository:
         self._repository = InMemoryAuditRepository()
         self._loaded = False
         self._load_lock = asyncio.Lock()
+        self._append_lock = asyncio.Lock()
 
     async def append(self, **kwargs: Any) -> Any:
         await self._ensure_loaded()
-        record = await self._repository.append(**kwargs)
-        await self._store.append("audit", _json_value(record))
-        return record
+        # Keep the in-memory hash-chain order and durable stream insertion order
+        # aligned even when independent engines append concurrently.
+        async with self._append_lock:
+            record = await self._repository.append(**kwargs)
+            await self._store.append("audit", _json_value(record))
+            return record
 
     async def query(self, query: AuditQuery) -> Any:
         await self._ensure_loaded()
@@ -279,7 +283,16 @@ class DurableAuditRepository:
         async with self._load_lock:
             if self._loaded:
                 return
-            for value in await self._store.read_stream("audit"):
+            values = await self._store.read_stream("audit")
+            try:
+                ordered_values = sorted(values, key=lambda value: int(value["sequence"]))
+            except (KeyError, TypeError, ValueError) as exc:
+                raise RuntimeError("durable audit sequence is invalid during restoration") from exc
+            expected_sequences = tuple(range(1, len(ordered_values) + 1))
+            actual_sequences = tuple(int(value["sequence"]) for value in ordered_values)
+            if actual_sequences != expected_sequences:
+                raise RuntimeError("durable audit sequence is incomplete during restoration")
+            for value in ordered_values:
                 actor = value["actor"]
                 record = await self._repository.append(
                     record_type=AuditRecordType(value["record_type"]), action=AuditAction(value["action"]),
@@ -288,7 +301,11 @@ class DurableAuditRepository:
                     causation_id=value.get("causation_id"), symbol=value.get("symbol"), configuration_version=value.get("configuration_version"),
                     metadata=value.get("metadata", {}), record_id=value["record_id"], created_at=datetime.fromisoformat(value["created_at"]),
                 )
-                if record.integrity_hash != value["integrity_hash"]:
+                if (
+                    record.sequence != int(value["sequence"])
+                    or record.previous_hash != value.get("previous_hash")
+                    or record.integrity_hash != value["integrity_hash"]
+                ):
                     raise RuntimeError("durable audit integrity verification failed during restoration")
             self._loaded = True
 

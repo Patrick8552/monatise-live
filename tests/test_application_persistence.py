@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from monatise.application.persistence import DurableAuditRepository, DurableEventStore, DurableRecord, DurableStateManager, DurableTaskScheduler, PostgresDocumentStore
 from monatise.infrastructure.audit_database import AuditAction, AuditActor, AuditRecordType
 from monatise.infrastructure.audit_database import AuditQuery
@@ -86,6 +88,82 @@ def test_durable_audit_repository_preserves_contract_and_streams_record():
         assert await restored.get(record.record_id) == record
         assert await restored.count() == 1
         assert await restored.query(AuditQuery(actor_id="test")) == (record,)
+    asyncio.run(scenario())
+
+
+def test_durable_audit_repository_restores_concurrent_rows_by_signed_sequence():
+    async def scenario():
+        backend = MemoryDocumentStore()
+        repository = DurableAuditRepository(backend)
+        first = await repository.append(
+            record_type=AuditRecordType.SYSTEM,
+            action=AuditAction.CREATED,
+            actor=AuditActor("first", "application"),
+            source="test",
+            payload={"order": 1},
+        )
+        second = await repository.append(
+            record_type=AuditRecordType.SYSTEM,
+            action=AuditAction.CREATED,
+            actor=AuditActor("second", "application"),
+            source="test",
+            payload={"order": 2},
+        )
+        backend.streams["audit"] = list(reversed(backend.streams["audit"]))
+
+        restored = DurableAuditRepository(backend)
+
+        assert await restored.verify_integrity() == ()
+        snapshot = await restored.snapshot()
+        assert [record.record_id for record in snapshot.records] == [first.record_id, second.record_id]
+
+    asyncio.run(scenario())
+
+
+def test_durable_audit_repository_serializes_concurrent_durable_appends():
+    class DelayedDocumentStore(MemoryDocumentStore):
+        async def append(self, stream, value):
+            if value["sequence"] == 1:
+                await asyncio.sleep(0.01)
+            await super().append(stream, value)
+
+    async def scenario():
+        backend = DelayedDocumentStore()
+        repository = DurableAuditRepository(backend)
+
+        await asyncio.gather(*(
+            repository.append(
+                record_type=AuditRecordType.SYSTEM,
+                action=AuditAction.CREATED,
+                actor=AuditActor(f"actor-{index}", "application"),
+                source="test",
+                payload={"index": index},
+            )
+            for index in range(2)
+        ))
+
+        assert [value["sequence"] for value in backend.streams["audit"]] == [1, 2]
+        assert await DurableAuditRepository(backend).verify_integrity() == ()
+
+    asyncio.run(scenario())
+
+
+def test_durable_audit_repository_rejects_missing_sequence_during_restoration():
+    async def scenario():
+        backend = MemoryDocumentStore()
+        repository = DurableAuditRepository(backend)
+        await repository.append(
+            record_type=AuditRecordType.SYSTEM,
+            action=AuditAction.CREATED,
+            actor=AuditActor("test", "application"),
+            source="test",
+            payload={"safe": True},
+        )
+        backend.streams["audit"][0]["sequence"] = 2
+
+        with pytest.raises(RuntimeError, match="sequence is incomplete"):
+            await DurableAuditRepository(backend).verify_integrity()
+
     asyncio.run(scenario())
 
 
