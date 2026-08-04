@@ -40,19 +40,27 @@ class MarketDataEngine:
         request.validate()
         observed_at = self._as_utc(self._clock())
         issues: list[str] = []
+        degraded_candidate: MarketSnapshot | None = None
 
         ordered_sources = self._ordered_sources(request.preferred_source)
         for source_name in ordered_sources:
             provider = self._providers[source_name]
             try:
-                raw_price = provider.latest_price(request.symbol)
                 raw_candles = provider.candles(
                     request.symbol,
                     request.candle_limit,
                     request.interval,
                 )
-                price = self._normalize_price(raw_price)
                 candles = self._normalize_candles(raw_candles)
+                try:
+                    raw_price = provider.latest_price(request.symbol)
+                except Exception as exc:
+                    raw_price = candles[-1].close if candles else None
+                    issues.append(
+                        f"{source_name}: provider error on latest price; used latest candle close "
+                        f"({type(exc).__name__})"
+                    )
+                price = self._normalize_price(raw_price)
 
                 provider_issues = self._validate_series(candles)
                 issues.extend(f"{source_name}: {item}" for item in provider_issues)
@@ -88,7 +96,7 @@ class MarketDataEngine:
                     validation_issues=provider_issues,
                 )
 
-                return MarketSnapshot(
+                snapshot = MarketSnapshot(
                     symbol=request.symbol.upper(),
                     interval=request.interval,
                     price=price,
@@ -106,10 +114,18 @@ class MarketDataEngine:
                         "requested_candle_limit": request.candle_limit,
                         "returned_candle_count": len(candles),
                         "fallback_used": source_name != ordered_sources[0],
+                        "providers_attempted": ordered_sources[: ordered_sources.index(source_name) + 1],
                     },
                 )
+                if status is DataStatus.READY:
+                    return snapshot
+                if status is DataStatus.DEGRADED and degraded_candidate is None:
+                    degraded_candidate = snapshot
             except Exception as exc:  # Adapter failures must not crash the pipeline.
                 issues.append(f"{source_name}: provider error: {type(exc).__name__}: {exc}")
+
+        if degraded_candidate is not None:
+            return degraded_candidate
 
         return MarketSnapshot(
             symbol=request.symbol.upper(),
@@ -125,7 +141,10 @@ class MarketDataEngine:
                 age_seconds=None,
                 issues=tuple(issues or ["no provider returned usable data"]),
             ),
-            metadata={"requested_candle_limit": request.candle_limit},
+            metadata={
+                "requested_candle_limit": request.candle_limit,
+                "providers_attempted": ordered_sources,
+            },
         )
 
     def _ordered_sources(self, preferred: str | None) -> list[str]:

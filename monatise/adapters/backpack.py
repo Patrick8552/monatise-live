@@ -25,6 +25,14 @@ DEFAULT_SYMBOL_MAP = {
     "SOL": "SOL_USDC_PERP",
 }
 SUPPORTED_INTERVALS = {"1m", "5m", "15m", "1h", "4h", "1d"}
+INTERVAL_SECONDS = {
+    "1m": 60,
+    "5m": 300,
+    "15m": 900,
+    "1h": 3_600,
+    "4h": 14_400,
+    "1d": 86_400,
+}
 
 
 @dataclass(frozen=True)
@@ -74,9 +82,16 @@ class BackpackAdapter(MarketDataPort, ExecutionPort):
             raise ValueError("unsupported Backpack candle interval")
         if limit <= 0:
             raise ValueError("candle limit must be positive")
+        end_time = int(time.time())
+        start_time = end_time - INTERVAL_SECONDS[interval] * (min(limit, 1000) + 2)
         payload = self._get_json(
             "/api/v1/klines",
-            {"symbol": self.exchange_symbol(symbol), "interval": interval, "limit": str(min(limit, 1000))},
+            {
+                "symbol": self.exchange_symbol(symbol),
+                "interval": interval,
+                "startTime": str(start_time),
+                "endTime": str(end_time),
+            },
         )
         if not isinstance(payload, list):
             raise RuntimeError("Backpack klines response was not a list")

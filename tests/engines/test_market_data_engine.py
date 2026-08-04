@@ -27,6 +27,16 @@ class BrokenProvider:
         return []
 
 
+class DegradedProvider(GoodProvider):
+    def candles(self, symbol: str, limit: int, interval: str = "1h") -> list[Candle]:
+        return [Candle("2026-08-01T00:00:00+00:00", 99, 101, 98, 100, 10)]
+
+
+class CandleOnlyProvider(GoodProvider):
+    def latest_price(self, symbol: str) -> float:
+        raise RuntimeError("ticker endpoint unavailable")
+
+
 class DerivativesProvider:
     def derivatives_snapshot(self, symbol: str) -> dict[str, float | None]:
         return {
@@ -73,6 +83,29 @@ def test_falls_back_after_provider_failure() -> None:
     assert snapshot.quality.source == "fallback"
     assert snapshot.metadata["fallback_used"] is True
     assert any("provider error" in issue for issue in snapshot.quality.issues)
+
+
+def test_ready_fallback_is_preferred_over_degraded_primary() -> None:
+    engine = MarketDataEngine(
+        {"primary": DegradedProvider(), "fallback": GoodProvider()},
+        clock=lambda: NOW,
+    )
+
+    snapshot = engine.collect(MarketDataRequest("BTC", interval="1m", max_age_seconds=120))
+
+    assert snapshot.quality.status is DataStatus.READY
+    assert snapshot.quality.source == "fallback"
+    assert snapshot.metadata["fallback_used"] is True
+
+
+def test_latest_candle_close_recovers_from_ticker_endpoint_failure() -> None:
+    engine = MarketDataEngine({"candles": CandleOnlyProvider()}, clock=lambda: NOW)
+
+    snapshot = engine.collect(MarketDataRequest("BTC", interval="1m", max_age_seconds=120))
+
+    assert snapshot.quality.status is DataStatus.READY
+    assert snapshot.price == 100.5
+    assert any("used latest candle close" in issue for issue in snapshot.quality.issues)
 
 
 def test_stale_snapshot_is_degraded() -> None:

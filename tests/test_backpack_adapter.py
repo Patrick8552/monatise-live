@@ -23,6 +23,8 @@ def test_backpack_candles_parse_public_klines(monkeypatch) -> None:
         assert path == "/api/v1/klines"
         assert params["symbol"] == "BTC_USDC_PERP"
         assert params["interval"] == "5m"
+        assert int(params["endTime"]) > int(params["startTime"])
+        assert "limit" not in params
         return [
             {
                 "start": "2026-06-19T00:00:00Z",

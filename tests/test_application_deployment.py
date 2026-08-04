@@ -394,12 +394,17 @@ def test_real_coinglass_adapter_is_resolved_through_di_without_exposing_key():
     assert "never-render-this" not in repr(container.registrations)
 
 
-def test_runtime_uses_only_coinglass_for_market_data():
+def test_runtime_uses_coinglass_with_public_backpack_fallback():
     primary = object()
+    fallback = object()
     runtime = OrchestrationRuntime()
     runtime.coinglass = primary
+    runtime.backpack = fallback
 
-    assert runtime.market_data_providers() == {"coinglass": primary}
+    assert runtime.market_data_providers() == {
+        "coinglass": primary,
+        "backpack_public": fallback,
+    }
 
 
 def test_staging_blueprint_installs_only_core_dependencies():

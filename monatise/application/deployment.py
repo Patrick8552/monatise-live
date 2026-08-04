@@ -24,6 +24,8 @@ from monatise.application.persistence import PostgresDocumentStore
 from monatise.application.workflows import TelegramNotifier
 from monatise.application.hierarchy import HierarchyConfiguration, HierarchyLayerEvaluator, HierarchyRepository, Provenance, ShadowHierarchyCoordinator, ShadowHierarchyService
 from monatise.adapters.coinglass_production import CoinGlassProductionAdapter
+from monatise.adapters.backpack import BackpackAdapter, BackpackCredentials
+from monatise.live.config import RuntimeConfig
 from monatise.infrastructure.audit_database import AuditAction, AuditActor, AuditRecordType
 from monatise.infrastructure.task_scheduler import JobDefinition, RetryPolicy, ScheduleType
 from monatise.engines.macro.rules import CRYPTO_MACRO_RULES
@@ -327,6 +329,7 @@ class OrchestrationRuntime:
     redis_coordination: RedisCoordinationStore | None = None
     migrations: MigrationRunner | None = None
     coinglass: CoinGlassProductionAdapter | None = None
+    backpack: BackpackAdapter | None = None
     telegram: TelegramNotifier | None = None
     dependencies: dict[str, dict[str, Any]] = field(default_factory=dict)
     hierarchy: ShadowHierarchyCoordinator | None = None
@@ -335,7 +338,10 @@ class OrchestrationRuntime:
     def market_data_providers(self) -> dict[str, Any]:
         if self.coinglass is None:
             raise RuntimeError("CoinGlass market provider is unavailable")
-        return {"coinglass": self.coinglass}
+        providers: dict[str, Any] = {"coinglass": self.coinglass}
+        if self.backpack is not None:
+            providers["backpack_public"] = self.backpack
+        return providers
 
     async def _register_scheduled_analysis(self) -> tuple[str, ...]:
         configuration = scheduled_analysis_configuration(self.environment)
@@ -487,6 +493,14 @@ class OrchestrationRuntime:
             store = PostgresDocumentStore(self.postgres)
             infrastructure = create_durable_infrastructure(store)
             self.coinglass = register_coinglass_provider(infrastructure.container, self.environment)
+            # Public Backpack endpoints provide an independent candle/price
+            # fallback. Empty credentials make this adapter incapable of
+            # authenticated account access, while its execution methods remain
+            # hard-disabled by implementation.
+            self.backpack = BackpackAdapter(
+                RuntimeConfig(mode="paper", network="testnet", execution_mode="disabled"),
+                credentials=BackpackCredentials(api_key="", secret_key=""),
+            )
             degraded_macro_enabled = deployment_environment == "test" or (
                 deployment_environment in {"staging", "production"}
                 and not _false(self.environment.get("MONATISE_ALLOW_DEGRADED_MACRO"))
