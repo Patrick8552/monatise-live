@@ -440,19 +440,27 @@ class OrchestrationRuntime:
         return tuple(job_ids)
 
     async def start(self) -> None:
+        startup_phase = "configuration"
         LOGGER.info("validating paper-only orchestration configuration")
         self.safety = PaperSafetyConfiguration.from_environment(self.environment)
         self.dependencies["configuration"] = {"status": "ok", "frozen": True}
         database_url = self.environment.get("MONATISE_DATABASE_URL") or self.environment.get("DATABASE_URL")
         redis_url = self.environment.get("MONATISE_REDIS_URL") or self.environment.get("REDIS_URL")
-        if not database_url:
-            raise RuntimeError("PostgreSQL configuration is unavailable")
         deployment_environment = self.environment.get("MONATISE_ENVIRONMENT", "production").strip().casefold()
-        if not redis_url or (deployment_environment != "test" and ("localhost" in redis_url or "127.0.0.1" in redis_url)):
-            raise RuntimeError("network-accessible Redis configuration is unavailable")
+        try:
+            startup_phase = "postgresql_configuration"
+            if not database_url:
+                raise RuntimeError("PostgreSQL configuration is unavailable")
+            startup_phase = "redis_configuration"
+            if not redis_url or (deployment_environment != "test" and ("localhost" in redis_url or "127.0.0.1" in redis_url)):
+                raise RuntimeError("network-accessible Redis configuration is unavailable")
+        except Exception as exc:
+            self._record_startup_failure(startup_phase, exc)
+            raise
         try:
             from psycopg_pool import AsyncConnectionPool
             from redis.asyncio import Redis
+            startup_phase = "postgresql_connection"
             LOGGER.info("opening managed PostgreSQL pool")
             started = perf_counter()
             self.postgres_pool = AsyncConnectionPool(database_url, min_size=1, max_size=4, open=False, kwargs={"autocommit": True})
@@ -460,10 +468,12 @@ class OrchestrationRuntime:
             self.postgres = await self.postgres_pool.getconn(timeout=10)
             await self.postgres.execute("SELECT 1")
             self.dependencies["postgresql"] = {"status": "ok", "latency_ms": round((perf_counter() - started) * 1000, 2)}
+            startup_phase = "database_migrations"
             self.migrations = MigrationRunner(self.postgres, self.migration_directory)
             await self.migrations.run()
             self.dependencies["migrations"] = {"status": "ok", "version": self.migrations.version}
             started = perf_counter()
+            startup_phase = "redis_connection"
             LOGGER.info("opening managed Redis connection")
             self.redis = Redis.from_url(redis_url, decode_responses=True)
             if not await self.redis.ping():
@@ -473,6 +483,7 @@ class OrchestrationRuntime:
                 "latency_ms": round((perf_counter() - started) * 1000, 2),
                 "capabilities": ["scheduler_lock", "event_deduplication", "replay_nonce", "coinglass_cache", "ttl"],
             }
+            startup_phase = "application_composition"
             store = PostgresDocumentStore(self.postgres)
             infrastructure = create_durable_infrastructure(store)
             self.coinglass = register_coinglass_provider(infrastructure.container, self.environment)
@@ -492,6 +503,7 @@ class OrchestrationRuntime:
             if telegram_token and telegram_chat:
                 secrets = EnvironmentSecretBoundary(self.environment)
                 self.telegram = TelegramNotifier(TelegramNotificationTransport(lambda: secrets.get("MONATISE_TELEGRAM_BOT_TOKEN")), telegram_chat)
+            startup_phase = "scheduler_registration"
             scheduled_jobs = await self._register_scheduled_analysis()
             await self._register_hierarchy_shadow(store)
             self.leadership = RedisSchedulerLeadership(
@@ -500,13 +512,16 @@ class OrchestrationRuntime:
             self.redis_coordination = RedisCoordinationStore(
                 self.redis, namespace=self.environment.get("MONATISE_REDIS_NAMESPACE", "monatise:paper-staging")
             )
+            startup_phase = "scheduler_leadership"
             leader = await self.leadership.acquire_or_wait(
                 infrastructure.scheduler.start,
                 infrastructure.scheduler.stop,
             )
+            startup_phase = "plugin_startup"
             await infrastructure.plugins.start_all()
             if leader:
                 await infrastructure.scheduler.start()
+            startup_phase = "health_checks"
             await infrastructure.observability.run_health_checks()
             for name in ("event_bus", "state_manager", "audit_repository", "scheduler", "pipeline_orchestrator"):
                 self.dependencies[name] = {"status": "ok"}
@@ -540,6 +555,7 @@ class OrchestrationRuntime:
                 "openclaw": "configured_analysis_only" if self.environment.get("MONATISE_OPENCLAW_TOKEN") else "unavailable_optional",
             }
             self.dependencies["audit_logging"] = {"status": "ok", "enabled": True}
+            startup_phase = "audit_integrity"
             audit_errors = await infrastructure.audit.verify_integrity()
             self.dependencies["audit_integrity"] = {
                 "status": "ok" if not audit_errors else "error",
@@ -547,9 +563,24 @@ class OrchestrationRuntime:
                 "error_count": len(audit_errors),
             }
         except Exception as exc:
-            self.dependencies["startup"] = {"status": "error", "reason": type(exc).__name__}
-            await self.shutdown()
+            self._record_startup_failure(startup_phase, exc)
+            try:
+                await self.shutdown()
+            except Exception:
+                LOGGER.exception("orchestration startup cleanup failed", extra={"startup_phase": startup_phase})
             raise
+
+    def _record_startup_failure(self, phase: str, exc: Exception) -> None:
+        self.dependencies["startup"] = {
+            "status": "error",
+            "phase": phase,
+            "error_type": type(exc).__name__,
+        }
+        LOGGER.exception(
+            "orchestration startup failed during %s",
+            phase,
+            extra={"startup_phase": phase, "error_type": type(exc).__name__},
+        )
 
     async def shutdown(self) -> None:
         if self.application is not None:
@@ -648,7 +679,8 @@ class OrchestrationASGI:
                     try:
                         await self.runtime.start()
                     except Exception as exc:
-                        await send({"type": "lifespan.startup.failed", "message": type(exc).__name__})
+                        LOGGER.exception("application lifespan startup failed", extra={"error_type": type(exc).__name__})
+                        await send({"type": "lifespan.startup.failed", "message": "startup_failed"})
                         return
                     await send({"type": "lifespan.startup.complete"})
                 elif message["type"] == "lifespan.shutdown":

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -21,6 +22,44 @@ def test_paper_safety_defaults_are_immutable_and_disabled():
     assert config.mode == "paper"
     assert config.execution_enabled is False
     assert config.governance_kill_switch_enabled is True
+
+
+def test_startup_failure_records_phase_and_logs_traceback(caplog):
+    runtime = OrchestrationRuntime(environment={})
+
+    with caplog.at_level(logging.ERROR, logger="monatise.orchestration"):
+        with pytest.raises(RuntimeError, match="PostgreSQL configuration is unavailable"):
+            asyncio.run(runtime.start())
+
+    assert runtime.dependencies["startup"] == {
+        "status": "error",
+        "phase": "postgresql_configuration",
+        "error_type": "RuntimeError",
+    }
+    record = next(item for item in caplog.records if item.message.startswith("orchestration startup failed"))
+    assert record.exc_info is not None
+
+
+def test_lifespan_failure_is_sanitized_and_logged(caplog):
+    class FailingRuntime:
+        async def start(self):
+            raise RuntimeError("private provider detail")
+
+    pending = [{"type": "lifespan.startup"}]
+    sent = []
+
+    async def receive():
+        return pending.pop(0)
+
+    async def send(message):
+        sent.append(message)
+
+    with caplog.at_level(logging.ERROR, logger="monatise.orchestration"):
+        asyncio.run(OrchestrationASGI(FailingRuntime())({"type": "lifespan"}, receive, send))
+
+    assert sent == [{"type": "lifespan.startup.failed", "message": "startup_failed"}]
+    record = next(item for item in caplog.records if item.message == "application lifespan startup failed")
+    assert record.exc_info is not None
 
 
 def test_telegram_transport_returns_provider_message_id(monkeypatch):

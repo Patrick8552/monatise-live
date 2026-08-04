@@ -113,6 +113,13 @@ def test_market_dashboard_uses_server_backed_read_only_data_routes():
     assert json.loads(dataset[1]["body"])["data"][0]["symbol"] == "BTC"
 
 
+def test_market_candles_default_to_supported_startup_interval():
+    response = get(ProductionASGI(Runtime()), "/api/market/candles", query="symbol=BTC&limit=2")
+
+    assert response[0]["status"] == 200
+    assert json.loads(response[1]["body"])["interval"] == "30m"
+
+
 def test_market_dashboard_routes_reject_unsupported_queries():
     app = ProductionASGI(Runtime())
     assert get(app, "/api/market/candles", query="symbol=EURUSD&interval=15m&limit=96")[0]["status"] == 400
