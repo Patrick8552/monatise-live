@@ -284,14 +284,7 @@ class DurableAuditRepository:
             if self._loaded:
                 return
             values = await self._store.read_stream("audit")
-            try:
-                ordered_values = sorted(values, key=lambda value: int(value["sequence"]))
-            except (KeyError, TypeError, ValueError) as exc:
-                raise RuntimeError("durable audit sequence is invalid during restoration") from exc
-            expected_sequences = tuple(range(1, len(ordered_values) + 1))
-            actual_sequences = tuple(int(value["sequence"]) for value in ordered_values)
-            if actual_sequences != expected_sequences:
-                raise RuntimeError("durable audit sequence is incomplete during restoration")
+            ordered_values = self._canonical_chain(values)
             for value in ordered_values:
                 actor = value["actor"]
                 record = await self._repository.append(
@@ -308,6 +301,48 @@ class DurableAuditRepository:
                 ):
                     raise RuntimeError("durable audit integrity verification failed during restoration")
             self._loaded = True
+
+    @staticmethod
+    def _canonical_chain(values: tuple[dict[str, Any], ...]) -> tuple[dict[str, Any], ...]:
+        """Restore the uniquely longest valid chain while retaining orphaned fork rows.
+
+        Rolling deployments can briefly run two processes against the same append-only
+        stream. Both may sign the same next sequence. Descendants identify the branch
+        that remained active; the other rows stay untouched as forensic evidence.
+        """
+        if not values:
+            return ()
+        try:
+            by_hash = {value["integrity_hash"]: value for value in values}
+            if len(by_hash) != len(values):
+                raise RuntimeError("durable audit hash is duplicated during restoration")
+            maximum = max(int(value["sequence"]) for value in values)
+            endpoints = [value for value in values if int(value["sequence"]) == maximum]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RuntimeError("durable audit sequence is invalid during restoration") from exc
+
+        chains: list[tuple[dict[str, Any], ...]] = []
+        for endpoint in endpoints:
+            reverse_chain: list[dict[str, Any]] = []
+            current: dict[str, Any] | None = endpoint
+            expected = maximum
+            seen: set[str] = set()
+            while current is not None and expected > 0:
+                integrity_hash = current["integrity_hash"]
+                if integrity_hash in seen or int(current["sequence"]) != expected:
+                    break
+                seen.add(integrity_hash)
+                reverse_chain.append(current)
+                previous_hash = current.get("previous_hash")
+                current = by_hash.get(previous_hash) if previous_hash is not None else None
+                expected -= 1
+            if expected == 0 and current is None:
+                chains.append(tuple(reversed(reverse_chain)))
+
+        if len(chains) != 1:
+            detail = "incomplete" if not chains else "ambiguous"
+            raise RuntimeError(f"durable audit sequence is {detail} during restoration")
+        return chains[0]
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._repository, name)

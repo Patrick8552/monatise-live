@@ -167,6 +167,45 @@ def test_durable_audit_repository_rejects_missing_sequence_during_restoration():
     asyncio.run(scenario())
 
 
+def test_durable_audit_repository_restores_unique_longest_fork_without_deleting_evidence():
+    async def scenario():
+        base = MemoryDocumentStore()
+        await DurableAuditRepository(base).append(
+            record_type=AuditRecordType.SYSTEM,
+            action=AuditAction.CREATED,
+            actor=AuditActor("base", "application"),
+            source="test",
+            payload={"branch": "base"},
+        )
+        left = MemoryDocumentStore()
+        right = MemoryDocumentStore()
+        left.streams["audit"] = list(base.streams["audit"])
+        right.streams["audit"] = list(base.streams["audit"])
+        await DurableAuditRepository(left).append(
+            record_type=AuditRecordType.SYSTEM, action=AuditAction.CREATED,
+            actor=AuditActor("left", "application"), source="test", payload={"branch": "left"},
+        )
+        right_repository = DurableAuditRepository(right)
+        right_second = await right_repository.append(
+            record_type=AuditRecordType.SYSTEM, action=AuditAction.CREATED,
+            actor=AuditActor("right", "application"), source="test", payload={"branch": "right"},
+        )
+        right_third = await right_repository.append(
+            record_type=AuditRecordType.SYSTEM, action=AuditAction.CREATED,
+            actor=AuditActor("right", "application"), source="test", payload={"branch": "right-continued"},
+        )
+        combined = MemoryDocumentStore()
+        combined.streams["audit"] = left.streams["audit"] + right.streams["audit"][1:]
+
+        restored = DurableAuditRepository(combined)
+        assert await restored.verify_integrity() == ()
+        snapshot = await restored.snapshot()
+        assert [record.record_id for record in snapshot.records[1:]] == [right_second.record_id, right_third.record_id]
+        assert len(combined.streams["audit"]) == 4
+
+    asyncio.run(scenario())
+
+
 def test_durable_scheduler_restores_definition_with_code_owned_task():
     async def scenario():
         backend = MemoryDocumentStore()
