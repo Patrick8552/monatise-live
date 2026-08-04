@@ -137,7 +137,7 @@ class ProductionASGI(OrchestrationASGI):
     async def _market_candles(self, scope: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         query = parse_qs(scope.get("query_string", b"").decode())
         symbol = str(query.get("symbol", ["BTC"])[0]).strip().upper()
-        interval = str(query.get("interval", ["15m"])[0]).strip()
+        interval = str(query.get("interval", ["30m"])[0]).strip()
         try:
             limit = int(query.get("limit", ["96"])[0])
         except ValueError:
