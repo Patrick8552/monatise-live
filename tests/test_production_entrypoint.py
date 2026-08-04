@@ -101,7 +101,7 @@ def test_market_dashboard_uses_server_backed_read_only_data_routes():
     assert candles[0]["status"] == 200
     candle_payload = json.loads(candles[1]["body"])
     assert candle_payload["status"] == "ready"
-    assert candle_payload["source"] == "CoinGlass"
+    assert candle_payload["source"] == "coinglass"
     assert candle_payload["candles"][0]["time"] == 1785672000000
     assert candle_payload["execution_enabled"] is False
 
@@ -128,7 +128,7 @@ def test_market_dashboard_routes_reject_unsupported_queries():
     assert get(app, "/api/coinglass/proxy/not-allowed")[0]["status"] == 400
 
 
-def test_market_candles_fail_closed_when_coinglass_is_unavailable():
+def test_market_candles_fail_closed_when_all_providers_are_unavailable():
     runtime = Runtime()
     runtime.coinglass.candles = lambda *_: (_ for _ in ()).throw(RuntimeError("plan restriction"))
     response = get(ProductionASGI(runtime), "/api/market/candles", query="symbol=BTC&interval=30m&limit=96")
@@ -137,7 +137,7 @@ def test_market_candles_fail_closed_when_coinglass_is_unavailable():
     assert payload == {
         "status": "unavailable",
         "dataset": "candles",
-        "source": "coinglass",
+        "source": "market_data",
         "error_type": "RuntimeError",
     }
 
@@ -251,7 +251,7 @@ def test_production_readiness_accepts_healthy_scheduler_contender_during_cutover
             "configuration", "postgresql", "migrations", "redis", "event_bus",
             "state_manager", "audit_repository", "audit_integrity", "audit_logging",
             "scheduler", "engine_registry", "pipeline_orchestrator", "governance",
-            "notifications", "coinglass", "macro_provider", "hierarchy_shadow",
+            "notifications", "coinglass", "market_data", "macro_provider", "hierarchy_shadow",
         )
     }
     runtime.dependencies["scheduler"]["leader"] = False

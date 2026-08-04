@@ -342,9 +342,10 @@ def test_scheduler_stops_and_recontends_after_leadership_loss():
     asyncio.run(scenario())
 
 
-def test_coinglass_request_failure_makes_runtime_not_ready():
+def test_coinglass_request_failure_makes_runtime_not_ready_even_with_fallback_policy():
     runtime = OrchestrationRuntime()
     runtime.dependencies["coinglass"] = {"status": "ok"}
+    runtime.dependencies["market_data"] = {"status": "ok"}
     runtime.coinglass = SimpleNamespace(
         health=lambda: SimpleNamespace(healthy=False, consecutive_failures=3)
     )
@@ -366,7 +367,7 @@ def test_single_coinglass_request_failure_is_degraded_but_still_ready():
     runtime.dependencies = {key: {"status": "ok"} for key in (
         "configuration", "postgresql", "migrations", "redis", "event_bus", "state_manager",
         "audit_repository", "audit_integrity", "audit_logging", "scheduler", "engine_registry",
-        "pipeline_orchestrator", "governance", "notifications", "coinglass", "hierarchy_shadow",
+        "pipeline_orchestrator", "governance", "notifications", "coinglass", "market_data", "hierarchy_shadow",
     )}
     runtime.dependencies["macro_provider"] = {"status": "degraded"}
     runtime.coinglass = SimpleNamespace(health=lambda: SimpleNamespace(healthy=False, consecutive_failures=1))

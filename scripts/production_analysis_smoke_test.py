@@ -48,6 +48,7 @@ def run(base_url: str, token: str) -> list[str]:
     if dependencies.get("governance", {}).get("kill_switch") is not True: failures.append("kill switch unavailable")
     if dependencies.get("audit_logging", {}).get("enabled") is not True: failures.append("audit logging unavailable")
     if dependencies.get("coinglass", {}).get("status") != "ok": failures.append("CoinGlass unavailable")
+    if dependencies.get("market_data", {}).get("status") != "ok": failures.append("market data unavailable")
     if dependencies.get("macro_provider", {}).get("status") not in {"ok", "degraded"}: failures.append("Macro unavailable")
     if request_json(base_url, "/api/staging/analyse", body=b"{}", token=token)[0] not in {403, 404}: failures.append("staging route exposed")
     rejected = json.dumps({"symbol": "BTC", "leverage": 2}, separators=(",", ":")).encode()

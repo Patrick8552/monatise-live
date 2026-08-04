@@ -17,6 +17,7 @@ from urllib.parse import parse_qs
 
 from monatise.adapters.coinglass_production import CoinGlassProductionAdapter
 from monatise.application.deployment import OrchestrationASGI, OrchestrationRuntime
+from monatise.engines.market_data import MarketDataEngine, MarketDataRequest
 
 
 LOGGER = logging.getLogger("monatise.production")
@@ -144,14 +145,32 @@ class ProductionASGI(OrchestrationASGI):
             return 400, {"status": "invalid_request", "reason": "limit must be an integer"}
         if symbol not in self.MARKET_SYMBOLS or interval not in self.MARKET_INTERVALS or not 2 <= limit <= 200:
             return 400, {"status": "invalid_request", "reason": "unsupported symbol, interval, or limit"}
-        if self.runtime.coinglass is None:
+        providers = (
+            self.runtime.market_data_providers()
+            if callable(getattr(self.runtime, "market_data_providers", None))
+            else {
+                name: provider
+                for name, provider in (
+                    ("coinglass", getattr(self.runtime, "coinglass", None)),
+                    ("backpack_public", getattr(self.runtime, "backpack", None)),
+                )
+                if provider is not None
+            }
+        )
+        if not providers:
             return 503, {"status": "unavailable", "dataset": "candles"}
-        source = "CoinGlass"
         try:
-            candles = await asyncio.to_thread(self.runtime.coinglass.candles, symbol, limit, interval)
+            max_age = {"30m": 3_600, "1h": 7_200, "4h": 28_800, "1d": 172_800}[interval]
+            snapshot = await asyncio.to_thread(
+                MarketDataEngine(providers).collect,
+                MarketDataRequest(symbol, interval=interval, candle_limit=limit, max_age_seconds=max_age),
+            )
+            if not snapshot.quality.usable:
+                raise RuntimeError("no market-data provider returned usable candles")
+            candles = snapshot.candles
         except Exception as exc:
             LOGGER.warning("market candles unavailable", extra={"symbol": symbol, "interval": interval, "error_type": type(exc).__name__})
-            return 503, {"status": "unavailable", "dataset": "candles", "source": "coinglass", "error_type": type(exc).__name__}
+            return 503, {"status": "unavailable", "dataset": "candles", "source": "market_data", "error_type": type(exc).__name__}
         rows = []
         for candle in candles:
             raw_timestamp = str(candle.timestamp).strip()
@@ -165,7 +184,16 @@ class ProductionASGI(OrchestrationASGI):
             if timestamp.tzinfo is None:
                 timestamp = timestamp.replace(tzinfo=timezone.utc)
             rows.append({"time": int(timestamp.timestamp() * 1000), "open": candle.open, "high": candle.high, "low": candle.low, "close": candle.close, "volume": candle.volume})
-        return 200, {"status": "ready", "symbol": symbol, "interval": interval, "source": source, "candles": rows, "execution_enabled": False}
+        return 200, {
+            "status": "ready",
+            "quality_status": snapshot.quality.status.value,
+            "symbol": symbol,
+            "interval": interval,
+            "source": snapshot.quality.source,
+            "fallback_used": bool(snapshot.metadata.get("fallback_used")),
+            "candles": rows,
+            "execution_enabled": False,
+        }
 
     async def _coinglass_dashboard(self, scope: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         if self.runtime.coinglass is None:

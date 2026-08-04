@@ -563,6 +563,12 @@ class OrchestrationRuntime:
                 "required": coinglass_required,
                 "latest_request": "not_yet_requested",
             }
+            self.dependencies["market_data"] = {
+                "status": "ok",
+                "providers": list(self.market_data_providers()),
+                "fallback_enabled": self.backpack is not None,
+                "execution_enabled": False,
+            }
             self.dependencies["notifications"] = {
                 "status": "ok",
                 "telegram": "configured_notification_only" if self.environment.get("MONATISE_TELEGRAM_BOT_TOKEN") and self.environment.get("MONATISE_TELEGRAM_CHAT_ID") else "unavailable_optional",
@@ -626,10 +632,18 @@ class OrchestrationRuntime:
             )
             coinglass_dependency["status"] = "error" if unavailable else "ok"
             coinglass_dependency["consecutive_failures"] = health.consecutive_failures
+            market_dependency = self.dependencies.setdefault("market_data", {})
+            fallback_available = self.backpack is not None
+            market_dependency.update({
+                "status": "ok" if fallback_available or not unavailable else "error",
+                "providers": list(self.market_data_providers()),
+                "fallback_enabled": fallback_available,
+                "execution_enabled": False,
+            })
         registry_ok = bool(self.application and tuple(item.name for item in self.application.registry.ordered()) == CANONICAL_ENGINE_ORDER)
         mandatory = (
             "configuration", "postgresql", "migrations", "redis", "event_bus", "state_manager",
-            "audit_repository", "audit_integrity", "audit_logging", "scheduler", "engine_registry", "pipeline_orchestrator", "governance", "notifications", "coinglass", "macro_provider", "hierarchy_shadow",
+            "audit_repository", "audit_integrity", "audit_logging", "scheduler", "engine_registry", "pipeline_orchestrator", "governance", "notifications", "coinglass", "market_data", "macro_provider", "hierarchy_shadow",
         )
         mandatory_ok = all(
             self.dependencies.get(key, {}).get("status") == "ok"
