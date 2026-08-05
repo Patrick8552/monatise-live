@@ -120,7 +120,7 @@ class ShadowHierarchyService:
         expiry = risk.expires_at.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
         return (
             f"Monatise HIERARCHY SHADOW — observation only, not a trade order\n"
-            f"{bundle.symbol} | {direction} | 4H + 1H aligned | 15M setup confirmed | 5M trigger confirmed\n"
+            f"{bundle.symbol} | {direction} | 4H + 1H aligned | 15M setup confirmed | 5M trigger confirmed | 1M entry refined\n"
             f"Entry {risk.reference_entry:.8g} | Stop {risk.final_stop:.8g} | Target {risk.target_liquidity:.8g} | R:R {risk.calculated_reward_to_risk:.2f}\n"
             f"Expires {expiry} | Valid for {validity_minutes} min\n"
             f"Strategy {bundle.strategy_version} | Evidence {bundle.bundle_id[:12]} | Publication {publication_id[:16]}"

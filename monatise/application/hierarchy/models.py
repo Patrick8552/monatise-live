@@ -151,7 +151,7 @@ class EvidenceContext:
     def __post_init__(self) -> None:
         if (self.source_open_time is None) != (self.source_close_time is None):
             raise ValueError("source candle boundaries must be provided together")
-        if self.identity.source_timeframe in {"4h", "1h", "15m", "5m"} and self.source_open_time is None:
+        if self.identity.source_timeframe in {"4h", "1h", "15m", "5m", "1m"} and self.source_open_time is None:
             raise ValueError("timeframe evidence requires source candle boundaries")
         if self.source_open_time is not None and self.source_close_time is not None:
             _aware(self.source_open_time, "source_open_time")

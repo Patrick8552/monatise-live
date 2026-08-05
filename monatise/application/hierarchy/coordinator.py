@@ -29,7 +29,7 @@ class HierarchyConfiguration:
     strategy_refresh_seconds: int = 900
     setup_refresh_seconds: int = 300
     trigger_poll_seconds: int = 60
-    maximum_provider_requests_per_cycle: int = 4
+    maximum_provider_requests_per_cycle: int = 5
     confirmation_retry_seconds: int = 5
     scheduler_interval_seconds: int = 60
     always_collect_5m: bool = False
@@ -40,8 +40,8 @@ class HierarchyConfiguration:
             raise ValueError("hierarchy configuration values must be positive")
         if self.provider_grace_seconds < 0 or not self.strategy_version:
             raise ValueError("hierarchy grace and strategy version are invalid")
-        if self.maximum_provider_requests_per_cycle < 4:
-            raise ValueError("provider budget must permit all four timeframe snapshots")
+        if self.maximum_provider_requests_per_cycle < 5:
+            raise ValueError("provider budget must permit all five timeframe snapshots")
 
     @classmethod
     def from_environment(cls, environment: Mapping[str, str] | None = None) -> "HierarchyConfiguration":
@@ -55,7 +55,7 @@ class HierarchyConfiguration:
             strategy_version=values.get("MONATISE_HIERARCHICAL_STRATEGY_VERSION", "hierarchy-shadow-v1").strip(),
             candle_limit=int(values.get("MONATISE_HIERARCHICAL_CANDLE_LIMIT", "200")),
             provider_grace_seconds=int(values.get("MONATISE_HIERARCHICAL_PROVIDER_GRACE_SECONDS", "10")),
-            maximum_provider_requests_per_cycle=int(values.get("MONATISE_HIERARCHICAL_MAX_REQUESTS_PER_CYCLE", "4")),
+            maximum_provider_requests_per_cycle=int(values.get("MONATISE_HIERARCHICAL_MAX_REQUESTS_PER_CYCLE", "5")),
             confirmation_retry_seconds=int(values.get("MONATISE_HIERARCHICAL_CONFIRMATION_RETRY_SECONDS", "5")),
             scheduler_interval_seconds=int(values.get("MONATISE_HIERARCHICAL_INTERVAL_SECONDS", "60")),
             always_collect_5m=values.get("MONATISE_HIERARCHICAL_ALWAYS_COLLECT_5M", "false").strip().casefold() in truthy,
@@ -91,7 +91,7 @@ class ShadowComparison:
 class ShadowHierarchyCoordinator:
     """Collects and versions evidence without granting execution capability."""
 
-    TIMEFRAMES = ("4h", "1h", "15m", "5m")
+    TIMEFRAMES = ("4h", "1h", "15m", "5m", "1m")
 
     def __init__(self, provider: CandleProvider, repository: HierarchyRepository, *, configuration: HierarchyConfiguration | None = None, provenance: Provenance | None = None) -> None:
         self.provider = provider
@@ -118,7 +118,7 @@ class ShadowHierarchyCoordinator:
         if not self.configuration.enabled:
             raise RuntimeError("hierarchical shadow coordinator is disabled")
         now = observed_at or datetime.now(timezone.utc)
-        candidates = ("4h", "1h", "15m") + (("5m",) if watching or self.configuration.always_collect_5m else ())
+        candidates = ("4h", "1h", "15m") + (("5m", "1m") if watching or self.configuration.always_collect_5m else ())
         due = [timeframe for timeframe in candidates if now >= self._next_due.get((symbol.upper(), timeframe), datetime.min.replace(tzinfo=timezone.utc))]
         if len(due) > self.configuration.maximum_provider_requests_per_cycle:
             raise RuntimeError("hierarchy provider request budget exceeded")

@@ -177,7 +177,11 @@ class HierarchyLayerEvaluator:
                 )
                 if trigger_state is TriggerState.TRIGGER_CONFIRMED:
                     try:
-                        risk = self._risk(layer, state.trigger_context, evaluated_at)
+                        entry_layer = self._analyse_structure(snapshots["1m"], state.regime_assessment) if "1m" in snapshots else None
+                        if entry_layer is None:
+                            reasons.append("1m_closed_candle_unavailable")
+                            raise ValueError("1m entry refinement is unavailable")
+                        risk = self._risk(layer, state.trigger_context, evaluated_at, entry_layer=entry_layer)
                         bundle = EvidenceBundle.create(
                             symbol=normalized, created_at=evaluated_at, macro_context=state.macro_context,
                             regime_4h=state.regime_context, strategy_1h=state.strategy_context,
@@ -283,24 +287,26 @@ class HierarchyLayerEvaluator:
             return TriggerState.TRIGGER_CONFIRMED
         return TriggerState.TRIGGER_REJECTED
 
-    def _risk(self, layer: LayerAnalysis, trigger: EvidenceContext, now: datetime):
+    def _risk(self, layer: LayerAnalysis, trigger: EvidenceContext, now: datetime, *, entry_layer: LayerAnalysis | None = None):
         direction = trigger.direction
         if direction not in {"long", "short"}:
             raise ValueError("grid risk proposal requires a dedicated grid builder")
-        price = layer.market.price
+        refinement = entry_layer or layer
+        price = refinement.market.price
         if price is None:
             raise ValueError("current price is unavailable")
         if direction == "long":
-            zone = layer.zones.active_demand or layer.zones.nearest_demand
-            swing = layer.structure.swing_lows[-1][1] if layer.structure.swing_lows else min(item.low for item in layer.market.candles[-10:])
+            zone = refinement.zones.active_demand or refinement.zones.nearest_demand
+            swing = refinement.structure.swing_lows[-1][1] if refinement.structure.swing_lows else min(item.low for item in refinement.market.candles[-10:])
             target = layer.liquidity.nearest_buy_side.price if layer.liquidity.nearest_buy_side else max(item.high for item in layer.market.candles[-20:])
         else:
-            zone = layer.zones.active_supply or layer.zones.nearest_supply
-            swing = layer.structure.swing_highs[-1][1] if layer.structure.swing_highs else max(item.high for item in layer.market.candles[-10:])
+            zone = refinement.zones.active_supply or refinement.zones.nearest_supply
+            swing = refinement.structure.swing_highs[-1][1] if refinement.structure.swing_highs else max(item.high for item in refinement.market.candles[-10:])
             target = layer.liquidity.nearest_sell_side.price if layer.liquidity.nearest_sell_side else min(item.low for item in layer.market.candles[-20:])
         low, high = (zone.lower_bound, zone.upper_bound) if zone is not None else (price * 0.999, price * 1.001)
-        atr = self._atr(layer.market.candles)
-        return self.risk_builder.build(direction=direction, entry_zone_low=low, entry_zone_high=high, structural_invalidation=swing, target_liquidity=target, atr=atr, movement_tolerance_pct=0.002, expires_at=now + timedelta(minutes=15))
+        atr = self._atr(refinement.market.candles)
+        reference_entry = min(max(price, low), high)
+        return self.risk_builder.build(direction=direction, entry_zone_low=low, entry_zone_high=high, structural_invalidation=swing, target_liquidity=target, atr=atr, movement_tolerance_pct=0.002, expires_at=now + timedelta(minutes=15), reference_entry=reference_entry)
 
     @staticmethod
     def _atr(candles: tuple[Candle, ...], window: int = 14) -> float:

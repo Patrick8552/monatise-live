@@ -325,7 +325,7 @@ def test_boundary_due_collection_sleeps_5m_until_watching_and_persists_metrics()
         assert tuple(confirmed) == ("4h", "1h", "15m")
         assert await coordinator.collect_due("BTC", watching=False, observed_at=NOW + timedelta(seconds=10)) == {}
         watching = await coordinator.collect_due("BTC", watching=True, observed_at=NOW + timedelta(seconds=10))
-        assert tuple(watching) == ("5m",)
+        assert tuple(watching) == ("5m", "1m")
         comparison = ShadowComparison("BTC", NOW, "blocked", "no_trade", forming_candle_blocked=True)
         await coordinator.record_comparison(comparison)
         stored = await coordinator.repository.shadow_comparisons("BTC")
@@ -348,13 +348,13 @@ def test_boundary_due_collection_can_include_5m_on_every_confluence_cycle():
             provenance=PROVENANCE,
         )
         snapshots = await coordinator.collect_due("BTC", watching=False, observed_at=NOW)
-        assert tuple(snapshots) == ("4h", "1h", "15m", "5m")
+        assert tuple(snapshots) == ("4h", "1h", "15m", "5m", "1m")
 
     asyncio.run(scenario())
 
 
 def test_real_layer_evaluator_builds_4h_1h_and_15m_evidence_without_publication():
-    durations = {"4h": timedelta(hours=4), "1h": timedelta(hours=1), "15m": timedelta(minutes=15), "5m": timedelta(minutes=5)}
+    durations = {"4h": timedelta(hours=4), "1h": timedelta(hours=1), "15m": timedelta(minutes=15), "5m": timedelta(minutes=5), "1m": timedelta(minutes=1)}
 
     def candles_for(timeframe):
         duration = durations[timeframe]
@@ -412,7 +412,7 @@ def test_shadow_service_persists_layer_evidence_and_never_publishes():
 
 
 def test_confirmed_hierarchy_produces_valid_shadow_bundle_and_risk_bridge():
-    durations = {"4h": timedelta(hours=4), "1h": timedelta(hours=1), "15m": timedelta(minutes=15), "5m": timedelta(minutes=5)}
+    durations = {"4h": timedelta(hours=4), "1h": timedelta(hours=1), "15m": timedelta(minutes=15), "5m": timedelta(minutes=5), "1m": timedelta(minutes=1)}
     normalizer = CandleBoundaryNormalizer()
     snapshots = {}
     for timeframe, duration in durations.items():
