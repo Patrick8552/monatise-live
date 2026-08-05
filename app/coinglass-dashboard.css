@@ -1297,6 +1297,9 @@ canvas {
   font-weight: 800;
   color: var(--text);
   text-align: right;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .positive {

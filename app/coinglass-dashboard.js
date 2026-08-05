@@ -19,6 +19,7 @@ const CONFIRMATION_INTERVAL_BY_STRUCTURE = {
   "1d": "12h", "1w": "1d"
 };
 const DEFAULT_VIEW_INTERVAL = "1h";
+const FETCH_TIMEOUT_MS = 20_000;
 
 function cryptoAnalysisFrames() {
   const primary = els?.intervalSelect?.value || DEFAULT_VIEW_INTERVAL;
@@ -197,6 +198,7 @@ const state = {
   apiKey: localStorage.getItem(API_KEY_STORAGE) || "",
   operator: null,
   productionAnalysis: null,
+  refreshVersion: 0,
   serverCoinGlassReady: false,
   priceSeries: [],
   lastPrice: null,
@@ -1972,8 +1974,10 @@ async function startVoiceRecording() {
 
 async function timedFetch(name, source, url, options = {}) {
   const started = performance.now();
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const response = await fetch(url, options);
+    const response = await fetch(url, { ...options, signal: controller.signal });
     const ms = Math.round(performance.now() - started);
     if (!response.ok) {
       throw new Error(`${response.status} ${response.statusText}`);
@@ -1983,15 +1987,20 @@ async function timedFetch(name, source, url, options = {}) {
     return data;
   } catch (error) {
     const ms = Math.round(performance.now() - started);
-    recordTelemetry(name, source, false, ms, error.message);
-    throw error;
+    const resolved = error.name === "AbortError" ? new Error(`request timed out after ${FETCH_TIMEOUT_MS / 1000}s`) : error;
+    recordTelemetry(name, source, false, ms, resolved.message);
+    throw resolved;
+  } finally {
+    window.clearTimeout(timeout);
   }
 }
 
 async function timedOptionalFetch(name, source, url, options = {}) {
   const started = performance.now();
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const response = await fetch(url, options);
+    const response = await fetch(url, { ...options, signal: controller.signal });
     const ms = Math.round(performance.now() - started);
     if (!response.ok) {
       recordTelemetry(name, source, false, ms, `${response.status} ${response.statusText}`);
@@ -2001,8 +2010,11 @@ async function timedOptionalFetch(name, source, url, options = {}) {
     recordTelemetry(name, source, true, ms);
     return data;
   } catch (error) {
-    recordTelemetry(name, source, false, Math.round(performance.now() - started), error.message);
+    const message = error.name === "AbortError" ? `request timed out after ${FETCH_TIMEOUT_MS / 1000}s` : error.message;
+    recordTelemetry(name, source, false, Math.round(performance.now() - started), message);
     return null;
+  } finally {
+    window.clearTimeout(timeout);
   }
 }
 
@@ -2122,6 +2134,7 @@ function chooseAsset(coin) {
   if (els.assetSearchInput) els.assetSearchInput.value = "";
   els.assetSearchResults?.classList.remove("open");
   resetMarketContext();
+  state.productionAnalysis = null;
   state.lastPrice = null;
   state.priceSeries = [];
   els.assetPrice.textContent = "$--";
@@ -2130,6 +2143,10 @@ function chooseAsset(coin) {
   els.priceChange.className = "";
   els.headerPriceChange.textContent = "Loading";
   els.headerPriceChange.className = "";
+  els.hyperList.innerHTML = lockedRows("Production analysis", `Refreshing decision pipeline for ${coin}`, [
+    "Previous asset analysis cleared",
+    "Waiting for the current asset response"
+  ], "refreshing");
   setLockedSignal(null);
   state.realtime.lastSetup = null;
   state.realtime.lastEntrySignal = null;
@@ -4148,14 +4165,24 @@ function renderSessionTimers(date = new Date()) {
 }
 
 async function refreshDashboard() {
+  const refreshVersion = ++state.refreshVersion;
+  const refreshAsset = selectedCoin();
+  const isCurrentRefresh = () => state.refreshVersion === refreshVersion && selectedCoin() === refreshAsset;
+  const settleCurrent = (promise, onSuccess, onError) => promise.then((value) => {
+    if (isCurrentRefresh()) onSuccess(value);
+  }).catch((error) => {
+    if (isCurrentRefresh()) onError(error);
+  });
   syncAssetLabels();
   els.refreshButton.disabled = true;
   els.refreshButton.textContent = "Refreshing";
   setSessionStatus("warn", "Refreshing market session");
   try {
     const price = await getPrice();
+    if (!isCurrentRefresh()) return;
     renderPrice(price);
   } catch (error) {
+    if (!isCurrentRefresh()) return;
     state.lastPrice = null;
     state.priceSeries = [];
     state.market.priceChange = null;
@@ -4172,10 +4199,10 @@ async function refreshDashboard() {
   }
 
   const jobs = [
-    getFunding().then(renderFunding).catch(renderFundingLocked),
-    getOpenInterest().then(renderOpenInterest).catch(renderOpenInterestLocked),
-    getLiquidations().then(renderLiquidations).catch(renderLiquidationsLocked),
-    getFearGreed().then(renderFearGreed).catch((error) => {
+    settleCurrent(getFunding(), renderFunding, renderFundingLocked),
+    settleCurrent(getOpenInterest(), renderOpenInterest, renderOpenInterestLocked),
+    settleCurrent(getLiquidations(), renderLiquidations, renderLiquidationsLocked),
+    settleCurrent(getFearGreed(), renderFearGreed, (error) => {
       state.market.fearGreed = null;
       els.fearGreed.textContent = "Optional";
       els.fgLabel.textContent = error.message;
@@ -4183,11 +4210,12 @@ async function refreshDashboard() {
       els.fgGauge.style.background = "";
       els.fgSource.textContent = `Optional CoinGlass sentiment unavailable · ${error.message}`;
     }),
-    getProductionAnalysis().then(renderProductionAnalysis).catch(renderProductionAnalysisUnavailable),
-    getNews().then(renderNews).catch(renderNewsLocked)
+    settleCurrent(getProductionAnalysis(), renderProductionAnalysis, renderProductionAnalysisUnavailable),
+    settleCurrent(getNews(), renderNews, renderNewsLocked)
   ];
 
   await Promise.allSettled(jobs);
+  if (!isCurrentRefresh()) return;
   const setup = applyProductionDecision(applyMonatiseFramework());
   renderAuthoritativeFramework(setup);
   publishGeneratedSignal(setup);
