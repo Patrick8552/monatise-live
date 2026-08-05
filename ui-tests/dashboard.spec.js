@@ -64,4 +64,15 @@ test("production grid analysis renders projected decision-ready levels without a
   await expect(production).toContainText("Below $96.00 or above $104.00");
   await expect(production).not.toContainText("RISK BLOCKED");
   await expect(production).not.toContainText("Risk review");
+
+  const generated = page.locator("article").filter({ has: page.getByRole("heading", { name: "Monatise Generated Signals" }) });
+  await expect(generated).toContainText("GRID · DECISION READY");
+  await expect(generated).toContainText("Grid bids");
+  await expect(generated).toContainText("Grid offers");
+  await expect(generated).not.toContainText("WAIT · NO TRADE");
+
+  const framework = page.locator("article").filter({ has: page.getByRole("heading", { name: "Monatise Framework" }) });
+  await expect(framework).toContainText("GRID");
+  await expect(framework).toContainText("Decision Ready");
+  await expect(framework).not.toContainText("BUY\n");
 });
