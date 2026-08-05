@@ -67,7 +67,7 @@ def test_orchestration_runtime_service_backed_startup_and_shutdown():
             ready, payload = runtime.readiness()
             assert ready is True
             assert payload["execution_enabled"] is False
-            assert payload["dependencies"]["engine_registry"]["count"] == 20
+            assert payload["dependencies"]["engine_registry"]["count"] == 19
             assert payload["dependencies"]["scheduler"]["leader"] is True
         finally:
             await runtime.shutdown()
