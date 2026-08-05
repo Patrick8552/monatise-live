@@ -395,11 +395,11 @@ class OrchestrationRuntime:
                 name=f"Hierarchical shadow evidence for {symbol}",
                 task=shadow_tick,
                 schedule_type=ScheduleType.INTERVAL,
-                interval=timedelta(seconds=60),
-                timeout_seconds=55,
+                interval=timedelta(seconds=configuration.scheduler_interval_seconds),
+                timeout_seconds=min(configuration.scheduler_interval_seconds - 1, 300),
                 retry_policy=RetryPolicy(maximum_attempts=2, delay_seconds=5, maximum_delay_seconds=15),
                 tags=("hierarchy", "shadow", "analysis-only"),
-                metadata={"symbol": symbol, "shadow": True, "telegram_publish_enabled": configuration.telegram_publish_enabled, "execution_enabled": False},
+                metadata={"symbol": symbol, "shadow": True, "telegram_publish_enabled": configuration.telegram_publish_enabled, "execution_enabled": False, "confluence_timeframes": ("15m", "5m")},
             ))
             job_ids.append(job_id)
         if configuration.telegram_publish_enabled:

@@ -335,6 +335,24 @@ def test_boundary_due_collection_sleeps_5m_until_watching_and_persists_metrics()
     asyncio.run(scenario())
 
 
+def test_boundary_due_collection_can_include_5m_on_every_confluence_cycle():
+    class Provider:
+        def candles(self, symbol, limit, interval="1h"):
+            return [candle("2026-08-02T04:00:00+00:00")]
+
+    async def scenario():
+        coordinator = ShadowHierarchyCoordinator(
+            Provider(),
+            HierarchyRepository(MemoryStore()),
+            configuration=HierarchyConfiguration(enabled=True, always_collect_5m=True),
+            provenance=PROVENANCE,
+        )
+        snapshots = await coordinator.collect_due("BTC", watching=False, observed_at=NOW)
+        assert tuple(snapshots) == ("4h", "1h", "15m", "5m")
+
+    asyncio.run(scenario())
+
+
 def test_real_layer_evaluator_builds_4h_1h_and_15m_evidence_without_publication():
     durations = {"4h": timedelta(hours=4), "1h": timedelta(hours=1), "15m": timedelta(minutes=15), "5m": timedelta(minutes=5)}
 

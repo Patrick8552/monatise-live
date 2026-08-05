@@ -155,6 +155,29 @@ def test_runtime_registers_fail_closed_hierarchy_shadow_jobs_without_publication
     assert runtime.dependencies["hierarchy_shadow"]["enabled"] is True
 
 
+def test_runtime_registers_btc_15m_5m_confluence_on_a_15_minute_cycle():
+    class Scheduler:
+        def __init__(self): self.definitions = []
+        async def register(self, definition): self.definitions.append(definition)
+
+    scheduler = Scheduler()
+    runtime = OrchestrationRuntime(environment={
+        "MONATISE_HIERARCHICAL_SHADOW_ENABLED": "true",
+        "MONATISE_HIERARCHICAL_INTERVAL_SECONDS": "900",
+        "MONATISE_HIERARCHICAL_ALWAYS_COLLECT_5M": "true",
+        "MONATISE_SCHEDULED_ANALYSIS_SYMBOLS": "BTC",
+    })
+    runtime.application = SimpleNamespace(infrastructure=SimpleNamespace(scheduler=scheduler))
+    runtime.coinglass = SimpleNamespace()
+
+    job_ids = asyncio.run(runtime._register_hierarchy_shadow(SimpleNamespace()))
+
+    assert job_ids == ("hierarchy-shadow-btc",)
+    definition = scheduler.definitions[0]
+    assert definition.interval.total_seconds() == 900
+    assert definition.metadata["confluence_timeframes"] == ("15m", "5m")
+
+
 def test_runtime_reports_requested_hierarchy_publication_without_publisher_as_error():
     class Scheduler:
         def __init__(self): self.definitions = []

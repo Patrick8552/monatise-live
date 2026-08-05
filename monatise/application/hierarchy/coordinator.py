@@ -31,9 +31,11 @@ class HierarchyConfiguration:
     trigger_poll_seconds: int = 60
     maximum_provider_requests_per_cycle: int = 4
     confirmation_retry_seconds: int = 5
+    scheduler_interval_seconds: int = 60
+    always_collect_5m: bool = False
 
     def __post_init__(self) -> None:
-        values = (self.candle_limit, self.macro_refresh_seconds, self.regime_refresh_seconds, self.strategy_refresh_seconds, self.setup_refresh_seconds, self.trigger_poll_seconds, self.maximum_provider_requests_per_cycle, self.confirmation_retry_seconds)
+        values = (self.candle_limit, self.macro_refresh_seconds, self.regime_refresh_seconds, self.strategy_refresh_seconds, self.setup_refresh_seconds, self.trigger_poll_seconds, self.maximum_provider_requests_per_cycle, self.confirmation_retry_seconds, self.scheduler_interval_seconds)
         if any(value <= 0 for value in values):
             raise ValueError("hierarchy configuration values must be positive")
         if self.provider_grace_seconds < 0 or not self.strategy_version:
@@ -55,6 +57,8 @@ class HierarchyConfiguration:
             provider_grace_seconds=int(values.get("MONATISE_HIERARCHICAL_PROVIDER_GRACE_SECONDS", "10")),
             maximum_provider_requests_per_cycle=int(values.get("MONATISE_HIERARCHICAL_MAX_REQUESTS_PER_CYCLE", "4")),
             confirmation_retry_seconds=int(values.get("MONATISE_HIERARCHICAL_CONFIRMATION_RETRY_SECONDS", "5")),
+            scheduler_interval_seconds=int(values.get("MONATISE_HIERARCHICAL_INTERVAL_SECONDS", "60")),
+            always_collect_5m=values.get("MONATISE_HIERARCHICAL_ALWAYS_COLLECT_5M", "false").strip().casefold() in truthy,
         )
 
 
@@ -114,7 +118,7 @@ class ShadowHierarchyCoordinator:
         if not self.configuration.enabled:
             raise RuntimeError("hierarchical shadow coordinator is disabled")
         now = observed_at or datetime.now(timezone.utc)
-        candidates = ("4h", "1h", "15m") + (("5m",) if watching else ())
+        candidates = ("4h", "1h", "15m") + (("5m",) if watching or self.configuration.always_collect_5m else ())
         due = [timeframe for timeframe in candidates if now >= self._next_due.get((symbol.upper(), timeframe), datetime.min.replace(tzinfo=timezone.utc))]
         if len(due) > self.configuration.maximum_provider_requests_per_cycle:
             raise RuntimeError("hierarchy provider request budget exceeded")
