@@ -18,7 +18,6 @@ from urllib.request import Request, urlopen
 
 from monatise.application.composition import create_application, create_durable_infrastructure
 from monatise.application.production_analysis import build_directional_plan, build_grid_plan, build_production_analysis_run, sanitized_result
-from monatise.application.registry import CANONICAL_ENGINE_ORDER
 from monatise.application.persistence import PostgresDocumentStore
 from monatise.application.workflows import TelegramNotifier
 from monatise.application.registry import PRODUCTION_ENGINE_ORDER
@@ -531,7 +530,9 @@ class OrchestrationRuntime:
                 "execution_enabled": False,
             }
             self.dependencies["engine_registry"] = {
-                "status": "ok", "count": len(self.application.registry.ordered()), "order": list(CANONICAL_ENGINE_ORDER)
+                "status": "ok",
+                "count": len(self.application.registry.ordered()),
+                "order": [item.name for item in self.application.registry.ordered()],
             }
             self.dependencies["governance"] = {"status": "ok", "kill_switch": True}
             configured = bool(self.environment.get("COINGLASS_API_KEY", "").strip())
