@@ -8,7 +8,6 @@ from typing import Any
 class Environment(StrEnum):
     DEVELOPMENT = "development"
     TEST = "test"
-    STAGING = "staging"
     PRODUCTION = "production"
 
 

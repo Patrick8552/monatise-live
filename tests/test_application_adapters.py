@@ -236,6 +236,26 @@ def test_telegram_completed_signal_contains_actionable_levels_and_coinglass_sour
     assert "CoinGlass futures price history" in message
 
 
+def test_telegram_no_trade_message_is_explicit_and_explained():
+    run = AnalysisRun("BTC", {})
+    now = run.requested_at
+    decision = SimpleNamespace(
+        classification=SimpleNamespace(value="no_trade"),
+        reasons=("insufficient directional conviction", "conflicting order flow"),
+    )
+    result = PipelineResult(
+        run.run_id, run.correlation_id, "BTC", PipelineStage.BLOCKED,
+        PipelineContext(run, {"decision": decision}), PipelineStatistics(1, {}, {}, 11),
+        None, "decision", now, now,
+    )
+
+    message = TelegramNotifier.format(result)
+
+    assert "Monatise NO_TRADE: BTC" in message
+    assert "insufficient directional conviction" in message
+    assert f"Run: {run.run_id}" in message
+
+
 def test_notification_failure_does_not_corrupt_completed_pipeline_result():
     run = AnalysisRun("BTC", {})
     now = run.requested_at
