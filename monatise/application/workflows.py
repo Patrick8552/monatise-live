@@ -100,6 +100,7 @@ class TelegramNotifier:
         expires_at = getattr(risk, "signal_expires_at", None)
         quality = getattr(market, "quality", None)
         source = getattr(quality, "source", "CoinGlass")
+        interval = getattr(market, "interval", "unknown")
         reasons = tuple(getattr(decision, "reasons", ()) or ())[:3]
 
         risk_decision = _enum_value(getattr(risk, "decision", "")).lower()
@@ -107,6 +108,7 @@ class TelegramNotifier:
         heading = f"Monatise GRID {'CANDIDATE — RISK BLOCKED' if grid_blocked else 'READY'}: {result.symbol} ({direction})" if classification == "GRID" else f"Monatise signal: {result.symbol} {direction} ({classification})"
         lines = [
             heading,
+            f"Timeframe: {interval}",
             f"Score: {grid_score}/10" if classification == "GRID" else f"Score: {signed_score:+d}/10",
             f"Confidence: {conviction * 100:.0f}%",
         ]

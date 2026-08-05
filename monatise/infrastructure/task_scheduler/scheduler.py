@@ -380,6 +380,12 @@ class TaskScheduler:
             return None
         if definition.schedule_type is ScheduleType.ONCE:
             return TaskScheduler._as_utc(definition.run_at)
+        if definition.metadata.get("align_to_interval_boundary"):
+            now = datetime.now(timezone.utc)
+            seconds = int(definition.interval.total_seconds())
+            delay = max(0, int(definition.metadata.get("alignment_delay_seconds", 0)))
+            boundary = ((int(now.timestamp()) // seconds) + 1) * seconds + delay
+            return datetime.fromtimestamp(boundary, tz=timezone.utc)
         return datetime.now(timezone.utc) + definition.interval
 
     @staticmethod

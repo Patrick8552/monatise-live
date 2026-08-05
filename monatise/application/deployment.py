@@ -35,6 +35,11 @@ FALSE_VALUES = {"0", "false", "no", "off", "disabled", ""}
 COINGLASS_PROVIDER_KEY = "coinglass.market_provider"
 SCHEDULED_ANALYSIS_JOB_PREFIX = "scheduled-analysis"
 SCHEDULED_ANALYSIS_DEFAULT_SYMBOLS = ("BTC", "ETH", "SOL")
+SCHEDULED_ANALYSIS_INTERVAL_SECONDS = {
+    "1m": 60, "3m": 180, "5m": 300, "15m": 900, "30m": 1_800,
+    "1h": 3_600, "4h": 14_400, "6h": 21_600, "8h": 28_800,
+    "12h": 43_200, "1d": 86_400, "1w": 604_800,
+}
 
 
 def _false(value: str | None) -> bool:
@@ -45,7 +50,7 @@ def _true(value: str | None) -> bool:
     return value is not None and value.strip().casefold() in {"1", "true", "yes", "on", "enabled"}
 
 
-def scheduled_analysis_configuration(environment: Mapping[str, str]) -> tuple[tuple[str, ...], int] | None:
+def scheduled_analysis_configuration(environment: Mapping[str, str]) -> tuple[tuple[str, ...], tuple[str, ...]] | None:
     """Return the production analysis schedule without granting execution capability."""
     if not _true(environment.get("MONATISE_SCHEDULED_ANALYSIS_ENABLED")):
         return None
@@ -56,13 +61,14 @@ def scheduled_analysis_configuration(environment: Mapping[str, str]) -> tuple[tu
         raise ValueError("scheduled analysis requires at least one symbol")
     if unsupported:
         raise ValueError("unsupported scheduled analysis symbols: " + ", ".join(unsupported))
-    try:
-        interval_seconds = int(environment.get("MONATISE_SCHEDULED_ANALYSIS_INTERVAL_SECONDS", "900"))
-    except ValueError as exc:
-        raise ValueError("scheduled analysis interval must be an integer") from exc
-    if not 60 <= interval_seconds <= 86_400:
-        raise ValueError("scheduled analysis interval must be between 60 and 86400 seconds")
-    return symbols, interval_seconds
+    raw_intervals = environment.get("MONATISE_SCHEDULED_ANALYSIS_TIMEFRAMES", "1h")
+    intervals = tuple(dict.fromkeys(part.strip() for part in raw_intervals.split(",") if part.strip()))
+    unsupported_intervals = tuple(interval for interval in intervals if interval not in SCHEDULED_ANALYSIS_INTERVAL_SECONDS)
+    if not intervals:
+        raise ValueError("scheduled analysis requires at least one timeframe")
+    if unsupported_intervals:
+        raise ValueError("unsupported scheduled analysis timeframes: " + ", ".join(unsupported_intervals))
+    return symbols, intervals
 
 
 class EnvironmentSecretBoundary:
@@ -314,6 +320,7 @@ class OrchestrationRuntime:
     dependencies: dict[str, dict[str, Any]] = field(default_factory=dict)
     hierarchy: ShadowHierarchyCoordinator | None = None
     hierarchy_service: ShadowHierarchyService | None = None
+    _telegram_signal_fingerprints: dict[tuple[str, str], str] = field(default_factory=dict)
 
     def market_data_providers(self) -> dict[str, Any]:
         if self.coinglass is None:
@@ -329,27 +336,29 @@ class OrchestrationRuntime:
             return ()
         if self.application is None:
             raise RuntimeError("orchestration runtime is unavailable")
-        symbols, interval_seconds = configuration
+        symbols, intervals = configuration
         scheduler = self.application.infrastructure.scheduler
         job_ids: list[str] = []
         for symbol in symbols:
-            job_id = f"{SCHEDULED_ANALYSIS_JOB_PREFIX}-{symbol.casefold()}"
+            for analysis_interval in intervals:
+                job_id = f"{SCHEDULED_ANALYSIS_JOB_PREFIX}-{symbol.casefold()}-{analysis_interval}"
 
-            async def task(asset: str = symbol) -> dict[str, Any]:
-                return await self.analyse(asset, source="monatise.scheduler")
+                async def task(asset: str = symbol, interval: str = analysis_interval) -> dict[str, Any]:
+                    return await self.analyse(asset, interval=interval, source="monatise.scheduler", notification_policy="qualified_changes")
 
-            await scheduler.register(JobDefinition(
-                job_id=job_id,
-                name=f"Scheduled paper analysis for {symbol}",
-                task=task,
-                schedule_type=ScheduleType.INTERVAL,
-                interval=timedelta(seconds=interval_seconds),
-                timeout_seconds=min(float(interval_seconds), 300.0),
-                retry_policy=RetryPolicy(maximum_attempts=2, delay_seconds=5.0, maximum_delay_seconds=30.0),
-                tags=("scheduled", "crypto", "analysis", "paper-only"),
-                metadata={"symbol": symbol, "execution_enabled": False, "notification_policy": "every_analysis"},
-            ))
-            job_ids.append(job_id)
+                cadence_seconds = SCHEDULED_ANALYSIS_INTERVAL_SECONDS[analysis_interval]
+                await scheduler.register(JobDefinition(
+                    job_id=job_id,
+                    name=f"Scheduled {analysis_interval} paper analysis for {symbol}",
+                    task=task,
+                    schedule_type=ScheduleType.INTERVAL,
+                    interval=timedelta(seconds=cadence_seconds),
+                    timeout_seconds=min(max(float(cadence_seconds), 60.0), 300.0),
+                    retry_policy=RetryPolicy(maximum_attempts=2, delay_seconds=5.0, maximum_delay_seconds=30.0),
+                    tags=("scheduled", "crypto", "analysis", analysis_interval, "paper-only"),
+                    metadata={"symbol": symbol, "analysis_interval": analysis_interval, "execution_enabled": False, "notification_policy": "qualified_changes", "align_to_interval_boundary": True, "alignment_delay_seconds": 10},
+                ))
+                job_ids.append(job_id)
         return tuple(job_ids)
 
     async def _register_hierarchy_shadow(self, store: PostgresDocumentStore) -> tuple[str, ...]:
@@ -622,11 +631,14 @@ class OrchestrationRuntime:
             "dependencies": self.dependencies,
         }
 
-    async def analyse(self, symbol: str, correlation_id: str | None = None, *, interval: str = "1h", source: str = "monatise.production", notify: bool = True) -> dict[str, Any]:
+    async def analyse(self, symbol: str, correlation_id: str | None = None, *, interval: str = "1h", source: str = "monatise.production", notify: bool = True, notification_policy: str = "every_analysis") -> dict[str, Any]:
         if self.application is None:
             raise RuntimeError("orchestration runtime is unavailable")
         result = await self.application.orchestrator.run(build_production_analysis_run(symbol, interval=interval, correlation_id=correlation_id, source=source))
-        if notify and self.telegram is not None:
+        should_notify = notify and self.telegram is not None
+        if should_notify and notification_policy == "qualified_changes":
+            should_notify = self._claim_material_telegram_signal(result, interval)
+        if should_notify:
             try:
                 await self.telegram.deliver(result)
             except Exception as exc:
@@ -641,6 +653,39 @@ class OrchestrationRuntime:
                 )
                 LOGGER.warning("Telegram notification delivery failed", extra={"error_type": type(exc).__name__, "run_id": result.run_id})
         return sanitized_result(result)
+
+    def _claim_material_telegram_signal(self, result: Any, interval: str) -> bool:
+        outputs = result.context.outputs
+        decision = outputs.get("decision")
+        if decision is None:
+            return False
+        metadata = getattr(decision, "metadata", {}) or {}
+        classification = getattr(getattr(decision, "classification", None), "value", "no_trade")
+        direction = getattr(getattr(decision, "direction", None), "value", "none")
+        threshold = int(metadata.get("minimum_signal_score", 7) or 7)
+        score = int(metadata.get("grid_signal_score", 0) or 0) if classification == "grid" else abs(int(metadata.get("signed_signal_score", 0) or 0))
+        if classification == "no_trade" or score < threshold:
+            return False
+        risk = outputs.get("risk_validation")
+        risk_metadata = getattr(risk, "metadata", {}) or {}
+        grid = risk_metadata.get("grid_plan") or {}
+        material = {
+            "classification": classification,
+            "direction": direction,
+            "score": score,
+            "risk": getattr(getattr(risk, "decision", None), "value", None),
+            "entry": round(float(getattr(risk, "validated_entry", 0) or 0), 6),
+            "invalidation": round(float(getattr(risk, "validated_invalidation", 0) or 0), 6),
+            "target": round(float(getattr(risk, "validated_target", 0) or 0), 6),
+            "grid_buy": [round(float(value), 6) for value in grid.get("buy_levels", ())],
+            "grid_sell": [round(float(value), 6) for value in grid.get("sell_levels", ())],
+        }
+        fingerprint = hashlib.sha256(json.dumps(material, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        key = (result.symbol, interval)
+        if self._telegram_signal_fingerprints.get(key) == fingerprint:
+            return False
+        self._telegram_signal_fingerprints[key] = fingerprint
+        return True
 
 class OrchestrationASGI:
     def __init__(self, runtime: OrchestrationRuntime | None = None) -> None:

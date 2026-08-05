@@ -96,17 +96,17 @@ def test_scheduled_analysis_configuration_is_explicit_bounded_and_crypto_only():
     assert scheduled_analysis_configuration({
         "MONATISE_SCHEDULED_ANALYSIS_ENABLED": "true",
         "MONATISE_SCHEDULED_ANALYSIS_SYMBOLS": "BTC, ETH, BTC",
-        "MONATISE_SCHEDULED_ANALYSIS_INTERVAL_SECONDS": "300",
-    }) == (("BTC", "ETH"), 300)
+        "MONATISE_SCHEDULED_ANALYSIS_TIMEFRAMES": "5m,15m,5m",
+    }) == (("BTC", "ETH"), ("5m", "15m"))
     with pytest.raises(ValueError, match="unsupported scheduled analysis symbols"):
         scheduled_analysis_configuration({
             "MONATISE_SCHEDULED_ANALYSIS_ENABLED": "true",
             "MONATISE_SCHEDULED_ANALYSIS_SYMBOLS": "XAUUSD",
         })
-    with pytest.raises(ValueError, match="between 60 and 86400"):
+    with pytest.raises(ValueError, match="unsupported scheduled analysis timeframes"):
         scheduled_analysis_configuration({
             "MONATISE_SCHEDULED_ANALYSIS_ENABLED": "true",
-            "MONATISE_SCHEDULED_ANALYSIS_INTERVAL_SECONDS": "30",
+            "MONATISE_SCHEDULED_ANALYSIS_TIMEFRAMES": "2h",
         })
 
 
@@ -119,15 +119,16 @@ def test_runtime_registers_paper_only_analysis_jobs_for_each_configured_symbol()
     runtime = OrchestrationRuntime(environment={
         "MONATISE_SCHEDULED_ANALYSIS_ENABLED": "true",
         "MONATISE_SCHEDULED_ANALYSIS_SYMBOLS": "BTC,SOL",
-        "MONATISE_SCHEDULED_ANALYSIS_INTERVAL_SECONDS": "600",
+        "MONATISE_SCHEDULED_ANALYSIS_TIMEFRAMES": "5m,1h",
     })
     runtime.application = SimpleNamespace(infrastructure=SimpleNamespace(scheduler=scheduler))
 
     job_ids = asyncio.run(runtime._register_scheduled_analysis())
 
-    assert job_ids == ("scheduled-analysis-btc", "scheduled-analysis-sol")
-    assert [item.interval.total_seconds() for item in scheduler.definitions] == [600, 600]
+    assert job_ids == ("scheduled-analysis-btc-5m", "scheduled-analysis-btc-1h", "scheduled-analysis-sol-5m", "scheduled-analysis-sol-1h")
+    assert [item.interval.total_seconds() for item in scheduler.definitions] == [300, 3600, 300, 3600]
     assert all(item.metadata["execution_enabled"] is False for item in scheduler.definitions)
+    assert all(item.metadata["notification_policy"] == "qualified_changes" for item in scheduler.definitions)
     assert all("paper-only" in item.tags for item in scheduler.definitions)
 
 
