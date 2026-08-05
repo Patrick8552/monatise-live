@@ -149,6 +149,7 @@ def test_qualified_directional_setups_are_claimed_for_telegram(direction, signed
     )
     result = SimpleNamespace(
         symbol="BTC",
+        status=SimpleNamespace(value="completed"),
         context=SimpleNamespace(outputs={"decision": decision, "risk_validation": risk}),
     )
 
@@ -161,6 +162,7 @@ def test_mismatched_directional_scores_are_not_claimed_for_telegram(direction, s
     runtime = OrchestrationRuntime(environment={})
     result = SimpleNamespace(
         symbol="BTC",
+        status=SimpleNamespace(value="completed"),
         context=SimpleNamespace(outputs={
             "decision": SimpleNamespace(
                 classification=SimpleNamespace(value="trend"),
@@ -168,6 +170,28 @@ def test_mismatched_directional_scores_are_not_claimed_for_telegram(direction, s
                 metadata={"signed_signal_score": signed_score, "minimum_signal_score": 7},
             ),
             "risk_validation": SimpleNamespace(metadata={}),
+        }),
+    )
+
+    assert runtime._claim_material_telegram_signal(result, "1h") is False
+
+
+@pytest.mark.parametrize(("pipeline_status", "risk_decision"), [("blocked", "approved"), ("completed", "rejected")])
+def test_risk_blocked_directional_setups_are_not_claimed_for_telegram(pipeline_status, risk_decision):
+    runtime = OrchestrationRuntime(environment={})
+    result = SimpleNamespace(
+        symbol="BTC",
+        status=SimpleNamespace(value=pipeline_status),
+        context=SimpleNamespace(outputs={
+            "decision": SimpleNamespace(
+                classification=SimpleNamespace(value="trend"),
+                direction=SimpleNamespace(value="long"),
+                metadata={"signed_signal_score": 8, "minimum_signal_score": 7},
+            ),
+            "risk_validation": SimpleNamespace(
+                decision=SimpleNamespace(value=risk_decision),
+                metadata={},
+            ),
         }),
     )
 
