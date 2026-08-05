@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from monatise.application.orchestrator import ApplicationInfrastructure, PipelineOrchestrator
-from monatise.application.registry import EngineRegistry, canonical_registrations
+from monatise.application.registry import CANONICAL_ENGINE_ORDER, EngineRegistry, canonical_registrations
 from monatise.application.persistence import DurableAuditRepository, DurableEventStore, DurableStateManager, DurableTaskScheduler
 from monatise.engines.market_data import MarketDataEngine
 from monatise.infrastructure.audit_database import InMemoryAuditRepository
@@ -112,6 +112,6 @@ def create_application(
         registry.register(registration, engine)
     async def registry_health():
         status = registry.health()["status"]
-        return (HealthStatus.HEALTHY if status == "healthy" else HealthStatus.UNHEALTHY, f"20-engine registry is {status}")
+        return (HealthStatus.HEALTHY if status == "healthy" else HealthStatus.UNHEALTHY, f"{len(CANONICAL_ENGINE_ORDER)}-engine registry is {status}")
     infrastructure.observability.register_health_check("engine_registry", registry_health, replace=True)
     return MonatiseApplication(PipelineOrchestrator(registry, infrastructure), registry, infrastructure)
