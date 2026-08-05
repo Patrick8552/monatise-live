@@ -29,21 +29,18 @@ test("market integrations clearly expand and collapse", async ({ page }) => {
   await expect(page.getByText("Your CoinGlass API key", { exact: true })).toBeVisible();
 });
 
-test("production grid analysis renders validated two-sided levels and risk issues", async ({ page }) => {
+test("production grid analysis renders projected decision-ready levels without a risk gate", async ({ page }) => {
   await page.route("**/api/public/analysis?*", (route) => route.fulfill({
     contentType: "application/json",
     body: JSON.stringify({
       ok: true,
       analysis: {
         classification: "grid",
-        status: "blocked",
-        blocked_by: "risk_validation",
-        completed_stages: 12,
+        status: "completed",
+        blocked_by: null,
+        completed_stages: 13,
         grid_score: 8,
         conviction: 0.75,
-        risk_decision: "rejected",
-        risk_validation_invoked: true,
-        execution_policy_produced: false,
         grid_plan: {
           center: 100,
           buy_levels: [99, 98, 97],
@@ -52,7 +49,6 @@ test("production grid analysis renders validated two-sided levels and risk issue
           upper_invalidation: 104,
           levels_per_side: 3
         },
-        risk_issues: [{ severity: "blocker", message: "regime is unstable" }],
         reasons: ["two-sided liquidity favors grid logic"]
       }
     })
@@ -61,9 +57,11 @@ test("production grid analysis renders validated two-sided levels and risk issue
   await page.goto("/coinglass-dashboard.html");
 
   const production = page.locator("#hyperList");
-  await expect(production).toContainText("GRID CANDIDATE · RISK BLOCKED");
+  await expect(production).toContainText("GRID DECISION READY");
+  await expect(production).toContainText("Projected decision geometry");
   await expect(production).toContainText("$99.00 / $98.00 / $97.00");
   await expect(production).toContainText("$101.00 / $102.00 / $103.00");
   await expect(production).toContainText("Below $96.00 or above $104.00");
-  await expect(production).toContainText("regime is unstable");
+  await expect(production).not.toContainText("RISK BLOCKED");
+  await expect(production).not.toContainText("Risk review");
 });

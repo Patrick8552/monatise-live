@@ -189,26 +189,39 @@ def test_mismatched_directional_scores_are_not_claimed_for_telegram(direction, s
     assert runtime._claim_material_telegram_signal(result, "1h") is False
 
 
-@pytest.mark.parametrize(("pipeline_status", "risk_decision"), [("blocked", "approved"), ("completed", "rejected")])
-def test_risk_blocked_directional_setups_are_not_claimed_for_telegram(pipeline_status, risk_decision):
+def test_incomplete_directional_setups_are_not_claimed_for_telegram():
     runtime = OrchestrationRuntime(environment={})
     result = SimpleNamespace(
         symbol="BTC",
-        status=SimpleNamespace(value=pipeline_status),
+        status=SimpleNamespace(value="blocked"),
         context=SimpleNamespace(outputs={
             "decision": SimpleNamespace(
                 classification=SimpleNamespace(value="trend"),
                 direction=SimpleNamespace(value="long"),
                 metadata={"signed_signal_score": 8, "minimum_signal_score": 7},
             ),
-            "risk_validation": SimpleNamespace(
-                decision=SimpleNamespace(value=risk_decision),
-                metadata={},
-            ),
         }),
     )
 
     assert runtime._claim_material_telegram_signal(result, "1h") is False
+
+
+def test_legacy_risk_rejection_does_not_block_completed_directional_notification():
+    runtime = OrchestrationRuntime(environment={})
+    result = SimpleNamespace(
+        symbol="BTC",
+        status=SimpleNamespace(value="completed"),
+        context=SimpleNamespace(outputs={
+            "decision": SimpleNamespace(
+                classification=SimpleNamespace(value="trend"),
+                direction=SimpleNamespace(value="long"),
+                metadata={"signed_signal_score": 8, "minimum_signal_score": 7},
+            ),
+            "risk_validation": SimpleNamespace(decision=SimpleNamespace(value="rejected")),
+        }),
+    )
+
+    assert runtime._claim_material_telegram_signal(result, "1h") is True
 
 
 def test_runtime_registers_fail_closed_hierarchy_shadow_jobs_without_publication():
