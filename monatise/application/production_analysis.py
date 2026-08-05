@@ -95,12 +95,16 @@ def build_production_analysis_run(symbol: str, *, correlation_id: str | None = N
 def sanitized_result(result: Any) -> dict[str, Any]:
     decision = result.context.outputs.get("decision")
     classification = getattr(getattr(decision, "classification", None), "value", None)
+    direction = getattr(getattr(decision, "direction", None), "value", None)
     return {
         "run_id": result.run_id,
         "correlation_id": result.correlation_id,
         "symbol": result.symbol,
         "status": result.status.value,
         "classification": classification,
+        "direction": direction,
+        "conviction": getattr(decision, "conviction", None),
+        "reasons": list(getattr(decision, "reasons", ()) or ()),
         "blocked_by": result.blocked_by,
         "completed_stages": result.statistics.completed_stages,
         "risk_validation_invoked": "risk_validation" in result.context.outputs,

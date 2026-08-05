@@ -622,11 +622,11 @@ class OrchestrationRuntime:
             "dependencies": self.dependencies,
         }
 
-    async def analyse(self, symbol: str, correlation_id: str | None = None, *, source: str = "monatise.production") -> dict[str, Any]:
+    async def analyse(self, symbol: str, correlation_id: str | None = None, *, source: str = "monatise.production", notify: bool = True) -> dict[str, Any]:
         if self.application is None:
             raise RuntimeError("orchestration runtime is unavailable")
         result = await self.application.orchestrator.run(build_production_analysis_run(symbol, correlation_id=correlation_id, source=source))
-        if self.telegram is not None:
+        if notify and self.telegram is not None:
             try:
                 await self.telegram.deliver(result)
             except Exception as exc:

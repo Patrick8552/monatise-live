@@ -124,6 +124,25 @@ def test_market_dashboard_routes_reject_unsupported_queries():
     assert get(app, "/api/coinglass/proxy/not-allowed")[0]["status"] == 400
 
 
+def test_public_dashboard_analysis_is_read_only_production_output_without_notification():
+    runtime = Runtime()
+    response = get(ProductionASGI(runtime), "/api/public/analysis", query="symbol=BTC&interval=1h")
+    payload = json.loads(response[1]["body"])
+
+    assert response[0]["status"] == 200
+    assert payload["ok"] is True
+    assert payload["source"] == "monatise-live"
+    assert payload["execution_enabled"] is False
+    assert payload["analysis"]["execution_enabled"] is False
+    assert runtime.calls == [("BTC", {"source": "monatise.web", "notify": False})]
+
+
+def test_public_dashboard_analysis_rejects_unsupported_assets_and_intervals():
+    app = ProductionASGI(Runtime())
+    assert get(app, "/api/public/analysis", query="symbol=XRP&interval=1h")[0]["status"] == 400
+    assert get(app, "/api/public/analysis", query="symbol=BTC&interval=15m")[0]["status"] == 400
+
+
 def test_market_candles_fail_closed_when_all_providers_are_unavailable():
     runtime = Runtime()
     runtime.coinglass.candles = lambda *_: (_ for _ in ()).throw(RuntimeError("plan restriction"))

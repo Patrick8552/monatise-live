@@ -66,6 +66,7 @@ class ProductionASGI(OrchestrationASGI):
         self._market_rate_windows: dict[str, tuple[int, int]] = {}
         self._openclaw_cache: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
         self._openclaw_inflight: dict[tuple[str, str], asyncio.Task[dict[str, Any]]] = {}
+        self._public_analysis_cache: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         path = scope.get("path", "")
@@ -107,6 +108,16 @@ class ProductionASGI(OrchestrationASGI):
                 await self._respond(send, 405, {"status": "method_not_allowed"})
                 return
             code, payload = await self._openclaw_status(scope)
+            await self._respond(send, code, payload)
+            return
+        if scope.get("type") == "http" and scope.get("path") == "/api/public/analysis":
+            if scope.get("method", "GET").upper() != "GET":
+                await self._respond(send, 405, {"status": "method_not_allowed"})
+                return
+            if self._market_rate_limited(scope, maximum=30):
+                await self._respond(send, 429, {"status": "rate_limited"})
+                return
+            code, payload = await self._public_analysis_status(scope)
             await self._respond(send, code, payload)
             return
         if scope.get("type") == "http" and await self._serve_frontend(scope, send):
@@ -250,6 +261,25 @@ class ProductionASGI(OrchestrationASGI):
                 "deploymentWrites": False,
             },
         }
+
+    async def _public_analysis_status(self, scope: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        query = parse_qs(scope.get("query_string", b"").decode())
+        symbol = str(query.get("symbol", ["BTC"])[0]).strip().upper()
+        interval = str(query.get("interval", ["1h"])[0]).strip()
+        if symbol not in {"BTC", "ETH", "SOL"} or interval != "1h":
+            return 400, {"status": "invalid_request", "reason": "supported symbols are BTC, ETH, and SOL at 1h"}
+        cache_key = (symbol, interval)
+        cached = self._public_analysis_cache.get(cache_key)
+        now = monotonic()
+        if cached is not None and now - cached[0] < 55:
+            return 200, {"ok": True, "source": "monatise-live", "interval": interval, "analysis": cached[1], "cache_hit": True, "execution_enabled": False}
+        try:
+            analysis = await self.runtime.analyse(symbol, source="monatise.web", notify=False)
+        except Exception as exc:
+            LOGGER.exception("public analysis failed", extra={"error_type": type(exc).__name__})
+            return 503, {"status": "analysis_unavailable", "error_type": type(exc).__name__}
+        self._public_analysis_cache[cache_key] = (monotonic(), analysis)
+        return 200, {"ok": True, "source": "monatise-live", "interval": interval, "analysis": analysis, "cache_hit": False, "execution_enabled": False}
 
     async def _cached_openclaw_analysis(self, cache_key: tuple[str, str]) -> tuple[dict[str, Any], bool]:
         raw_ttl = self.runtime.environment.get("MONATISE_OPENCLAW_CACHE_TTL_SECONDS", "300")

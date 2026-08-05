@@ -1,5 +1,4 @@
 const CG_BASE = "/api/coinglass/proxy";
-const HYPER_BASE = "https://api.hyperliquid.xyz/info";
 const ELEVEN_BASE = "https://api.elevenlabs.io";
 const OPENAI_BASE = "https://api.openai.com";
 const SESSION_KEY = "btc-coinglass-dashboard-session-coinglass-only";
@@ -189,6 +188,7 @@ const state = {
   telemetry: readSession(),
   apiKey: localStorage.getItem(API_KEY_STORAGE) || "",
   operator: null,
+  productionAnalysis: null,
   serverCoinGlassReady: false,
   priceSeries: [],
   lastPrice: null,
@@ -2184,7 +2184,7 @@ async function refreshAutonomousMonitor() {
   const start = state.monitor.cursor % keys.length;
   const batch = Array.from({ length: batchSize }, (_, index) => keys[(start + index) % keys.length]);
   state.monitor.cursor = (start + batchSize) % keys.length;
-  els.monitorStatus.textContent = `Scanning ${batch.join(", ")} · ${keys.length} Hyperliquid markets in rotation`;
+  els.monitorStatus.textContent = `Scanning ${batch.join(", ")} · ${keys.length} CoinGlass markets in rotation`;
   const settled = await Promise.allSettled(batch.map(async (coin) => {
     const asset = ASSETS[coin];
     const rows = await getPriceForAsset(asset, "32");
@@ -2324,6 +2324,40 @@ async function getNews() {
   });
   const payload = await timedFetch("News alerts", "CoinGlass", `${CG_BASE}/api/article/list?${params}`, { headers: cgHeaders() });
   return (payload.data || []).slice(0, 8);
+}
+
+async function getProductionAnalysis() {
+  const asset = selectedAsset();
+  if (!["BTC", "ETH", "SOL"].includes(asset.coin)) return null;
+  const payload = await timedFetch(
+    `${asset.coin} production analysis`,
+    "Monatise production",
+    `/api/public/analysis?symbol=${asset.coin}&interval=1h`,
+    { cache: "no-store" }
+  );
+  if (payload?.ok !== true || !payload.analysis) throw new Error("production analysis returned no result");
+  return payload.analysis;
+}
+
+function renderProductionAnalysis(analysis) {
+  state.productionAnalysis = analysis;
+  const classification = String(analysis.classification || "no_trade").toUpperCase();
+  const blocked = analysis.blocked_by ? `Blocked by ${analysis.blocked_by}` : "Pipeline completed";
+  const reasons = Array.isArray(analysis.reasons) ? analysis.reasons.slice(0, 3) : [];
+  els.hyperList.innerHTML = `
+    <div class="metric-row"><div><strong>Production decision</strong><br /><small>Monatise 19-stage pipeline</small></div><span class="metric-value">${classification.replace("_", " ")}</span></div>
+    <div class="metric-row"><div><strong>Pipeline state</strong><br /><small>${blocked}</small></div><span class="metric-value">${analysis.completed_stages || 0}/19</span></div>
+    <div class="metric-row"><div><strong>Market source</strong><br /><small>CoinGlass primary · Backpack fallback</small></div><span class="metric-value">LIVE</span></div>
+    ${reasons.map((reason, index) => `<div class="metric-row"><div><strong>${index ? "Reason" : "Decision reason"}</strong><br /><small>${escapeHtml(reason)}</small></div><span class="metric-value">READ ONLY</span></div>`).join("")}
+  `;
+}
+
+function renderProductionAnalysisUnavailable(error) {
+  state.productionAnalysis = null;
+  els.hyperList.innerHTML = lockedRows("Production analysis", error.message, [
+    "Monatise production analysis unavailable",
+    "CoinGlass candle chart remains read-only"
+  ], "unavailable");
 }
 
 async function getHyperliquidContext() {
@@ -3416,8 +3450,8 @@ function applyMonatiseFramework() {
   const confidence = contextSignalReady ? contextConfidence : 0;
 
   els.frameworkSource.textContent = usesCryptoMultiFrame(asset)
-    ? `${asset.coin} selected · selected crypto multi-timeframe context + CoinGlass/Hyperliquid context`
-    : `${asset.coin} selected · Native indicator stack + market candles + CoinGlass/Hyperliquid context`;
+    ? `${asset.coin} selected · production multi-timeframe context + CoinGlass derivatives`
+    : `${asset.coin} selected · native indicator stack + CoinGlass market context`;
   const displayedDirection = frameworkGate.ready
     ? direction.replace(" SETUP", "")
     : contextSignalReady
@@ -3479,6 +3513,55 @@ function applyMonatiseFramework() {
     vwapSignal: m.vwapSignal,
     scaleAction: m.scaleAction,
     checks
+  };
+}
+
+function applyProductionDecision(setup) {
+  const analysis = state.productionAnalysis;
+  if (!analysis) return setup;
+  const classification = String(analysis.classification || "no_trade").toLowerCase();
+  const direction = String(analysis.direction || "none").toLowerCase();
+  const reasons = Array.isArray(analysis.reasons) ? analysis.reasons.filter(Boolean) : [];
+  const summary = reasons.length
+    ? `Production ${classification.replace("_", " ")}: ${reasons.slice(0, 3).join("; ")}`
+    : `Production ${classification.replace("_", " ")} at ${analysis.completed_stages || 0}/19 stages.`;
+  if (classification === "no_trade") {
+    return {
+      ...setup,
+      direction: "WAIT",
+      confidence: 0,
+      contextSignalReady: false,
+      frameworkReady: false,
+      tradeReady: false,
+      productionClassification: classification,
+      frameworkGate: { side: "WAIT", ready: false, missing: [], summary }
+    };
+  }
+  const directional = classification === "trend" && ["long", "short"].includes(direction);
+  const approved = Boolean(analysis.risk_validation_invoked && analysis.execution_policy_produced);
+  if (directional) {
+    return {
+      ...setup,
+      direction: direction === "long" ? "BUY SETUP" : "SELL SETUP",
+      confidence: Math.round(Number(analysis.conviction || 0) * 100),
+      contextConfidence: Math.round(Number(analysis.conviction || 0) * 100),
+      contextSignalReady: true,
+      frameworkReady: approved,
+      tradeReady: approved,
+      productionClassification: classification,
+      frameworkGate: { side: direction === "long" ? "BUY" : "SELL", ready: approved, missing: approved ? [] : ["risk approval"], summary }
+    };
+  }
+  return {
+    ...setup,
+    direction: "WAIT",
+    contextSignalReady: false,
+    frameworkReady: false,
+    tradeReady: false,
+    productionClassification: classification,
+    gridDirection: classification === "grid" ? `Production grid ${setup.asset}` : setup.gridDirection,
+    gridPlan: summary,
+    frameworkGate: { side: "WAIT", ready: false, missing: [], summary }
   };
 }
 
@@ -3860,7 +3943,7 @@ async function refreshDashboard() {
     els.priceChange.className = "";
     els.headerPriceChange.textContent = "Market data unavailable";
     els.headerPriceChange.className = "";
-    els.priceSource.textContent = `Hyperliquid market candles unavailable · ${error.message}`;
+    els.priceSource.textContent = `CoinGlass market candles unavailable · ${error.message}`;
     els.pricePulse.textContent = "offline";
     updateCoinGlassSourceStatus(error.message);
     drawCanvasNotice(els.priceCanvas, "Market candles unavailable", error.message);
@@ -3878,16 +3961,16 @@ async function refreshDashboard() {
       els.fgGauge.style.background = "";
       els.fgSource.textContent = `Optional CoinGlass sentiment unavailable · ${error.message}`;
     }),
-    getHyperliquidContext().then(renderHyperliquid).catch(renderHyperliquidLocked),
+    getProductionAnalysis().then(renderProductionAnalysis).catch(renderProductionAnalysisUnavailable),
     getNews().then(renderNews).catch(renderNewsLocked)
   ];
 
   await Promise.allSettled(jobs);
-  const setup = applyMonatiseFramework();
+  const setup = applyProductionDecision(applyMonatiseFramework());
   publishGeneratedSignal(setup);
   evaluateLiveAlerts(setup);
   const coreReady = Number.isFinite(state.lastPrice) && state.lastPrice > 0;
-  setSessionStatus(coreReady ? "good" : "bad", coreReady ? "Session live · Hyperliquid core" : "Core market data unavailable");
+  setSessionStatus(coreReady ? "good" : "bad", coreReady ? "Session live · CoinGlass production analysis" : "Core market data unavailable");
   els.refreshButton.disabled = false;
   els.refreshButton.textContent = "Refresh";
 }

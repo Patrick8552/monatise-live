@@ -421,20 +421,20 @@ function applyLanguagePreference(language = selectedLanguage) {
 
 const assetMetadata = {
   AAPL: { name: "Apple", route: "TradingView stock watch" },
-  BNB: { name: "BNB", route: "Core Hyperliquid perp" },
-  BTC: { name: "Bitcoin", route: "Core Hyperliquid perp" },
-  DOGE: { name: "Dogecoin", route: "Core Hyperliquid perp" },
-  ETH: { name: "Ethereum", route: "Core Hyperliquid perp" },
-  HYPE: { name: "Hyperliquid", route: "Core Hyperliquid perp" },
+  BNB: { name: "BNB", route: "CoinGlass market feed" },
+  BTC: { name: "Bitcoin", route: "CoinGlass market feed" },
+  DOGE: { name: "Dogecoin", route: "CoinGlass market feed" },
+  ETH: { name: "Ethereum", route: "CoinGlass market feed" },
+  HYPE: { name: "HYPE", route: "CoinGlass market feed" },
   NDX: { name: "Nasdaq 100", route: "TradingView index watch" },
   NASDAQ: { name: "Nasdaq Composite", route: "TradingView index watch" },
   NVDA: { name: "NVIDIA", route: "TradingView stock watch" },
   QQQ: { name: "Invesco QQQ", route: "TradingView ETF watch" },
-  SOL: { name: "Solana", route: "Core Hyperliquid perp" },
+  SOL: { name: "Solana", route: "CoinGlass market feed" },
   SPX: { name: "S&P 500", route: "TradingView index watch" },
   SPY: { name: "SPDR S&P 500 ETF", route: "TradingView ETF watch" },
   TSLA: { name: "Tesla", route: "TradingView stock watch" },
-  XRP: { name: "XRP", route: "Core Hyperliquid perp" }
+  XRP: { name: "XRP", route: "CoinGlass market feed" }
 };
 
 const tradingViewSymbols = {
@@ -1485,7 +1485,7 @@ function setupWaitDetail(health, signal, timing) {
   if (signal.direction !== "WAIT") {
     return signal.thesis;
   }
-  if (!health.markOk) return "Waiting for a live Hyperliquid mark before forming entries.";
+  if (!health.markOk) return "Waiting for a live CoinGlass mark before forming entries.";
   if (!health.orderCount) return "Waiting for live setup-grid levels from Fibonacci/FVG analysis.";
   if (health.structureBreak) return "Price broke invalidation; wait for a fresh structure reset.";
   if (timing.blocked) return `${timing.detail} The grid remains visible for planning.`;
@@ -1497,8 +1497,8 @@ function setupWaitDetail(health, signal, timing) {
 function assetSignalProfile(symbol = selectedAsset) {
   return {
     className: "crypto",
-    lens: "Hyperliquid mark, FVG/Fibonacci structure, funding, OI, and liquidation context",
-    primaryFeed: "Hyperliquid/CoinGlass crypto read"
+    lens: "CoinGlass mark, FVG/Fibonacci structure, funding, OI, and liquidation context",
+    primaryFeed: "CoinGlass production crypto read"
   };
 }
 
@@ -4939,10 +4939,10 @@ function candlesToCsv(candles) {
 }
 
 async function loadLiveCandles(options = {}) {
-  if (!hasLivePlan()) return;
   const symbol = options.symbol || selectedAsset;
   if (candleLoading && !options.force && symbol === candleLoadingSymbol) return;
-  const interval = options.interval || tradingRules.chartInterval;
+  const requestedInterval = options.interval || tradingRules.chartInterval;
+  const interval = ["30m", "1h", "4h", "1d"].includes(requestedInterval) ? requestedInterval : "1h";
   const limit = options.limit || 120;
   const requestId = candleLoadSequence + 1;
   candleLoadSequence = requestId;
@@ -4950,12 +4950,15 @@ async function loadLiveCandles(options = {}) {
   candleLoadingSymbol = symbol;
   try {
     const response = await apiFetch(
-      `/api/candles?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${encodeURIComponent(limit)}`,
+      `/api/market/candles?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${encodeURIComponent(limit)}`,
       { cache: "no-store" }
     );
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.error || "live candles unavailable");
-    const candles = Array.isArray(payload.candles) ? payload.candles : [];
+    const candles = (Array.isArray(payload.candles) ? payload.candles : []).map((candle) => ({
+      ...candle,
+      timestamp: candle.timestamp || new Date(Number(candle.time)).toISOString()
+    }));
     if (!candles.length) throw new Error("no candles returned");
     if (requestId !== candleLoadSequence || symbol !== selectedAsset) return;
     candleCsvBuffer = candlesToCsv(candles);
