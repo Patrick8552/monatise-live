@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from monatise.adapters.coinglass_production import CoinGlassProductionAdapter
 from monatise.application.production import ProductionASGI, ProductionRuntime
 from monatise.core.models import Candle
 
@@ -119,9 +120,16 @@ def test_market_candles_default_to_supported_startup_interval():
 def test_market_dashboard_routes_reject_unsupported_queries():
     app = ProductionASGI(Runtime())
     assert get(app, "/api/market/candles", query="symbol=EURUSD&interval=15m&limit=96")[0]["status"] == 400
-    assert get(app, "/api/market/candles", query="symbol=BTC&interval=15m&limit=96")[0]["status"] == 400
+    assert get(app, "/api/market/candles", query="symbol=BTC&interval=2h&limit=96")[0]["status"] == 400
     assert get(app, "/api/market/candles", query="symbol=BTC&interval=15m&limit=2000")[0]["status"] == 400
     assert get(app, "/api/coinglass/proxy/not-allowed")[0]["status"] == 400
+
+
+@pytest.mark.parametrize("interval", CoinGlassProductionAdapter.SUPPORTED_INTERVALS)
+def test_market_candles_unlock_all_coinglass_v4_intervals(interval):
+    response = get(ProductionASGI(Runtime()), "/api/market/candles", query=f"symbol=BTC&interval={interval}&limit=96")
+    assert response[0]["status"] == 200
+    assert json.loads(response[1]["body"])["interval"] == interval
 
 
 def test_public_dashboard_analysis_is_read_only_production_output_without_notification():

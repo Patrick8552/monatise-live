@@ -56,9 +56,12 @@ class ProductionRuntime(OrchestrationRuntime):
 
 class ProductionASGI(OrchestrationASGI):
     MARKET_SYMBOLS = {"BTC", "ETH", "SOL", "XRP", "DOGE", "BNB"}
-    # CoinGlass STARTUP supports 30m and coarser candles. Keep this allowlist
-    # aligned with the configured plan so unsupported requests fail clearly.
-    MARKET_INTERVALS = {"30m", "1h", "4h", "1d"}
+    MARKET_INTERVALS = set(CoinGlassProductionAdapter.SUPPORTED_INTERVALS)
+    INTERVAL_MAX_AGE_SECONDS = {
+        "1m": 120, "3m": 360, "5m": 600, "15m": 1_800, "30m": 3_600,
+        "1h": 7_200, "4h": 28_800, "6h": 43_200, "8h": 57_600,
+        "12h": 86_400, "1d": 172_800, "1w": 1_209_600,
+    }
 
     def __init__(self, runtime: OrchestrationRuntime | None = None, static_dir: Path | None = None) -> None:
         super().__init__(runtime or ProductionRuntime())
@@ -140,7 +143,13 @@ class ProductionASGI(OrchestrationASGI):
     async def _operator_status(self) -> tuple[int, dict[str, Any]]:
         configured = self.runtime.coinglass is not None and bool(self.runtime.environment.get("COINGLASS_API_KEY", "").strip())
         return 200, {
-            "integrations": {"coinglass": {"configured": configured, "exchange": "Binance"}},
+            "integrations": {"coinglass": {
+                "configured": configured,
+                "exchange": "Binance",
+                "api_version": "v4",
+                "intervals": list(CoinGlassProductionAdapter.SUPPORTED_INTERVALS),
+                "datasets": sorted(CoinGlassProductionAdapter.DASHBOARD_PATHS),
+            }},
             "execution_enabled": False,
         }
 
@@ -169,7 +178,7 @@ class ProductionASGI(OrchestrationASGI):
         if not providers:
             return 503, {"status": "unavailable", "dataset": "candles"}
         try:
-            max_age = {"30m": 3_600, "1h": 7_200, "4h": 28_800, "1d": 172_800}[interval]
+            max_age = self.INTERVAL_MAX_AGE_SECONDS[interval]
             snapshot = await asyncio.to_thread(
                 MarketDataEngine(providers).collect,
                 MarketDataRequest(symbol, interval=interval, candle_limit=limit, max_age_seconds=max_age),

@@ -31,6 +31,8 @@ class CoinGlassHealth:
 class CoinGlassProductionAdapter:
     """Fetches and normalizes data only; it contains no analytical rules."""
 
+    SUPPORTED_INTERVALS = ("1m", "3m", "5m", "15m", "30m", "1h", "4h", "6h", "8h", "12h", "1d", "1w")
+
     ENDPOINTS = {
         "price_history": "/api/futures/price/history",
         "open_interest": "/api/futures/open-interest/exchange-list",
@@ -44,12 +46,28 @@ class CoinGlassProductionAdapter:
     PAIRS = {"BTC": "BTCUSDT", "ETH": "ETHUSDT", "SOL": "SOLUSDT"}
     DASHBOARD_PATHS = {
         "/api/article/list": {"start_time", "end_time", "language", "page", "per_page"},
+        "/api/futures/aggregated-cvd/history": {"exchange_list", "symbol", "interval", "limit", "start_time", "end_time", "unit"},
+        "/api/futures/aggregated-taker-buy-sell-volume/history": {"exchange_list", "symbol", "interval", "limit", "start_time", "end_time", "unit"},
+        "/api/futures/cvd/history": {"exchange", "symbol", "interval", "limit", "start_time", "end_time", "unit"},
         "/api/futures/funding-rate/exchange-list": set(),
+        "/api/futures/funding-rate/history": {"exchange", "symbol", "interval", "limit", "start_time", "end_time"},
+        "/api/futures/funding-rate/oi-weight-history": {"symbol", "interval", "limit", "start_time", "end_time"},
+        "/api/futures/global-long-short-account-ratio/history": {"exchange", "symbol", "interval", "limit", "start_time", "end_time"},
         "/api/futures/liquidation/aggregated-map": {"symbol", "range"},
         "/api/futures/liquidation/aggregated-history": {"exchange_list", "symbol", "interval", "limit"},
+        "/api/futures/liquidation/exchange-list": {"symbol", "range"},
+        "/api/futures/liquidation/order": {"exchange", "symbol", "min_liquidation_amount", "start_time", "end_time"},
         "/api/futures/liquidation/max-pain": {"range"},
+        "/api/futures/open-interest/aggregated-history": {"symbol", "interval", "limit", "start_time", "end_time", "unit"},
         "/api/futures/open-interest/exchange-list": {"symbol"},
-        "/api/futures/price/history": {"exchange", "symbol", "interval", "limit"},
+        "/api/futures/open-interest/history": {"exchange", "symbol", "interval", "limit", "start_time", "end_time", "unit"},
+        "/api/futures/orderbook/aggregated-ask-bids-history": {"exchange_list", "symbol", "interval", "limit", "start_time", "end_time", "range"},
+        "/api/futures/orderbook/ask-bids-history": {"exchange", "symbol", "interval", "limit", "start_time", "end_time", "range"},
+        "/api/futures/orderbook/large-limit-order": {"exchange", "symbol"},
+        "/api/futures/orderbook/v2/large-limit-order-history": {"exchange", "symbol", "start_time", "end_time"},
+        "/api/futures/price/history": {"exchange", "symbol", "interval", "limit", "start_time", "end_time"},
+        "/api/futures/top-long-short-account-ratio/history": {"exchange", "symbol", "interval", "limit", "start_time", "end_time"},
+        "/api/futures/top-long-short-position-ratio/history": {"exchange", "symbol", "interval", "limit", "start_time", "end_time"},
         "/api/index/fear-greed-history": set(),
     }
 
