@@ -11,7 +11,7 @@ const OPENAI_KEY_STORAGE = "monatise-openai-api-key";
 const OPENAI_MODEL_STORAGE = "monatise-openai-model";
 const TRADER_ACCOUNT_STORAGE = "monatise-trader-account-size";
 const TRADER_RISK_STORAGE = "monatise-trader-risk-pct";
-const LOCKED_SIGNAL_STORAGE = "monatise-locked-signal";
+const LOCKED_SIGNAL_STORAGE = "monatise-locked-signal-risk-grid-v1";
 const ANALYSIS_INTERVAL = "30m";
 const CRYPTO_ANALYSIS_INTERVALS = ["1h", "30m"];
 const CRYPTO_PRIMARY_ANALYSIS_INTERVAL = "1h";
@@ -1197,12 +1197,12 @@ function buildGeneratedSignal(setup, price, vwap) {
   const spacingPct = Math.max(0.12, Math.min(0.55, riskPct / 3));
   const mark = Number.isFinite(price) ? price : state.lastPrice;
   const anchor = Number.isFinite(vwap) && vwap > 0 ? vwap : mark;
-  const buyGrid = buildGridLevels(anchor, "buy", spacingPct, setupAction);
-  const sellGrid = buildGridLevels(anchor, "sell", spacingPct, setupAction);
+  const candidateBuyGrid = buildGridLevels(anchor, "buy", spacingPct, setupAction);
+  const candidateSellGrid = buildGridLevels(anchor, "sell", spacingPct, setupAction);
   const markEntry = markEntryCandidate(setupAction, mark, setup);
-  const plannedEntry = plannedDashboardEntry(setupAction, mark, vwap, buyGrid, sellGrid);
+  const plannedEntry = plannedDashboardEntry(setupAction, mark, vwap, candidateBuyGrid, candidateSellGrid);
   const directionalWatch = setupAction !== "WAIT";
-  const fallbackEntry = directionalWatch ? fallbackDirectionalEntry(setupAction, mark, buyGrid, sellGrid) : Number.NaN;
+  const fallbackEntry = directionalWatch ? fallbackDirectionalEntry(setupAction, mark, candidateBuyGrid, candidateSellGrid) : Number.NaN;
   const entryCandidate = Number.isFinite(markEntry) ? markEntry : Number.isFinite(plannedEntry) ? plannedEntry : fallbackEntry;
   const entryMode = Number.isFinite(markEntry) ? "mark" : Number.isFinite(plannedEntry) ? "pullback" : "grid";
   const action = setupAction === "WAIT" || !setup.tradeReady || !Number.isFinite(entryCandidate) ? "WAIT" : setupAction;
@@ -1219,6 +1219,9 @@ function buildGeneratedSignal(setup, price, vwap) {
     : action === "SELL"
       ? Math.min(entry - invalidationPlan.riskDistance * 1.35, Number.isFinite(vwap) ? vwap : entry)
       : Number.isFinite(vwap) ? vwap : mark;
+  const alignedGrids = buildRiskAlignedTradeGrids(executableAction, executableEntry, invalidation, target);
+  const buyGrid = alignedGrids?.buyGrid || candidateBuyGrid;
+  const sellGrid = alignedGrids?.sellGrid || candidateSellGrid;
   const bestChecks = setup.checks
     .filter((check) => check.live || Math.abs(check.score) > 0)
     .slice(0, 4)
@@ -1291,6 +1294,35 @@ function buildGridLevels(anchor, side, spacingPct, action) {
     const pct = spacingPct * (step + (side === "buy" ? -biasShift : biasShift));
     return anchor * (1 + direction * pct / 100);
   });
+}
+
+function buildRiskAlignedTradeGrids(action, entry, invalidation, target) {
+  const numericEntry = Number(entry);
+  const numericInvalidation = Number(invalidation);
+  const numericTarget = Number(target);
+  if (!["BUY", "SELL"].includes(action)
+    || ![numericEntry, numericInvalidation, numericTarget].every((value) => Number.isFinite(value) && value > 0)) {
+    return null;
+  }
+  const riskDistance = Math.abs(numericEntry - numericInvalidation);
+  const rewardDistance = Math.abs(numericTarget - numericEntry);
+  const correctlyOrdered = action === "BUY"
+    ? numericInvalidation < numericEntry && numericEntry < numericTarget
+    : numericTarget < numericEntry && numericEntry < numericInvalidation;
+  if (!correctlyOrdered || riskDistance <= 0 || rewardDistance <= 0) return null;
+
+  const entryRatios = [0, 0.33, 0.66];
+  const profitRatios = [0.33, 0.66, 1];
+  if (action === "BUY") {
+    return {
+      buyGrid: entryRatios.map((ratio) => numericEntry - riskDistance * ratio),
+      sellGrid: profitRatios.map((ratio) => numericEntry + rewardDistance * ratio)
+    };
+  }
+  return {
+    buyGrid: profitRatios.map((ratio) => numericEntry - rewardDistance * ratio),
+    sellGrid: entryRatios.map((ratio) => numericEntry + riskDistance * ratio)
+  };
 }
 
 function formatGridLevels(levels) {
