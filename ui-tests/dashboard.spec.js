@@ -76,3 +76,44 @@ test("production grid analysis renders projected decision-ready levels without a
   await expect(framework).toContainText("Decision Ready");
   await expect(framework).not.toContainText("BUY\n");
 });
+
+test("rapid asset switching never renders analysis from the previous asset", async ({ page }) => {
+  await page.route("**/api/public/analysis?*", async (route) => {
+    const symbol = new URL(route.request().url()).searchParams.get("symbol");
+    if (symbol === "BTC") await new Promise((resolve) => setTimeout(resolve, 500));
+    const center = symbol === "ETH" ? 1900 : 65000;
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        analysis: {
+          symbol,
+          classification: "grid",
+          direction: "two_sided",
+          status: "completed",
+          blocked_by: null,
+          completed_stages: 13,
+          grid_score: 8,
+          conviction: 0.75,
+          grid_plan: {
+            center,
+            buy_levels: [center - 10, center - 20, center - 30],
+            sell_levels: [center + 10, center + 20, center + 30],
+            lower_invalidation: center - 40,
+            upper_invalidation: center + 40,
+            levels_per_side: 3
+          },
+          reasons: ["two-sided liquidity favors grid logic"]
+        }
+      })
+    });
+  });
+
+  await page.goto("/coinglass-dashboard.html");
+  await page.locator("#assetSelect").selectOption("ETH");
+
+  const production = page.locator("#hyperList");
+  await expect(production).toContainText("$1,900", { timeout: 10_000 });
+  await expect(production).not.toContainText("$65,000");
+  await expect(page.locator("#assetSelect")).toHaveValue("ETH");
+});
