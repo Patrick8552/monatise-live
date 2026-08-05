@@ -379,6 +379,7 @@ def test_qualified_grid_score_takes_priority_over_directional_conflict() -> None
     assert result.classification is DecisionClassification.GRID
     assert result.direction is DecisionDirection.TWO_SIDED
     assert result.state is DecisionState.APPROVED_FOR_RISK_REVIEW
+    assert result.conviction == result.grid_score
     assert "order flow unavailable" not in result.blockers
     assert "regime is unstable" not in result.blockers
     assert "market structure is unstable" not in result.blockers

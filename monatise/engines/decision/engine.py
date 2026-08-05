@@ -578,12 +578,13 @@ class DecisionEngine:
     ) -> float:
         if classification is DecisionClassification.GRID:
             base = grid_score
+            conflict_penalty = 0.0
         elif classification is DecisionClassification.TREND:
             base = max(long_score, short_score)
+            conflict_penalty = conflict_ratio * 0.40
         else:
             return 0.0
 
-        conflict_penalty = conflict_ratio * 0.40
         return max(0.0, min(1.0, base - conflict_penalty))
 
     @staticmethod
