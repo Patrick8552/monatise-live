@@ -324,6 +324,52 @@ def test_signed_signal_score_threshold_allows_qualified_directional_trade() -> N
     assert result.state is DecisionState.APPROVED_FOR_RISK_REVIEW
 
 
+def test_qualified_grid_score_takes_priority_over_directional_conflict() -> None:
+    request = base_request()
+    balanced_liquidity = LiquidityAssessment(
+        symbol=request.market.symbol,
+        current_price=100.0,
+        buy_side_levels=(object(),),
+        sell_side_levels=(object(),),
+        nearest_buy_side=object(),
+        nearest_sell_side=object(),
+        reasons=(),
+    )
+    range_regime = RegimeAssessment(
+        symbol=request.market.symbol,
+        state=RegimeState.RANGE,
+        confidence=RegimeConfidence.HIGH,
+        score=0.85,
+        reasons=(),
+    )
+    neutral_structure = MarketStructureAssessment(
+        symbol=request.market.symbol,
+        bias=StructureBias.NEUTRAL,
+        state=StructureState.RANGE,
+        events=(),
+        latest_event=None,
+        swing_highs=(),
+        swing_lows=(),
+        confidence=0.75,
+        reasons=(),
+    )
+    qualified = DecisionRequest(**{
+        **request.__dict__,
+        "liquidity": balanced_liquidity,
+        "regime": range_regime,
+        "structure": neutral_structure,
+        "minimum_signal_score": 7,
+        "maximum_conflict_ratio": 0.0,
+    })
+
+    result = DecisionEngine().assess(qualified)
+
+    assert result.metadata["grid_signal_score"] >= 7
+    assert result.classification is DecisionClassification.GRID
+    assert result.direction is DecisionDirection.TWO_SIDED
+    assert result.state is DecisionState.APPROVED_FOR_RISK_REVIEW
+
+
 def test_decision_engine_remains_non_executable() -> None:
     result = DecisionEngine().assess(base_request())
 

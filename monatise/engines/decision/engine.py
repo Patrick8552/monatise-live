@@ -75,6 +75,9 @@ class DecisionEngine:
             else 0.0
         )
 
+        signed_signal_score = round((long_score - short_score) * 10)
+        grid_signal_score = round(grid_score * 10)
+
         classification, direction = self._classify(
             request=request,
             long_score=long_score,
@@ -83,8 +86,14 @@ class DecisionEngine:
             blockers=blockers,
         )
 
-        signed_signal_score = round((long_score - short_score) * 10)
-        grid_signal_score = round(grid_score * 10)
+        if (
+            request.minimum_signal_score > 0
+            and not blockers
+            and grid_signal_score >= request.minimum_signal_score
+        ):
+            classification = DecisionClassification.GRID
+            direction = DecisionDirection.TWO_SIDED
+
         if classification is DecisionClassification.TREND and abs(signed_signal_score) < request.minimum_signal_score:
             blockers.append(
                 f"signed signal score {signed_signal_score:+d} is below threshold "
@@ -108,7 +117,7 @@ class DecisionEngine:
             conflict_ratio=conflict_ratio,
         )
 
-        if conflict_ratio > request.maximum_conflict_ratio:
+        if classification is DecisionClassification.TREND and conflict_ratio > request.maximum_conflict_ratio:
             blockers.append(
                 f"evidence conflict ratio {conflict_ratio:.3f} exceeds limit "
                 f"{request.maximum_conflict_ratio:.3f}"
