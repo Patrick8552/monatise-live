@@ -663,8 +663,14 @@ class OrchestrationRuntime:
         classification = getattr(getattr(decision, "classification", None), "value", "no_trade")
         direction = getattr(getattr(decision, "direction", None), "value", "none")
         threshold = int(metadata.get("minimum_signal_score", 7) or 7)
-        score = int(metadata.get("grid_signal_score", 0) or 0) if classification == "grid" else abs(int(metadata.get("signed_signal_score", 0) or 0))
-        if classification == "no_trade" or score < threshold:
+        signed_score = int(metadata.get("signed_signal_score", 0) or 0)
+        score = int(metadata.get("grid_signal_score", 0) or 0) if classification == "grid" else abs(signed_score)
+        direction_is_qualified = (
+            classification == "grid"
+            or (direction == "long" and signed_score >= threshold)
+            or (direction == "short" and signed_score <= -threshold)
+        )
+        if classification == "no_trade" or score < threshold or not direction_is_qualified:
             return False
         risk = outputs.get("risk_validation")
         risk_metadata = getattr(risk, "metadata", {}) or {}

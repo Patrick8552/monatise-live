@@ -105,7 +105,7 @@ class TelegramNotifier:
 
         risk_decision = _enum_value(getattr(risk, "decision", "")).lower()
         grid_blocked = classification == "GRID" and (result.status.value == "blocked" or risk_decision == "rejected")
-        heading = f"Monatise GRID {'CANDIDATE — RISK BLOCKED' if grid_blocked else 'READY'}: {result.symbol} ({direction})" if classification == "GRID" else f"Monatise signal: {result.symbol} {direction} ({classification})"
+        heading = f"Monatise GRID {'CANDIDATE — RISK BLOCKED' if grid_blocked else 'READY'}: {result.symbol} ({direction})" if classification == "GRID" else f"Monatise directional setup: {result.symbol} {direction} ({classification})"
         lines = [
             heading,
             f"Timeframe: {interval}",
