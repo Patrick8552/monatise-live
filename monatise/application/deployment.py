@@ -673,13 +673,18 @@ class OrchestrationRuntime:
         if classification == "no_trade" or score < threshold or not direction_is_qualified:
             return False
         risk = outputs.get("risk_validation")
+        risk_decision = getattr(getattr(risk, "decision", None), "value", None)
+        if classification != "grid" and (
+            result.status.value == "blocked" or risk_decision == "rejected"
+        ):
+            return False
         risk_metadata = getattr(risk, "metadata", {}) or {}
         grid = risk_metadata.get("grid_plan") or {}
         material = {
             "classification": classification,
             "direction": direction,
             "score": score,
-            "risk": getattr(getattr(risk, "decision", None), "value", None),
+            "risk": risk_decision,
             "entry": round(float(getattr(risk, "validated_entry", 0) or 0), 6),
             "invalidation": round(float(getattr(risk, "validated_invalidation", 0) or 0), 6),
             "target": round(float(getattr(risk, "validated_target", 0) or 0), 6),

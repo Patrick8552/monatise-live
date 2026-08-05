@@ -105,7 +105,12 @@ class TelegramNotifier:
 
         risk_decision = _enum_value(getattr(risk, "decision", "")).lower()
         grid_blocked = classification == "GRID" and (result.status.value == "blocked" or risk_decision == "rejected")
-        heading = f"Monatise GRID {'CANDIDATE — RISK BLOCKED' if grid_blocked else 'READY'}: {result.symbol} ({direction})" if classification == "GRID" else f"Monatise directional setup: {result.symbol} {direction} ({classification})"
+        directional_blocked = classification != "GRID" and (result.status.value == "blocked" or risk_decision == "rejected")
+        heading = (
+            f"Monatise GRID {'CANDIDATE — RISK BLOCKED' if grid_blocked else 'READY'}: {result.symbol} ({direction})"
+            if classification == "GRID"
+            else f"Monatise directional setup{' — RISK BLOCKED' if directional_blocked else ''}: {result.symbol} {direction} ({classification})"
+        )
         lines = [
             heading,
             f"Timeframe: {interval}",
@@ -131,6 +136,10 @@ class TelegramNotifier:
                 lines.append("Risk review: " + "; ".join(str(getattr(issue, "message", issue)) for issue in issues))
         else:
             lines.append(f"Entry: {_price(entry)} | Stop: {_price(stop)} | Target: {_price(target)}")
+            if directional_blocked:
+                issues = tuple(getattr(risk, "issues", ()) or ())[:3]
+                if issues:
+                    lines.append("Risk review: " + "; ".join(str(getattr(issue, "message", issue)) for issue in issues))
         if reward_risk is not None and classification != "GRID":
             lines.append(f"Reward/risk: {float(reward_risk):.2f}")
         if expires_at is not None:

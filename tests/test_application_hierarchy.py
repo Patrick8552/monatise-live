@@ -21,6 +21,7 @@ from monatise.application.hierarchy import (
     Provenance,
     SetupState,
     ShadowComparison,
+    ShadowEvaluation,
     ShadowHierarchyCoordinator,
     ShadowHierarchyService,
     StrategicState,
@@ -116,6 +117,32 @@ def test_structural_risk_builder_uses_structure_volatility_and_estimated_costs()
     assert proposal.final_stop < 97
     assert proposal.calculated_reward_to_risk > proposal.minimum_reward_to_risk
     assert proposal.estimates_observed is False
+
+
+def test_hierarchy_short_notification_preserves_directional_risk_geometry():
+    macro = context("macro", StrategicState.NEUTRAL, direction="neutral")
+    regime = context("4h", StrategicState.SHORT_ONLY, macro, direction="short")
+    strategy = context("1h", StrategicState.SHORT_ONLY, regime, direction="short")
+    setup = context("15m", SetupState.SETUP_CONFIRMED, strategy, direction="short")
+    trigger = context("5m", TriggerState.TRIGGER_CONFIRMED, setup, direction="short")
+    risk = StructuralRiskInputBuilder(atr_multiplier=0.1).build(
+        direction="short", entry_zone_low=99, entry_zone_high=101, structural_invalidation=103,
+        target_liquidity=90, atr=2, movement_tolerance_pct=0.002, expires_at=NOW + timedelta(minutes=15),
+    )
+    bundle = EvidenceBundle.create(
+        symbol="BTC", created_at=NOW, macro_context=macro, regime_4h=regime,
+        strategy_1h=strategy, setup_15m=setup, trigger_5m=trigger,
+        risk_inputs=risk, strategy_version="hierarchy-shadow-v1",
+    )
+    evaluation = ShadowEvaluation("BTC", NOW, macro, regime, strategy, setup, trigger, bundle, None, True, ())
+
+    message = ShadowHierarchyService._format_notification(evaluation, publication_id="short-publication")
+
+    assert "BTC | SHORT" in message
+    assert f"Entry {risk.reference_entry:.8g}" in message
+    assert f"Stop {risk.final_stop:.8g}" in message
+    assert f"Target {risk.target_liquidity:.8g}" in message
+    assert risk.final_stop > risk.reference_entry > risk.target_liquidity
 
 
 @pytest.mark.parametrize(("direction", "expected_swing"), (("long", 112.0), ("short", 132.0)))

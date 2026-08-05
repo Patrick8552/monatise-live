@@ -309,6 +309,39 @@ def test_telegram_grid_analysis_is_included_and_labeled():
     assert "Score: 7/10" in message
 
 
+def test_telegram_directional_risk_rejection_is_prominently_labeled():
+    run = AnalysisRun("BTC", {})
+    now = run.requested_at
+    outputs = {
+        "decision": SimpleNamespace(
+            direction=SimpleNamespace(value="long"),
+            classification=SimpleNamespace(value="trend"),
+            conviction=0.8,
+            reasons=("directional evidence qualified",),
+            metadata={"signed_signal_score": 8, "grid_signal_score": 1, "minimum_signal_score": 7},
+        ),
+        "risk_validation": SimpleNamespace(
+            decision=SimpleNamespace(value="rejected"),
+            validated_entry=65_000,
+            validated_invalidation=66_000,
+            validated_target=68_000,
+            reward_risk=None,
+            signal_expires_at=now,
+            issues=(SimpleNamespace(message="stop is on the wrong side of entry"),),
+        ),
+        "market_data": SimpleNamespace(interval="15m", quality=SimpleNamespace(source="CoinGlass")),
+    }
+    result = PipelineResult(
+        run.run_id, run.correlation_id, "BTC", PipelineStage.BLOCKED,
+        PipelineContext(run, outputs), PipelineStatistics(1, {}, {}, 12), None, "risk_validation", now, now,
+    )
+
+    message = TelegramNotifier.format(result)
+
+    assert "Monatise directional setup — RISK BLOCKED: BTC LONG (TREND)" in message
+    assert "Risk review: stop is on the wrong side of entry" in message
+
+
 def test_notification_failure_does_not_corrupt_completed_pipeline_result():
     run = AnalysisRun("BTC", {})
     now = run.requested_at
