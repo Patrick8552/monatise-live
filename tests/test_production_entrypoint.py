@@ -34,6 +34,7 @@ class Runtime:
             dashboard_query=lambda path, query: {"code": "0", "data": [{"path": path, "symbol": query.get("symbol")}]},
         )
         self.redis_coordination = Coordination()
+        self.telegram = None
         self.calls = []
     async def analyse(self, symbol, **kwargs):
         self.calls.append((symbol, kwargs))
@@ -142,13 +143,21 @@ def test_public_dashboard_analysis_is_read_only_production_output_without_notifi
     assert payload["source"] == "monatise-live"
     assert payload["execution_enabled"] is False
     assert payload["analysis"]["execution_enabled"] is False
-    assert runtime.calls == [("BTC", {"source": "monatise.web", "notify": False})]
+    assert runtime.calls == [("BTC", {"interval": "1h", "source": "monatise.web", "notify": False})]
 
 
 def test_public_dashboard_analysis_rejects_unsupported_assets_and_intervals():
     app = ProductionASGI(Runtime())
     assert get(app, "/api/public/analysis", query="symbol=XRP&interval=1h")[0]["status"] == 400
-    assert get(app, "/api/public/analysis", query="symbol=BTC&interval=15m")[0]["status"] == 400
+    assert get(app, "/api/public/analysis", query="symbol=BTC&interval=2h")[0]["status"] == 400
+
+
+@pytest.mark.parametrize("interval", CoinGlassProductionAdapter.SUPPORTED_INTERVALS)
+def test_public_dashboard_analysis_uses_selected_coinglass_interval(interval):
+    runtime = Runtime()
+    response = get(ProductionASGI(runtime), "/api/public/analysis", query=f"symbol=BTC&interval={interval}")
+    assert response[0]["status"] == 200
+    assert runtime.calls == [("BTC", {"interval": interval, "source": "monatise.web", "notify": False})]
 
 
 def test_market_candles_fail_closed_when_all_providers_are_unavailable():
@@ -189,7 +198,7 @@ def test_openclaw_status_restores_read_only_legacy_contract():
         "configurationWrites": False,
         "deploymentWrites": False,
     }
-    assert runtime.calls == [("BTC", {"source": "monatise.openclaw"})]
+    assert runtime.calls == [("BTC", {"interval": "1h", "source": "monatise.openclaw"})]
 
 
 def test_openclaw_status_reuses_recent_analysis_by_symbol_and_interval():
@@ -204,7 +213,7 @@ def test_openclaw_status_reuses_recent_analysis_by_symbol_and_interval():
     assert first["cache_hit"] is False
     assert second["cache_hit"] is True
     assert first["analysis"] == second["analysis"]
-    assert runtime.calls == [("BTC", {"source": "monatise.openclaw"})]
+    assert runtime.calls == [("BTC", {"interval": "1h", "source": "monatise.openclaw"})]
 
 
 def test_openclaw_status_rejects_wrong_or_missing_credentials():
@@ -217,7 +226,7 @@ def test_openclaw_status_rejects_wrong_or_missing_credentials():
 def test_openclaw_status_rejects_unsupported_assets_and_intervals():
     app = ProductionASGI(Runtime())
     assert openclaw_status(app, query="symbol=XRP&interval=1h")[0] == 400
-    assert openclaw_status(app, query="symbol=BTC&interval=5m")[0] == 400
+    assert openclaw_status(app, query="symbol=BTC&interval=2h")[0] == 400
     assert app.runtime.calls == []
 
 

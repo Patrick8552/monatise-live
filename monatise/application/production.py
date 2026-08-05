@@ -244,8 +244,8 @@ class ProductionASGI(OrchestrationASGI):
         query = parse_qs(scope.get("query_string", b"").decode())
         symbol = str(query.get("symbol", [self.runtime.environment.get("MONATISE_SYMBOL", "BTC")])[0]).strip().upper()
         interval = str(query.get("interval", ["1h"])[0]).strip() or "1h"
-        if symbol not in {"BTC", "ETH", "SOL"} or interval != "1h":
-            return 400, {"status": "invalid_request", "reason": "supported symbols are BTC, ETH, and SOL at 1h"}
+        if symbol not in {"BTC", "ETH", "SOL"} or interval not in self.MARKET_INTERVALS:
+            return 400, {"status": "invalid_request", "reason": "unsupported symbol or interval"}
         cache_key = (symbol, interval)
         try:
             analysis, cache_hit = await self._cached_openclaw_analysis(cache_key)
@@ -277,15 +277,15 @@ class ProductionASGI(OrchestrationASGI):
         query = parse_qs(scope.get("query_string", b"").decode())
         symbol = str(query.get("symbol", ["BTC"])[0]).strip().upper()
         interval = str(query.get("interval", ["1h"])[0]).strip()
-        if symbol not in {"BTC", "ETH", "SOL"} or interval != "1h":
-            return 400, {"status": "invalid_request", "reason": "supported symbols are BTC, ETH, and SOL at 1h"}
+        if symbol not in {"BTC", "ETH", "SOL"} or interval not in self.MARKET_INTERVALS:
+            return 400, {"status": "invalid_request", "reason": "unsupported symbol or interval"}
         cache_key = (symbol, interval)
         cached = self._public_analysis_cache.get(cache_key)
         now = monotonic()
         if cached is not None and now - cached[0] < 55:
             return 200, {"ok": True, "source": "monatise-live", "interval": interval, "analysis": cached[1], "cache_hit": True, "execution_enabled": False}
         try:
-            analysis = await self.runtime.analyse(symbol, source="monatise.web", notify=False)
+            analysis = await self.runtime.analyse(symbol, interval=interval, source="monatise.web", notify=False)
         except Exception as exc:
             LOGGER.exception("public analysis failed", extra={"error_type": type(exc).__name__})
             return 503, {"status": "analysis_unavailable", "error_type": type(exc).__name__}
@@ -306,7 +306,7 @@ class ProductionASGI(OrchestrationASGI):
         task = self._openclaw_inflight.get(cache_key)
         joined_existing = task is not None
         if task is None:
-            task = asyncio.create_task(self.runtime.analyse(cache_key[0], source="monatise.openclaw"))
+            task = asyncio.create_task(self.runtime.analyse(cache_key[0], interval=cache_key[1], source="monatise.openclaw"))
             self._openclaw_inflight[cache_key] = task
         try:
             analysis = await asyncio.shield(task)

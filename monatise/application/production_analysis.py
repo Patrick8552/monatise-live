@@ -28,6 +28,12 @@ from monatise.engines.supply_demand.models import ZoneRequest
 
 
 SUPPORTED_PRODUCTION_SYMBOLS = frozenset({"BTC", "ETH", "SOL"})
+SUPPORTED_PRODUCTION_INTERVALS = frozenset({"1m", "3m", "5m", "15m", "30m", "1h", "4h", "6h", "8h", "12h", "1d", "1w"})
+INTERVAL_SECONDS = {
+    "1m": 60, "3m": 180, "5m": 300, "15m": 900, "30m": 1_800,
+    "1h": 3_600, "4h": 14_400, "6h": 21_600, "8h": 28_800,
+    "12h": 43_200, "1d": 86_400, "1w": 604_800,
+}
 
 
 def build_grid_plan(center: float | None, *, levels_per_side: int = 3, half_width_pct: float = 0.02) -> dict[str, Any] | None:
@@ -56,11 +62,17 @@ def build_grid_plan(center: float | None, *, levels_per_side: int = 3, half_widt
     }
 
 
-def build_production_analysis_run(symbol: str, *, correlation_id: str | None = None, source: str = "monatise.production") -> AnalysisRun:
+def build_production_analysis_run(symbol: str, *, interval: str = "1h", correlation_id: str | None = None, source: str = "monatise.production") -> AnalysisRun:
     normalized = symbol.strip().upper()
     if normalized not in SUPPORTED_PRODUCTION_SYMBOLS:
         raise ValueError("supported production symbols are BTC, ETH, and SOL")
+    interval = interval.strip()
+    if interval not in SUPPORTED_PRODUCTION_INTERVALS:
+        raise ValueError("unsupported production analysis interval")
     now = datetime.now(timezone.utc)
+    interval_seconds = INTERVAL_SECONDS[interval]
+    maximum_age_seconds = max(120, interval_seconds * 2)
+    signal_lifetime = timedelta(seconds=max(300, interval_seconds))
 
     def output(context: Any, name: str) -> Any:
         return context.outputs[name]
@@ -97,10 +109,10 @@ def build_production_analysis_run(symbol: str, *, correlation_id: str | None = N
             proposed = (entry, entry * 1.02, entry * 0.96)
         else:
             proposed = (entry, entry * 0.98, entry * 1.04)
-        return RiskRequest(output(context, "market_data"), output(context, "decision"), None, output(context, "regime"), output(context, "market_structure"), output(context, "fibonacci_liquidity"), output(context, "supply_demand"), output(context, "order_flow"), output(context, "rsi"), now, now + timedelta(minutes=30), proposed_entry=proposed[0], proposed_invalidation=proposed[1], proposed_target=proposed[2], proposed_grid_buy_levels=tuple(grid["buy_levels"]) if grid else (), proposed_grid_sell_levels=tuple(grid["sell_levels"]) if grid else (), proposed_grid_lower_invalidation=grid["lower_invalidation"] if grid else None, proposed_grid_upper_invalidation=grid["upper_invalidation"] if grid else None, account_equity=100_000, minimum_reward_risk=1.0)
+        return RiskRequest(output(context, "market_data"), output(context, "decision"), None, output(context, "regime"), output(context, "market_structure"), output(context, "fibonacci_liquidity"), output(context, "supply_demand"), output(context, "order_flow"), output(context, "rsi"), now, now + signal_lifetime, proposed_entry=proposed[0], proposed_invalidation=proposed[1], proposed_target=proposed[2], proposed_grid_buy_levels=tuple(grid["buy_levels"]) if grid else (), proposed_grid_sell_levels=tuple(grid["sell_levels"]) if grid else (), proposed_grid_lower_invalidation=grid["lower_invalidation"] if grid else None, proposed_grid_upper_invalidation=grid["upper_invalidation"] if grid else None, account_equity=100_000, minimum_reward_risk=1.0)
 
     inputs = {
-        "market_data": MarketDataRequest(normalized, interval="1h", candle_limit=200, max_age_seconds=7200),
+        "market_data": MarketDataRequest(normalized, interval=interval, candle_limit=200, max_age_seconds=maximum_age_seconds),
         "regime": lambda c: RegimeRequest(output(c, "market_data")),
         "liquidity": lambda c: LiquidityRequest(output(c, "market_data"), output(c, "regime")),
         "liquidity_sweep": lambda c: SweepRequest(output(c, "market_data"), output(c, "liquidity"), output(c, "regime")),
@@ -141,6 +153,7 @@ def sanitized_result(result: Any) -> dict[str, Any]:
         "run_id": result.run_id,
         "correlation_id": result.correlation_id,
         "symbol": result.symbol,
+        "interval": getattr(market, "interval", None),
         "status": result.status.value,
         "classification": classification,
         "direction": direction,
