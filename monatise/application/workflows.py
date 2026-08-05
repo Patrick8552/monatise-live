@@ -63,11 +63,16 @@ class TelegramNotifier:
         market = outputs.get("market_data")
 
         classification = _enum_value(getattr(decision, "classification", "no_trade")).upper() if decision is not None else None
+        decision_metadata = (getattr(decision, "metadata", {}) or {}) if decision is not None else {}
+        signed_score = int(decision_metadata.get("signed_signal_score", 0) or 0)
+        grid_score = int(decision_metadata.get("grid_signal_score", 0) or 0)
+        threshold = int(decision_metadata.get("minimum_signal_score", 7) or 7)
         if classification == "NO_TRADE":
             reasons = tuple(getattr(decision, "reasons", ()) or ())[:3]
             lines = [
                 f"Monatise NO_TRADE: {result.symbol}",
                 f"Status: {result.status.value} | stages {result.statistics.completed_stages}/{len(CANONICAL_ENGINE_ORDER)}",
+                f"Score: {signed_score:+d}/10 | trade threshold: ±{threshold}",
             ]
             if reasons:
                 lines.append("Why: " + "; ".join(str(reason) for reason in reasons))
@@ -100,6 +105,7 @@ class TelegramNotifier:
         )
         lines = [
             heading,
+            f"Score: {grid_score}/10" if classification == "GRID" else f"Score: {signed_score:+d}/10",
             f"Confidence: {conviction * 100:.0f}%",
             f"Entry: {_price(entry)} | Stop: {_price(stop)} | Target: {_price(target)}",
         ]

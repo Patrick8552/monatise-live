@@ -68,6 +68,7 @@ class DecisionRequest:
     trend_regime_bonus: float = 0.12
     require_structure_for_trend: bool = True
     require_two_sided_liquidity_for_grid: bool = True
+    minimum_signal_score: int = 0
 
     def validate(self) -> None:
         require_finite(
@@ -76,6 +77,7 @@ class DecisionRequest:
             maximum_conflict_ratio=self.maximum_conflict_ratio,
             grid_regime_bonus=self.grid_regime_bonus,
             trend_regime_bonus=self.trend_regime_bonus,
+            minimum_signal_score=self.minimum_signal_score,
         )
         symbols = {
             self.market.symbol,
@@ -102,6 +104,8 @@ class DecisionRequest:
             raise ValueError("grid_regime_bonus cannot be negative")
         if self.trend_regime_bonus < 0:
             raise ValueError("trend_regime_bonus cannot be negative")
+        if not 0 <= self.minimum_signal_score <= 10:
+            raise ValueError("minimum_signal_score must be between 0 and 10")
 
 
 @dataclass(frozen=True)

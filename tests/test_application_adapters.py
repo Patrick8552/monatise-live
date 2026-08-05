@@ -211,6 +211,7 @@ def test_telegram_completed_signal_contains_actionable_levels_and_coinglass_sour
             classification=SimpleNamespace(value="trend"),
             conviction=0.78,
             reasons=("bullish structure confirmed", "positive derivatives flow"),
+            metadata={"signed_signal_score": 8, "grid_signal_score": 2, "minimum_signal_score": 7},
         ),
         "risk_validation": SimpleNamespace(
             validated_entry=65000.0,
@@ -233,6 +234,7 @@ def test_telegram_completed_signal_contains_actionable_levels_and_coinglass_sour
     assert "Stop: 63,500" in message
     assert "Target: 68,000" in message
     assert "Confidence: 78%" in message
+    assert "Score: +8/10" in message
     assert "CoinGlass futures price history" in message
 
 
@@ -242,6 +244,7 @@ def test_telegram_no_trade_message_is_explicit_and_explained():
     decision = SimpleNamespace(
         classification=SimpleNamespace(value="no_trade"),
         reasons=("insufficient directional conviction", "conflicting order flow"),
+        metadata={"signed_signal_score": 6, "grid_signal_score": 2, "minimum_signal_score": 7},
     )
     result = PipelineResult(
         run.run_id, run.correlation_id, "BTC", PipelineStage.BLOCKED,
@@ -254,6 +257,7 @@ def test_telegram_no_trade_message_is_explicit_and_explained():
     assert "Monatise NO_TRADE: BTC" in message
     assert "stages 11/19" in message
     assert "insufficient directional conviction" in message
+    assert "Score: +6/10 | trade threshold: ±7" in message
     assert f"Run: {run.run_id}" in message
 
 
@@ -266,6 +270,7 @@ def test_telegram_grid_analysis_is_included_and_labeled():
             classification=SimpleNamespace(value="grid"),
             conviction=0.72,
             reasons=("balanced two-sided liquidity",),
+            metadata={"signed_signal_score": 0, "grid_signal_score": 7, "minimum_signal_score": 7},
         ),
         "risk_validation": SimpleNamespace(
             validated_entry=65000.0,
@@ -286,6 +291,7 @@ def test_telegram_grid_analysis_is_included_and_labeled():
     assert "Monatise GRID: BTC (TWO_SIDED)" in message
     assert "Entry: 65,000" in message
     assert "CoinGlass futures price history" in message
+    assert "Score: 7/10" in message
 
 
 def test_notification_failure_does_not_corrupt_completed_pipeline_result():

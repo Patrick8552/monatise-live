@@ -83,6 +83,23 @@ class DecisionEngine:
             blockers=blockers,
         )
 
+        signed_signal_score = round((long_score - short_score) * 10)
+        grid_signal_score = round(grid_score * 10)
+        if classification is DecisionClassification.TREND and abs(signed_signal_score) < request.minimum_signal_score:
+            blockers.append(
+                f"signed signal score {signed_signal_score:+d} is below threshold "
+                f"{request.minimum_signal_score:+d}"
+            )
+            classification = DecisionClassification.NO_TRADE
+            direction = DecisionDirection.NONE
+        elif classification is DecisionClassification.GRID and grid_signal_score < request.minimum_signal_score:
+            blockers.append(
+                f"grid signal score {grid_signal_score} is below threshold "
+                f"{request.minimum_signal_score}"
+            )
+            classification = DecisionClassification.NO_TRADE
+            direction = DecisionDirection.NONE
+
         conviction = self._conviction(
             classification=classification,
             long_score=long_score,
@@ -140,6 +157,9 @@ class DecisionEngine:
                 "evidence_count": len(evidence),
                 "requires_risk_validation": True,
                 "execution_enabled": False,
+                "signed_signal_score": signed_signal_score,
+                "grid_signal_score": grid_signal_score,
+                "minimum_signal_score": request.minimum_signal_score,
             },
         )
 

@@ -77,7 +77,7 @@ def build_production_analysis_run(symbol: str, *, correlation_id: str | None = N
         "market_structure": lambda c: MarketStructureRequest(output(c, "market_data"), output(c, "regime"), output(c, "liquidity"), output(c, "liquidity_sweep"), output(c, "reclaim"), output(c, "supply_demand"), swing_window=1, displacement_body_ratio=0.5),
         "fibonacci_liquidity": lambda c: FibonacciRequest(output(c, "market_data"), output(c, "market_structure"), output(c, "liquidity"), output(c, "supply_demand"), output(c, "reclaim"), minimum_structure_confidence=0),
         "order_flow": flow,
-        "decision": lambda c: DecisionRequest(output(c, "market_data"), None, output(c, "regime"), output(c, "liquidity"), output(c, "liquidity_sweep"), output(c, "supply_demand"), output(c, "reclaim"), output(c, "market_structure"), output(c, "fibonacci_liquidity"), output(c, "order_flow"), minimum_conviction=0.55, high_conviction=0.75, maximum_conflict_ratio=0.45, grid_regime_bonus=0.12, trend_regime_bonus=0.12, require_structure_for_trend=True, require_two_sided_liquidity_for_grid=True),
+        "decision": lambda c: DecisionRequest(output(c, "market_data"), None, output(c, "regime"), output(c, "liquidity"), output(c, "liquidity_sweep"), output(c, "supply_demand"), output(c, "reclaim"), output(c, "market_structure"), output(c, "fibonacci_liquidity"), output(c, "order_flow"), minimum_conviction=0.55, high_conviction=0.75, maximum_conflict_ratio=0.45, grid_regime_bonus=0.12, trend_regime_bonus=0.12, require_structure_for_trend=True, require_two_sided_liquidity_for_grid=True, minimum_signal_score=7),
         "rsi": lambda c: RSIRequest(output(c, "market_data"), output(c, "market_structure"), output(c, "regime")),
         "risk_validation": risk,
         "capital_allocation": lambda c: AllocationRequest(output(c, "risk_validation"), PortfolioExposure(100_000, 0, 0, 0, 0, 0, 0, 0), output(c, "decision").classification, requested_capital=1_000),
@@ -94,8 +94,11 @@ def build_production_analysis_run(symbol: str, *, correlation_id: str | None = N
 
 def sanitized_result(result: Any) -> dict[str, Any]:
     decision = result.context.outputs.get("decision")
+    risk = result.context.outputs.get("risk_validation")
+    market = result.context.outputs.get("market_data")
     classification = getattr(getattr(decision, "classification", None), "value", None)
     direction = getattr(getattr(decision, "direction", None), "value", None)
+    metadata = getattr(decision, "metadata", {}) or {}
     return {
         "run_id": result.run_id,
         "correlation_id": result.correlation_id,
@@ -104,6 +107,15 @@ def sanitized_result(result: Any) -> dict[str, Any]:
         "classification": classification,
         "direction": direction,
         "conviction": getattr(decision, "conviction", None),
+        "score": metadata.get("signed_signal_score"),
+        "grid_score": metadata.get("grid_signal_score"),
+        "score_threshold": metadata.get("minimum_signal_score", 7),
+        "entry": getattr(risk, "validated_entry", None),
+        "invalidation": getattr(risk, "validated_invalidation", None),
+        "target": getattr(risk, "validated_target", None),
+        "reward_risk": getattr(risk, "reward_risk", None),
+        "expires_at": getattr(getattr(risk, "signal_expires_at", None), "isoformat", lambda: None)(),
+        "data_source": getattr(getattr(market, "quality", None), "source", None),
         "reasons": list(getattr(decision, "reasons", ()) or ()),
         "blocked_by": result.blocked_by,
         "completed_stages": result.statistics.completed_stages,

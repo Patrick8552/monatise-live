@@ -304,6 +304,26 @@ def test_conflicting_directional_evidence_can_block() -> None:
     assert result.state is DecisionState.BLOCKED
 
 
+def test_signed_signal_score_threshold_blocks_weak_directional_trade() -> None:
+    request = base_request()
+    result = DecisionEngine().assess(DecisionRequest(**{**request.__dict__, "minimum_signal_score": 10}))
+
+    assert result.classification is DecisionClassification.NO_TRADE
+    assert result.state is DecisionState.BLOCKED
+    assert abs(result.metadata["signed_signal_score"]) < 10
+    assert result.metadata["minimum_signal_score"] == 10
+
+
+def test_signed_signal_score_threshold_allows_qualified_directional_trade() -> None:
+    request = base_request()
+    baseline = DecisionEngine().assess(request)
+    threshold = abs(baseline.metadata["signed_signal_score"])
+    result = DecisionEngine().assess(DecisionRequest(**{**request.__dict__, "minimum_signal_score": threshold}))
+
+    assert result.classification is DecisionClassification.TREND
+    assert result.state is DecisionState.APPROVED_FOR_RISK_REVIEW
+
+
 def test_decision_engine_remains_non_executable() -> None:
     result = DecisionEngine().assess(base_request())
 
