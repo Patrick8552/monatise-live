@@ -117,3 +117,14 @@ test("rapid asset switching never renders analysis from the previous asset", asy
   await expect(production).not.toContainText("$65,000");
   await expect(page.locator("#assetSelect")).toHaveValue("ETH");
 });
+
+test("long liquidation errors wrap without mobile overflow", async ({ page }) => {
+  await page.setViewportSize({ width: 327, height: 800 });
+  await page.goto("/coinglass-dashboard.html");
+  await page.locator("#maxPain").evaluate((element) => {
+    element.textContent = "CoinGlass liquidation map returned no price levels because the upstream service is temporarily unavailable";
+  });
+
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
+  expect(overflow).toBeFalsy();
+});

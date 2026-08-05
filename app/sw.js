@@ -1,4 +1,4 @@
-const CACHE_NAME = "monatise-shell-20260805-asset-switch-v1";
+const CACHE_NAME = "monatise-shell-20260805-asset-switch-v2";
 const SHELL_ASSETS = [
   "./",
   "./cg.html",
@@ -11,7 +11,7 @@ const SHELL_ASSETS = [
   "./spotify.js?v=20260629-request-access-fix",
   "./game.js?v=20260629-crypto-trainer",
   "./assets/payout-clients.svg",
-  "./coinglass-dashboard.css?v=20260805-asset-switch-v1",
+  "./coinglass-dashboard.css?v=20260805-asset-switch-v2",
   "./coinglass-dashboard.js?v=20260805-asset-switch-v1",
   "./memecoins.css?v=20260715-memecoins",
   "./memecoins.js?v=20260715-memecoins",
