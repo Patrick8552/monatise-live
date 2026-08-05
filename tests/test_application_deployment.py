@@ -132,6 +132,48 @@ def test_runtime_registers_paper_only_analysis_jobs_for_each_configured_symbol()
     assert all("paper-only" in item.tags for item in scheduler.definitions)
 
 
+@pytest.mark.parametrize(("direction", "signed_score"), [("long", 8), ("short", -8)])
+def test_qualified_directional_setups_are_claimed_for_telegram(direction, signed_score):
+    runtime = OrchestrationRuntime(environment={})
+    decision = SimpleNamespace(
+        classification=SimpleNamespace(value="trend"),
+        direction=SimpleNamespace(value=direction),
+        metadata={"signed_signal_score": signed_score, "minimum_signal_score": 7},
+    )
+    risk = SimpleNamespace(
+        decision=SimpleNamespace(value="approved"),
+        validated_entry=65_000,
+        validated_invalidation=63_500 if direction == "long" else 66_500,
+        validated_target=68_000 if direction == "long" else 62_000,
+        metadata={},
+    )
+    result = SimpleNamespace(
+        symbol="BTC",
+        context=SimpleNamespace(outputs={"decision": decision, "risk_validation": risk}),
+    )
+
+    assert runtime._claim_material_telegram_signal(result, "1h") is True
+    assert runtime._claim_material_telegram_signal(result, "1h") is False
+
+
+@pytest.mark.parametrize(("direction", "signed_score"), [("long", -8), ("short", 8)])
+def test_mismatched_directional_scores_are_not_claimed_for_telegram(direction, signed_score):
+    runtime = OrchestrationRuntime(environment={})
+    result = SimpleNamespace(
+        symbol="BTC",
+        context=SimpleNamespace(outputs={
+            "decision": SimpleNamespace(
+                classification=SimpleNamespace(value="trend"),
+                direction=SimpleNamespace(value=direction),
+                metadata={"signed_signal_score": signed_score, "minimum_signal_score": 7},
+            ),
+            "risk_validation": SimpleNamespace(metadata={}),
+        }),
+    )
+
+    assert runtime._claim_material_telegram_signal(result, "1h") is False
+
+
 def test_runtime_registers_fail_closed_hierarchy_shadow_jobs_without_publication():
     class Scheduler:
         def __init__(self): self.definitions = []

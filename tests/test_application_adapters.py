@@ -202,21 +202,30 @@ def test_telegram_message_has_no_execution_capability():
     assert notifier.execution_enabled is False
 
 
-def test_telegram_completed_signal_contains_actionable_levels_and_coinglass_source():
+@pytest.mark.parametrize(
+    ("direction", "score", "entry", "stop", "target"),
+    [
+        ("long", 8, 65000.0, 63500.0, 68000.0),
+        ("short", -8, 65000.0, 66500.0, 62000.0),
+    ],
+)
+def test_telegram_completed_directional_setup_contains_actionable_levels_and_coinglass_source(
+    direction, score, entry, stop, target
+):
     run = AnalysisRun("BTC", {})
     now = run.requested_at
     outputs = {
         "decision": SimpleNamespace(
-            direction=SimpleNamespace(value="long"),
+            direction=SimpleNamespace(value=direction),
             classification=SimpleNamespace(value="trend"),
             conviction=0.78,
             reasons=("bullish structure confirmed", "positive derivatives flow"),
-            metadata={"signed_signal_score": 8, "grid_signal_score": 2, "minimum_signal_score": 7},
+            metadata={"signed_signal_score": score, "grid_signal_score": 2, "minimum_signal_score": 7},
         ),
         "risk_validation": SimpleNamespace(
-            validated_entry=65000.0,
-            validated_invalidation=63500.0,
-            validated_target=68000.0,
+            validated_entry=entry,
+            validated_invalidation=stop,
+            validated_target=target,
             reward_risk=2.0,
             signal_expires_at=now,
         ),
@@ -229,12 +238,12 @@ def test_telegram_completed_signal_contains_actionable_levels_and_coinglass_sour
 
     message = TelegramNotifier.format(result)
 
-    assert "BTC LONG (TREND)" in message
+    assert f"Monatise directional setup: BTC {direction.upper()} (TREND)" in message
     assert "Entry: 65,000" in message
-    assert "Stop: 63,500" in message
-    assert "Target: 68,000" in message
+    assert f"Stop: {stop:,.0f}" in message
+    assert f"Target: {target:,.0f}" in message
     assert "Confidence: 78%" in message
-    assert "Score: +8/10" in message
+    assert f"Score: {score:+d}/10" in message
     assert "CoinGlass futures price history" in message
 
 
