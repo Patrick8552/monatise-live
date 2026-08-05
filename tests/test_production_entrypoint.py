@@ -233,7 +233,7 @@ def test_production_readiness_accepts_healthy_scheduler_contender_during_cutover
     runtime.application = SimpleNamespace(
         registry=SimpleNamespace(
             ordered=lambda: tuple(SimpleNamespace(name=name) for name in (
-                "market_data", "macro", "regime", "liquidity", "liquidity_sweep",
+                "market_data", "regime", "liquidity", "liquidity_sweep",
                 "supply_demand", "reclaim", "market_structure", "fibonacci_liquidity",
                 "order_flow", "decision", "rsi", "risk_validation", "capital_allocation",
                 "execution_policy", "portfolio_intelligence", "reporting_intelligence",
@@ -242,12 +242,12 @@ def test_production_readiness_accepts_healthy_scheduler_contender_during_cutover
         )
     )
     runtime.dependencies = {
-        key: {"status": "degraded" if key == "macro_provider" else "ok"}
+        key: {"status": "ok"}
         for key in (
             "configuration", "postgresql", "migrations", "redis", "event_bus",
             "state_manager", "audit_repository", "audit_integrity", "audit_logging",
             "scheduler", "engine_registry", "pipeline_orchestrator", "governance",
-            "notifications", "coinglass", "market_data", "macro_provider", "hierarchy_shadow",
+            "notifications", "coinglass", "market_data", "hierarchy_shadow",
         )
     }
     runtime.dependencies["scheduler"]["leader"] = False
@@ -258,16 +258,14 @@ def test_production_readiness_accepts_healthy_scheduler_contender_during_cutover
     assert payload["dependencies"]["scheduler"]["leader"] is False
 
 
-def test_production_runtime_requires_explicit_environment_and_macro_flag():
+def test_production_runtime_requires_explicit_environment_and_safety_configuration():
     with pytest.raises(ValueError, match="must be production"):
         asyncio.run(ProductionRuntime(environment={}).start())
-    with pytest.raises(ValueError, match="degraded mode"):
-        asyncio.run(ProductionRuntime(environment={"MONATISE_ENVIRONMENT": "production"}).start())
     with pytest.raises(ValueError, match="safety configuration"):
-        asyncio.run(ProductionRuntime(environment={"MONATISE_ENVIRONMENT": "production", "MONATISE_ALLOW_DEGRADED_MACRO": "true"}).start())
+        asyncio.run(ProductionRuntime(environment={"MONATISE_ENVIRONMENT": "production"}).start())
 
 
-def test_degraded_macro_is_disclosed_and_audited_for_every_production_analysis():
+def test_production_analysis_has_no_macro_fields_or_macro_audit():
     records = []
     class Audit:
         async def append(self, **kwargs): records.append(kwargs)
@@ -281,11 +279,10 @@ def test_degraded_macro_is_disclosed_and_audited_for_every_production_analysis()
             )
     runtime = ProductionRuntime(environment={})
     runtime.application = SimpleNamespace(orchestrator=Orchestrator(), infrastructure=SimpleNamespace(audit=Audit()))
-    runtime.dependencies["macro_provider"] = {"status": "degraded", "mode": "degraded_unavailable_factors"}
     result = asyncio.run(runtime.analyse("BTC", source="monatise.production"))
-    assert result["macro_confidence_degraded"] is True
-    assert result["macro_mode"] == "degraded_unavailable_factors"
-    assert records[0]["payload"] == {"event": "degraded_macro_used", "mode": "unavailable_factors", "confidence": 0}
+    assert "macro_confidence_degraded" not in result
+    assert "macro_mode" not in result
+    assert records == []
 
 
 def test_production_blueprint_is_analysis_only_and_isolated():
@@ -298,7 +295,6 @@ def test_production_blueprint_is_analysis_only_and_isolated():
         "MONATISE_OPENCLAW_CACHE_TTL_SECONDS",
         "MONATISE_MODE",
         "MONATISE_ENVIRONMENT",
-        "MONATISE_ALLOW_DEGRADED_MACRO",
         "monatise:production-analysis",
         "MONATISE_HIERARCHICAL_SHADOW_ENABLED",
         "MONATISE_HIERARCHICAL_TELEGRAM_PUBLISH_ENABLED",

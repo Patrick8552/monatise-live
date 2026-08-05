@@ -35,9 +35,6 @@ services:
         value: true
       - key: MONATISE_AUDIT_LOGGING_ENABLED
         value: true
-      # Temporary until a real production macro provider is integrated.
-      - key: MONATISE_ALLOW_DEGRADED_MACRO
-        value: true
       - key: MONATISE_REDIS_NAMESPACE
         value: monatise:production-analysis
       - key: MONATISE_SCHEDULED_ANALYSIS_ENABLED

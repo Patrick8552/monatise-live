@@ -28,8 +28,6 @@ class ProductionRuntime(OrchestrationRuntime):
         LOGGER.info("validating production safety configuration")
         if self.environment.get("MONATISE_ENVIRONMENT", "").strip().casefold() != "production":
             raise ValueError("MONATISE_ENVIRONMENT must be production")
-        if self.environment.get("MONATISE_ALLOW_DEGRADED_MACRO", "").strip().casefold() not in {"1", "true", "yes", "on"}:
-            raise ValueError("production macro provider is unavailable and degraded mode was not explicitly enabled")
         required = {
             "MONATISE_MODE": "paper",
             "MONATISE_NETWORK": "paper",

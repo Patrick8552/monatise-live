@@ -53,7 +53,8 @@ class DecisionEngine:
 
         self._hard_blocks(request, blockers)
 
-        self._macro_evidence(request, evidence)
+        if request.macro is not None:
+            self._macro_evidence(request, evidence)
         self._regime_evidence(request, evidence)
         self._liquidity_evidence(request, evidence)
         self._sweep_evidence(request, evidence)
@@ -151,9 +152,9 @@ class DecisionEngine:
             blockers.append("market data unavailable")
         if request.market.quality.status is DataStatus.DEGRADED:
             blockers.append("market data is degraded")
-        if request.macro.risk_state is MacroRiskState.EVENT_LOCK:
+        if request.macro is not None and request.macro.risk_state is MacroRiskState.EVENT_LOCK:
             blockers.append("macro event lock is active")
-        if request.macro.risk_state is MacroRiskState.DATA_UNAVAILABLE:
+        if request.macro is not None and request.macro.risk_state is MacroRiskState.DATA_UNAVAILABLE:
             blockers.append("macro context unavailable")
         if request.regime.state in {
             RegimeState.UNKNOWN,
@@ -173,6 +174,7 @@ class DecisionEngine:
         request: DecisionRequest,
         evidence: list[DecisionEvidence],
     ) -> None:
+        assert request.macro is not None
         mapping = {
             MacroBias.BULLISH: DecisionDirection.LONG,
             MacroBias.BEARISH: DecisionDirection.SHORT,
