@@ -2405,8 +2405,8 @@ function renderProductionAnalysis(analysis) {
     <div class="metric-row"><div><strong>Two-sided invalidation</strong><br /><small>Below ${formatUsd(Number(grid.lower_invalidation))} or above ${formatUsd(Number(grid.upper_invalidation))}</small></div><span class="metric-value">${Number(grid.levels_per_side) || 0} × 2</span></div>
   ` : "";
   els.hyperList.innerHTML = `
-    <div class="metric-row"><div><strong>Production decision</strong><br /><small>Monatise 19-stage pipeline</small></div><span class="metric-value">${classification.replace("_", " ")}</span></div>
-    <div class="metric-row"><div><strong>Pipeline state</strong><br /><small>${blocked}</small></div><span class="metric-value">${analysis.completed_stages || 0}/19</span></div>
+    <div class="metric-row"><div><strong>Production decision</strong><br /><small>Monatise 13-stage decision pipeline</small></div><span class="metric-value">${classification.replace("_", " ")}</span></div>
+    <div class="metric-row"><div><strong>Pipeline state</strong><br /><small>${blocked}</small></div><span class="metric-value">${analysis.completed_stages || 0}/13</span></div>
     ${grid ? `<div class="metric-row"><div><strong>Grid state</strong><br /><small>Score ${Number(analysis.grid_score) || 0}/10 · confidence ${Math.round(Number(analysis.conviction || 0) * 100)}%</small></div><span class="metric-value">${gridState}</span></div>` : ""}
     ${gridRows}
     <div class="metric-row"><div><strong>Market source</strong><br /><small>CoinGlass primary · Backpack fallback</small></div><span class="metric-value">LIVE</span></div>
@@ -3602,7 +3602,7 @@ function applyProductionDecision(setup) {
   const reasons = Array.isArray(analysis.reasons) ? analysis.reasons.filter(Boolean) : [];
   const summary = reasons.length
     ? `Production ${classification.replace("_", " ")}: ${reasons.slice(0, 3).join("; ")}`
-    : `Production ${classification.replace("_", " ")} at ${analysis.completed_stages || 0}/19 stages.`;
+    : `Production ${classification.replace("_", " ")} at ${analysis.completed_stages || 0}/13 stages.`;
   if (classification === "no_trade") {
     if (setup.scoreTradeReady) {
       return {

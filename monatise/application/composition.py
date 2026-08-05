@@ -69,6 +69,7 @@ def create_application(
     macro_provider: Any | None = None,
     derivatives_provider: Any | None = None,
     infrastructure: ApplicationInfrastructure | None = None,
+    engine_order: tuple[str, ...] = CANONICAL_ENGINE_ORDER,
 ) -> MonatiseApplication:
     if infrastructure is None:
         container = Container()
@@ -103,8 +104,8 @@ def create_application(
         if "already registered" not in str(exc):
             raise
 
-    registry = EngineRegistry(infrastructure.container)
-    for registration in canonical_registrations():
+    registry = EngineRegistry(infrastructure.container, engine_order)
+    for registration in canonical_registrations(engine_order):
         if registration.name == "market_data":
             engine = MarketDataEngine(market_data_providers, derivatives_provider=derivatives_provider)
         else:
@@ -112,6 +113,6 @@ def create_application(
         registry.register(registration, engine)
     async def registry_health():
         status = registry.health()["status"]
-        return (HealthStatus.HEALTHY if status == "healthy" else HealthStatus.UNHEALTHY, f"{len(CANONICAL_ENGINE_ORDER)}-engine registry is {status}")
+        return (HealthStatus.HEALTHY if status == "healthy" else HealthStatus.UNHEALTHY, f"{len(engine_order)}-engine registry is {status}")
     infrastructure.observability.register_health_check("engine_registry", registry_health, replace=True)
     return MonatiseApplication(PipelineOrchestrator(registry, infrastructure), registry, infrastructure)

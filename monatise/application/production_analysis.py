@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 
 from monatise.application.models import AnalysisRun, PipelineExecutionMetadata
-from monatise.engines.capital_allocation.models import AllocationRequest, PortfolioExposure
 from monatise.engines.decision.models import DecisionRequest
-from monatise.engines.execution_policy.models import ExecutionMode, ExecutionPolicyRequest
 from monatise.engines.fibonacci_liquidity.models import FibonacciRequest
-from monatise.engines.governance_loss_control.models import GovernanceRequest, LossControlSnapshot
-from monatise.engines.integration.models import IntegrationChannel, IntegrationRequest
 from monatise.engines.intelligence_learning.models import LearningRequest
 from monatise.engines.liquidity.models import LiquidityRequest
 from monatise.engines.liquidity_sweep.models import SweepRequest
@@ -21,8 +17,6 @@ from monatise.engines.order_flow.models import FlowInput, OrderFlowRequest
 from monatise.engines.portfolio_intelligence.models import PortfolioIntelligenceRequest
 from monatise.engines.reclaim.models import ReclaimRequest
 from monatise.engines.regime.models import RegimeRequest
-from monatise.engines.reporting_intelligence.models import ReportChannel, ReportRequest
-from monatise.engines.risk_validation.models import RiskRequest
 from monatise.engines.rsi.models import RSIRequest
 from monatise.engines.supply_demand.models import ZoneRequest
 
@@ -62,6 +56,21 @@ def build_grid_plan(center: float | None, *, levels_per_side: int = 3, half_widt
     }
 
 
+def build_directional_plan(price: float | None, direction: str | None) -> dict[str, float] | None:
+    """Project analysis levels without approval, sizing, or risk-engine semantics."""
+    if not isinstance(price, (int, float)) or isinstance(price, bool) or price <= 0:
+        return None
+    normalized = str(direction or "").lower()
+    if normalized not in {"long", "short"}:
+        return None
+    entry = float(price)
+    if normalized == "short":
+        invalidation, target = entry * 1.02, entry * 0.96
+    else:
+        invalidation, target = entry * 0.98, entry * 1.04
+    return {"entry": round(entry, 8), "invalidation": round(invalidation, 8), "target": round(target, 8)}
+
+
 def build_production_analysis_run(symbol: str, *, interval: str = "1h", correlation_id: str | None = None, source: str = "monatise.production") -> AnalysisRun:
     normalized = symbol.strip().upper()
     if normalized not in SUPPORTED_PRODUCTION_SYMBOLS:
@@ -72,7 +81,6 @@ def build_production_analysis_run(symbol: str, *, interval: str = "1h", correlat
     now = datetime.now(timezone.utc)
     interval_seconds = INTERVAL_SECONDS[interval]
     maximum_age_seconds = max(120, interval_seconds * 2)
-    signal_lifetime = timedelta(seconds=max(300, interval_seconds))
 
     def output(context: Any, name: str) -> Any:
         return context.outputs[name]
@@ -93,24 +101,6 @@ def build_production_analysis_run(symbol: str, *, interval: str = "1h", correlat
             output(context, "market_structure"),
         )
 
-    def risk(context: Any) -> RiskRequest:
-        market = output(context, "market_data")
-        decision = output(context, "decision")
-        direction = getattr(decision.direction, "value", "none")
-        classification = getattr(decision.classification, "value", "no_trade")
-        entry = market.price
-        grid = None
-        if entry is None:
-            proposed = (None, None, None)
-        elif classification == "grid":
-            grid = build_grid_plan(entry)
-            proposed = (entry, grid["lower_boundary"], grid["upper_boundary"])
-        elif direction == "short":
-            proposed = (entry, entry * 1.02, entry * 0.96)
-        else:
-            proposed = (entry, entry * 0.98, entry * 1.04)
-        return RiskRequest(output(context, "market_data"), output(context, "decision"), None, output(context, "regime"), output(context, "market_structure"), output(context, "fibonacci_liquidity"), output(context, "supply_demand"), output(context, "order_flow"), output(context, "rsi"), now, now + signal_lifetime, proposed_entry=proposed[0], proposed_invalidation=proposed[1], proposed_target=proposed[2], proposed_grid_buy_levels=tuple(grid["buy_levels"]) if grid else (), proposed_grid_sell_levels=tuple(grid["sell_levels"]) if grid else (), proposed_grid_lower_invalidation=grid["lower_invalidation"] if grid else None, proposed_grid_upper_invalidation=grid["upper_invalidation"] if grid else None, account_equity=100_000, minimum_reward_risk=1.0)
-
     inputs = {
         "market_data": MarketDataRequest(normalized, interval=interval, candle_limit=200, max_age_seconds=maximum_age_seconds),
         "regime": lambda c: RegimeRequest(output(c, "market_data")),
@@ -123,14 +113,8 @@ def build_production_analysis_run(symbol: str, *, interval: str = "1h", correlat
         "order_flow": flow,
         "decision": lambda c: DecisionRequest(output(c, "market_data"), None, output(c, "regime"), output(c, "liquidity"), output(c, "liquidity_sweep"), output(c, "supply_demand"), output(c, "reclaim"), output(c, "market_structure"), output(c, "fibonacci_liquidity"), output(c, "order_flow"), minimum_conviction=0.55, high_conviction=0.75, maximum_conflict_ratio=0.45, grid_regime_bonus=0.12, trend_regime_bonus=0.12, require_structure_for_trend=True, require_two_sided_liquidity_for_grid=True, minimum_signal_score=7),
         "rsi": lambda c: RSIRequest(output(c, "market_data"), output(c, "market_structure"), output(c, "regime")),
-        "risk_validation": risk,
-        "capital_allocation": lambda c: AllocationRequest(output(c, "risk_validation"), PortfolioExposure(100_000, 0, 0, 0, 0, 0, 0, 0), output(c, "decision").classification, requested_capital=1_000),
-        "execution_policy": lambda c: ExecutionPolicyRequest(output(c, "decision"), output(c, "risk_validation"), output(c, "capital_allocation"), ExecutionMode.PAPER, now),
         "portfolio_intelligence": PortfolioIntelligenceRequest(100_000, ()),
-        "reporting_intelligence": lambda c: ReportRequest(now, ReportChannel.API, output(c, "market_data"), None, output(c, "regime"), output(c, "liquidity"), output(c, "liquidity_sweep"), output(c, "supply_demand"), output(c, "reclaim"), output(c, "market_structure"), output(c, "fibonacci_liquidity"), output(c, "order_flow"), output(c, "decision"), output(c, "rsi"), output(c, "risk_validation"), output(c, "capital_allocation"), output(c, "execution_policy"), output(c, "portfolio_intelligence")),
         "intelligence_learning": LearningRequest((), minimum_samples=1),
-        "integration": lambda c: IntegrationRequest(output(c, "reporting_intelligence"), output(c, "execution_policy"), (IntegrationChannel.DATABASE, IntegrationChannel.AUDIT_LOG), now, enable_coinglass=True, enable_telegram=False, enable_openclaw=False, enable_dashboard=False),
-        "governance_loss_control": lambda c: GovernanceRequest(LossControlSnapshot(100_000, 100_000, 100_000, 0, 0, 0, 0, 0, kill_switch_active=False), output(c, "risk_validation"), output(c, "capital_allocation"), output(c, "execution_policy"), output(c, "portfolio_intelligence"), now),
     }
     kwargs = {"correlation_id": correlation_id} if correlation_id else {}
     return AnalysisRun(normalized, inputs, metadata=PipelineExecutionMetadata(source=source, retry_delay_seconds=0.1), **kwargs)
@@ -138,17 +122,13 @@ def build_production_analysis_run(symbol: str, *, interval: str = "1h", correlat
 
 def sanitized_result(result: Any) -> dict[str, Any]:
     decision = result.context.outputs.get("decision")
-    risk = result.context.outputs.get("risk_validation")
     market = result.context.outputs.get("market_data")
     classification = getattr(getattr(decision, "classification", None), "value", None)
     direction = getattr(getattr(decision, "direction", None), "value", None)
     metadata = getattr(decision, "metadata", {}) or {}
-    risk_decision = getattr(getattr(risk, "decision", None), "value", None)
-    risk_issues = list(getattr(risk, "issues", ()) or ())
-    risk_metadata = getattr(risk, "metadata", {}) or {}
-    grid_plan = risk_metadata.get("grid_plan") if classification == "grid" else None
-    if classification == "grid" and grid_plan is None:
-        grid_plan = build_grid_plan(getattr(risk, "validated_entry", None) or getattr(market, "price", None))
+    price = getattr(market, "price", None)
+    directional_plan = build_directional_plan(price, direction)
+    grid_plan = build_grid_plan(price) if classification == "grid" else None
     return {
         "run_id": result.run_id,
         "correlation_id": result.correlation_id,
@@ -161,30 +141,23 @@ def sanitized_result(result: Any) -> dict[str, Any]:
         "score": metadata.get("signed_signal_score"),
         "grid_score": metadata.get("grid_signal_score"),
         "score_threshold": metadata.get("minimum_signal_score", 7),
-        "entry": getattr(risk, "validated_entry", None),
-        "invalidation": getattr(risk, "validated_invalidation", None),
-        "target": getattr(risk, "validated_target", None),
-        "reward_risk": getattr(risk, "reward_risk", None),
+        "entry": directional_plan["entry"] if directional_plan else price if classification == "grid" else None,
+        "invalidation": directional_plan["invalidation"] if directional_plan else None,
+        "target": directional_plan["target"] if directional_plan else None,
+        "reward_risk": None,
         "grid_plan": grid_plan,
-        "risk_decision": risk_decision,
-        "risk_issues": [
-            {
-                "code": getattr(issue, "code", None),
-                "severity": getattr(getattr(issue, "severity", None), "value", None),
-                "message": getattr(issue, "message", str(issue)),
-            }
-            for issue in risk_issues
-        ],
-        "risk_reasons": list(getattr(risk, "reasons", ()) or ()),
-        "expires_at": getattr(getattr(risk, "signal_expires_at", None), "isoformat", lambda: None)(),
+        "risk_decision": None,
+        "risk_issues": [],
+        "risk_reasons": [],
+        "expires_at": None,
         "data_source": getattr(getattr(market, "quality", None), "source", None),
         "reasons": list(getattr(decision, "reasons", ()) or ()),
         "blockers": list(getattr(decision, "blockers", ()) or ()),
         "blocked_by": result.blocked_by,
         "completed_stages": result.statistics.completed_stages,
-        "risk_validation_invoked": "risk_validation" in result.context.outputs,
-        "allocation_produced": "capital_allocation" in result.context.outputs,
-        "execution_policy_produced": "execution_policy" in result.context.outputs,
+        "risk_validation_invoked": False,
+        "allocation_produced": False,
+        "execution_policy_produced": False,
         "execution_enabled": False,
         "audit_reference": result.run_id,
         "state_reference": result.run_id,

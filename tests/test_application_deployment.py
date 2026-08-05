@@ -11,6 +11,8 @@ import pytest
 
 from monatise.application.deployment import COINGLASS_PROVIDER_KEY, MigrationRunner, OrchestrationASGI, OrchestrationRuntime, PaperSafetyConfiguration, RedisSchedulerLeadership, TelegramNotificationTransport, register_coinglass_provider, scheduled_analysis_configuration
 from monatise.application.registry import CANONICAL_ENGINE_ORDER
+from monatise.application.registry import PRODUCTION_ENGINE_ORDER
+from monatise.application.production_analysis import build_production_analysis_run
 from monatise.infrastructure.dependency_injection import Container
 
 
@@ -108,6 +110,17 @@ def test_scheduled_analysis_configuration_is_explicit_bounded_and_crypto_only():
             "MONATISE_SCHEDULED_ANALYSIS_ENABLED": "true",
             "MONATISE_SCHEDULED_ANALYSIS_TIMEFRAMES": "2h",
         })
+
+
+def test_production_analysis_graph_completely_excludes_risk_engine_and_consumers():
+    run = build_production_analysis_run("BTC", interval="15m")
+
+    assert tuple(run.stage_inputs) == PRODUCTION_ENGINE_ORDER
+    assert "risk_validation" not in run.stage_inputs
+    assert "capital_allocation" not in run.stage_inputs
+    assert "execution_policy" not in run.stage_inputs
+    assert "governance_loss_control" not in run.stage_inputs
+    assert set(PRODUCTION_ENGINE_ORDER).issubset(CANONICAL_ENGINE_ORDER)
 
 
 def test_runtime_registers_paper_only_analysis_jobs_for_each_configured_symbol():
@@ -450,7 +463,7 @@ def test_coinglass_request_failure_makes_runtime_not_ready_even_with_fallback_po
 def test_single_coinglass_request_failure_is_degraded_but_still_ready():
     runtime = OrchestrationRuntime()
     runtime.safety = SimpleNamespace()
-    runtime.application = SimpleNamespace(registry=SimpleNamespace(ordered=lambda: tuple(SimpleNamespace(name=name) for name in CANONICAL_ENGINE_ORDER)))
+    runtime.application = SimpleNamespace(registry=SimpleNamespace(ordered=lambda: tuple(SimpleNamespace(name=name) for name in PRODUCTION_ENGINE_ORDER)))
     runtime.dependencies = {key: {"status": "ok"} for key in (
         "configuration", "postgresql", "migrations", "redis", "event_bus", "state_manager",
         "audit_repository", "audit_integrity", "audit_logging", "scheduler", "engine_registry",
