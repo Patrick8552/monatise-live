@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import hmac
 import inspect
 import json
 import logging
@@ -12,13 +11,13 @@ import os
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from time import perf_counter, time
+from time import perf_counter
 from typing import Any, Mapping
 from uuid import uuid4
 from urllib.request import Request, urlopen
 
 from monatise.application.composition import create_application, create_durable_infrastructure
-from monatise.application.staging_analysis import build_paper_analysis_run, sanitized_result
+from monatise.application.production_analysis import build_production_analysis_run, sanitized_result
 from monatise.application.registry import CANONICAL_ENGINE_ORDER
 from monatise.application.persistence import PostgresDocumentStore
 from monatise.application.workflows import TelegramNotifier
@@ -307,7 +306,7 @@ class _UnavailableMacroProvider:
 
 
 class _DegradedMacroProvider:
-    """Explicitly unavailable staging factors; never fabricates macro values."""
+    """Explicitly unavailable macro factors; never fabricates macro values."""
 
     def context_snapshot(self, symbol: str) -> dict[str, None]:
         return {rule.factor: None for rule in CRYPTO_MACRO_RULES}
@@ -367,7 +366,7 @@ class OrchestrationRuntime:
                 timeout_seconds=min(float(interval_seconds), 300.0),
                 retry_policy=RetryPolicy(maximum_attempts=2, delay_seconds=5.0, maximum_delay_seconds=30.0),
                 tags=("scheduled", "crypto", "analysis", "paper-only"),
-                metadata={"symbol": symbol, "execution_enabled": False, "notification_policy": "validated_signals_only"},
+                metadata={"symbol": symbol, "execution_enabled": False, "notification_policy": "every_analysis"},
             ))
             job_ids.append(job_id)
         return tuple(job_ids)
@@ -502,7 +501,7 @@ class OrchestrationRuntime:
                 credentials=BackpackCredentials(api_key="", secret_key=""),
             )
             degraded_macro_enabled = deployment_environment == "test" or (
-                deployment_environment in {"staging", "production"}
+                deployment_environment == "production"
                 and not _false(self.environment.get("MONATISE_ALLOW_DEGRADED_MACRO"))
             )
             macro_provider = _DegradedMacroProvider() if degraded_macro_enabled else _UnavailableMacroProvider()
@@ -521,10 +520,10 @@ class OrchestrationRuntime:
             scheduled_jobs = await self._register_scheduled_analysis()
             await self._register_hierarchy_shadow(store)
             self.leadership = RedisSchedulerLeadership(
-                self.redis, namespace=self.environment.get("MONATISE_REDIS_NAMESPACE", "monatise:paper-staging")
+                self.redis, namespace=self.environment.get("MONATISE_REDIS_NAMESPACE", "monatise:production-analysis")
             )
             self.redis_coordination = RedisCoordinationStore(
-                self.redis, namespace=self.environment.get("MONATISE_REDIS_NAMESPACE", "monatise:paper-staging")
+                self.redis, namespace=self.environment.get("MONATISE_REDIS_NAMESPACE", "monatise:production-analysis")
             )
             startup_phase = "scheduler_leadership"
             leader = await self.leadership.acquire_or_wait(
@@ -658,7 +657,7 @@ class OrchestrationRuntime:
             "dependencies": self.dependencies,
         }
 
-    async def analyse(self, symbol: str, correlation_id: str | None = None, scenario: str = "live", *, source: str = "monatise.staging") -> dict[str, Any]:
+    async def analyse(self, symbol: str, correlation_id: str | None = None, *, source: str = "monatise.production") -> dict[str, Any]:
         if self.application is None:
             raise RuntimeError("orchestration runtime is unavailable")
         if self.dependencies.get("macro_provider", {}).get("status") == "degraded":
@@ -671,15 +670,8 @@ class OrchestrationRuntime:
                 correlation_id=correlation_id,
                 symbol=symbol.strip().upper(),
             )
-        result = await self.application.orchestrator.run(build_paper_analysis_run(symbol, correlation_id=correlation_id, scenario=scenario, source=source))
-        decision = result.context.outputs.get("decision")
-        classification = getattr(getattr(decision, "classification", None), "value", None)
-        validated_signal = (
-            getattr(result.status, "value", result.status) == "completed"
-            and classification in {"trend", "grid"}
-            and all(stage in result.context.outputs for stage in ("risk_validation", "capital_allocation", "execution_policy", "governance_loss_control"))
-        )
-        if self.telegram is not None and validated_signal:
+        result = await self.application.orchestrator.run(build_production_analysis_run(symbol, correlation_id=correlation_id, source=source))
+        if self.telegram is not None:
             try:
                 await self.telegram.deliver(result)
             except Exception as exc:
@@ -724,50 +716,10 @@ class OrchestrationASGI:
         elif path == "/health/ready":
             ready, payload = self.runtime.readiness()
             code = 200 if ready else 503
-        elif path == "/api/staging/analyse" and scope.get("method", "GET").upper() == "POST":
-            code, payload = await self._analyse(scope, receive)
         else:
             code, payload = 404, {"status": "not_found"}
         body = json.dumps(payload, separators=(",", ":")).encode()
         await send({"type": "http.response.start", "status": code, "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())]})
         await send({"type": "http.response.body", "body": body})
-
-    async def _analyse(self, scope: dict[str, Any], receive: Any) -> tuple[int, dict[str, Any]]:
-        environment = self.runtime.environment
-        if environment.get("MONATISE_ENVIRONMENT", "").strip().casefold() != "staging":
-            return 404, {"status": "not_found"}
-        body = b""
-        while True:
-            message = await receive()
-            body += message.get("body", b"")
-            if len(body) > 16_384:
-                return 413, {"status": "request_too_large"}
-            if not message.get("more_body", False):
-                break
-        headers = {key.decode().casefold(): value.decode() for key, value in scope.get("headers", ())}
-        token = environment.get("MONATISE_STAGING_API_TOKEN", "")
-        timestamp = headers.get("x-monatise-timestamp", "")
-        signature = headers.get("x-monatise-signature", "")
-        try:
-            fresh = abs(time() - int(timestamp)) <= 300
-        except ValueError:
-            fresh = False
-        expected = hmac.new(token.encode(), timestamp.encode() + b"." + body, hashlib.sha256).hexdigest() if token else ""
-        if not token or not fresh or not hmac.compare_digest(signature, expected):
-            return 401, {"status": "unauthorized"}
-        if self.runtime.redis_coordination and not await self.runtime.redis_coordination.claim_nonce(signature):
-            return 409, {"status": "duplicate_request"}
-        try:
-            request = json.loads(body or b"{}")
-            if not isinstance(request, dict) or set(request) - {"symbol", "correlation_id", "scenario"}:
-                return 400, {"status": "invalid_request", "reason": "only symbol, correlation_id, and scenario are accepted"}
-            result = await self.runtime.analyse(str(request.get("symbol", "")), request.get("correlation_id"), str(request.get("scenario", "live")))
-            return 200, result
-        except (TypeError, ValueError, json.JSONDecodeError) as exc:
-            return 400, {"status": "invalid_request", "reason": str(exc)}
-        except Exception as exc:
-            LOGGER.exception("staging analysis failed", extra={"error_type": type(exc).__name__})
-            return 503, {"status": "analysis_unavailable", "error_type": type(exc).__name__}
-
 
 app = OrchestrationASGI()

@@ -87,10 +87,6 @@ def test_production_analysis_is_authenticated_symbol_only_and_non_executable():
     assert runtime.calls == [("BTC", {"source": "monatise.production"})]
 
 
-def test_staging_route_is_disabled_in_production():
-    assert request(ProductionASGI(Runtime()), "/api/staging/analyse", {"symbol": "BTC"})[0] == 404
-
-
 def test_notification_verification_route_is_not_exposed():
     assert request(ProductionASGI(Runtime()), "/api/notifications/test", {"confirmation": "TEST_NOTIFICATION_ONLY"})[0] == 404
 
@@ -309,5 +305,5 @@ def test_production_blueprint_is_analysis_only_and_isolated():
         "hierarchy-shadow-v1",
     ]
     assert all(value in text for value in required)
-    forbidden = ["mainnet", "value: live", "BACKPACK_API_KEY", "MONATISE_STAGING_API_TOKEN", "monatise-paper-staging"]
+    forbidden = ["mainnet", "value: live", "BACKPACK_API_KEY"]
     assert all(value not in text for value in forbidden)

@@ -1,4 +1,4 @@
-"""Canonical, paper-only request construction for deployed staging analysis."""
+"""Canonical, analysis-only request construction for production."""
 
 from __future__ import annotations
 
@@ -28,15 +28,13 @@ from monatise.engines.rsi.models import RSIRequest
 from monatise.engines.supply_demand.models import ZoneRequest
 
 
-SUPPORTED_STAGING_SYMBOLS = frozenset({"BTC", "ETH", "SOL"})
+SUPPORTED_PRODUCTION_SYMBOLS = frozenset({"BTC", "ETH", "SOL"})
 
 
-def build_paper_analysis_run(symbol: str, *, correlation_id: str | None = None, scenario: str = "live", source: str = "monatise.staging") -> AnalysisRun:
+def build_production_analysis_run(symbol: str, *, correlation_id: str | None = None, source: str = "monatise.production") -> AnalysisRun:
     normalized = symbol.strip().upper()
-    if normalized not in SUPPORTED_STAGING_SYMBOLS:
-        raise ValueError("supported staging symbols are BTC, ETH, and SOL")
-    if scenario not in {"live", "no_trade", "governance_block"}:
-        raise ValueError("unsupported staging scenario")
+    if normalized not in SUPPORTED_PRODUCTION_SYMBOLS:
+        raise ValueError("supported production symbols are BTC, ETH, and SOL")
     now = datetime.now(timezone.utc)
 
     def output(context: Any, name: str) -> Any:
@@ -44,9 +42,6 @@ def build_paper_analysis_run(symbol: str, *, correlation_id: str | None = None, 
 
     def flow(context: Any) -> OrderFlowRequest:
         derivatives = output(context, "market_data").derivatives
-        if scenario == "governance_block":
-            controlled = FlowInput(open_interest_change_pct=2.0, price_change_pct=1.0, cvd_change=100.0, liquidation_short_usd=200.0, liquidation_long_usd=100.0, footprint_delta=0.6, large_trade_net_usd=1000.0, bid_ask_imbalance=0.5, funding_rate=0.0001, metadata={"fixture": "staging_governance_validation"})
-            return OrderFlowRequest(normalized, controlled, output(context, "regime"), output(context, "market_structure"))
         return OrderFlowRequest(
             normalized,
             FlowInput(
@@ -76,7 +71,7 @@ def build_paper_analysis_run(symbol: str, *, correlation_id: str | None = None, 
     inputs = {
         "market_data": MarketDataRequest(normalized, interval="1h", candle_limit=200, max_age_seconds=7200),
         "macro": MacroRequest(normalized, now),
-        "regime": lambda c: RegimeRequest(output(c, "market_data"), output(c, "macro"), trend_threshold=0.5, compression_threshold=0.01, expansion_threshold=100, high_volatility_threshold=200) if scenario == "governance_block" else RegimeRequest(output(c, "market_data"), output(c, "macro")),
+        "regime": lambda c: RegimeRequest(output(c, "market_data"), output(c, "macro")),
         "liquidity": lambda c: LiquidityRequest(output(c, "market_data"), output(c, "regime")),
         "liquidity_sweep": lambda c: SweepRequest(output(c, "market_data"), output(c, "liquidity"), output(c, "regime")),
         "supply_demand": lambda c: ZoneRequest(output(c, "market_data"), output(c, "regime"), output(c, "liquidity")),
@@ -84,7 +79,7 @@ def build_paper_analysis_run(symbol: str, *, correlation_id: str | None = None, 
         "market_structure": lambda c: MarketStructureRequest(output(c, "market_data"), output(c, "regime"), output(c, "liquidity"), output(c, "liquidity_sweep"), output(c, "reclaim"), output(c, "supply_demand"), swing_window=1, displacement_body_ratio=0.5),
         "fibonacci_liquidity": lambda c: FibonacciRequest(output(c, "market_data"), output(c, "market_structure"), output(c, "liquidity"), output(c, "supply_demand"), output(c, "reclaim"), minimum_structure_confidence=0),
         "order_flow": flow,
-        "decision": lambda c: DecisionRequest(output(c, "market_data"), output(c, "macro"), output(c, "regime"), output(c, "liquidity"), output(c, "liquidity_sweep"), output(c, "supply_demand"), output(c, "reclaim"), output(c, "market_structure"), output(c, "fibonacci_liquidity"), output(c, "order_flow"), minimum_conviction=0.99 if scenario == "no_trade" else (0.0 if scenario == "governance_block" else 0.55), high_conviction=1.0 if scenario == "no_trade" else 0.75, maximum_conflict_ratio=0.0 if scenario == "no_trade" else (1.0 if scenario == "governance_block" else 0.45), grid_regime_bonus=1.0 if scenario == "governance_block" else 0.12, trend_regime_bonus=1.0 if scenario == "governance_block" else 0.12, require_structure_for_trend=scenario != "governance_block", require_two_sided_liquidity_for_grid=scenario != "governance_block"),
+        "decision": lambda c: DecisionRequest(output(c, "market_data"), output(c, "macro"), output(c, "regime"), output(c, "liquidity"), output(c, "liquidity_sweep"), output(c, "supply_demand"), output(c, "reclaim"), output(c, "market_structure"), output(c, "fibonacci_liquidity"), output(c, "order_flow"), minimum_conviction=0.55, high_conviction=0.75, maximum_conflict_ratio=0.45, grid_regime_bonus=0.12, trend_regime_bonus=0.12, require_structure_for_trend=True, require_two_sided_liquidity_for_grid=True),
         "rsi": lambda c: RSIRequest(output(c, "market_data"), output(c, "market_structure"), output(c, "regime")),
         "risk_validation": risk,
         "capital_allocation": lambda c: AllocationRequest(output(c, "risk_validation"), PortfolioExposure(100_000, 0, 0, 0, 0, 0, 0, 0), output(c, "decision").classification, requested_capital=1_000),
@@ -93,7 +88,7 @@ def build_paper_analysis_run(symbol: str, *, correlation_id: str | None = None, 
         "reporting_intelligence": lambda c: ReportRequest(now, ReportChannel.API, output(c, "market_data"), output(c, "macro"), output(c, "regime"), output(c, "liquidity"), output(c, "liquidity_sweep"), output(c, "supply_demand"), output(c, "reclaim"), output(c, "market_structure"), output(c, "fibonacci_liquidity"), output(c, "order_flow"), output(c, "decision"), output(c, "rsi"), output(c, "risk_validation"), output(c, "capital_allocation"), output(c, "execution_policy"), output(c, "portfolio_intelligence")),
         "intelligence_learning": LearningRequest((), minimum_samples=1),
         "integration": lambda c: IntegrationRequest(output(c, "reporting_intelligence"), output(c, "execution_policy"), (IntegrationChannel.DATABASE, IntegrationChannel.AUDIT_LOG), now, enable_coinglass=True, enable_telegram=False, enable_openclaw=False, enable_dashboard=False),
-        "governance_loss_control": lambda c: GovernanceRequest(LossControlSnapshot(100_000, 100_000, 100_000, 0, 0, 0, 0, 0, kill_switch_active=scenario == "governance_block"), output(c, "risk_validation"), output(c, "capital_allocation"), output(c, "execution_policy"), output(c, "portfolio_intelligence"), now),
+        "governance_loss_control": lambda c: GovernanceRequest(LossControlSnapshot(100_000, 100_000, 100_000, 0, 0, 0, 0, 0, kill_switch_active=False), output(c, "risk_validation"), output(c, "capital_allocation"), output(c, "execution_policy"), output(c, "portfolio_intelligence"), now),
     }
     kwargs = {"correlation_id": correlation_id} if correlation_id else {}
     return AnalysisRun(normalized, inputs, metadata=PipelineExecutionMetadata(source=source, retry_delay_seconds=0.1), **kwargs)

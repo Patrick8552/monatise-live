@@ -61,6 +61,18 @@ class TelegramNotifier:
         risk = outputs.get("risk_validation")
         market = outputs.get("market_data")
 
+        classification = _enum_value(getattr(decision, "classification", "no_trade")).upper() if decision is not None else None
+        if classification == "NO_TRADE":
+            reasons = tuple(getattr(decision, "reasons", ()) or ())[:3]
+            lines = [
+                f"Monatise NO_TRADE: {result.symbol}",
+                f"Status: {result.status.value} | stages {result.statistics.completed_stages}/20",
+            ]
+            if reasons:
+                lines.append("Why: " + "; ".join(str(reason) for reason in reasons))
+            lines.append(f"Run: {result.run_id}")
+            return "\n".join(lines)
+
         if decision is None or risk is None:
             suffix = f" | blocked by {result.blocked_by}" if result.blocked_by else ""
             return (
@@ -80,8 +92,13 @@ class TelegramNotifier:
         source = getattr(quality, "source", "CoinGlass")
         reasons = tuple(getattr(decision, "reasons", ()) or ())[:3]
 
+        heading = (
+            f"Monatise GRID: {result.symbol} ({direction})"
+            if classification == "GRID"
+            else f"Monatise signal: {result.symbol} {direction} ({classification})"
+        )
         lines = [
-            f"Monatise signal: {result.symbol} {direction} ({classification})",
+            heading,
             f"Confidence: {conviction * 100:.0f}%",
             f"Entry: {_price(entry)} | Stop: {_price(stop)} | Target: {_price(target)}",
         ]

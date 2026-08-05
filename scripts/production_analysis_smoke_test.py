@@ -50,7 +50,6 @@ def run(base_url: str, token: str) -> list[str]:
     if dependencies.get("coinglass", {}).get("status") != "ok": failures.append("CoinGlass unavailable")
     if dependencies.get("market_data", {}).get("status") != "ok": failures.append("market data unavailable")
     if dependencies.get("macro_provider", {}).get("status") not in {"ok", "degraded"}: failures.append("Macro unavailable")
-    if request_json(base_url, "/api/staging/analyse", body=b"{}", token=token)[0] not in {403, 404}: failures.append("staging route exposed")
     rejected = json.dumps({"symbol": "BTC", "leverage": 2}, separators=(",", ":")).encode()
     if request_json(base_url, "/api/analysis", body=rejected, token=token)[0] != 400: failures.append("execution-shaped input was not rejected")
     analysis = json.dumps({"symbol": "BTC"}, separators=(",", ":")).encode()

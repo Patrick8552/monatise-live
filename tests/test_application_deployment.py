@@ -186,7 +186,7 @@ def test_runtime_reports_requested_hierarchy_publication_without_publisher_as_er
     }
 
 
-def test_runtime_notifies_only_completed_risk_validated_signals():
+def test_runtime_notifies_every_analysis_result():
     delivered = []
 
     class Orchestrator:
@@ -214,10 +214,10 @@ def test_runtime_notifies_only_completed_risk_validated_signals():
     runtime.telegram = Telegram()
 
     asyncio.run(runtime.analyse("BTC", source="monatise.scheduler"))
-    assert delivered == []
+    assert delivered == ["run-1"]
     orchestrator.completed = True
     asyncio.run(runtime.analyse("BTC", source="monatise.scheduler"))
-    assert delivered == ["run-1"]
+    assert delivered == ["run-1", "run-1"]
 
 
 class _ReadyRuntime:
@@ -408,13 +408,6 @@ def test_runtime_uses_coinglass_with_public_backpack_fallback():
     }
 
 
-def test_staging_blueprint_installs_only_core_dependencies():
-    blueprint = (Path(__file__).resolve().parents[1] / "render.staging.yaml").read_text()
-
-    assert "buildCommand: pip install ." in blueprint
-    assert "[live]" not in blueprint
-
-
 def test_degraded_macro_provider_marks_every_factor_unavailable_without_fabrication():
     provider = _DegradedMacroProvider()
     snapshot = provider.context_snapshot("BTC")
@@ -459,14 +452,6 @@ def test_migrations_use_advisory_lock_and_record_version(tmp_path):
     assert runner.version == "001_test"
 
 
-def test_render_blueprints_keep_production_and_staging_isolated():
-    repository = Path(__file__).parents[1]
-    production = (repository / "render.yaml").read_text(encoding="utf-8")
-    staging = (repository / "render.staging.yaml").read_text(encoding="utf-8")
+def test_render_blueprint_targets_production_only():
+    production = (Path(__file__).parents[1] / "render.yaml").read_text(encoding="utf-8")
     assert "name: monatise-live" in production
-    assert "name: monatise-paper-staging" not in production
-    assert "name: monatise-paper-staging" in staging
-    assert "name: monatise-paper-staging-postgres" in staging
-    assert "name: monatise-paper-staging-redis" in staging
-    assert "name: monatise-live" not in staging
-    assert "autoDeployTrigger: off" in staging

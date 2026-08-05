@@ -4,8 +4,7 @@
 
 This promotion replaces the web process for `monatise-live` with the canonical
 20-engine orchestration runtime in paper, analysis-only mode. It does not enable
-an exchange adapter or order submission. The staging service and its Redis and
-PostgreSQL resources remain separate.
+an exchange adapter or order submission.
 
 The current rollback target is Render deployment
 `dep-d9n7fsoae00c73b0ni70`, commit `8f3bc58265a75abd03e9dd48abb8ec504c425b67`.
@@ -22,8 +21,8 @@ and authentication data.
 1. Require a green pull-request run with all PostgreSQL and Redis contracts.
 2. Confirm `render.yaml` retains `monatise-live`, one worker, Oregon, Starter,
    `/health/ready`, and `autoDeployTrigger: off`.
-3. Confirm the production PostgreSQL and Redis resources and the namespace
-   `monatise:production-analysis` are distinct from staging.
+3. Confirm the production PostgreSQL and Redis resources use the namespace
+   `monatise:production-analysis`.
 4. Configure CoinGlass, Telegram, and OpenClaw secrets without exchange keys.
 5. Verify every execution flag is false, the kill switch is true, and audit is
    enabled.
@@ -53,7 +52,7 @@ and authentication data.
 Rollback immediately for readiness 503, migration failure, Redis failure,
 multiple or missing scheduler leadership after the lease window, audit-integrity
 failure, CoinGlass failure, accidental execution enablement, unavailable
-governance kill switch, secret exposure, or any production staging/test route.
+governance kill switch, secret exposure, or any test route in production.
 
 ## Rollback
 

@@ -35,7 +35,7 @@ def test_environment_and_symbol_rule() -> None:
             default_value=False,
             rules=(
                 RolloutRule(
-                    environments=("staging",),
+                    environments=("production",),
                     symbols=("BTCUSDT",),
                 ),
             ),
@@ -45,14 +45,14 @@ def test_environment_and_symbol_rule() -> None:
     enabled = manager.evaluate(
         "btc_order_flow_v2",
         EvaluationContext(
-            environment="staging",
+            environment="production",
             symbol="BTCUSDT",
         ),
     )
     disabled = manager.evaluate(
         "btc_order_flow_v2",
         EvaluationContext(
-            environment="production",
+            environment="development",
             symbol="BTCUSDT",
         ),
     )
