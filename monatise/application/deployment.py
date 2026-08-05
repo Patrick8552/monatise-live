@@ -675,13 +675,9 @@ class OrchestrationRuntime:
         )
         if classification == "no_trade" or score < threshold or not direction_is_qualified:
             return False
-        market = outputs.get("market_data")
-        legacy_risk = outputs.get("risk_validation")
-        legacy_risk_decision = getattr(getattr(legacy_risk, "decision", None), "value", None)
-        if legacy_risk is not None and classification != "grid" and (
-            result.status.value == "blocked" or legacy_risk_decision == "rejected"
-        ):
+        if result.status.value != "completed":
             return False
+        market = outputs.get("market_data")
         price = getattr(market, "price", None)
         plan = build_directional_plan(price, direction) or {}
         grid = (build_grid_plan(price) or {}) if classification == "grid" else {}

@@ -94,25 +94,19 @@ class TelegramNotifier:
         direction = _enum_value(getattr(decision, "direction", "none")).upper()
         classification = _enum_value(getattr(decision, "classification", "no_trade")).upper()
         conviction = float(getattr(decision, "conviction", 0.0) or 0.0)
-        risk = outputs.get("risk_validation")
         analysis_plan = build_directional_plan(getattr(market, "price", None), direction)
-        entry = getattr(risk, "validated_entry", None) if risk is not None else analysis_plan["entry"] if analysis_plan else None
-        stop = getattr(risk, "validated_invalidation", None) if risk is not None else analysis_plan["invalidation"] if analysis_plan else None
-        target = getattr(risk, "validated_target", None) if risk is not None else analysis_plan["target"] if analysis_plan else None
-        reward_risk = getattr(risk, "reward_risk", None) if risk is not None else None
-        expires_at = getattr(risk, "signal_expires_at", None) if risk is not None else None
+        entry = analysis_plan["entry"] if analysis_plan else None
+        stop = analysis_plan["invalidation"] if analysis_plan else None
+        target = analysis_plan["target"] if analysis_plan else None
         quality = getattr(market, "quality", None)
         source = getattr(quality, "source", "CoinGlass")
         interval = getattr(market, "interval", "unknown")
         reasons = tuple(getattr(decision, "reasons", ()) or ())[:3]
 
-        risk_decision = _enum_value(getattr(risk, "decision", "")).lower() if risk is not None else ""
-        grid_blocked = classification == "GRID" and (result.status.value == "blocked" or risk_decision == "rejected")
-        directional_blocked = classification != "GRID" and (result.status.value == "blocked" or risk_decision == "rejected")
         heading = (
-            f"Monatise GRID {'CANDIDATE — RISK BLOCKED' if grid_blocked else 'READY'}: {result.symbol} ({direction})"
+            f"Monatise GRID DECISION READY: {result.symbol} ({direction})"
             if classification == "GRID"
-            else f"Monatise directional setup{' — RISK BLOCKED' if directional_blocked else ''}: {result.symbol} {direction} ({classification})"
+            else f"Monatise directional setup: {result.symbol} {direction} ({classification})"
         )
         lines = [
             heading,
@@ -121,8 +115,7 @@ class TelegramNotifier:
             f"Confidence: {conviction * 100:.0f}%",
         ]
         if classification == "GRID":
-            risk_metadata = getattr(risk, "metadata", {}) or {} if risk is not None else {}
-            grid = risk_metadata.get("grid_plan") or build_grid_plan(entry or getattr(market, "price", None))
+            grid = build_grid_plan(entry or getattr(market, "price", None))
             if grid is None:
                 lines.append("Grid levels: unavailable")
             else:
@@ -134,22 +127,8 @@ class TelegramNotifier:
                     f"Invalidation: below {_price(grid['lower_invalidation'])} or above {_price(grid['upper_invalidation'])}",
                     f"Spacing: {_price(grid['spacing'])} | {grid['levels_per_side']} levels per side",
                 ])
-            issues = tuple(getattr(risk, "issues", ()) or ())[:3] if risk is not None else ()
-            if issues:
-                lines.append("Risk review: " + "; ".join(str(getattr(issue, "message", issue)) for issue in issues))
         else:
-            if risk is None:
-                lines.append(f"Projected entry: {_price(entry)} | Invalidation: {_price(stop)} | Target: {_price(target)}")
-            else:
-                lines.append(f"Entry: {_price(entry)} | Stop: {_price(stop)} | Target: {_price(target)}")
-            if directional_blocked:
-                issues = tuple(getattr(risk, "issues", ()) or ())[:3] if risk is not None else ()
-                if issues:
-                    lines.append("Risk review: " + "; ".join(str(getattr(issue, "message", issue)) for issue in issues))
-        if reward_risk is not None and classification != "GRID":
-            lines.append(f"Reward/risk: {float(reward_risk):.2f}")
-        if expires_at is not None:
-            lines.append(f"Expires: {expires_at.astimezone(timezone.utc):%Y-%m-%d %H:%M UTC}")
+            lines.append(f"Projected entry: {_price(entry)} | Invalidation: {_price(stop)} | Target: {_price(target)}")
         lines.append(f"Data: {source} | Status: {result.status.value}")
         if reasons:
             lines.append("Why: " + "; ".join(str(reason) for reason in reasons))
