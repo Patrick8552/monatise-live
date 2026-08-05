@@ -76,6 +76,9 @@ class TelegramNotifier:
             ]
             if reasons:
                 lines.append("Why: " + "; ".join(str(reason) for reason in reasons))
+            blockers = tuple(getattr(decision, "blockers", ()) or ())[:3]
+            if blockers:
+                lines.append("Blocked by: " + "; ".join(str(blocker) for blocker in blockers))
             lines.append(f"Run: {result.run_id}")
             return "\n".join(lines)
 

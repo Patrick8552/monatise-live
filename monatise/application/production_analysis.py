@@ -117,6 +117,7 @@ def sanitized_result(result: Any) -> dict[str, Any]:
         "expires_at": getattr(getattr(risk, "signal_expires_at", None), "isoformat", lambda: None)(),
         "data_source": getattr(getattr(market, "quality", None), "source", None),
         "reasons": list(getattr(decision, "reasons", ()) or ()),
+        "blockers": list(getattr(decision, "blockers", ()) or ()),
         "blocked_by": result.blocked_by,
         "completed_stages": result.statistics.completed_stages,
         "risk_validation_invoked": "risk_validation" in result.context.outputs,

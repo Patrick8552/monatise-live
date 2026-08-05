@@ -86,13 +86,15 @@ class DecisionEngine:
             blockers=blockers,
         )
 
+        grid_blockers = [blocker for blocker in blockers if blocker != "order flow unavailable"]
         if (
             request.minimum_signal_score > 0
-            and not blockers
+            and not grid_blockers
             and grid_signal_score >= request.minimum_signal_score
         ):
             classification = DecisionClassification.GRID
             direction = DecisionDirection.TWO_SIDED
+            blockers = grid_blockers
 
         if classification is DecisionClassification.TREND and abs(signed_signal_score) < request.minimum_signal_score:
             blockers.append(

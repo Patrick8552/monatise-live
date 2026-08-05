@@ -51,7 +51,8 @@ def analyze(asset: str, interval: str = "1h", payload: dict | None = None, curre
     elif classification == "grid" and grid_score >= threshold:
         decision, reason = "GRID", "GRID_SCORE_THRESHOLD_MET"
     else:
-        decision, reason = "NO_TRADE", "SCORE_BELOW_THRESHOLD"
+        decision = "NO_TRADE"
+        reason = "PRODUCTION_BLOCKED" if analysis.get("blockers") else "SCORE_BELOW_THRESHOLD"
 
     actionable = decision in {"LONG", "SHORT", "GRID"}
     entry = analysis.get("entry") if actionable else None
@@ -75,6 +76,7 @@ def analyze(asset: str, interval: str = "1h", payload: dict | None = None, curre
         "expires_at": analysis.get("expires_at"),
         "reason_code": reason,
         "reasons": list(analysis.get("reasons") or []),
+        "blockers": list(analysis.get("blockers") or []),
         "data_source": analysis.get("data_source") or "CoinGlass",
         "execution": {"enabled": False, "orders_placed": 0},
     }
@@ -102,6 +104,8 @@ def telegram(analysis: dict) -> str:
             lines.append(f"Reward/risk: {float(analysis['reward_risk']):.2f}")
     if analysis["reasons"]:
         lines += ["Evidence:", *[f"• {reason}" for reason in analysis["reasons"][:3]]]
+    if analysis["blockers"]:
+        lines += ["Blocked by:", *[f"• {blocker}" for blocker in analysis["blockers"][:3]]]
     if analysis["expires_at"]:
         lines.append(f"Expires: {analysis['expires_at']}")
     return "\n".join(lines + ["Analysis only. No trade was executed."])

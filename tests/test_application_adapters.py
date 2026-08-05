@@ -244,6 +244,7 @@ def test_telegram_no_trade_message_is_explicit_and_explained():
     decision = SimpleNamespace(
         classification=SimpleNamespace(value="no_trade"),
         reasons=("insufficient directional conviction", "conflicting order flow"),
+        blockers=("market structure is unstable",),
         metadata={"signed_signal_score": 6, "grid_signal_score": 2, "minimum_signal_score": 7},
     )
     result = PipelineResult(
@@ -258,6 +259,7 @@ def test_telegram_no_trade_message_is_explicit_and_explained():
     assert "stages 11/19" in message
     assert "insufficient directional conviction" in message
     assert "Score: +6/10 | trade threshold: ±7" in message
+    assert "Blocked by: market structure is unstable" in message
     assert f"Run: {run.run_id}" in message
 
 

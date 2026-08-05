@@ -353,11 +353,22 @@ def test_qualified_grid_score_takes_priority_over_directional_conflict() -> None
         confidence=0.75,
         reasons=(),
     )
+    unavailable_order_flow = OrderFlowAssessment(**{
+        **request.order_flow.__dict__,
+        "bias": FlowBias.UNKNOWN,
+        "participation": ParticipationState.UNKNOWN,
+        "health": FlowHealth.UNAVAILABLE,
+        "confidence": FlowConfidence.NONE,
+        "score": 0.0,
+        "execution_timing_score": 0.0,
+        "inputs_used": 0,
+    })
     qualified = DecisionRequest(**{
         **request.__dict__,
         "liquidity": balanced_liquidity,
         "regime": range_regime,
         "structure": neutral_structure,
+        "order_flow": unavailable_order_flow,
         "minimum_signal_score": 7,
         "maximum_conflict_ratio": 0.0,
     })
@@ -368,6 +379,7 @@ def test_qualified_grid_score_takes_priority_over_directional_conflict() -> None
     assert result.classification is DecisionClassification.GRID
     assert result.direction is DecisionDirection.TWO_SIDED
     assert result.state is DecisionState.APPROVED_FOR_RISK_REVIEW
+    assert "order flow unavailable" not in result.blockers
 
 
 def test_decision_engine_remains_non_executable() -> None:

@@ -23,6 +23,7 @@ def payload(*, classification="trend", direction="long", score=7, grid_score=2):
         "target": 110.0 if direction != "short" else 90.0,
         "reward_risk": 2.0,
         "reasons": ["production evidence aligned"],
+        "blockers": [],
         "data_source": "CoinGlass futures price history",
     }
 
@@ -66,3 +67,12 @@ def test_invalid_risk_levels_fail_closed():
     result = MODULE.analyze("SOL", payload=data, current_time=WEEKDAY)
     assert result["decision"] == "NO_TRADE"
     assert result["reason_code"] == "INVALID_RISK_LEVELS"
+
+
+def test_production_blocker_is_reported_instead_of_score_failure():
+    data = payload(classification="no_trade", score=3, grid_score=8)
+    data["blockers"] = ["market structure is unstable"]
+    result = MODULE.analyze("BTC", payload=data, current_time=WEEKDAY)
+    assert result["decision"] == "NO_TRADE"
+    assert result["reason_code"] == "PRODUCTION_BLOCKED"
+    assert result["blockers"] == ["market structure is unstable"]
