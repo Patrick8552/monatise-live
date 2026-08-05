@@ -290,8 +290,12 @@ def test_telegram_grid_analysis_is_included_and_labeled():
 
     message = TelegramNotifier.format(result)
 
-    assert "Monatise GRID: BTC (TWO_SIDED)" in message
-    assert "Entry: 65,000" in message
+    assert "Monatise GRID READY: BTC (TWO_SIDED)" in message
+    assert "Center: 65,000" in message
+    assert "Buy levels: 64,566.66666667 | 64,133.33333333 | 63,700" in message
+    assert "Sell levels: 65,433.33333333 | 65,866.66666667 | 66,300" in message
+    assert "Invalidation: below 63,266.66666667 or above 66,733.33333333" in message
+    assert "Entry:" not in message
     assert "CoinGlass futures price history" in message
     assert "Score: 7/10" in message
 

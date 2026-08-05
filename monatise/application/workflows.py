@@ -10,6 +10,7 @@ from typing import Any, Awaitable, Callable, Protocol
 
 from monatise.application.models import AnalysisRun, PipelineResult
 from monatise.application.orchestrator import PipelineOrchestrator
+from monatise.application.production_analysis import build_grid_plan
 from monatise.application.registry import CANONICAL_ENGINE_ORDER
 from monatise.infrastructure.state_manager import StateKey
 from monatise.infrastructure.task_scheduler import JobDefinition, RetryPolicy, ScheduleType
@@ -101,18 +102,33 @@ class TelegramNotifier:
         source = getattr(quality, "source", "CoinGlass")
         reasons = tuple(getattr(decision, "reasons", ()) or ())[:3]
 
-        heading = (
-            f"Monatise GRID: {result.symbol} ({direction})"
-            if classification == "GRID"
-            else f"Monatise signal: {result.symbol} {direction} ({classification})"
-        )
+        risk_decision = _enum_value(getattr(risk, "decision", "")).lower()
+        grid_blocked = classification == "GRID" and (result.status.value == "blocked" or risk_decision == "rejected")
+        heading = f"Monatise GRID {'CANDIDATE — RISK BLOCKED' if grid_blocked else 'READY'}: {result.symbol} ({direction})" if classification == "GRID" else f"Monatise signal: {result.symbol} {direction} ({classification})"
         lines = [
             heading,
             f"Score: {grid_score}/10" if classification == "GRID" else f"Score: {signed_score:+d}/10",
             f"Confidence: {conviction * 100:.0f}%",
-            f"Entry: {_price(entry)} | Stop: {_price(stop)} | Target: {_price(target)}",
         ]
-        if reward_risk is not None:
+        if classification == "GRID":
+            grid = build_grid_plan(entry or getattr(market, "price", None))
+            if grid is None:
+                lines.append("Grid levels: unavailable")
+            else:
+                lines.extend([
+                    f"Center: {_price(grid['center'])}",
+                    "Buy levels: " + " | ".join(_price(value) for value in grid["buy_levels"]),
+                    "Sell levels: " + " | ".join(_price(value) for value in grid["sell_levels"]),
+                    f"Boundaries: {_price(grid['lower_boundary'])} — {_price(grid['upper_boundary'])}",
+                    f"Invalidation: below {_price(grid['lower_invalidation'])} or above {_price(grid['upper_invalidation'])}",
+                    f"Spacing: {_price(grid['spacing'])} | {grid['levels_per_side']} levels per side",
+                ])
+            issues = tuple(getattr(risk, "issues", ()) or ())[:3]
+            if issues:
+                lines.append("Risk review: " + "; ".join(str(getattr(issue, "message", issue)) for issue in issues))
+        else:
+            lines.append(f"Entry: {_price(entry)} | Stop: {_price(stop)} | Target: {_price(target)}")
+        if reward_risk is not None and classification != "GRID":
             lines.append(f"Reward/risk: {float(reward_risk):.2f}")
         if expires_at is not None:
             lines.append(f"Expires: {expires_at.astimezone(timezone.utc):%Y-%m-%d %H:%M UTC}")

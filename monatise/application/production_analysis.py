@@ -30,6 +30,32 @@ from monatise.engines.supply_demand.models import ZoneRequest
 SUPPORTED_PRODUCTION_SYMBOLS = frozenset({"BTC", "ETH", "SOL"})
 
 
+def build_grid_plan(center: float | None, *, levels_per_side: int = 3, half_width_pct: float = 0.02) -> dict[str, Any] | None:
+    """Build a symmetric, analysis-only grid around the current market price."""
+    if not isinstance(center, (int, float)) or isinstance(center, bool) or center <= 0:
+        return None
+    if levels_per_side < 2:
+        raise ValueError("a grid requires at least two levels per side")
+    if not 0 < half_width_pct < 1:
+        raise ValueError("half_width_pct must be between zero and one")
+
+    center_value = float(center)
+    spacing = center_value * half_width_pct / levels_per_side
+    buy_levels = [center_value - spacing * index for index in range(1, levels_per_side + 1)]
+    sell_levels = [center_value + spacing * index for index in range(1, levels_per_side + 1)]
+    return {
+        "center": round(center_value, 8),
+        "buy_levels": [round(value, 8) for value in buy_levels],
+        "sell_levels": [round(value, 8) for value in sell_levels],
+        "lower_boundary": round(buy_levels[-1], 8),
+        "upper_boundary": round(sell_levels[-1], 8),
+        "lower_invalidation": round(buy_levels[-1] - spacing, 8),
+        "upper_invalidation": round(sell_levels[-1] + spacing, 8),
+        "spacing": round(spacing, 8),
+        "levels_per_side": levels_per_side,
+    }
+
+
 def build_production_analysis_run(symbol: str, *, correlation_id: str | None = None, source: str = "monatise.production") -> AnalysisRun:
     normalized = symbol.strip().upper()
     if normalized not in SUPPORTED_PRODUCTION_SYMBOLS:
@@ -57,10 +83,15 @@ def build_production_analysis_run(symbol: str, *, correlation_id: str | None = N
 
     def risk(context: Any) -> RiskRequest:
         market = output(context, "market_data")
-        direction = getattr(output(context, "decision").direction, "value", "none")
+        decision = output(context, "decision")
+        direction = getattr(decision.direction, "value", "none")
+        classification = getattr(decision.classification, "value", "no_trade")
         entry = market.price
         if entry is None:
             proposed = (None, None, None)
+        elif classification == "grid":
+            grid = build_grid_plan(entry)
+            proposed = (entry, grid["lower_boundary"], grid["upper_boundary"])
         elif direction == "short":
             proposed = (entry, entry * 1.02, entry * 0.96)
         else:
@@ -99,6 +130,9 @@ def sanitized_result(result: Any) -> dict[str, Any]:
     classification = getattr(getattr(decision, "classification", None), "value", None)
     direction = getattr(getattr(decision, "direction", None), "value", None)
     metadata = getattr(decision, "metadata", {}) or {}
+    risk_decision = getattr(getattr(risk, "decision", None), "value", None)
+    risk_issues = list(getattr(risk, "issues", ()) or ())
+    grid_plan = build_grid_plan(getattr(risk, "validated_entry", None) or getattr(market, "price", None)) if classification == "grid" else None
     return {
         "run_id": result.run_id,
         "correlation_id": result.correlation_id,
@@ -114,6 +148,17 @@ def sanitized_result(result: Any) -> dict[str, Any]:
         "invalidation": getattr(risk, "validated_invalidation", None),
         "target": getattr(risk, "validated_target", None),
         "reward_risk": getattr(risk, "reward_risk", None),
+        "grid_plan": grid_plan,
+        "risk_decision": risk_decision,
+        "risk_issues": [
+            {
+                "code": getattr(issue, "code", None),
+                "severity": getattr(getattr(issue, "severity", None), "value", None),
+                "message": getattr(issue, "message", str(issue)),
+            }
+            for issue in risk_issues
+        ],
+        "risk_reasons": list(getattr(risk, "reasons", ()) or ()),
         "expires_at": getattr(getattr(risk, "signal_expires_at", None), "isoformat", lambda: None)(),
         "data_source": getattr(getattr(market, "quality", None), "source", None),
         "reasons": list(getattr(decision, "reasons", ()) or ()),
