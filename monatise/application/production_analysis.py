@@ -87,6 +87,7 @@ def build_production_analysis_run(symbol: str, *, correlation_id: str | None = N
         direction = getattr(decision.direction, "value", "none")
         classification = getattr(decision.classification, "value", "no_trade")
         entry = market.price
+        grid = None
         if entry is None:
             proposed = (None, None, None)
         elif classification == "grid":
@@ -96,7 +97,7 @@ def build_production_analysis_run(symbol: str, *, correlation_id: str | None = N
             proposed = (entry, entry * 1.02, entry * 0.96)
         else:
             proposed = (entry, entry * 0.98, entry * 1.04)
-        return RiskRequest(output(context, "market_data"), output(context, "decision"), None, output(context, "regime"), output(context, "market_structure"), output(context, "fibonacci_liquidity"), output(context, "supply_demand"), output(context, "order_flow"), output(context, "rsi"), now, now + timedelta(minutes=30), proposed_entry=proposed[0], proposed_invalidation=proposed[1], proposed_target=proposed[2], account_equity=100_000, minimum_reward_risk=1.0)
+        return RiskRequest(output(context, "market_data"), output(context, "decision"), None, output(context, "regime"), output(context, "market_structure"), output(context, "fibonacci_liquidity"), output(context, "supply_demand"), output(context, "order_flow"), output(context, "rsi"), now, now + timedelta(minutes=30), proposed_entry=proposed[0], proposed_invalidation=proposed[1], proposed_target=proposed[2], proposed_grid_buy_levels=tuple(grid["buy_levels"]) if grid else (), proposed_grid_sell_levels=tuple(grid["sell_levels"]) if grid else (), proposed_grid_lower_invalidation=grid["lower_invalidation"] if grid else None, proposed_grid_upper_invalidation=grid["upper_invalidation"] if grid else None, account_equity=100_000, minimum_reward_risk=1.0)
 
     inputs = {
         "market_data": MarketDataRequest(normalized, interval="1h", candle_limit=200, max_age_seconds=7200),
@@ -132,7 +133,10 @@ def sanitized_result(result: Any) -> dict[str, Any]:
     metadata = getattr(decision, "metadata", {}) or {}
     risk_decision = getattr(getattr(risk, "decision", None), "value", None)
     risk_issues = list(getattr(risk, "issues", ()) or ())
-    grid_plan = build_grid_plan(getattr(risk, "validated_entry", None) or getattr(market, "price", None)) if classification == "grid" else None
+    risk_metadata = getattr(risk, "metadata", {}) or {}
+    grid_plan = risk_metadata.get("grid_plan") if classification == "grid" else None
+    if classification == "grid" and grid_plan is None:
+        grid_plan = build_grid_plan(getattr(risk, "validated_entry", None) or getattr(market, "price", None))
     return {
         "run_id": result.run_id,
         "correlation_id": result.correlation_id,

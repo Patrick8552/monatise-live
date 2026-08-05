@@ -2377,10 +2377,24 @@ function renderProductionAnalysis(analysis) {
   const classification = String(analysis.classification || "no_trade").toUpperCase();
   const blocked = analysis.blocked_by ? `Blocked by ${analysis.blocked_by}` : "Pipeline completed";
   const reasons = Array.isArray(analysis.reasons) ? analysis.reasons.slice(0, 3) : [];
+  const grid = classification === "GRID" && analysis.grid_plan && typeof analysis.grid_plan === "object" ? analysis.grid_plan : null;
+  const riskIssues = Array.isArray(analysis.risk_issues) ? analysis.risk_issues.slice(0, 3) : [];
+  const gridState = grid
+    ? analysis.risk_decision === "rejected" || analysis.status === "blocked" ? "GRID CANDIDATE · RISK BLOCKED" : "GRID READY"
+    : classification.replace("_", " ");
+  const gridRows = grid ? `
+    <div class="metric-row"><div><strong>Grid center</strong><br /><small>Validated production geometry</small></div><span class="metric-value">${formatUsd(Number(grid.center))}</span></div>
+    <div class="metric-row"><div><strong>Buy levels</strong><br /><small>${escapeHtml((grid.buy_levels || []).map((value) => formatUsd(Number(value))).join(" / "))}</small></div><span class="metric-value">BIDS</span></div>
+    <div class="metric-row"><div><strong>Sell levels</strong><br /><small>${escapeHtml((grid.sell_levels || []).map((value) => formatUsd(Number(value))).join(" / "))}</small></div><span class="metric-value">OFFERS</span></div>
+    <div class="metric-row"><div><strong>Two-sided invalidation</strong><br /><small>Below ${formatUsd(Number(grid.lower_invalidation))} or above ${formatUsd(Number(grid.upper_invalidation))}</small></div><span class="metric-value">${Number(grid.levels_per_side) || 0} × 2</span></div>
+  ` : "";
   els.hyperList.innerHTML = `
     <div class="metric-row"><div><strong>Production decision</strong><br /><small>Monatise 19-stage pipeline</small></div><span class="metric-value">${classification.replace("_", " ")}</span></div>
     <div class="metric-row"><div><strong>Pipeline state</strong><br /><small>${blocked}</small></div><span class="metric-value">${analysis.completed_stages || 0}/19</span></div>
+    ${grid ? `<div class="metric-row"><div><strong>Grid state</strong><br /><small>Score ${Number(analysis.grid_score) || 0}/10 · confidence ${Math.round(Number(analysis.conviction || 0) * 100)}%</small></div><span class="metric-value">${gridState}</span></div>` : ""}
+    ${gridRows}
     <div class="metric-row"><div><strong>Market source</strong><br /><small>CoinGlass primary · Backpack fallback</small></div><span class="metric-value">LIVE</span></div>
+    ${riskIssues.map((issue, index) => `<div class="metric-row"><div><strong>${index ? "Risk issue" : "Risk review"}</strong><br /><small>${escapeHtml(String(issue.message || issue.code || "Unknown risk issue"))}</small></div><span class="metric-value">${escapeHtml(String(issue.severity || "review").toUpperCase())}</span></div>`).join("")}
     ${reasons.map((reason, index) => `<div class="metric-row"><div><strong>${index ? "Reason" : "Decision reason"}</strong><br /><small>${escapeHtml(reason)}</small></div><span class="metric-value">READ ONLY</span></div>`).join("")}
   `;
 }
@@ -3605,6 +3619,26 @@ function applyProductionDecision(setup) {
       tradeReady: approved,
       productionClassification: classification,
       frameworkGate: { side: direction === "long" ? "BUY" : "SELL", ready: approved, missing: approved ? [] : ["risk approval"], summary }
+    };
+  }
+  if (classification === "grid" && analysis.grid_plan) {
+    const grid = analysis.grid_plan;
+    const buys = Array.isArray(grid.buy_levels) ? grid.buy_levels.map(Number).filter(Number.isFinite) : [];
+    const sells = Array.isArray(grid.sell_levels) ? grid.sell_levels.map(Number).filter(Number.isFinite) : [];
+    const gridSummary = `${approved ? "Production GRID READY" : "Production GRID CANDIDATE — RISK BLOCKED"}. Buys ${formatGridLevels(buys)}; sells ${formatGridLevels(sells)}; invalidates below ${formatUsd(Number(grid.lower_invalidation))} or above ${formatUsd(Number(grid.upper_invalidation))}.`;
+    return {
+      ...setup,
+      direction: "GRID SETUP",
+      confidence: Math.round(Number(analysis.conviction || 0) * 100),
+      contextConfidence: Math.round(Number(analysis.conviction || 0) * 100),
+      contextSignalReady: true,
+      frameworkReady: approved,
+      tradeReady: approved,
+      productionClassification: classification,
+      productionGridPlan: grid,
+      gridDirection: approved ? `Production grid ready ${setup.asset}` : `Production grid candidate ${setup.asset}`,
+      gridPlan: gridSummary,
+      frameworkGate: { side: "GRID", ready: approved, missing: approved ? [] : ["risk approval"], summary: gridSummary }
     };
   }
   return {

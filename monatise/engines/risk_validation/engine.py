@@ -141,6 +141,7 @@ class RiskValidationEngine:
                         message="current regime does not prefer grid logic",
                     )
                 )
+            self._validate_grid_geometry(request, issues)
 
         risk_amount = (
             request.account_equity * request.risk_percent
@@ -218,8 +219,57 @@ class RiskValidationEngine:
                 "execution_enabled": False,
                 "requires_execution_policy": decision is RiskDecision.APPROVED,
                 "account_equity_supplied": request.account_equity is not None,
+                "grid_plan": self._validated_grid_plan(request) if side is RiskSide.GRID else None,
             },
         )
+
+    @staticmethod
+    def _validate_grid_geometry(request: RiskRequest, issues: list[RiskIssue]) -> None:
+        if not RiskValidationEngine._grid_geometry_valid(request):
+            issues.append(RiskIssue(
+                code="invalid_grid_geometry",
+                severity=RiskIssueSeverity.BLOCKER,
+                message="grid requires ordered buys below center, ordered sells above center, and two-sided invalidation",
+            ))
+
+    @staticmethod
+    def _grid_geometry_valid(request: RiskRequest) -> bool:
+        center = request.proposed_entry
+        buys = request.proposed_grid_buy_levels
+        sells = request.proposed_grid_sell_levels
+        lower = request.proposed_grid_lower_invalidation
+        upper = request.proposed_grid_upper_invalidation
+        return (
+            isinstance(center, (int, float))
+            and not isinstance(center, bool)
+            and center > 0
+            and len(buys) >= 2
+            and len(sells) >= 2
+            and all(value > 0 for value in (*buys, *sells))
+            and all(buys[index] > buys[index + 1] for index in range(len(buys) - 1))
+            and all(sells[index] < sells[index + 1] for index in range(len(sells) - 1))
+            and max(buys) < center < min(sells)
+            and lower is not None
+            and upper is not None
+            and 0 < lower < min(buys)
+            and upper > max(sells)
+        )
+
+    @staticmethod
+    def _validated_grid_plan(request: RiskRequest) -> dict[str, object] | None:
+        if not RiskValidationEngine._grid_geometry_valid(request):
+            return None
+        return {
+            "center": request.proposed_entry,
+            "buy_levels": list(request.proposed_grid_buy_levels),
+            "sell_levels": list(request.proposed_grid_sell_levels),
+            "lower_boundary": request.proposed_grid_buy_levels[-1],
+            "upper_boundary": request.proposed_grid_sell_levels[-1],
+            "lower_invalidation": request.proposed_grid_lower_invalidation,
+            "upper_invalidation": request.proposed_grid_upper_invalidation,
+            "spacing": abs(request.proposed_grid_buy_levels[0] - request.proposed_entry) if request.proposed_entry is not None else None,
+            "levels_per_side": len(request.proposed_grid_buy_levels),
+        }
 
     @staticmethod
     def _side(request: RiskRequest) -> RiskSide:

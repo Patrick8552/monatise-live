@@ -82,6 +82,15 @@ def test_grid_without_multiple_levels_fails_closed():
     assert result["reason_code"] == "INVALID_GRID_LEVELS"
 
 
+def test_inverted_grid_levels_fail_closed():
+    data = payload(classification="grid", direction="two_sided", score=0, grid_score=8)
+    data["grid_plan"]["buy_levels"] = [101.0, 102.0, 103.0]
+    data["grid_plan"]["sell_levels"] = [99.0, 98.0, 97.0]
+    result = MODULE.analyze("BTC", payload=data, current_time=WEEKDAY)
+    assert result["decision"] == "NO_TRADE"
+    assert result["reason_code"] == "INVALID_GRID_LEVELS"
+
+
 def test_weekend_is_always_no_trade():
     result = MODULE.analyze("BTC", payload=payload(score=9), current_time=datetime(2026, 7, 25, tzinfo=timezone.utc))
     assert result["decision"] == "NO_TRADE"

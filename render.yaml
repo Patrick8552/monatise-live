@@ -44,7 +44,7 @@ services:
       - key: MONATISE_SCHEDULED_ANALYSIS_INTERVAL_SECONDS
         value: 900
       - key: MONATISE_OPENCLAW_CACHE_TTL_SECONDS
-        value: 0
+        value: 60
       - key: MONATISE_HIERARCHICAL_SHADOW_ENABLED
         value: true
       - key: MONATISE_HIERARCHICAL_TELEGRAM_PUBLISH_ENABLED

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,6 +12,35 @@ from pathlib import Path
 
 SUPPORTED = {"BTC", "ETH", "SOL"}
 FORBIDDEN = {"EUR", "GBP", "JPY", "AUD", "CAD", "CHF", "GOLD", "XAU", "OIL", "CL", "SPX", "NDX"}
+
+
+def valid_grid_plan(grid: object) -> bool:
+    if not isinstance(grid, dict):
+        return False
+    center = grid.get("center")
+    buys = grid.get("buy_levels")
+    sells = grid.get("sell_levels")
+    lower = grid.get("lower_invalidation")
+    upper = grid.get("upper_invalidation")
+
+    def valid_number(value: object) -> bool:
+        return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value > 0
+
+    return (
+        valid_number(center)
+        and isinstance(buys, list)
+        and isinstance(sells, list)
+        and len(buys) >= 2
+        and len(sells) >= 2
+        and all(valid_number(value) for value in [*buys, *sells, lower, upper])
+        and len(set(buys)) == len(buys)
+        and len(set(sells)) == len(sells)
+        and all(buys[index] > buys[index + 1] for index in range(len(buys) - 1))
+        and all(sells[index] < sells[index + 1] for index in range(len(sells) - 1))
+        and max(buys) < center < min(sells)
+        and lower < min(buys)
+        and upper > max(sells)
+    )
 
 
 def normalize(raw: str) -> str:
@@ -59,12 +89,7 @@ def analyze(asset: str, interval: str = "1h", payload: dict | None = None, curre
     invalidation = analysis.get("invalidation") if actionable else None
     target = analysis.get("target") if actionable else None
     grid_plan = analysis.get("grid_plan") if decision == "GRID" else None
-    valid_grid = (
-        isinstance(grid_plan, dict)
-        and len(grid_plan.get("buy_levels") or []) >= 2
-        and len(grid_plan.get("sell_levels") or []) >= 2
-        and all(isinstance(value, (int, float)) and value > 0 for value in (grid_plan.get("buy_levels") or []) + (grid_plan.get("sell_levels") or []))
-    )
+    valid_grid = valid_grid_plan(grid_plan)
     if decision == "GRID" and not valid_grid:
         decision, reason, actionable = "NO_TRADE", "INVALID_GRID_LEVELS", False
     elif actionable and decision != "GRID" and not all(isinstance(value, (int, float)) and value > 0 for value in (entry, invalidation, target)):

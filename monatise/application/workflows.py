@@ -111,7 +111,8 @@ class TelegramNotifier:
             f"Confidence: {conviction * 100:.0f}%",
         ]
         if classification == "GRID":
-            grid = build_grid_plan(entry or getattr(market, "price", None))
+            risk_metadata = getattr(risk, "metadata", {}) or {}
+            grid = risk_metadata.get("grid_plan") or build_grid_plan(entry or getattr(market, "price", None))
             if grid is None:
                 lines.append("Grid levels: unavailable")
             else:

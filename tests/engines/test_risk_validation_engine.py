@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 from monatise.engines.decision.models import (
@@ -289,3 +290,47 @@ def test_engine_remains_non_executable() -> None:
     assert not hasattr(result, "order")
     assert not hasattr(result, "exchange")
     assert result.metadata["execution_enabled"] is False
+
+
+def test_grid_geometry_is_validated_and_preserved() -> None:
+    value = request()
+    grid_decision = replace(
+        value.decision,
+        classification=DecisionClassification.GRID,
+        direction=DecisionDirection.TWO_SIDED,
+    )
+    value = replace(
+        value,
+        decision=grid_decision,
+        regime=replace(value.regime, state=RegimeState.RANGE),
+        proposed_invalidation=98.0,
+        proposed_target=102.0,
+        proposed_grid_buy_levels=(99.0, 98.0, 97.0),
+        proposed_grid_sell_levels=(101.0, 102.0, 103.0),
+        proposed_grid_lower_invalidation=96.0,
+        proposed_grid_upper_invalidation=104.0,
+    )
+
+    result = RiskValidationEngine().assess(value)
+
+    assert result.decision is RiskDecision.APPROVED
+    assert result.metadata["grid_plan"]["buy_levels"] == [99.0, 98.0, 97.0]
+    assert result.metadata["grid_plan"]["sell_levels"] == [101.0, 102.0, 103.0]
+
+
+def test_inverted_grid_geometry_is_rejected() -> None:
+    value = request()
+    value = replace(
+        value,
+        decision=replace(value.decision, classification=DecisionClassification.GRID, direction=DecisionDirection.TWO_SIDED),
+        regime=replace(value.regime, state=RegimeState.RANGE),
+        proposed_grid_buy_levels=(101.0, 102.0),
+        proposed_grid_sell_levels=(99.0, 98.0),
+        proposed_grid_lower_invalidation=97.0,
+        proposed_grid_upper_invalidation=103.0,
+    )
+
+    result = RiskValidationEngine().assess(value)
+
+    assert result.decision is RiskDecision.REJECTED
+    assert any(issue.code == "invalid_grid_geometry" for issue in result.issues)

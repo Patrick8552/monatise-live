@@ -62,6 +62,10 @@ class RiskRequest:
     proposed_entry: float | None = None
     proposed_invalidation: float | None = None
     proposed_target: float | None = None
+    proposed_grid_buy_levels: tuple[float, ...] = ()
+    proposed_grid_sell_levels: tuple[float, ...] = ()
+    proposed_grid_lower_invalidation: float | None = None
+    proposed_grid_upper_invalidation: float | None = None
 
     account_equity: float | None = None
     risk_percent: float = 0.01
@@ -89,7 +93,13 @@ class RiskRequest:
             volatility_stop_multiplier=self.volatility_stop_multiplier,
             normal_buffer_pct=self.normal_buffer_pct,
             high_volatility_buffer_pct=self.high_volatility_buffer_pct,
+            proposed_grid_lower_invalidation=self.proposed_grid_lower_invalidation,
+            proposed_grid_upper_invalidation=self.proposed_grid_upper_invalidation,
         )
+        for index, value in enumerate(self.proposed_grid_buy_levels):
+            require_finite(**{f"proposed_grid_buy_levels[{index}]": value})
+        for index, value in enumerate(self.proposed_grid_sell_levels):
+            require_finite(**{f"proposed_grid_sell_levels[{index}]": value})
         symbols = {
             self.market.symbol,
             self.decision.symbol,

@@ -206,6 +206,24 @@ def test_openclaw_status_rejects_wrong_or_missing_credentials():
     assert openclaw_status(ProductionASGI(runtime))[0] == 503
 
 
+def test_openclaw_status_rejects_unsupported_assets_and_intervals():
+    app = ProductionASGI(Runtime())
+    assert openclaw_status(app, query="symbol=XRP&interval=1h")[0] == 400
+    assert openclaw_status(app, query="symbol=BTC&interval=5m")[0] == 400
+    assert app.runtime.calls == []
+
+
+def test_openclaw_status_is_rate_limited_after_authentication():
+    app = ProductionASGI(Runtime())
+    app._market_rate_windows["unknown"] = (int(time.time()) // 60, 12)
+
+    code, payload = openclaw_status(app)
+
+    assert code == 429
+    assert payload == {"status": "rate_limited"}
+    assert app.runtime.calls == []
+
+
 def test_production_serves_frontend_homepage_and_assets(tmp_path):
     (tmp_path / "index.html").write_text("<!doctype html><title>Monatise</title>")
     (tmp_path / "app.js").write_text("window.MONATISE = true;")

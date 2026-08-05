@@ -229,12 +229,14 @@ class ProductionASGI(OrchestrationASGI):
         scheme, _, supplied = headers.get("authorization", "").partition(" ")
         if scheme.casefold() != "bearer" or not secrets.compare_digest(supplied.strip(), token):
             return 401, {"status": "unauthorized"}
+        if self._market_rate_limited(scope, maximum=12):
+            return 429, {"status": "rate_limited"}
 
         query = parse_qs(scope.get("query_string", b"").decode())
         symbol = str(query.get("symbol", [self.runtime.environment.get("MONATISE_SYMBOL", "BTC")])[0]).strip().upper()
         interval = str(query.get("interval", ["1h"])[0]).strip() or "1h"
-        if not symbol:
-            return 400, {"status": "invalid_request", "reason": "symbol is required"}
+        if symbol not in {"BTC", "ETH", "SOL"} or interval != "1h":
+            return 400, {"status": "invalid_request", "reason": "supported symbols are BTC, ETH, and SOL at 1h"}
         cache_key = (symbol, interval)
         try:
             analysis, cache_hit = await self._cached_openclaw_analysis(cache_key)

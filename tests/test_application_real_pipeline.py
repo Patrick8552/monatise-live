@@ -5,6 +5,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 from monatise.application import AnalysisRun, PipelineExecutionMetadata, PipelineStage, create_application
+from monatise.application.production_analysis import build_grid_plan
 from monatise.core.models import Candle
 from monatise.engines.capital_allocation.models import AllocationRequest, PortfolioExposure
 from monatise.engines.capital_allocation.engine import CapitalAllocationEngine
@@ -73,6 +74,21 @@ def run_real_pipeline(direction: str = "long", *, grid: bool = False):
 
     def output(context, name): return context.outputs[name]
 
+    def risk_request(context):
+        plan = build_grid_plan(120) if grid else None
+        return RiskRequest(
+            output(context, "market_data"), output(context, "decision"), None, output(context, "regime"), output(context, "market_structure"), output(context, "fibonacci_liquidity"), output(context, "supply_demand"), output(context, "order_flow"), output(context, "rsi"), now, now + timedelta(minutes=30),
+            proposed_entry=120,
+            proposed_invalidation=plan["lower_boundary"] if plan else 117 if sign > 0 else 123,
+            proposed_target=plan["upper_boundary"] if plan else 126 if sign > 0 else 114,
+            proposed_grid_buy_levels=tuple(plan["buy_levels"]) if plan else (),
+            proposed_grid_sell_levels=tuple(plan["sell_levels"]) if plan else (),
+            proposed_grid_lower_invalidation=plan["lower_invalidation"] if plan else None,
+            proposed_grid_upper_invalidation=plan["upper_invalidation"] if plan else None,
+            account_equity=100_000,
+            minimum_reward_risk=1,
+        )
+
     inputs = {
         "market_data": MarketDataRequest("BTC", interval="1m", candle_limit=200, max_age_seconds=120),
         "regime": lambda c: RegimeRequest(output(c, "market_data"), trend_threshold=0.5, compression_threshold=0.01, expansion_threshold=100, high_volatility_threshold=200),
@@ -85,7 +101,7 @@ def run_real_pipeline(direction: str = "long", *, grid: bool = False):
         "order_flow": lambda c: OrderFlowRequest("BTC", FlowInput(open_interest_change_pct=2, price_change_pct=sign, cvd_change=100 * sign, liquidation_short_usd=200 if sign > 0 else 100, liquidation_long_usd=100 if sign > 0 else 200, footprint_delta=0.6 * sign, large_trade_net_usd=1000 * sign, bid_ask_imbalance=0.5 * sign, funding_rate=0.0001 * sign), output(c, "regime"), output(c, "market_structure")),
         "decision": lambda c: DecisionRequest(output(c, "market_data"), None, output(c, "regime"), output(c, "liquidity"), output(c, "liquidity_sweep"), output(c, "supply_demand"), output(c, "reclaim"), output(c, "market_structure"), output(c, "fibonacci_liquidity"), output(c, "order_flow"), minimum_conviction=0, maximum_conflict_ratio=1, grid_regime_bonus=1 if grid else 0.12, require_structure_for_trend=False, require_two_sided_liquidity_for_grid=False),
         "rsi": lambda c: RSIRequest(output(c, "market_data"), output(c, "market_structure"), output(c, "regime")),
-        "risk_validation": lambda c: RiskRequest(output(c, "market_data"), output(c, "decision"), None, output(c, "regime"), output(c, "market_structure"), output(c, "fibonacci_liquidity"), output(c, "supply_demand"), output(c, "order_flow"), output(c, "rsi"), now, now + timedelta(minutes=30), proposed_entry=120, proposed_invalidation=117 if sign > 0 else 123, proposed_target=126 if sign > 0 else 114, account_equity=100_000, minimum_reward_risk=1),
+        "risk_validation": risk_request,
         "capital_allocation": lambda c: AllocationRequest(output(c, "risk_validation"), PortfolioExposure(100_000, 0, 0, 0, 0, 0, 0, 0), output(c, "decision").classification, requested_capital=1_000),
         "execution_policy": lambda c: ExecutionPolicyRequest(output(c, "decision"), output(c, "risk_validation"), output(c, "capital_allocation"), ExecutionMode.PAPER, now),
         "portfolio_intelligence": PortfolioIntelligenceRequest(100_000, ()),
