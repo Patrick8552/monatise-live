@@ -8,7 +8,6 @@ from typing import Any
 from monatise.application.orchestrator import ApplicationInfrastructure, PipelineOrchestrator
 from monatise.application.registry import EngineRegistry, canonical_registrations
 from monatise.application.persistence import DurableAuditRepository, DurableEventStore, DurableStateManager, DurableTaskScheduler
-from monatise.engines.macro import MacroEngine
 from monatise.engines.market_data import MarketDataEngine
 from monatise.infrastructure.audit_database import InMemoryAuditRepository
 from monatise.infrastructure.configuration import ConfigurationManager
@@ -67,7 +66,7 @@ def create_durable_infrastructure(document_store: Any) -> ApplicationInfrastruct
 def create_application(
     *,
     market_data_providers: dict[str, Any],
-    macro_provider: Any,
+    macro_provider: Any | None = None,
     derivatives_provider: Any | None = None,
     infrastructure: ApplicationInfrastructure | None = None,
 ) -> MonatiseApplication:
@@ -108,8 +107,6 @@ def create_application(
     for registration in canonical_registrations():
         if registration.name == "market_data":
             engine = MarketDataEngine(market_data_providers, derivatives_provider=derivatives_provider)
-        elif registration.name == "macro":
-            engine = MacroEngine(macro_provider)
         else:
             engine = registration.engine_type()
         registry.register(registration, engine)

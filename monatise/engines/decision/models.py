@@ -51,7 +51,7 @@ class DecisionEvidence:
 @dataclass(frozen=True)
 class DecisionRequest:
     market: MarketSnapshot
-    macro: MacroAssessment
+    macro: MacroAssessment | None
     regime: RegimeAssessment
     liquidity: LiquidityAssessment
     sweep: SweepAssessment
@@ -79,7 +79,6 @@ class DecisionRequest:
         )
         symbols = {
             self.market.symbol,
-            self.macro.symbol,
             self.regime.symbol,
             self.liquidity.symbol,
             self.sweep.symbol,
@@ -89,6 +88,8 @@ class DecisionRequest:
             self.fibonacci.symbol,
             self.order_flow.symbol,
         }
+        if self.macro is not None:
+            symbols.add(self.macro.symbol)
         if len(symbols) != 1:
             raise ValueError("all decision inputs must use the same symbol")
         if not 0 <= self.minimum_conviction <= 1:

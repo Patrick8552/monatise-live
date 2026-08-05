@@ -15,7 +15,6 @@ from monatise.engines.integration.models import IntegrationChannel, IntegrationR
 from monatise.engines.intelligence_learning.models import LearningRequest
 from monatise.engines.liquidity.models import LiquidityRequest
 from monatise.engines.liquidity_sweep.models import SweepRequest
-from monatise.engines.macro.models import MacroRequest
 from monatise.engines.market_data.models import MarketDataRequest
 from monatise.engines.market_structure.models import MarketStructureRequest
 from monatise.engines.order_flow.models import FlowInput, OrderFlowRequest
@@ -66,12 +65,11 @@ def build_production_analysis_run(symbol: str, *, correlation_id: str | None = N
             proposed = (entry, entry * 1.02, entry * 0.96)
         else:
             proposed = (entry, entry * 0.98, entry * 1.04)
-        return RiskRequest(output(context, "market_data"), output(context, "decision"), output(context, "macro"), output(context, "regime"), output(context, "market_structure"), output(context, "fibonacci_liquidity"), output(context, "supply_demand"), output(context, "order_flow"), output(context, "rsi"), now, now + timedelta(minutes=30), proposed_entry=proposed[0], proposed_invalidation=proposed[1], proposed_target=proposed[2], account_equity=100_000, minimum_reward_risk=1.0)
+        return RiskRequest(output(context, "market_data"), output(context, "decision"), None, output(context, "regime"), output(context, "market_structure"), output(context, "fibonacci_liquidity"), output(context, "supply_demand"), output(context, "order_flow"), output(context, "rsi"), now, now + timedelta(minutes=30), proposed_entry=proposed[0], proposed_invalidation=proposed[1], proposed_target=proposed[2], account_equity=100_000, minimum_reward_risk=1.0)
 
     inputs = {
         "market_data": MarketDataRequest(normalized, interval="1h", candle_limit=200, max_age_seconds=7200),
-        "macro": MacroRequest(normalized, now),
-        "regime": lambda c: RegimeRequest(output(c, "market_data"), output(c, "macro")),
+        "regime": lambda c: RegimeRequest(output(c, "market_data")),
         "liquidity": lambda c: LiquidityRequest(output(c, "market_data"), output(c, "regime")),
         "liquidity_sweep": lambda c: SweepRequest(output(c, "market_data"), output(c, "liquidity"), output(c, "regime")),
         "supply_demand": lambda c: ZoneRequest(output(c, "market_data"), output(c, "regime"), output(c, "liquidity")),
@@ -79,13 +77,13 @@ def build_production_analysis_run(symbol: str, *, correlation_id: str | None = N
         "market_structure": lambda c: MarketStructureRequest(output(c, "market_data"), output(c, "regime"), output(c, "liquidity"), output(c, "liquidity_sweep"), output(c, "reclaim"), output(c, "supply_demand"), swing_window=1, displacement_body_ratio=0.5),
         "fibonacci_liquidity": lambda c: FibonacciRequest(output(c, "market_data"), output(c, "market_structure"), output(c, "liquidity"), output(c, "supply_demand"), output(c, "reclaim"), minimum_structure_confidence=0),
         "order_flow": flow,
-        "decision": lambda c: DecisionRequest(output(c, "market_data"), output(c, "macro"), output(c, "regime"), output(c, "liquidity"), output(c, "liquidity_sweep"), output(c, "supply_demand"), output(c, "reclaim"), output(c, "market_structure"), output(c, "fibonacci_liquidity"), output(c, "order_flow"), minimum_conviction=0.55, high_conviction=0.75, maximum_conflict_ratio=0.45, grid_regime_bonus=0.12, trend_regime_bonus=0.12, require_structure_for_trend=True, require_two_sided_liquidity_for_grid=True),
+        "decision": lambda c: DecisionRequest(output(c, "market_data"), None, output(c, "regime"), output(c, "liquidity"), output(c, "liquidity_sweep"), output(c, "supply_demand"), output(c, "reclaim"), output(c, "market_structure"), output(c, "fibonacci_liquidity"), output(c, "order_flow"), minimum_conviction=0.55, high_conviction=0.75, maximum_conflict_ratio=0.45, grid_regime_bonus=0.12, trend_regime_bonus=0.12, require_structure_for_trend=True, require_two_sided_liquidity_for_grid=True),
         "rsi": lambda c: RSIRequest(output(c, "market_data"), output(c, "market_structure"), output(c, "regime")),
         "risk_validation": risk,
         "capital_allocation": lambda c: AllocationRequest(output(c, "risk_validation"), PortfolioExposure(100_000, 0, 0, 0, 0, 0, 0, 0), output(c, "decision").classification, requested_capital=1_000),
         "execution_policy": lambda c: ExecutionPolicyRequest(output(c, "decision"), output(c, "risk_validation"), output(c, "capital_allocation"), ExecutionMode.PAPER, now),
         "portfolio_intelligence": PortfolioIntelligenceRequest(100_000, ()),
-        "reporting_intelligence": lambda c: ReportRequest(now, ReportChannel.API, output(c, "market_data"), output(c, "macro"), output(c, "regime"), output(c, "liquidity"), output(c, "liquidity_sweep"), output(c, "supply_demand"), output(c, "reclaim"), output(c, "market_structure"), output(c, "fibonacci_liquidity"), output(c, "order_flow"), output(c, "decision"), output(c, "rsi"), output(c, "risk_validation"), output(c, "capital_allocation"), output(c, "execution_policy"), output(c, "portfolio_intelligence")),
+        "reporting_intelligence": lambda c: ReportRequest(now, ReportChannel.API, output(c, "market_data"), None, output(c, "regime"), output(c, "liquidity"), output(c, "liquidity_sweep"), output(c, "supply_demand"), output(c, "reclaim"), output(c, "market_structure"), output(c, "fibonacci_liquidity"), output(c, "order_flow"), output(c, "decision"), output(c, "rsi"), output(c, "risk_validation"), output(c, "capital_allocation"), output(c, "execution_policy"), output(c, "portfolio_intelligence")),
         "intelligence_learning": LearningRequest((), minimum_samples=1),
         "integration": lambda c: IntegrationRequest(output(c, "reporting_intelligence"), output(c, "execution_policy"), (IntegrationChannel.DATABASE, IntegrationChannel.AUDIT_LOG), now, enable_coinglass=True, enable_telegram=False, enable_openclaw=False, enable_dashboard=False),
         "governance_loss_control": lambda c: GovernanceRequest(LossControlSnapshot(100_000, 100_000, 100_000, 0, 0, 0, 0, 0, kill_switch_active=False), output(c, "risk_validation"), output(c, "capital_allocation"), output(c, "execution_policy"), output(c, "portfolio_intelligence"), now),
@@ -94,7 +92,7 @@ def build_production_analysis_run(symbol: str, *, correlation_id: str | None = N
     return AnalysisRun(normalized, inputs, metadata=PipelineExecutionMetadata(source=source, retry_delay_seconds=0.1), **kwargs)
 
 
-def sanitized_result(result: Any, *, macro_mode: str = "unknown") -> dict[str, Any]:
+def sanitized_result(result: Any) -> dict[str, Any]:
     decision = result.context.outputs.get("decision")
     classification = getattr(getattr(decision, "classification", None), "value", None)
     return {
@@ -109,8 +107,6 @@ def sanitized_result(result: Any, *, macro_mode: str = "unknown") -> dict[str, A
         "allocation_produced": "capital_allocation" in result.context.outputs,
         "execution_policy_produced": "execution_policy" in result.context.outputs,
         "execution_enabled": False,
-        "macro_mode": macro_mode,
-        "macro_confidence_degraded": macro_mode == "degraded_unavailable_factors",
         "audit_reference": result.run_id,
         "state_reference": result.run_id,
     }

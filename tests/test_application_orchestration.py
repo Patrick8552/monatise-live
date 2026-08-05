@@ -58,13 +58,13 @@ def make_orchestrator(*, blocked_at: str | None = None, flaky_at: str | None = N
     return PipelineOrchestrator(registry, infra), calls, bus
 
 
-def test_pipeline_executes_all_twenty_engines_in_canonical_order():
+def test_pipeline_executes_all_nineteen_engines_in_canonical_order():
     orchestrator, calls, _ = make_orchestrator()
     inputs = {name: object() for name in CANONICAL_ENGINE_ORDER}
     result = asyncio.run(orchestrator.run(AnalysisRun("BTC", inputs, metadata=PipelineExecutionMetadata(actor_id="test", retry_delay_seconds=0))))
     assert result.status is PipelineStage.COMPLETED
     assert calls == list(CANONICAL_ENGINE_ORDER)
-    assert result.statistics.completed_stages == 20
+    assert result.statistics.completed_stages == 19
     assert result.execution_enabled is False
 
 
@@ -108,7 +108,6 @@ def test_engine_error_produces_structured_failure_and_stops_pipeline():
     ("engine_name", "output"),
     (
         ("market_data", type("Market", (), {"quality": type("Quality", (), {"usable": False})()})()),
-        ("macro", type("Macro", (), {"risk_state": "event_lock"})()),
         ("decision", type("Decision", (), {"passes_to_risk_engine": False})()),
         ("risk_validation", type("Risk", (), {"approved_for_execution_policy": False})()),
         ("capital_allocation", type("Allocation", (), {"approved_for_execution_policy": False})()),

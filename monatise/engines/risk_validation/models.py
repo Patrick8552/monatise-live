@@ -48,7 +48,7 @@ class RiskIssue:
 class RiskRequest:
     market: MarketSnapshot
     decision: DecisionResult
-    macro: MacroAssessment
+    macro: MacroAssessment | None
     regime: RegimeAssessment
     structure: MarketStructureAssessment
     fibonacci: FibonacciAssessment
@@ -93,7 +93,6 @@ class RiskRequest:
         symbols = {
             self.market.symbol,
             self.decision.symbol,
-            self.macro.symbol,
             self.regime.symbol,
             self.structure.symbol,
             self.fibonacci.symbol,
@@ -101,6 +100,8 @@ class RiskRequest:
             self.order_flow.symbol,
             self.rsi.symbol,
         }
+        if self.macro is not None:
+            symbols.add(self.macro.symbol)
         if len(symbols) != 1:
             raise ValueError("all risk inputs must use the same symbol")
         if not 0 < self.risk_percent <= 1:

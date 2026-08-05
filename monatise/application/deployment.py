@@ -27,7 +27,6 @@ from monatise.adapters.backpack import BackpackAdapter, BackpackCredentials
 from monatise.live.config import RuntimeConfig
 from monatise.infrastructure.audit_database import AuditAction, AuditActor, AuditRecordType
 from monatise.infrastructure.task_scheduler import JobDefinition, RetryPolicy, ScheduleType
-from monatise.engines.macro.rules import CRYPTO_MACRO_RULES
 
 
 LOGGER = logging.getLogger("monatise.orchestration")
@@ -297,24 +296,6 @@ class RedisCoordinationStore:
         return bool(await self.client.set(self.key("replay-nonce", nonce), "1", nx=True, ex=ttl_seconds))
 
 
-class _UnavailableMacroProvider:
-    def context_snapshot(self, symbol: str) -> dict[str, Any]:
-        raise RuntimeError("macro provider is not invoked during startup")
-
-    def economic_events(self) -> list[Any]:
-        return []
-
-
-class _DegradedMacroProvider:
-    """Explicitly unavailable macro factors; never fabricates macro values."""
-
-    def context_snapshot(self, symbol: str) -> dict[str, None]:
-        return {rule.factor: None for rule in CRYPTO_MACRO_RULES}
-
-    def economic_events(self) -> list[Any]:
-        return []
-
-
 @dataclass
 class OrchestrationRuntime:
     environment: Mapping[str, str] = field(default_factory=lambda: os.environ)
@@ -500,14 +481,8 @@ class OrchestrationRuntime:
                 RuntimeConfig(mode="paper", network="testnet", execution_mode="disabled"),
                 credentials=BackpackCredentials(api_key="", secret_key=""),
             )
-            degraded_macro_enabled = deployment_environment == "test" or (
-                deployment_environment == "production"
-                and not _false(self.environment.get("MONATISE_ALLOW_DEGRADED_MACRO"))
-            )
-            macro_provider = _DegradedMacroProvider() if degraded_macro_enabled else _UnavailableMacroProvider()
             self.application = create_application(
                 market_data_providers=self.market_data_providers(),
-                macro_provider=macro_provider,
                 derivatives_provider=self.coinglass,
                 infrastructure=infrastructure,
             )
@@ -548,12 +523,6 @@ class OrchestrationRuntime:
                 "status": "ok", "count": len(self.application.registry.ordered()), "order": list(CANONICAL_ENGINE_ORDER)
             }
             self.dependencies["governance"] = {"status": "ok", "kill_switch": True}
-            self.dependencies["macro_provider"] = {
-                "status": "degraded" if degraded_macro_enabled else "error",
-                "mode": "degraded_unavailable_factors" if degraded_macro_enabled else "unavailable",
-                "blocks_on_missing_data": not degraded_macro_enabled,
-                "event_calendar": "empty",
-            }
             configured = bool(self.environment.get("COINGLASS_API_KEY", "").strip())
             coinglass_required = deployment_environment != "test"
             self.dependencies["coinglass"] = {
@@ -642,13 +611,9 @@ class OrchestrationRuntime:
         registry_ok = bool(self.application and tuple(item.name for item in self.application.registry.ordered()) == CANONICAL_ENGINE_ORDER)
         mandatory = (
             "configuration", "postgresql", "migrations", "redis", "event_bus", "state_manager",
-            "audit_repository", "audit_integrity", "audit_logging", "scheduler", "engine_registry", "pipeline_orchestrator", "governance", "notifications", "coinglass", "market_data", "macro_provider", "hierarchy_shadow",
+            "audit_repository", "audit_integrity", "audit_logging", "scheduler", "engine_registry", "pipeline_orchestrator", "governance", "notifications", "coinglass", "market_data", "hierarchy_shadow",
         )
-        mandatory_ok = all(
-            self.dependencies.get(key, {}).get("status") == "ok"
-            or (key == "macro_provider" and self.dependencies.get(key, {}).get("status") == "degraded")
-            for key in mandatory
-        )
+        mandatory_ok = all(self.dependencies.get(key, {}).get("status") == "ok" for key in mandatory)
         ready = registry_ok and self.safety is not None and mandatory_ok
         return ready, {
             "status": "ready" if ready else "not_ready",
@@ -660,16 +625,6 @@ class OrchestrationRuntime:
     async def analyse(self, symbol: str, correlation_id: str | None = None, *, source: str = "monatise.production") -> dict[str, Any]:
         if self.application is None:
             raise RuntimeError("orchestration runtime is unavailable")
-        if self.dependencies.get("macro_provider", {}).get("status") == "degraded":
-            await self.application.infrastructure.audit.append(
-                record_type=AuditRecordType.CONFIGURATION,
-                action=AuditAction.REVIEWED,
-                actor=AuditActor("monatise-runtime", "application"),
-                source="monatise.macro",
-                payload={"event": "degraded_macro_used", "mode": "unavailable_factors", "confidence": 0},
-                correlation_id=correlation_id,
-                symbol=symbol.strip().upper(),
-            )
         result = await self.application.orchestrator.run(build_production_analysis_run(symbol, correlation_id=correlation_id, source=source))
         if self.telegram is not None:
             try:
@@ -685,7 +640,7 @@ class OrchestrationRuntime:
                     symbol=result.symbol,
                 )
                 LOGGER.warning("Telegram notification delivery failed", extra={"error_type": type(exc).__name__, "run_id": result.run_id})
-        return sanitized_result(result, macro_mode=self.dependencies.get("macro_provider", {}).get("mode", "unknown"))
+        return sanitized_result(result)
 
 class OrchestrationASGI:
     def __init__(self, runtime: OrchestrationRuntime | None = None) -> None:

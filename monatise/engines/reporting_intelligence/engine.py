@@ -25,7 +25,6 @@ class ReportingIntelligenceEngine:
 
         sections = (
             self._market_section(request),
-            self._macro_section(request),
             self._regime_section(request),
             self._liquidity_section(request),
             self._structure_section(request),
@@ -447,7 +446,6 @@ class ReportingIntelligenceEngine:
     def _decision_trace(request: ReportRequest) -> tuple[str, ...]:
         trace = [
             f"market_data:{request.market.quality.status.value}",
-            f"macro:{request.macro.risk_state.value}",
             f"regime:{request.regime.state.value}",
             f"structure:{request.structure.state.value}",
             f"order_flow:{request.order_flow.health.value}",

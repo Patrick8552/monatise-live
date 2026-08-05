@@ -9,12 +9,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from monatise.application.deployment import COINGLASS_PROVIDER_KEY, MigrationRunner, OrchestrationASGI, OrchestrationRuntime, PaperSafetyConfiguration, RedisSchedulerLeadership, TelegramNotificationTransport, _DegradedMacroProvider, register_coinglass_provider, scheduled_analysis_configuration
+from monatise.application.deployment import COINGLASS_PROVIDER_KEY, MigrationRunner, OrchestrationASGI, OrchestrationRuntime, PaperSafetyConfiguration, RedisSchedulerLeadership, TelegramNotificationTransport, register_coinglass_provider, scheduled_analysis_configuration
 from monatise.application.registry import CANONICAL_ENGINE_ORDER
 from monatise.infrastructure.dependency_injection import Container
-from monatise.engines.macro.rules import CRYPTO_MACRO_RULES
-from monatise.engines.macro import MacroEngine
-from monatise.engines.macro.models import MacroRequest, MacroRiskState
 
 
 def test_paper_safety_defaults_are_immutable_and_disabled():
@@ -369,7 +366,6 @@ def test_single_coinglass_request_failure_is_degraded_but_still_ready():
         "audit_repository", "audit_integrity", "audit_logging", "scheduler", "engine_registry",
         "pipeline_orchestrator", "governance", "notifications", "coinglass", "market_data", "hierarchy_shadow",
     )}
-    runtime.dependencies["macro_provider"] = {"status": "degraded"}
     runtime.coinglass = SimpleNamespace(health=lambda: SimpleNamespace(healthy=False, consecutive_failures=1))
 
     ready, payload = runtime.readiness()
@@ -406,19 +402,6 @@ def test_runtime_uses_coinglass_with_public_backpack_fallback():
         "coinglass": primary,
         "backpack_public": fallback,
     }
-
-
-def test_degraded_macro_provider_marks_every_factor_unavailable_without_fabrication():
-    provider = _DegradedMacroProvider()
-    snapshot = provider.context_snapshot("BTC")
-    assert snapshot
-    assert set(snapshot) == {rule.factor for rule in CRYPTO_MACRO_RULES}
-    assert all(value is None for value in snapshot.values())
-    assert provider.economic_events() == []
-    assessment = MacroEngine(provider).assess(MacroRequest("BTC", datetime.now(timezone.utc)))
-    assert assessment.risk_state is MacroRiskState.ELEVATED
-    assert assessment.blocks_new_analysis is False
-    assert assessment.conviction == 0
 
 
 class _MigrationCursor:

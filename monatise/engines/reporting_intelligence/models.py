@@ -52,7 +52,7 @@ class ReportRequest:
     channel: ReportChannel
 
     market: MarketSnapshot
-    macro: MacroAssessment
+    macro: MacroAssessment | None
     regime: RegimeAssessment
     liquidity: LiquidityAssessment
     sweep: SweepAssessment
@@ -74,7 +74,6 @@ class ReportRequest:
     def validate(self) -> None:
         symbols = {
             self.market.symbol,
-            self.macro.symbol,
             self.regime.symbol,
             self.liquidity.symbol,
             self.sweep.symbol,
@@ -89,6 +88,8 @@ class ReportRequest:
             self.allocation.symbol,
             self.execution_policy.symbol,
         }
+        if self.macro is not None:
+            symbols.add(self.macro.symbol)
         if len(symbols) != 1:
             raise ValueError("all report inputs must use the same symbol")
 

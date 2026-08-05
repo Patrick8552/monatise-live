@@ -296,7 +296,7 @@ class RiskValidationEngine:
         request: RiskRequest,
         issues: list[RiskIssue],
     ) -> None:
-        if request.macro.risk_state in {
+        if request.macro is not None and request.macro.risk_state in {
             MacroRiskState.EVENT_LOCK,
             MacroRiskState.DATA_UNAVAILABLE,
         }:

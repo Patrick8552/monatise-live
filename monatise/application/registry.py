@@ -9,7 +9,7 @@ from monatise.infrastructure.dependency_injection import Container
 
 
 CANONICAL_ENGINE_ORDER = (
-    "market_data", "macro", "regime", "liquidity", "liquidity_sweep",
+    "market_data", "regime", "liquidity", "liquidity_sweep",
     "supply_demand", "reclaim", "market_structure", "fibonacci_liquidity",
     "order_flow", "decision", "rsi", "risk_validation", "capital_allocation",
     "execution_policy", "portfolio_intelligence", "reporting_intelligence",
@@ -103,7 +103,6 @@ def canonical_registrations() -> tuple[EngineRegistration, ...]:
     from monatise.engines.intelligence_learning import IntelligenceLearningEngine
     from monatise.engines.liquidity import LiquidityEngine
     from monatise.engines.liquidity_sweep import LiquiditySweepEngine
-    from monatise.engines.macro import MacroEngine
     from monatise.engines.market_data import MarketDataEngine
     from monatise.engines.market_structure import MarketStructureEngine
     from monatise.engines.order_flow import OrderFlowIntelligenceEngine
@@ -114,12 +113,11 @@ def canonical_registrations() -> tuple[EngineRegistration, ...]:
     from monatise.engines.risk_validation import RiskValidationEngine
     from monatise.engines.rsi import RSIEngine
     from monatise.engines.supply_demand import SupplyDemandEngine
-    types = (MarketDataEngine, MacroEngine, RegimeEngine, LiquidityEngine, LiquiditySweepEngine, SupplyDemandEngine, ReclaimEngine, MarketStructureEngine, FibonacciLiquidityEngine, OrderFlowIntelligenceEngine, DecisionEngine, RSIEngine, RiskValidationEngine, CapitalAllocationEngine, ExecutionPolicyEngine, PortfolioIntelligenceEngine, ReportingIntelligenceEngine, IntelligenceLearningEngine, IntegrationEngine, GovernanceLossControlEngine)
-    methods = ("collect", "assess", "assess", "assess", "assess", "assess", "assess", "assess", "assess", "assess", "assess", "assess", "assess", "assess", "assess", "assess", "build", "assess", "build", "assess")
-    retryable = {"market_data", "macro", "order_flow", "integration"}
+    types = (MarketDataEngine, RegimeEngine, LiquidityEngine, LiquiditySweepEngine, SupplyDemandEngine, ReclaimEngine, MarketStructureEngine, FibonacciLiquidityEngine, OrderFlowIntelligenceEngine, DecisionEngine, RSIEngine, RiskValidationEngine, CapitalAllocationEngine, ExecutionPolicyEngine, PortfolioIntelligenceEngine, ReportingIntelligenceEngine, IntelligenceLearningEngine, IntegrationEngine, GovernanceLossControlEngine)
+    methods = ("collect", "assess", "assess", "assess", "assess", "assess", "assess", "assess", "assess", "assess", "assess", "assess", "assess", "assess", "assess", "build", "assess", "build", "assess")
+    retryable = {"market_data", "order_flow", "integration"}
     blockers = {
         "market_data": lambda value: _property_is_false(getattr(value, "quality", None), "usable"),
-        "macro": lambda value: _nested_state_is(value, "risk_state", {"event_lock", "data_unavailable"}),
         "decision": lambda value: (
             _property_is_false(value, "passes_to_risk_engine")
             or _nested_state_is(value, "classification", {"no_trade"})
