@@ -901,6 +901,26 @@ function publishGeneratedSignal(setup) {
 
 function snapshotLockedSignal(candidate, setup, price) {
   const now = Date.now();
+  if (setup.productionUnavailable) {
+    const snapshotDurationMs = selectedSnapshotLockMs();
+    setLockedSignal(null);
+    return {
+      ...candidate,
+      action: "WAIT",
+      tradeReady: false,
+      entry: null,
+      target: null,
+      status: "unavailable",
+      stateLabel: "production unavailable",
+      thesis: setup.frameworkGate.summary,
+      snapshotAtMs: now,
+      reassessAtMs: now + snapshotDurationMs,
+      snapshotDurationMs,
+      snapshotInterval: selectedSnapshotInterval(),
+      snapshotTime: formatClock(now),
+      reassessTime: formatClock(now + snapshotDurationMs)
+    };
+  }
   if (candidate.action === "GRID") {
     setLockedSignal(null);
     return {
@@ -1547,7 +1567,7 @@ function currentFrameworkGate(direction, confidence, liveChecks) {
     missing,
     summary: missing.length
       ? `NO TRADE: waiting for ${missing.slice(0, 4).join(", ")}${missing.length > 4 ? ", ..." : ""}.`
-      : `${side} framework sequence confirmed: sweep, rejection, CHoCH/BOS, retest, grid, risk.`
+      : `${side} framework sequence confirmed: sweep, rejection, CHoCH/BOS, retest, grid, decision evidence.`
   };
 }
 
@@ -3702,6 +3722,24 @@ function applyMonatiseFramework() {
 
 function applyProductionDecision(setup) {
   const analysis = state.productionAnalysis;
+  const productionRequired = ["BTC", "ETH", "SOL"].includes(String(setup.asset || "").toUpperCase());
+  if (!analysis && productionRequired) {
+    const summary = `Production analysis unavailable for ${setup.asset}; no trade signal can be activated.`;
+    return {
+      ...setup,
+      direction: "WAIT",
+      confidence: 0,
+      contextConfidence: 0,
+      contextSignalReady: false,
+      frameworkReady: false,
+      tradeReady: false,
+      productionClassification: "unavailable",
+      productionUnavailable: true,
+      gridDirection: `Production confirmation unavailable for ${setup.asset}`,
+      gridPlan: summary,
+      frameworkGate: { side: "WAIT", ready: false, missing: ["production analysis"], summary }
+    };
+  }
   if (!analysis) return setup;
   const classification = String(analysis.classification || "no_trade").toLowerCase();
   const direction = String(analysis.direction || "none").toLowerCase();
@@ -3784,6 +3822,17 @@ function applyProductionDecision(setup) {
 function renderAuthoritativeFramework(setup) {
   if (!setup?.productionClassification) return;
   const ready = Boolean(setup.tradeReady);
+  if (setup.productionClassification === "unavailable") {
+    els.setupDirection.textContent = "NO TRADE";
+    els.setupDirection.className = "";
+    els.frameworkBias.textContent = "Production Unavailable · No Trade";
+    els.setupReason.textContent = setup.frameworkGate.summary;
+    els.gridDirection.textContent = setup.gridDirection;
+    els.gridPlan.textContent = setup.gridPlan;
+    els.hedgeDirection.textContent = "TP pending";
+    els.hedgePlan.textContent = "No target until production confirmation returns.";
+    return;
+  }
   if (setup.productionClassification === "grid") {
     els.setupDirection.textContent = ready ? "GRID" : "GRID PENDING";
     els.setupDirection.className = "";
