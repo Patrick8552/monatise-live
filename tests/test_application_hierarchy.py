@@ -118,6 +118,35 @@ def test_structural_risk_builder_uses_structure_volatility_and_estimated_costs()
     assert proposal.estimates_observed is False
 
 
+@pytest.mark.parametrize(("direction", "expected_swing"), (("long", 112.0), ("short", 132.0)))
+def test_hierarchy_stop_invalidation_uses_15m_swing(direction, expected_swing):
+    candles = tuple(Candle((NOW - timedelta(minutes=20 - index)).isoformat(), 119, 122, 117, 120, 1000) for index in range(20))
+    market = SimpleNamespace(price=120.0, candles=candles)
+    demand = SimpleNamespace(lower_bound=119.0, upper_bound=121.0)
+    supply = SimpleNamespace(lower_bound=119.0, upper_bound=121.0)
+
+    def layer(*, swing_low, swing_high):
+        return LayerAnalysis(
+            market=market,
+            liquidity=SimpleNamespace(nearest_buy_side=SimpleNamespace(price=145.0), nearest_sell_side=SimpleNamespace(price=95.0)),
+            sweep=SimpleNamespace(),
+            zones=SimpleNamespace(active_demand=demand, nearest_demand=demand, active_supply=supply, nearest_supply=supply),
+            reclaim=SimpleNamespace(),
+            structure=SimpleNamespace(swing_lows=((1, swing_low),), swing_highs=((1, swing_high),)),
+        )
+
+    trigger_layer = layer(swing_low=115.0, swing_high=130.0)
+    entry_layer = layer(swing_low=118.0, swing_high=122.0)
+    setup_15m_layer = layer(swing_low=112.0, swing_high=132.0)
+    trigger = context("5m", TriggerState.TRIGGER_CONFIRMED, direction=direction)
+    evaluator = HierarchyLayerEvaluator(risk_builder=StructuralRiskInputBuilder(atr_multiplier=0.1))
+
+    proposal = evaluator._risk(trigger_layer, trigger, NOW, entry_layer=entry_layer, stop_layer=setup_15m_layer)
+
+    assert proposal.structural_invalidation == expected_swing
+    assert proposal.final_stop < expected_swing if direction == "long" else proposal.final_stop > expected_swing
+
+
 def test_repository_is_append_only_and_trigger_claim_is_idempotent():
     async def scenario():
         store = MemoryStore()
@@ -448,6 +477,7 @@ def test_confirmed_hierarchy_produces_valid_shadow_bundle_and_risk_bridge():
     assert result.bundle is not None
     assert result.validation is not None and result.validation.eligible_for_shadow_decision is True
     assert result.bundle.risk_inputs.reference_entry == 120
+    assert result.bundle.risk_inputs.structural_invalidation == 115
     assert result.execution_enabled is False
     message = ShadowHierarchyService._format_notification(result, publication_id="publication-123456789")
     assert "Expires 2026-08-02 12:15:20 UTC" in message

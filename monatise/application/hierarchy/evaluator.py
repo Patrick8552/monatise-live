@@ -181,7 +181,12 @@ class HierarchyLayerEvaluator:
                         if entry_layer is None:
                             reasons.append("1m_closed_candle_unavailable")
                             raise ValueError("1m entry refinement is unavailable")
-                        risk = self._risk(layer, state.trigger_context, evaluated_at, entry_layer=entry_layer)
+                        setup_snapshot = state.snapshots.get("15m") if state.snapshots is not None else None
+                        stop_layer = self._analyse_structure(setup_snapshot, state.regime_assessment) if setup_snapshot is not None else None
+                        if stop_layer is None:
+                            reasons.append("15m_stop_structure_unavailable")
+                            raise ValueError("15m stop structure is unavailable")
+                        risk = self._risk(layer, state.trigger_context, evaluated_at, entry_layer=entry_layer, stop_layer=stop_layer)
                         bundle = EvidenceBundle.create(
                             symbol=normalized, created_at=evaluated_at, macro_context=state.macro_context,
                             regime_4h=state.regime_context, strategy_1h=state.strategy_context,
@@ -287,21 +292,22 @@ class HierarchyLayerEvaluator:
             return TriggerState.TRIGGER_CONFIRMED
         return TriggerState.TRIGGER_REJECTED
 
-    def _risk(self, layer: LayerAnalysis, trigger: EvidenceContext, now: datetime, *, entry_layer: LayerAnalysis | None = None):
+    def _risk(self, layer: LayerAnalysis, trigger: EvidenceContext, now: datetime, *, entry_layer: LayerAnalysis | None = None, stop_layer: LayerAnalysis | None = None):
         direction = trigger.direction
         if direction not in {"long", "short"}:
             raise ValueError("grid risk proposal requires a dedicated grid builder")
         refinement = entry_layer or layer
+        stop_structure = stop_layer or layer
         price = refinement.market.price
         if price is None:
             raise ValueError("current price is unavailable")
         if direction == "long":
             zone = refinement.zones.active_demand or refinement.zones.nearest_demand
-            swing = refinement.structure.swing_lows[-1][1] if refinement.structure.swing_lows else min(item.low for item in refinement.market.candles[-10:])
+            swing = stop_structure.structure.swing_lows[-1][1] if stop_structure.structure.swing_lows else min(item.low for item in stop_structure.market.candles[-10:])
             target = layer.liquidity.nearest_buy_side.price if layer.liquidity.nearest_buy_side else max(item.high for item in layer.market.candles[-20:])
         else:
             zone = refinement.zones.active_supply or refinement.zones.nearest_supply
-            swing = refinement.structure.swing_highs[-1][1] if refinement.structure.swing_highs else max(item.high for item in refinement.market.candles[-10:])
+            swing = stop_structure.structure.swing_highs[-1][1] if stop_structure.structure.swing_highs else max(item.high for item in stop_structure.market.candles[-10:])
             target = layer.liquidity.nearest_sell_side.price if layer.liquidity.nearest_sell_side else min(item.low for item in layer.market.candles[-20:])
         low, high = (zone.lower_bound, zone.upper_bound) if zone is not None else (price * 0.999, price * 1.001)
         atr = self._atr(refinement.market.candles)
