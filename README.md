@@ -76,6 +76,11 @@ API for the best trade-signal quality.
 
 The website and Hyperliquid-based market-analysis GET routes are open without login. Private account status, TradingView signal history, credentials, settings, start/stop controls, and commercial CoinGlass/Quiver connectors require a valid login. OpenClaw uses the separate bearer-protected `GET /api/openclaw/status` route, which is structurally read-only and cannot place orders, change configuration, or deploy. Configure its secret only in Render and OpenClaw:
 
+The production analysis graph is decision-only. It does not instantiate the
+Risk Validation, Capital Allocation, Execution Policy, or Governance engines.
+Displayed entries, invalidations, targets, and grids are analytical projections,
+not risk approval or execution instructions.
+
 ```bash
 MONATISE_OPENCLAW_TOKEN=use-a-long-random-secret
 ```
