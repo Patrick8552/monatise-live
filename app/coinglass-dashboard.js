@@ -20,6 +20,7 @@ const DEFAULT_VIEW_INTERVAL = "1h";
 const MIN_CONTEXT_SIGNAL_CONFIDENCE = 50;
 const MIN_ENTRY_NOTIFICATION_CONFIDENCE = 65;
 const MIN_ENTRY_NOTIFICATION_CHECKS = 6;
+const SCORE_TRADE_THRESHOLD = 7;
 const ASSET_DEFINITIONS = [
   "BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "ADA", "AVAX", "LINK", "TRX", "TON", "DOT", "BCH", "LTC", "UNI", "NEAR",
   "APT", "ICP", "ETC", "ATOM", "FIL", "ARB", "OP", "SUI", "SEI", "INJ", "TIA", "WLD", "AAVE", "MKR", "RUNE", "GRT",
@@ -3447,22 +3448,31 @@ function applyMonatiseFramework() {
   const direction = score >= 2 ? "BUY SETUP" : score <= -2 ? "SELL SETUP" : "WAIT";
   const frameworkGate = currentFrameworkGate(direction, contextConfidence, liveChecks);
   const contextSignalReady = direction !== "WAIT" && contextConfidence >= MIN_CONTEXT_SIGNAL_CONFIDENCE;
+  const scoreTradeReady = direction !== "WAIT" && Math.abs(score) >= SCORE_TRADE_THRESHOLD;
+  const tradeReady = frameworkGate.ready || scoreTradeReady;
+  const effectiveGate = scoreTradeReady && !frameworkGate.ready
+    ? {
+        ...frameworkGate,
+        ready: true,
+        summary: `${direction.startsWith("BUY") ? "+" : "-"}${Math.abs(score)} score threshold reached; display trade setup approved.`
+      }
+    : frameworkGate;
   const confidence = contextSignalReady ? contextConfidence : 0;
 
   els.frameworkSource.textContent = usesCryptoMultiFrame(asset)
     ? `${asset.coin} selected · production multi-timeframe context + CoinGlass derivatives`
     : `${asset.coin} selected · native indicator stack + CoinGlass market context`;
-  const displayedDirection = frameworkGate.ready
+  const displayedDirection = tradeReady
     ? direction.replace(" SETUP", "")
     : contextSignalReady
       ? `NO TRADE · ${direction.startsWith("BUY") ? "BUY" : "SELL"} BIAS`
       : displayFrameworkDirection("WAIT");
   els.setupDirection.textContent = displayedDirection;
-  els.setupDirection.className = frameworkGate.ready && direction.includes("BUY") ? "positive" : frameworkGate.ready && direction.includes("SELL") ? "negative" : "";
+  els.setupDirection.className = tradeReady && direction.includes("BUY") ? "positive" : tradeReady && direction.includes("SELL") ? "negative" : "";
   els.setupConfidence.textContent = contextSignalReady ? `context strength ${confidence}%` : `context strength < ${MIN_CONTEXT_SIGNAL_CONFIDENCE}%`;
   els.frameworkChecks.textContent = `${liveChecks} / ${checks.length}`;
-  els.frameworkBias.textContent = `${frameworkGate.ready ? "Entry Ready" : contextSignalReady ? "Context Signal" : "No Trade"} · Context strength ${contextConfidence}% · Score ${score >= 0 ? "+" : ""}${score} from ${checks.length} checks`;
-  els.setupReason.textContent = `${contextSignalReady && !frameworkGate.ready ? `Context signal active from ${MIN_CONTEXT_SIGNAL_CONFIDENCE}-100% strength. ` : ""}${frameworkGate.summary} ${checks.map((check) => `${check.name}: ${check.detail}`).join(" · ")}`;
+  els.frameworkBias.textContent = `${tradeReady ? "Entry Ready" : contextSignalReady ? "Context Signal" : "No Trade"} · Context strength ${contextConfidence}% · Score ${score >= 0 ? "+" : ""}${score} from ${checks.length} checks`;
+  els.setupReason.textContent = `${contextSignalReady && !tradeReady ? `Context signal active from ${MIN_CONTEXT_SIGNAL_CONFIDENCE}-100% strength. ` : ""}${effectiveGate.summary} ${checks.map((check) => `${check.name}: ${check.detail}`).join(" · ")}`;
 
   let gridDirection = `Neutral grid ${asset.coin}`;
   let gridPlan = "Use small two-sided grid or wait until funding/OI/liquidation checks align.";
@@ -3471,16 +3481,16 @@ function applyMonatiseFramework() {
 
   if (contextSignalReady && direction === "BUY SETUP") {
     gridDirection = `Buy grid ${asset.coin}`;
-    gridPlan = frameworkGate.ready ? gridPlanForResearch("buy", m.scaleAction, m.vwapSignal) : `Context signal active at ${contextConfidence}%. ${frameworkGate.summary}`;
+    gridPlan = tradeReady ? gridPlanForResearch("buy", m.scaleAction, m.vwapSignal) : `Context signal active at ${contextConfidence}%. ${effectiveGate.summary}`;
     takeProfitDirection = `TP above ${asset.coin}`;
     takeProfitPlan = "Use the generated snapshot target as the first take-profit area. Scale out into the sell grid and reassess after target, invalidation, or snapshot expiry.";
   } else if (contextSignalReady && direction === "SELL SETUP") {
     gridDirection = `Sell grid ${asset.coin}`;
-    gridPlan = frameworkGate.ready ? gridPlanForResearch("sell", m.scaleAction, m.vwapSignal) : `Context signal active at ${contextConfidence}%. ${frameworkGate.summary}`;
+    gridPlan = tradeReady ? gridPlanForResearch("sell", m.scaleAction, m.vwapSignal) : `Context signal active at ${contextConfidence}%. ${effectiveGate.summary}`;
     takeProfitDirection = `TP below ${asset.coin}`;
     takeProfitPlan = "Use the generated snapshot target as the first take-profit area. Cover into the lower buy-back zone and reassess after target, invalidation, or snapshot expiry.";
   } else {
-    gridPlan = frameworkGate.summary;
+    gridPlan = effectiveGate.summary;
   }
 
   els.gridDirection.textContent = gridDirection;
@@ -3494,10 +3504,11 @@ function applyMonatiseFramework() {
     direction,
     confidence,
     contextConfidence,
-    frameworkGate,
+    frameworkGate: effectiveGate,
     contextSignalReady,
-    frameworkReady: frameworkGate.ready,
-    tradeReady: frameworkGate.ready,
+    frameworkReady: tradeReady,
+    tradeReady,
+    scoreTradeReady,
     liveChecks,
     score,
     gridDirection,
@@ -3526,6 +3537,18 @@ function applyProductionDecision(setup) {
     ? `Production ${classification.replace("_", " ")}: ${reasons.slice(0, 3).join("; ")}`
     : `Production ${classification.replace("_", " ")} at ${analysis.completed_stages || 0}/19 stages.`;
   if (classification === "no_trade") {
+    if (setup.scoreTradeReady) {
+      return {
+        ...setup,
+        productionClassification: classification,
+        productionSummary: summary,
+        frameworkGate: {
+          ...setup.frameworkGate,
+          ready: true,
+          summary: `${setup.frameworkGate.summary} Production currently reports no trade; execution remains disabled.`
+        }
+      };
+    }
     return {
       ...setup,
       direction: "WAIT",
