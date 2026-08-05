@@ -252,6 +252,7 @@ def test_telegram_no_trade_message_is_explicit_and_explained():
     message = TelegramNotifier.format(result)
 
     assert "Monatise NO_TRADE: BTC" in message
+    assert "stages 11/19" in message
     assert "insufficient directional conviction" in message
     assert f"Run: {run.run_id}" in message
 

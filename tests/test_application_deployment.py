@@ -199,7 +199,7 @@ def test_runtime_notifies_every_analysis_result():
                 status=SimpleNamespace(value="completed" if self.completed else "blocked"),
                 blocked_by=None if self.completed else "risk_validation",
                 context=SimpleNamespace(outputs=outputs),
-                statistics=SimpleNamespace(completed_stages=20 if self.completed else 12),
+                statistics=SimpleNamespace(completed_stages=19 if self.completed else 12),
             )
 
     class Telegram:
@@ -229,7 +229,7 @@ class _ReadyRuntime:
             "status": "ready",
             "mode": "paper",
             "execution_enabled": False,
-            "dependencies": {"engine_registry": {"status": "ok", "count": 20, "order": list(CANONICAL_ENGINE_ORDER)}},
+            "dependencies": {"engine_registry": {"status": "ok", "count": 19, "order": list(CANONICAL_ENGINE_ORDER)}},
         }
 
 

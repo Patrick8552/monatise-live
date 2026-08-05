@@ -10,6 +10,7 @@ from typing import Any, Awaitable, Callable, Protocol
 
 from monatise.application.models import AnalysisRun, PipelineResult
 from monatise.application.orchestrator import PipelineOrchestrator
+from monatise.application.registry import CANONICAL_ENGINE_ORDER
 from monatise.infrastructure.state_manager import StateKey
 from monatise.infrastructure.task_scheduler import JobDefinition, RetryPolicy, ScheduleType
 
@@ -66,7 +67,7 @@ class TelegramNotifier:
             reasons = tuple(getattr(decision, "reasons", ()) or ())[:3]
             lines = [
                 f"Monatise NO_TRADE: {result.symbol}",
-                f"Status: {result.status.value} | stages {result.statistics.completed_stages}/20",
+                f"Status: {result.status.value} | stages {result.statistics.completed_stages}/{len(CANONICAL_ENGINE_ORDER)}",
             ]
             if reasons:
                 lines.append("Why: " + "; ".join(str(reason) for reason in reasons))
@@ -77,7 +78,7 @@ class TelegramNotifier:
             suffix = f" | blocked by {result.blocked_by}" if result.blocked_by else ""
             return (
                 f"Monatise analysis: {result.symbol} | {result.status.value} | "
-                f"stages {result.statistics.completed_stages}/20{suffix} | run {result.run_id}"
+                f"stages {result.statistics.completed_stages}/{len(CANONICAL_ENGINE_ORDER)}{suffix} | run {result.run_id}"
             )
 
         direction = _enum_value(getattr(decision, "direction", "none")).upper()
