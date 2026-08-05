@@ -337,7 +337,7 @@ def test_qualified_grid_score_takes_priority_over_directional_conflict() -> None
     )
     range_regime = RegimeAssessment(
         symbol=request.market.symbol,
-        state=RegimeState.RANGE,
+        state=RegimeState.UNSTABLE,
         confidence=RegimeConfidence.HIGH,
         score=0.85,
         reasons=(),
@@ -345,7 +345,7 @@ def test_qualified_grid_score_takes_priority_over_directional_conflict() -> None
     neutral_structure = MarketStructureAssessment(
         symbol=request.market.symbol,
         bias=StructureBias.NEUTRAL,
-        state=StructureState.RANGE,
+        state=StructureState.UNSTABLE,
         events=(),
         latest_event=None,
         swing_highs=(),
@@ -380,6 +380,8 @@ def test_qualified_grid_score_takes_priority_over_directional_conflict() -> None
     assert result.direction is DecisionDirection.TWO_SIDED
     assert result.state is DecisionState.APPROVED_FOR_RISK_REVIEW
     assert "order flow unavailable" not in result.blockers
+    assert "regime is unstable" not in result.blockers
+    assert "market structure is unstable" not in result.blockers
 
 
 def test_decision_engine_remains_non_executable() -> None:

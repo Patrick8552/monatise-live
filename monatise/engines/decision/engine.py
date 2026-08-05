@@ -86,7 +86,12 @@ class DecisionEngine:
             blockers=blockers,
         )
 
-        grid_blockers = [blocker for blocker in blockers if blocker != "order flow unavailable"]
+        grid_context_warnings = {
+            "order flow unavailable",
+            "regime is unstable",
+            "market structure is unstable",
+        }
+        grid_blockers = [blocker for blocker in blockers if blocker not in grid_context_warnings]
         if (
             request.minimum_signal_score > 0
             and not grid_blockers
