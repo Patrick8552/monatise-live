@@ -77,6 +77,28 @@ test("production grid analysis renders projected decision-ready levels without a
   await expect(framework).not.toContainText("BUY\n");
 });
 
+test("production outage fails supported assets closed", async ({ page }) => {
+  await page.route("**/api/public/analysis?*", (route) => route.fulfill({
+    status: 503,
+    contentType: "application/json",
+    body: JSON.stringify({ ok: false, error: "production analysis unavailable" })
+  }));
+
+  await page.goto("/coinglass-dashboard.html");
+
+  const production = page.locator("#hyperList");
+  await expect(production).toContainText("production analysis unavailable", { ignoreCase: true });
+
+  const generated = page.locator("article").filter({ has: page.getByRole("heading", { name: "Monatise Generated Signals" }) });
+  await expect(generated).toContainText("WAIT · NO TRADE");
+  await expect(generated).toContainText("production unavailable", { ignoreCase: true });
+  await expect(generated).not.toContainText(/(BUY|SELL) · ACTIVE/);
+
+  const framework = page.locator("article").filter({ has: page.getByRole("heading", { name: "Monatise Framework" }) });
+  await expect(framework).toContainText("NO TRADE");
+  await expect(framework).toContainText("Production Unavailable");
+});
+
 test("rapid asset switching never renders analysis from the previous asset", async ({ page }) => {
   await page.route("**/api/public/analysis?*", async (route) => {
     const symbol = new URL(route.request().url()).searchParams.get("symbol");
