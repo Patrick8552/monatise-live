@@ -92,8 +92,13 @@ class TelegramNotifier:
         source = getattr(quality, "source", "CoinGlass")
         reasons = tuple(getattr(decision, "reasons", ()) or ())[:3]
 
+        heading = (
+            f"Monatise GRID: {result.symbol} ({direction})"
+            if classification == "GRID"
+            else f"Monatise signal: {result.symbol} {direction} ({classification})"
+        )
         lines = [
-            f"Monatise signal: {result.symbol} {direction} ({classification})",
+            heading,
             f"Confidence: {conviction * 100:.0f}%",
             f"Entry: {_price(entry)} | Stop: {_price(stop)} | Target: {_price(target)}",
         ]

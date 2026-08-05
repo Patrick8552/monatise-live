@@ -256,6 +256,37 @@ def test_telegram_no_trade_message_is_explicit_and_explained():
     assert f"Run: {run.run_id}" in message
 
 
+def test_telegram_grid_analysis_is_included_and_labeled():
+    run = AnalysisRun("BTC", {})
+    now = run.requested_at
+    outputs = {
+        "decision": SimpleNamespace(
+            direction=SimpleNamespace(value="two_sided"),
+            classification=SimpleNamespace(value="grid"),
+            conviction=0.72,
+            reasons=("balanced two-sided liquidity",),
+        ),
+        "risk_validation": SimpleNamespace(
+            validated_entry=65000.0,
+            validated_invalidation=63700.0,
+            validated_target=67600.0,
+            reward_risk=2.0,
+            signal_expires_at=now,
+        ),
+        "market_data": SimpleNamespace(quality=SimpleNamespace(source="CoinGlass futures price history")),
+    }
+    result = PipelineResult(
+        run.run_id, run.correlation_id, "BTC", PipelineStage.COMPLETED,
+        PipelineContext(run, outputs), PipelineStatistics(1, {}, {}, 20), None, None, now, now,
+    )
+
+    message = TelegramNotifier.format(result)
+
+    assert "Monatise GRID: BTC (TWO_SIDED)" in message
+    assert "Entry: 65,000" in message
+    assert "CoinGlass futures price history" in message
+
+
 def test_notification_failure_does_not_corrupt_completed_pipeline_result():
     run = AnalysisRun("BTC", {})
     now = run.requested_at
