@@ -326,6 +326,9 @@ def test_telegram_grid_renders_each_confirmation_status(status, expected):
     assert f"ENTRY CONFIRMATION {status.upper()}" in message
     assert expected in message
     assert "executed" not in message.lower()
+    if status == "invalidated":
+        assert "GRID ACTIVE ENTRY BLOCKED" in message
+        assert "GRID DECISION READY" not in message
 
 
 def test_telegram_directional_setup_ignores_legacy_risk_rejection():
