@@ -23,6 +23,7 @@ from monatise.engines.supply_demand.models import ZoneRequest
 
 
 SUPPORTED_PRODUCTION_SYMBOLS = frozenset({"BTC", "ETH", "SOL"})
+MINIMUM_MOVING_GRID_SPACING = {"BTC": 500.0}
 SUPPORTED_PRODUCTION_INTERVALS = frozenset({"1m", "3m", "5m", "15m", "30m", "1h", "4h", "6h", "8h", "12h", "1d", "1w"})
 INTERVAL_SECONDS = {
     "1m": 60, "3m": 180, "5m": 300, "15m": 900, "30m": 1_800,
@@ -64,29 +65,40 @@ def build_moving_grid_plan(market: Any, *, levels_per_side: int = 3, lookback_ca
     approach an actual grid level and therefore supplies meaningful location
     context to the pre-decision price-action stage.
     """
+    symbol = str(getattr(market, "symbol", "")).strip().upper()
+    minimum_spacing = MINIMUM_MOVING_GRID_SPACING.get(symbol, 0.0)
     candles = tuple(getattr(market, "candles", ()) or ())[-lookback_candles:]
     if len(candles) < 5:
-        return build_grid_plan(getattr(market, "price", None), levels_per_side=levels_per_side)
-    lower = min(float(candle.low) for candle in candles)
-    upper = max(float(candle.high) for candle in candles)
+        fallback = build_grid_plan(getattr(market, "price", None), levels_per_side=levels_per_side)
+        if fallback is None or fallback["spacing"] >= minimum_spacing:
+            return fallback
+        center = fallback["center"]
+        lower, upper = center - minimum_spacing * levels_per_side, center + minimum_spacing * levels_per_side
+    else:
+        lower = min(float(candle.low) for candle in candles)
+        upper = max(float(candle.high) for candle in candles)
     if lower <= 0 or upper <= lower:
         return build_grid_plan(getattr(market, "price", None), levels_per_side=levels_per_side)
     center = (lower + upper) / 2
-    spacing = (upper - lower) / (levels_per_side * 2)
+    natural_spacing = (upper - lower) / (levels_per_side * 2)
+    spacing = max(natural_spacing, minimum_spacing)
     buy_levels = [center - spacing * index for index in range(1, levels_per_side + 1)]
     sell_levels = [center + spacing * index for index in range(1, levels_per_side + 1)]
+    lower_boundary, upper_boundary = buy_levels[-1], sell_levels[-1]
+    floor_applied = spacing > natural_spacing
     return {
         "center": round(center, 8),
         "buy_levels": [round(value, 8) for value in buy_levels],
         "sell_levels": [round(value, 8) for value in sell_levels],
-        "lower_boundary": round(lower, 8),
-        "upper_boundary": round(upper, 8),
-        "lower_invalidation": round(lower - spacing, 8),
-        "upper_invalidation": round(upper + spacing, 8),
+        "lower_boundary": round(lower_boundary, 8),
+        "upper_boundary": round(upper_boundary, 8),
+        "lower_invalidation": round(lower_boundary - spacing, 8),
+        "upper_invalidation": round(upper_boundary + spacing, 8),
         "spacing": round(spacing, 8),
         "levels_per_side": levels_per_side,
-        "basis": "rolling_range",
+        "basis": "rolling_range_minimum_spacing" if floor_applied else "rolling_range",
         "lookback_candles": len(candles),
+        "minimum_spacing": minimum_spacing,
     }
 
 

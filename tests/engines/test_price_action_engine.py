@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -242,7 +243,7 @@ def test_sanitized_output_exposes_contextual_confirmation_fields():
 
 def test_moving_grid_uses_rolling_range_instead_of_latest_price():
     candles = [Candle(str(i), 100, 110, 90, 105, 10) for i in range(20)]
-    snapshot = market(candles)
+    snapshot = replace(market(candles), symbol="ETH")
     grid = build_moving_grid_plan(snapshot)
     assert grid["basis"] == "rolling_range"
     assert grid["center"] == 100
@@ -251,13 +252,25 @@ def test_moving_grid_uses_rolling_range_instead_of_latest_price():
     assert grid["upper_boundary"] == 110
 
 
+def test_btc_moving_grid_enforces_500_dollar_minimum_spacing():
+    candles = [Candle(str(i), 64_600, 64_971, 64_473, 64_722, 10) for i in range(20)]
+    grid = build_moving_grid_plan(market(candles))
+    assert grid["spacing"] == 500
+    assert grid["center"] == 64_722
+    assert grid["buy_levels"] == [64_222, 63_722, 63_222]
+    assert grid["sell_levels"] == [65_222, 65_722, 66_222]
+    assert grid["lower_invalidation"] == 62_722
+    assert grid["upper_invalidation"] == 66_722
+    assert grid["basis"] == "rolling_range_minimum_spacing"
+
+
 def test_production_price_action_receives_nearest_moving_grid_side_and_zone():
-    candles = [Candle(str(i), 100, 110, 90, 105, 10) for i in range(20)]
+    candles = [Candle(str(i), 64_600, 64_971, 64_473, 64_722, 10) for i in range(20)]
     snapshot = market(candles)
     run = build_production_analysis_run("BTC", interval="15m")
     request_builder = run.stage_inputs["price_action"]
     context = SimpleNamespace(outputs={"market_data": snapshot})
     built = request_builder(context)
-    assert built.expected_direction is PriceActionDirection.BEARISH
-    assert built.entry_price == pytest.approx(103.33333333)
+    assert built.expected_direction is PriceActionDirection.BULLISH
+    assert built.entry_price == pytest.approx(64_222)
     assert built.entry_zone_low < built.entry_price < built.entry_zone_high
