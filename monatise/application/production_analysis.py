@@ -15,6 +15,7 @@ from monatise.engines.market_data.models import MarketDataRequest
 from monatise.engines.market_structure.models import MarketStructureRequest
 from monatise.engines.order_flow.models import FlowInput, OrderFlowRequest
 from monatise.engines.portfolio_intelligence.models import PortfolioIntelligenceRequest
+from monatise.engines.price_action.models import PriceActionRequest
 from monatise.engines.reclaim.models import ReclaimRequest
 from monatise.engines.regime.models import RegimeRequest
 from monatise.engines.rsi.models import RSIRequest
@@ -111,6 +112,7 @@ def build_production_analysis_run(symbol: str, *, interval: str = "1h", correlat
         "market_structure": lambda c: MarketStructureRequest(output(c, "market_data"), output(c, "regime"), output(c, "liquidity"), output(c, "liquidity_sweep"), output(c, "reclaim"), output(c, "supply_demand"), swing_window=1, displacement_body_ratio=0.5),
         "fibonacci_liquidity": lambda c: FibonacciRequest(output(c, "market_data"), output(c, "market_structure"), output(c, "liquidity"), output(c, "supply_demand"), output(c, "reclaim"), minimum_structure_confidence=0),
         "order_flow": flow,
+        "price_action": lambda c: PriceActionRequest(output(c, "market_data")),
         "decision": lambda c: DecisionRequest(output(c, "market_data"), None, output(c, "regime"), output(c, "liquidity"), output(c, "liquidity_sweep"), output(c, "supply_demand"), output(c, "reclaim"), output(c, "market_structure"), output(c, "fibonacci_liquidity"), output(c, "order_flow"), minimum_conviction=0.55, high_conviction=0.75, maximum_conflict_ratio=0.45, grid_regime_bonus=0.12, trend_regime_bonus=0.12, require_structure_for_trend=True, require_two_sided_liquidity_for_grid=True, minimum_signal_score=7),
         "rsi": lambda c: RSIRequest(output(c, "market_data"), output(c, "market_structure"), output(c, "regime")),
         "portfolio_intelligence": PortfolioIntelligenceRequest(100_000, ()),
@@ -123,6 +125,7 @@ def build_production_analysis_run(symbol: str, *, interval: str = "1h", correlat
 def sanitized_result(result: Any) -> dict[str, Any]:
     decision = result.context.outputs.get("decision")
     market = result.context.outputs.get("market_data")
+    price_action = result.context.outputs.get("price_action")
     classification = getattr(getattr(decision, "classification", None), "value", None)
     direction = getattr(getattr(decision, "direction", None), "value", None)
     metadata = getattr(decision, "metadata", {}) or {}
@@ -146,6 +149,17 @@ def sanitized_result(result: Any) -> dict[str, Any]:
         "target": directional_plan["target"] if directional_plan else None,
         "reward_risk": None,
         "grid_plan": grid_plan,
+        "entry_confirmation_required": bool(getattr(price_action, "entry_confirmation_required", True)),
+        "price_action_confirmed": bool(getattr(price_action, "has_confirmation", False)),
+        "price_action_signals": [
+            {
+                "family": signal.family.value,
+                "pattern": signal.pattern,
+                "direction": signal.direction.value,
+                "confidence": signal.confidence,
+            }
+            for signal in tuple(getattr(price_action, "confirmed_signals", ()) or ())
+        ],
         "risk_decision": None,
         "risk_issues": [],
         "risk_reasons": [],

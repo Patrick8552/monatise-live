@@ -104,7 +104,7 @@ class TelegramNotifier:
         reasons = tuple(getattr(decision, "reasons", ()) or ())[:3]
 
         heading = (
-            f"Monatise GRID DECISION READY: {result.symbol} ({direction})"
+            f"Monatise GRID DECISION READY — ENTRY CONFIRMATION PENDING: {result.symbol} ({direction})"
             if classification == "GRID"
             else f"Monatise directional setup: {result.symbol} {direction} ({classification})"
         )
@@ -115,6 +115,7 @@ class TelegramNotifier:
             f"Confidence: {conviction * 100:.0f}%",
         ]
         if classification == "GRID":
+            price_action = outputs.get("price_action")
             grid = build_grid_plan(entry or getattr(market, "price", None))
             if grid is None:
                 lines.append("Grid levels: unavailable")
@@ -127,6 +128,12 @@ class TelegramNotifier:
                     f"Invalidation: below {_price(grid['lower_invalidation'])} or above {_price(grid['upper_invalidation'])}",
                     f"Spacing: {_price(grid['spacing'])} | {grid['levels_per_side']} levels per side",
                 ])
+            confirmed = tuple(getattr(price_action, "confirmed_signals", ()) or ())
+            if confirmed:
+                patterns = " | ".join(f"{signal.family.value}:{signal.pattern}" for signal in confirmed[:3])
+                lines.append(f"Price action: detected {patterns}; confirm again at the selected grid level")
+            else:
+                lines.append("Entry: WAIT — price-action confirmation required at the selected grid level")
         else:
             lines.append(f"Projected entry: {_price(entry)} | Invalidation: {_price(stop)} | Target: {_price(target)}")
         lines.append(f"Data: {source} | Status: {result.status.value}")
