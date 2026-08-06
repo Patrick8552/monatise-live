@@ -79,10 +79,17 @@ class BackpackAdapter(MarketDataPort, ExecutionPort):
 
     def latest_mark_price(self, symbol: str) -> float:
         """Return the exchange mark price without silently substituting a last price."""
-        value = self.ticker(symbol).get("markPrice")
-        if value in (None, ""):
-            raise RuntimeError("Backpack ticker did not include a mark price")
-        return float(value)
+        exchange_symbol = self.exchange_symbol(symbol)
+        payload = self._get_json("/api/v1/markPrices")
+        if not isinstance(payload, list):
+            raise RuntimeError("Backpack mark-prices response was not a list")
+        for item in payload:
+            if isinstance(item, dict) and item.get("symbol") == exchange_symbol:
+                value = item.get("markPrice")
+                if value not in (None, ""):
+                    return float(value)
+                break
+        raise RuntimeError(f"Backpack did not include a mark price for {exchange_symbol}")
 
     def candles(self, symbol: str, limit: int, interval: str = "1h") -> list[Candle]:
         if interval not in SUPPORTED_INTERVALS:

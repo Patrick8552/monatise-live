@@ -44,6 +44,22 @@ def test_backpack_candles_parse_public_klines(monkeypatch) -> None:
     assert candles[0].volume == 12.5
 
 
+def test_backpack_mark_price_uses_dedicated_public_feed(monkeypatch) -> None:
+    adapter = BackpackAdapter(RuntimeConfig())
+
+    def fake_get_json(path, params=None):  # noqa: ANN001
+        assert path == "/api/v1/markPrices"
+        assert params is None
+        return [
+            {"symbol": "ETH_USDC_PERP", "markPrice": "3500.1"},
+            {"symbol": "BTC_USDC_PERP", "markPrice": "64321.25"},
+        ]
+
+    monkeypatch.setattr(adapter, "_get_json", fake_get_json)
+
+    assert adapter.latest_mark_price("BTC") == 64321.25
+
+
 def test_backpack_signing_payload_is_stable() -> None:
     payload = backpack_signing_payload(
         instruction="orderExecute",
