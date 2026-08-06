@@ -81,6 +81,18 @@ def test_invalidated_expected_side_signal_is_invalidated():
     assert result.status is PriceActionConfirmationStatus.INVALIDATED
 
 
+def test_invalidated_pattern_outside_active_grid_level_does_not_invalidate_entry():
+    result = request(signal(PriceActionDirection.BULLISH, invalidated=True, reference=105))
+    assert result.status is PriceActionConfirmationStatus.PENDING
+    assert result.invalidated_signals
+
+
+def test_stale_invalidated_pattern_does_not_invalidate_current_entry():
+    result = request(signal(PriceActionDirection.BULLISH, invalidated=True, index=0), maximum_signal_age_candles=2)
+    assert result.status is PriceActionConfirmationStatus.PENDING
+    assert result.expired_signals
+
+
 def test_missing_entry_context_detects_but_stays_pending():
     engine = StaticEngine((signal(PriceActionDirection.BULLISH),))
     result = engine.assess(PriceActionRequest(market(flat_candles()), expected_direction=PriceActionDirection.BULLISH))
