@@ -149,16 +149,29 @@ def sanitized_result(result: Any) -> dict[str, Any]:
         "target": directional_plan["target"] if directional_plan else None,
         "reward_risk": None,
         "grid_plan": grid_plan,
+        "entry_confirmation_status": getattr(getattr(price_action, "status", None), "value", "pending"),
         "entry_confirmation_required": bool(getattr(price_action, "entry_confirmation_required", True)),
         "price_action_confirmed": bool(getattr(price_action, "has_confirmation", False)),
+        "price_action_aggregate_confidence": float(getattr(price_action, "aggregate_confidence", 0.0) or 0.0),
+        "price_action_aligned_family_count": int(getattr(price_action, "aligned_family_count", 0) or 0),
+        "price_action_conflicting_family_count": int(getattr(price_action, "conflicting_family_count", 0) or 0),
+        "price_action_reasons": list(getattr(price_action, "reasons", ()) or ()),
         "price_action_signals": [
             {
                 "family": signal.family.value,
                 "pattern": signal.pattern,
                 "direction": signal.direction.value,
                 "confidence": signal.confidence,
+                "age_candles": signal.age_candles,
+                "direction_aligned": signal.direction_aligned,
+                "location_aligned": signal.location_aligned,
+                "fresh": signal.fresh,
+                "invalidated": signal.invalidated,
+                "distance_to_entry_ratio": signal.distance_to_entry_ratio,
+                "evidence_score": signal.evidence_score,
+                "metadata": signal.metadata,
             }
-            for signal in tuple(getattr(price_action, "confirmed_signals", ()) or ())
+            for signal in tuple(getattr(price_action, "signals", ()) or ())
         ],
         "risk_decision": None,
         "risk_issues": [],

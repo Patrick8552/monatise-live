@@ -290,9 +290,42 @@ def test_telegram_grid_analysis_is_included_and_labeled():
     assert "Buy levels: 64,566.66666667 | 64,133.33333333 | 63,700" in message
     assert "Sell levels: 65,433.33333333 | 65,866.66666667 | 66,300" in message
     assert "Invalidation: below 63,266.66666667 or above 66,733.33333333" in message
-    assert "Entry: WAIT — price-action confirmation required at the selected grid level" in message
+    assert "Entry: WAIT — fresh confirmation is required at the selected grid level" in message
     assert "CoinGlass futures price history" in message
     assert "Score: 7/10" in message
+
+
+@pytest.mark.parametrize(("status", "expected"), (
+    ("confirmed", "Entry confirmation: bullish_engulfing | confidence 82% | aligned families 1 | age 0 candle(s)"),
+    ("conflict", "Entry: WAIT — conflicting evidence: bullish bullish_engulfing | bearish bearish_engulfing"),
+    ("expired", "Entry: WAIT — previous trigger expired; a fresh price-action trigger is required"),
+    ("invalidated", "Entry: WAIT — price-action setup invalidated; a new setup is required"),
+    ("pending", "Entry: WAIT — waiting for fixed entry context"),
+))
+def test_telegram_grid_renders_each_confirmation_status(status, expected):
+    run = AnalysisRun("BTC", {})
+    now = run.requested_at
+    bullish = SimpleNamespace(family=SimpleNamespace(value="candlestick"), pattern="bullish_engulfing", direction=SimpleNamespace(value="bullish"), confidence=0.8, age_candles=0)
+    bearish = SimpleNamespace(family=SimpleNamespace(value="candlestick"), pattern="bearish_engulfing", direction=SimpleNamespace(value="bearish"), confidence=0.8, age_candles=0)
+    price_action = SimpleNamespace(
+        status=SimpleNamespace(value=status),
+        confirming_signals=(bullish,) if status in {"confirmed", "conflict"} else (),
+        conflicting_signals=(bearish,) if status == "conflict" else (),
+        strongest_confirming_pattern="bullish_engulfing",
+        aggregate_confidence=0.82,
+        aligned_family_count=1,
+        reasons=("waiting for fixed entry context",),
+    )
+    outputs = {
+        "decision": SimpleNamespace(direction=SimpleNamespace(value="two_sided"), classification=SimpleNamespace(value="grid"), conviction=0.8, reasons=(), metadata={"grid_signal_score": 8}),
+        "market_data": SimpleNamespace(price=65_000, interval="15m", quality=SimpleNamespace(source="CoinGlass")),
+        "price_action": price_action,
+    }
+    result = PipelineResult(run.run_id, run.correlation_id, "BTC", PipelineStage.COMPLETED, PipelineContext(run, outputs), PipelineStatistics(1, {}, {}, 14), None, None, now, now)
+    message = TelegramNotifier.format(result)
+    assert f"ENTRY CONFIRMATION {status.upper()}" in message
+    assert expected in message
+    assert "executed" not in message.lower()
 
 
 def test_telegram_directional_setup_ignores_legacy_risk_rejection():

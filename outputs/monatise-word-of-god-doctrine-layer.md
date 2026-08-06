@@ -162,6 +162,16 @@ Registered price-action confirmation families:
 - Order blocks
 - Wyckoff spring and upthrust concepts
 
+Entry-confirmation lifecycle:
+- PENDING when fixed entry context or fresh aligned evidence is unavailable
+- CONFIRMED only when direction, location, confidence, freshness, validity, and evidence agree
+- CONFLICT when eligible bullish and bearish evidence disagrees
+- EXPIRED when otherwise qualifying evidence is older than its candle limit
+- INVALIDATED when the expected-side setup is objectively broken
+
+Pattern detection alone is diagnostic. It cannot become entry confirmation
+without an explicit fixed entry price or zone and expected direction.
+
 ---
 
 ## 7. Humility and Invalidation
