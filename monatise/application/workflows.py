@@ -74,7 +74,7 @@ class TelegramNotifier:
             lines = [
                 f"Monatise NO_TRADE: {result.symbol}",
                 f"Status: {result.status.value} | stages {result.statistics.completed_stages}/{stage_total}",
-                f"Current mark price: {_price(getattr(market, 'price', None))}",
+                _current_price_line(market),
                 f"Score: {signed_score:+d}/10 | trade threshold: ±{threshold}",
             ]
             if reasons:
@@ -90,7 +90,7 @@ class TelegramNotifier:
             return (
                 f"Monatise analysis: {result.symbol} | {result.status.value} | "
                 f"stages {result.statistics.completed_stages}/{stage_total}{suffix} | "
-                f"current mark price {_price(getattr(market, 'price', None))} | run {result.run_id}"
+                f"{_current_price_line(market).casefold()} | run {result.run_id}"
             )
 
         direction = _enum_value(getattr(decision, "direction", "none")).upper()
@@ -122,7 +122,7 @@ class TelegramNotifier:
         lines = [
             heading,
             f"Timeframe: {interval}",
-            f"Current mark price: {_price(getattr(market, 'price', None))}",
+            _current_price_line(market),
             f"Score: {grid_score}/10" if classification == "GRID" else f"Score: {signed_score:+d}/10",
             f"Confidence: {conviction * 100:.0f}%",
         ]
@@ -178,6 +178,17 @@ def _price(value: Any) -> str:
     if value is None:
         return "pending"
     return f"{float(value):,.8f}".rstrip("0").rstrip(".")
+
+
+def _current_price_line(market: Any) -> str:
+    metadata = getattr(market, "metadata", {}) or {}
+    price_type = metadata.get("price_type", "reference")
+    label = "Current mark price" if price_type == "mark" else "Current reference price"
+    observed_at = metadata.get("price_observed_at")
+    source = metadata.get("price_source")
+    details = [f"source {source}" if source else "", f"observed {observed_at}" if observed_at else ""]
+    suffix = " | " + " | ".join(detail for detail in details if detail) if any(details) else ""
+    return f"{label}: {_price(getattr(market, 'price', None))}{suffix}"
 
 
 @dataclass(frozen=True)

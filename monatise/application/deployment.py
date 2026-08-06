@@ -376,7 +376,8 @@ class OrchestrationRuntime:
             provenance=Provenance("coinglass", "binance", "dynamic-crypto-usdt", "v4", "hierarchy-candle-v1"),
         )
         publisher = self.telegram.hierarchy_shadow_notification if self.telegram is not None else None
-        self.hierarchy_service = ShadowHierarchyService(self.hierarchy, HierarchyLayerEvaluator(configuration=configuration), repository, publisher=publisher)
+        mark_price_provider = self.backpack.latest_mark_price if self.backpack is not None else None
+        self.hierarchy_service = ShadowHierarchyService(self.hierarchy, HierarchyLayerEvaluator(configuration=configuration), repository, publisher=publisher, mark_price_provider=mark_price_provider)
         scheduler = self.application.infrastructure.scheduler
         job_ids: list[str] = []
         raw_symbols = self.environment.get("MONATISE_SCHEDULED_ANALYSIS_SYMBOLS", "BTC,ETH,SOL")

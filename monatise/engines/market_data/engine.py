@@ -43,6 +43,7 @@ class MarketDataEngine:
         degraded_candidate: MarketSnapshot | None = None
 
         ordered_sources = self._ordered_sources(request.preferred_source)
+        mark_price, mark_source = self._collect_mark_price(request.symbol, ordered_sources, issues)
         for source_name in ordered_sources:
             provider = self._providers[source_name]
             try:
@@ -60,7 +61,8 @@ class MarketDataEngine:
                         f"{source_name}: provider error on latest price; used latest candle close "
                         f"({type(exc).__name__})"
                     )
-                price = self._normalize_price(raw_price)
+                reference_price = self._normalize_price(raw_price)
+                price = mark_price if mark_price is not None else reference_price
 
                 provider_issues = self._validate_series(candles)
                 issues.extend(f"{source_name}: {item}" for item in provider_issues)
@@ -115,6 +117,9 @@ class MarketDataEngine:
                         "returned_candle_count": len(candles),
                         "fallback_used": source_name != ordered_sources[0],
                         "providers_attempted": ordered_sources[: ordered_sources.index(source_name) + 1],
+                        "price_type": "mark" if mark_price is not None else "reference",
+                        "price_source": mark_source or source_name,
+                        "price_observed_at": observed_at.isoformat(),
                     },
                 )
                 if status is DataStatus.READY:
@@ -146,6 +151,21 @@ class MarketDataEngine:
                 "providers_attempted": ordered_sources,
             },
         )
+
+    def _collect_mark_price(self, symbol: str, ordered_sources: list[str], issues: list[str]) -> tuple[float | None, str | None]:
+        for source_name in ordered_sources:
+            mark_reader = getattr(self._providers[source_name], "latest_mark_price", None)
+            if not callable(mark_reader):
+                continue
+            try:
+                mark_price = self._normalize_price(mark_reader(symbol))
+            except Exception as exc:
+                issues.append(f"{source_name}: mark price unavailable ({type(exc).__name__})")
+                continue
+            if mark_price is not None:
+                return mark_price, source_name
+            issues.append(f"{source_name}: mark price is invalid")
+        return None, None
 
     def _ordered_sources(self, preferred: str | None) -> list[str]:
         names = list(self._providers)

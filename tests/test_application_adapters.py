@@ -222,7 +222,7 @@ def test_telegram_completed_directional_setup_contains_actionable_levels_and_coi
             reasons=("bullish structure confirmed", "positive derivatives flow"),
             metadata={"signed_signal_score": score, "grid_signal_score": 2, "minimum_signal_score": 7},
         ),
-        "market_data": SimpleNamespace(price=entry, quality=SimpleNamespace(source="CoinGlass futures price history")),
+        "market_data": SimpleNamespace(price=entry, metadata={"price_type": "mark"}, quality=SimpleNamespace(source="CoinGlass futures price history")),
     }
     result = PipelineResult(
         run.run_id, run.correlation_id, "BTC", PipelineStage.COMPLETED,
@@ -252,7 +252,7 @@ def test_telegram_no_trade_message_is_explicit_and_explained():
     )
     result = PipelineResult(
         run.run_id, run.correlation_id, "BTC", PipelineStage.BLOCKED,
-        PipelineContext(run, {"decision": decision, "market_data": SimpleNamespace(price=65_000)}), PipelineStatistics(1, {}, {}, 11),
+        PipelineContext(run, {"decision": decision, "market_data": SimpleNamespace(price=65_000, metadata={"price_type": "mark"})}), PipelineStatistics(1, {}, {}, 11),
         None, "decision", now, now,
     )
 
@@ -278,7 +278,7 @@ def test_telegram_grid_analysis_is_included_and_labeled():
             reasons=("balanced two-sided liquidity",),
             metadata={"signed_signal_score": 0, "grid_signal_score": 7, "minimum_signal_score": 7},
         ),
-        "market_data": SimpleNamespace(price=65000.0, quality=SimpleNamespace(source="CoinGlass futures price history")),
+        "market_data": SimpleNamespace(price=65000.0, metadata={"price_type": "mark"}, quality=SimpleNamespace(source="CoinGlass futures price history")),
     }
     result = PipelineResult(
         run.run_id, run.correlation_id, "BTC", PipelineStage.COMPLETED,
