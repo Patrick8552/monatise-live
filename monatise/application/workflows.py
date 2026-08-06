@@ -105,8 +105,15 @@ class TelegramNotifier:
 
         price_action = outputs.get("price_action")
         confirmation_status = _enum_value(getattr(price_action, "status", "pending")).upper()
+        grid_state = {
+            "CONFIRMED": "ENTRY READY",
+            "PENDING": "DECISION READY",
+            "CONFLICT": "ACTIVE ENTRY BLOCKED",
+            "EXPIRED": "REFRESH REQUIRED",
+            "INVALIDATED": "ACTIVE ENTRY BLOCKED",
+        }.get(confirmation_status, "DECISION REVIEW")
         heading = (
-            f"Monatise GRID DECISION READY — ENTRY CONFIRMATION {confirmation_status}: {result.symbol} ({direction})"
+            f"Monatise GRID {grid_state} — ENTRY CONFIRMATION {confirmation_status}: {result.symbol} ({direction})"
             if classification == "GRID"
             else f"Monatise directional setup: {result.symbol} {direction} ({classification})"
         )
