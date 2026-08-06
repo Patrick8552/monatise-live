@@ -74,6 +74,7 @@ class TelegramNotifier:
             lines = [
                 f"Monatise NO_TRADE: {result.symbol}",
                 f"Status: {result.status.value} | stages {result.statistics.completed_stages}/{stage_total}",
+                f"Current mark price: {_price(getattr(market, 'price', None))}",
                 f"Score: {signed_score:+d}/10 | trade threshold: ±{threshold}",
             ]
             if reasons:
@@ -88,7 +89,8 @@ class TelegramNotifier:
             suffix = f" | blocked by {result.blocked_by}" if result.blocked_by else ""
             return (
                 f"Monatise analysis: {result.symbol} | {result.status.value} | "
-                f"stages {result.statistics.completed_stages}/{stage_total}{suffix} | run {result.run_id}"
+                f"stages {result.statistics.completed_stages}/{stage_total}{suffix} | "
+                f"current mark price {_price(getattr(market, 'price', None))} | run {result.run_id}"
             )
 
         direction = _enum_value(getattr(decision, "direction", "none")).upper()
@@ -120,6 +122,7 @@ class TelegramNotifier:
         lines = [
             heading,
             f"Timeframe: {interval}",
+            f"Current mark price: {_price(getattr(market, 'price', None))}",
             f"Score: {grid_score}/10" if classification == "GRID" else f"Score: {signed_score:+d}/10",
             f"Confidence: {conviction * 100:.0f}%",
         ]

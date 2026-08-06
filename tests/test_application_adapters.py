@@ -232,6 +232,7 @@ def test_telegram_completed_directional_setup_contains_actionable_levels_and_coi
     message = TelegramNotifier.format(result)
 
     assert f"Monatise directional setup: BTC {direction.upper()} (TREND)" in message
+    assert "Current mark price: 65,000" in message
     assert "Projected entry: 65,000" in message
     assert f"Invalidation: {entry * (0.98 if direction == 'long' else 1.02):,.0f}" in message
     assert f"Target: {entry * (1.04 if direction == 'long' else 0.96):,.0f}" in message
@@ -251,13 +252,14 @@ def test_telegram_no_trade_message_is_explicit_and_explained():
     )
     result = PipelineResult(
         run.run_id, run.correlation_id, "BTC", PipelineStage.BLOCKED,
-        PipelineContext(run, {"decision": decision}), PipelineStatistics(1, {}, {}, 11),
+        PipelineContext(run, {"decision": decision, "market_data": SimpleNamespace(price=65_000)}), PipelineStatistics(1, {}, {}, 11),
         None, "decision", now, now,
     )
 
     message = TelegramNotifier.format(result)
 
     assert "Monatise NO_TRADE: BTC" in message
+    assert "Current mark price: 65,000" in message
     assert "stages 11/20" in message
     assert "insufficient directional conviction" in message
     assert "Score: +6/10 | trade threshold: ±7" in message
@@ -286,6 +288,7 @@ def test_telegram_grid_analysis_is_included_and_labeled():
     message = TelegramNotifier.format(result)
 
     assert "Monatise GRID DECISION READY — ENTRY CONFIRMATION PENDING: BTC (TWO_SIDED)" in message
+    assert "Current mark price: 65,000" in message
     assert "Center: 65,000" in message
     assert "Buy levels: 64,566.66666667 | 64,133.33333333 | 63,700" in message
     assert "Sell levels: 65,433.33333333 | 65,866.66666667 | 66,300" in message
