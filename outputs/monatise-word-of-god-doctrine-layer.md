@@ -177,6 +177,10 @@ not re-center exactly on every latest price. The nearest rolling buy or sell
 level supplies location and expected-side context; entry still requires valid
 price-action confirmation at that level.
 
+BTC moving grids enforce a $500 minimum step. With three levels per side, the
+minimum active range is $1,500 below and above center, and invalidation is one
+additional $500 step beyond each boundary.
+
 ---
 
 ## 7. Humility and Invalidation
