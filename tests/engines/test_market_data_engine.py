@@ -20,7 +20,7 @@ class GoodProvider:
 
 
 class MarkProvider(GoodProvider):
-    def latest_mark_price(self, symbol: str) -> float:
+    def latest_current_price(self, symbol: str) -> float:
         return 100.75
 
 
@@ -75,7 +75,7 @@ def test_exchange_mark_price_is_preferred_and_timestamped() -> None:
     )
 
     assert snapshot.price == 100.75
-    assert snapshot.metadata["price_type"] == "mark"
+    assert snapshot.metadata["price_type"] == "current"
     assert snapshot.metadata["price_source"] == "mark"
     assert snapshot.metadata["price_observed_at"] == NOW.isoformat()
 

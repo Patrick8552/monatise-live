@@ -61,6 +61,20 @@ def test_coinglass_uses_official_dataset_parameters_and_normalizes_native_fields
     assert calls[adapter.ENDPOINTS["order_book"]]["symbol"] == "BTC"
 
 
+def test_coinglass_current_price_uses_binance_pair_market():
+    def transport(path, params, timeout):
+        assert path == "/api/futures/pairs-markets"
+        assert params == {"symbol": "BTC"}
+        return {"code": 0, "data": [
+            {"exchange_name": "OKX", "instrument_id": "BTC-USDT-SWAP", "current_price": 64_300},
+            {"exchange_name": "Binance", "instrument_id": "BTCUSDT", "current_price": "64321.5"},
+        ]}
+
+    adapter = CoinGlassProductionAdapter(lambda: "secret", transport=transport, requests_per_second=100000)
+
+    assert adapter.latest_current_price("BTC") == 64_321.5
+
+
 def test_coinglass_rejects_forex():
     adapter = CoinGlassProductionAdapter(lambda: "secret", transport=lambda *_: {})
     with pytest.raises(ValueError, match="crypto"):
@@ -222,7 +236,7 @@ def test_telegram_completed_directional_setup_contains_actionable_levels_and_coi
             reasons=("bullish structure confirmed", "positive derivatives flow"),
             metadata={"signed_signal_score": score, "grid_signal_score": 2, "minimum_signal_score": 7},
         ),
-        "market_data": SimpleNamespace(price=entry, metadata={"price_type": "mark"}, quality=SimpleNamespace(source="CoinGlass futures price history")),
+        "market_data": SimpleNamespace(price=entry, metadata={"price_type": "current", "price_source": "coinglass"}, quality=SimpleNamespace(source="CoinGlass futures price history")),
     }
     result = PipelineResult(
         run.run_id, run.correlation_id, "BTC", PipelineStage.COMPLETED,
@@ -232,7 +246,7 @@ def test_telegram_completed_directional_setup_contains_actionable_levels_and_coi
     message = TelegramNotifier.format(result)
 
     assert f"Monatise directional setup: BTC {direction.upper()} (TREND)" in message
-    assert "Current mark price: 65,000" in message
+    assert "Current CoinGlass price: 65,000" in message
     assert "Projected entry: 65,000" in message
     assert f"Invalidation: {entry * (0.98 if direction == 'long' else 1.02):,.0f}" in message
     assert f"Target: {entry * (1.04 if direction == 'long' else 0.96):,.0f}" in message
@@ -252,14 +266,14 @@ def test_telegram_no_trade_message_is_explicit_and_explained():
     )
     result = PipelineResult(
         run.run_id, run.correlation_id, "BTC", PipelineStage.BLOCKED,
-        PipelineContext(run, {"decision": decision, "market_data": SimpleNamespace(price=65_000, metadata={"price_type": "mark"})}), PipelineStatistics(1, {}, {}, 11),
+        PipelineContext(run, {"decision": decision, "market_data": SimpleNamespace(price=65_000, metadata={"price_type": "current", "price_source": "coinglass"})}), PipelineStatistics(1, {}, {}, 11),
         None, "decision", now, now,
     )
 
     message = TelegramNotifier.format(result)
 
     assert "Monatise NO_TRADE: BTC" in message
-    assert "Current mark price: 65,000" in message
+    assert "Current CoinGlass price: 65,000" in message
     assert "stages 11/20" in message
     assert "insufficient directional conviction" in message
     assert "Score: +6/10 | trade threshold: ±7" in message
@@ -278,7 +292,7 @@ def test_telegram_grid_analysis_is_included_and_labeled():
             reasons=("balanced two-sided liquidity",),
             metadata={"signed_signal_score": 0, "grid_signal_score": 7, "minimum_signal_score": 7},
         ),
-        "market_data": SimpleNamespace(price=65000.0, metadata={"price_type": "mark"}, quality=SimpleNamespace(source="CoinGlass futures price history")),
+        "market_data": SimpleNamespace(price=65000.0, metadata={"price_type": "current", "price_source": "coinglass"}, quality=SimpleNamespace(source="CoinGlass futures price history")),
     }
     result = PipelineResult(
         run.run_id, run.correlation_id, "BTC", PipelineStage.COMPLETED,
@@ -288,7 +302,7 @@ def test_telegram_grid_analysis_is_included_and_labeled():
     message = TelegramNotifier.format(result)
 
     assert "Monatise GRID DECISION READY — ENTRY CONFIRMATION PENDING: BTC (TWO_SIDED)" in message
-    assert "Current mark price: 65,000" in message
+    assert "Current CoinGlass price: 65,000" in message
     assert "Center: 65,000" in message
     assert "Buy levels: 64,566.66666667 | 64,133.33333333 | 63,700" in message
     assert "Sell levels: 65,433.33333333 | 65,866.66666667 | 66,300" in message
