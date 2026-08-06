@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from monatise.core.models import Candle
-from monatise.application.production_analysis import sanitized_result
+from monatise.application.production_analysis import build_moving_grid_plan, build_production_analysis_run, sanitized_result
 from monatise.engines.market_data.models import DataQuality, DataStatus, MarketSnapshot
 from monatise.engines.price_action import (
     PriceActionConfirmationStatus,
@@ -226,3 +226,26 @@ def test_sanitized_output_exposes_contextual_confirmation_fields():
     assert payload["price_action_signals"][0]["location_aligned"] is True
     assert isinstance(payload["price_action_signals"][0]["metadata"], dict)
     assert payload["execution_enabled"] is False
+
+
+def test_moving_grid_uses_rolling_range_instead_of_latest_price():
+    candles = [Candle(str(i), 100, 110, 90, 105, 10) for i in range(20)]
+    snapshot = market(candles)
+    grid = build_moving_grid_plan(snapshot)
+    assert grid["basis"] == "rolling_range"
+    assert grid["center"] == 100
+    assert grid["center"] != snapshot.price
+    assert grid["lower_boundary"] == 90
+    assert grid["upper_boundary"] == 110
+
+
+def test_production_price_action_receives_nearest_moving_grid_side_and_zone():
+    candles = [Candle(str(i), 100, 110, 90, 105, 10) for i in range(20)]
+    snapshot = market(candles)
+    run = build_production_analysis_run("BTC", interval="15m")
+    request_builder = run.stage_inputs["price_action"]
+    context = SimpleNamespace(outputs={"market_data": snapshot})
+    built = request_builder(context)
+    assert built.expected_direction is PriceActionDirection.BEARISH
+    assert built.entry_price == pytest.approx(103.33333333)
+    assert built.entry_zone_low < built.entry_price < built.entry_zone_high

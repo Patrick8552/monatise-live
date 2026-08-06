@@ -16,9 +16,9 @@ from monatise.engines.price_action.models import (
 class PriceActionEngine:
     """Detect and qualify entry evidence without creating orders.
 
-    Entry confirmation is intentionally unavailable without an explicit fixed
-    entry price/zone and expected direction. Production must not derive these
-    from a grid that is re-centred on every market-data refresh.
+    Entry confirmation is intentionally unavailable without an explicit entry
+    price/zone and expected direction. Production derives these from a rolling
+    range grid, never from a grid re-centred exactly on every latest price.
     """
 
     def assess(self, request: PriceActionRequest) -> PriceActionAssessment:

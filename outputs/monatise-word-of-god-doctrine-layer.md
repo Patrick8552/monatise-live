@@ -172,6 +172,11 @@ Entry-confirmation lifecycle:
 Pattern detection alone is diagnostic. It cannot become entry confirmation
 without an explicit fixed entry price or zone and expected direction.
 
+For live analysis, the active grid may move with a rolling candle range. It must
+not re-center exactly on every latest price. The nearest rolling buy or sell
+level supplies location and expected-side context; entry still requires valid
+price-action confirmation at that level.
+
 ---
 
 ## 7. Humility and Invalidation
