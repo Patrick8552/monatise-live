@@ -183,7 +183,7 @@ def _price(value: Any) -> str:
 def _current_price_line(market: Any) -> str:
     metadata = getattr(market, "metadata", {}) or {}
     price_type = metadata.get("price_type", "reference")
-    label = "Current mark price" if price_type == "mark" else "Current reference price"
+    label = "Current CoinGlass price" if price_type == "current" and metadata.get("price_source") == "coinglass" else "Current reference price"
     observed_at = metadata.get("price_observed_at")
     source = metadata.get("price_source")
     details = [f"source {source}" if source else "", f"observed {observed_at}" if observed_at else ""]

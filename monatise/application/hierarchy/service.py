@@ -17,12 +17,12 @@ LOGGER = logging.getLogger("monatise.hierarchy")
 class ShadowHierarchyService:
     """Coordinates shadow analysis and optional notification-only publication."""
 
-    def __init__(self, coordinator: ShadowHierarchyCoordinator, evaluator: HierarchyLayerEvaluator, repository: HierarchyRepository, *, publisher: Callable[[str], Awaitable[Any]] | None = None, mark_price_provider: Callable[[str], float] | None = None) -> None:
+    def __init__(self, coordinator: ShadowHierarchyCoordinator, evaluator: HierarchyLayerEvaluator, repository: HierarchyRepository, *, publisher: Callable[[str], Awaitable[Any]] | None = None, current_price_provider: Callable[[str], float] | None = None) -> None:
         self.coordinator = coordinator
         self.evaluator = evaluator
         self.repository = repository
         self.publisher = publisher
-        self.mark_price_provider = mark_price_provider
+        self.current_price_provider = current_price_provider
 
     async def tick(self, symbol: str, *, observed_at: datetime | None = None, macro_degraded: bool = True) -> dict[str, Any]:
         now = observed_at or datetime.now(timezone.utc)
@@ -57,14 +57,14 @@ class ShadowHierarchyService:
         telegram_message_id: int | None = None
         if eligible and publication_available and not duplicate and trigger_id is not None:
             await self.repository.begin_publication(symbol=symbol, trigger_id=trigger_id, occurred_at=now)
-            mark_price = None
-            if self.mark_price_provider is not None:
+            current_price = None
+            if self.current_price_provider is not None:
                 try:
-                    mark_price = await asyncio.to_thread(self.mark_price_provider, symbol)
+                    current_price = await asyncio.to_thread(self.current_price_provider, symbol)
                 except Exception:
-                    LOGGER.warning("hierarchical mark price unavailable", extra={"symbol": symbol.upper()})
+                    LOGGER.warning("hierarchical CoinGlass current price unavailable", extra={"symbol": symbol.upper()})
             try:
-                delivery_result = await self.publisher(self._format_notification(evaluation, publication_id=trigger_id, mark_price=mark_price, price_observed_at=now))
+                delivery_result = await self.publisher(self._format_notification(evaluation, publication_id=trigger_id, current_price=current_price, price_observed_at=now))
                 telegram_message_id = self._telegram_message_id(delivery_result)
             except Exception as exc:
                 publication_failed = True
@@ -117,7 +117,7 @@ class ShadowHierarchyService:
         }
 
     @staticmethod
-    def _format_notification(evaluation: ShadowEvaluation, *, publication_id: str, mark_price: float | None = None, price_observed_at: datetime | None = None, price_source: str = "backpack_public") -> str:
+    def _format_notification(evaluation: ShadowEvaluation, *, publication_id: str, current_price: float | None = None, price_observed_at: datetime | None = None, price_source: str = "coinglass") -> str:
         bundle = evaluation.bundle
         if bundle is None:
             raise ValueError("notification requires a validated evidence bundle")
@@ -127,11 +127,11 @@ class ShadowHierarchyService:
         validity_minutes = (validity_seconds + 59) // 60
         expiry = risk.expires_at.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
         observed = (price_observed_at or evaluation.evaluated_at).astimezone(timezone.utc).isoformat()
-        mark = f"{mark_price:,.8f}".rstrip("0").rstrip(".") if mark_price is not None else "unavailable"
+        current = f"{current_price:,.8f}".rstrip("0").rstrip(".") if current_price is not None else "unavailable"
         return (
             f"Monatise HIERARCHY SHADOW — observation only, not a trade order\n"
             f"{bundle.symbol} | {direction} | 4H + 1H aligned | 15M setup confirmed | 5M trigger confirmed | 1M entry refined\n"
-            f"Current mark price: {mark} | source {price_source} | observed {observed}\n"
+            f"Current CoinGlass price: {current} | source {price_source} | observed {observed}\n"
             f"Entry {risk.reference_entry:.8g} | Stop {risk.final_stop:.8g} | Target {risk.target_liquidity:.8g} | R:R {risk.calculated_reward_to_risk:.2f}\n"
             f"Expires {expiry} | Valid for {validity_minutes} min\n"
             f"Strategy {bundle.strategy_version} | Evidence {bundle.bundle_id[:12]} | Publication {publication_id[:16]}"

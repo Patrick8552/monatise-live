@@ -34,6 +34,7 @@ class CoinGlassProductionAdapter:
     SUPPORTED_INTERVALS = ("1m", "3m", "5m", "15m", "30m", "1h", "4h", "6h", "8h", "12h", "1d", "1w")
 
     ENDPOINTS = {
+        "pairs_markets": "/api/futures/pairs-markets",
         "price_history": "/api/futures/price/history",
         "open_interest": "/api/futures/open-interest/exchange-list",
         "funding_rate": "/api/futures/funding-rate/oi-weight-history",
@@ -99,6 +100,24 @@ class CoinGlassProductionAdapter:
         if not candles:
             raise CoinGlassError("CoinGlass returned no price data")
         return candles[-1].close
+
+    def latest_current_price(self, symbol: str) -> float:
+        coin = self._crypto_symbol(symbol)
+        rows = self._fetch("pairs_markets", coin)
+        if not isinstance(rows, list):
+            raise CoinGlassError("CoinGlass pairs markets data must be a list")
+        expected_pair = self.PAIRS.get(coin, f"{coin}USDT")
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            exchange = str(row.get("exchange_name", "")).casefold()
+            instrument = str(row.get("instrument_id", "")).upper()
+            if exchange == "binance" and instrument == expected_pair:
+                try:
+                    return float(row["current_price"])
+                except (KeyError, TypeError, ValueError) as exc:
+                    raise CoinGlassError("CoinGlass returned an invalid current price") from exc
+        raise CoinGlassError(f"CoinGlass returned no Binance current price for {expected_pair}")
 
     def candles(self, symbol: str, limit: int, interval: str = "1h") -> list[Candle]:
         coin = self._crypto_symbol(symbol)
@@ -245,6 +264,8 @@ class CoinGlassProductionAdapter:
 
     def _dataset_params(self, dataset: str, coin: str) -> dict[str, str]:
         pair = self.PAIRS.get(coin, f"{coin}USDT")
+        if dataset == "pairs_markets":
+            return {"symbol": coin}
         if dataset == "open_interest":
             return {"symbol": coin}
         if dataset == "funding_rate":

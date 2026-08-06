@@ -136,10 +136,10 @@ def test_hierarchy_short_notification_preserves_directional_risk_geometry():
     )
     evaluation = ShadowEvaluation("BTC", NOW, macro, regime, strategy, setup, trigger, bundle, None, True, ())
 
-    message = ShadowHierarchyService._format_notification(evaluation, publication_id="short-publication", mark_price=100.25, price_observed_at=NOW)
+    message = ShadowHierarchyService._format_notification(evaluation, publication_id="short-publication", current_price=100.25, price_observed_at=NOW)
 
     assert "BTC | SHORT" in message
-    assert "Current mark price: 100.25 | source backpack_public | observed 2026-08-02T12:00:20+00:00" in message
+    assert "Current CoinGlass price: 100.25 | source coinglass | observed 2026-08-02T12:00:20+00:00" in message
     assert f"Entry {risk.reference_entry:.8g}" in message
     assert f"Stop {risk.final_stop:.8g}" in message
     assert f"Target {risk.target_liquidity:.8g}" in message
