@@ -56,7 +56,13 @@ class PriceActionEngine:
             and not s.invalidated
             and s.confidence >= threshold
         )
-        expected_side_invalidated = tuple(s for s in invalidated if s.direction_aligned)
+        expected_side_invalidated = tuple(
+            s for s in invalidated
+            if s.direction_aligned
+            and s.location_aligned
+            and s.fresh
+            and s.confidence >= threshold
+        )
         confirming_families = {s.family for s in eligible}
         conflicting_families = {s.family for s in conflicts}
         aggregate = self._aggregate_confidence(eligible)
