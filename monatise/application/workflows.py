@@ -10,7 +10,7 @@ from typing import Any, Awaitable, Callable, Protocol
 
 from monatise.application.models import AnalysisRun, PipelineResult
 from monatise.application.orchestrator import PipelineOrchestrator
-from monatise.application.production_analysis import build_directional_plan, build_grid_plan
+from monatise.application.production_analysis import build_directional_plan, build_grid_plan, build_moving_grid_plan
 from monatise.application.registry import CANONICAL_ENGINE_ORDER, PRODUCTION_ENGINE_ORDER
 from monatise.infrastructure.state_manager import StateKey
 from monatise.infrastructure.task_scheduler import JobDefinition, RetryPolicy, ScheduleType
@@ -103,8 +103,10 @@ class TelegramNotifier:
         interval = getattr(market, "interval", "unknown")
         reasons = tuple(getattr(decision, "reasons", ()) or ())[:3]
 
+        price_action = outputs.get("price_action")
+        confirmation_status = _enum_value(getattr(price_action, "status", "pending")).upper()
         heading = (
-            f"Monatise GRID DECISION READY — ENTRY CONFIRMATION PENDING: {result.symbol} ({direction})"
+            f"Monatise GRID DECISION READY — ENTRY CONFIRMATION {confirmation_status}: {result.symbol} ({direction})"
             if classification == "GRID"
             else f"Monatise directional setup: {result.symbol} {direction} ({classification})"
         )
@@ -115,8 +117,7 @@ class TelegramNotifier:
             f"Confidence: {conviction * 100:.0f}%",
         ]
         if classification == "GRID":
-            price_action = outputs.get("price_action")
-            grid = build_grid_plan(entry or getattr(market, "price", None))
+            grid = build_moving_grid_plan(market) or build_grid_plan(entry or getattr(market, "price", None))
             if grid is None:
                 lines.append("Grid levels: unavailable")
             else:
@@ -128,12 +129,24 @@ class TelegramNotifier:
                     f"Invalidation: below {_price(grid['lower_invalidation'])} or above {_price(grid['upper_invalidation'])}",
                     f"Spacing: {_price(grid['spacing'])} | {grid['levels_per_side']} levels per side",
                 ])
-            confirmed = tuple(getattr(price_action, "confirmed_signals", ()) or ())
-            if confirmed:
-                patterns = " | ".join(f"{signal.family.value}:{signal.pattern}" for signal in confirmed[:3])
-                lines.append(f"Price action: detected {patterns}; confirm again at the selected grid level")
+            confirming = tuple(getattr(price_action, "confirming_signals", ()) or ())
+            conflicts = tuple(getattr(price_action, "conflicting_signals", ()) or ())
+            confirmation_reasons = tuple(getattr(price_action, "reasons", ()) or ())
+            if confirmation_status == "CONFIRMED":
+                strongest = getattr(price_action, "strongest_confirming_pattern", None) or "price action"
+                age = min((signal.age_candles for signal in confirming), default=0)
+                lines.append(f"Entry confirmation: {strongest} | confidence {float(getattr(price_action, 'aggregate_confidence', 0)) * 100:.0f}% | aligned families {getattr(price_action, 'aligned_family_count', 0)} | age {age} candle(s)")
+            elif confirmation_status == "CONFLICT":
+                bullish = max((s for s in (*confirming, *conflicts) if s.direction.value == "bullish"), key=lambda s: s.confidence, default=None)
+                bearish = max((s for s in (*confirming, *conflicts) if s.direction.value == "bearish"), key=lambda s: s.confidence, default=None)
+                lines.append(f"Entry: WAIT — conflicting evidence: bullish {getattr(bullish, 'pattern', 'none')} | bearish {getattr(bearish, 'pattern', 'none')}")
+            elif confirmation_status == "EXPIRED":
+                lines.append("Entry: WAIT — previous trigger expired; a fresh price-action trigger is required")
+            elif confirmation_status == "INVALIDATED":
+                lines.append("Entry: WAIT — price-action setup invalidated; a new setup is required")
             else:
-                lines.append("Entry: WAIT — price-action confirmation required at the selected grid level")
+                reason = confirmation_reasons[0] if confirmation_reasons else "fresh confirmation is required at the selected grid level"
+                lines.append(f"Entry: WAIT — {reason}")
         else:
             lines.append(f"Projected entry: {_price(entry)} | Invalidation: {_price(stop)} | Target: {_price(target)}")
         lines.append(f"Data: {source} | Status: {result.status.value}")

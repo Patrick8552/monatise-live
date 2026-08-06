@@ -15,7 +15,7 @@ from monatise.engines.market_data.models import MarketDataRequest
 from monatise.engines.market_structure.models import MarketStructureRequest
 from monatise.engines.order_flow.models import FlowInput, OrderFlowRequest
 from monatise.engines.portfolio_intelligence.models import PortfolioIntelligenceRequest
-from monatise.engines.price_action.models import PriceActionRequest
+from monatise.engines.price_action.models import PriceActionDirection, PriceActionRequest
 from monatise.engines.reclaim.models import ReclaimRequest
 from monatise.engines.regime.models import RegimeRequest
 from monatise.engines.rsi.models import RSIRequest
@@ -54,6 +54,39 @@ def build_grid_plan(center: float | None, *, levels_per_side: int = 3, half_widt
         "upper_invalidation": round(sell_levels[-1] + spacing, 8),
         "spacing": round(spacing, 8),
         "levels_per_side": levels_per_side,
+    }
+
+
+def build_moving_grid_plan(market: Any, *, levels_per_side: int = 3, lookback_candles: int = 20) -> dict[str, Any] | None:
+    """Build a rolling range grid that moves only as its candle window moves.
+
+    Unlike latest-price centering, the rolling high/low midpoint lets price
+    approach an actual grid level and therefore supplies meaningful location
+    context to the pre-decision price-action stage.
+    """
+    candles = tuple(getattr(market, "candles", ()) or ())[-lookback_candles:]
+    if len(candles) < 5:
+        return build_grid_plan(getattr(market, "price", None), levels_per_side=levels_per_side)
+    lower = min(float(candle.low) for candle in candles)
+    upper = max(float(candle.high) for candle in candles)
+    if lower <= 0 or upper <= lower:
+        return build_grid_plan(getattr(market, "price", None), levels_per_side=levels_per_side)
+    center = (lower + upper) / 2
+    spacing = (upper - lower) / (levels_per_side * 2)
+    buy_levels = [center - spacing * index for index in range(1, levels_per_side + 1)]
+    sell_levels = [center + spacing * index for index in range(1, levels_per_side + 1)]
+    return {
+        "center": round(center, 8),
+        "buy_levels": [round(value, 8) for value in buy_levels],
+        "sell_levels": [round(value, 8) for value in sell_levels],
+        "lower_boundary": round(lower, 8),
+        "upper_boundary": round(upper, 8),
+        "lower_invalidation": round(lower - spacing, 8),
+        "upper_invalidation": round(upper + spacing, 8),
+        "spacing": round(spacing, 8),
+        "levels_per_side": levels_per_side,
+        "basis": "rolling_range",
+        "lookback_candles": len(candles),
     }
 
 
@@ -102,6 +135,25 @@ def build_production_analysis_run(symbol: str, *, interval: str = "1h", correlat
             output(context, "market_structure"),
         )
 
+    def price_action(context: Any) -> PriceActionRequest:
+        market = output(context, "market_data")
+        grid = build_moving_grid_plan(market)
+        if grid is None or market.price is None:
+            return PriceActionRequest(market)
+        candidates = (
+            *((level, PriceActionDirection.BULLISH) for level in grid["buy_levels"]),
+            *((level, PriceActionDirection.BEARISH) for level in grid["sell_levels"]),
+        )
+        level, expected_direction = min(candidates, key=lambda item: abs(float(market.price) - item[0]))
+        zone_half_width = grid["spacing"] * 0.15
+        return PriceActionRequest(
+            market,
+            expected_direction=expected_direction,
+            entry_price=level,
+            entry_zone_low=level - zone_half_width,
+            entry_zone_high=level + zone_half_width,
+        )
+
     inputs = {
         "market_data": MarketDataRequest(normalized, interval=interval, candle_limit=200, max_age_seconds=maximum_age_seconds),
         "regime": lambda c: RegimeRequest(output(c, "market_data")),
@@ -112,7 +164,7 @@ def build_production_analysis_run(symbol: str, *, interval: str = "1h", correlat
         "market_structure": lambda c: MarketStructureRequest(output(c, "market_data"), output(c, "regime"), output(c, "liquidity"), output(c, "liquidity_sweep"), output(c, "reclaim"), output(c, "supply_demand"), swing_window=1, displacement_body_ratio=0.5),
         "fibonacci_liquidity": lambda c: FibonacciRequest(output(c, "market_data"), output(c, "market_structure"), output(c, "liquidity"), output(c, "supply_demand"), output(c, "reclaim"), minimum_structure_confidence=0),
         "order_flow": flow,
-        "price_action": lambda c: PriceActionRequest(output(c, "market_data")),
+        "price_action": price_action,
         "decision": lambda c: DecisionRequest(output(c, "market_data"), None, output(c, "regime"), output(c, "liquidity"), output(c, "liquidity_sweep"), output(c, "supply_demand"), output(c, "reclaim"), output(c, "market_structure"), output(c, "fibonacci_liquidity"), output(c, "order_flow"), minimum_conviction=0.55, high_conviction=0.75, maximum_conflict_ratio=0.45, grid_regime_bonus=0.12, trend_regime_bonus=0.12, require_structure_for_trend=True, require_two_sided_liquidity_for_grid=True, minimum_signal_score=7),
         "rsi": lambda c: RSIRequest(output(c, "market_data"), output(c, "market_structure"), output(c, "regime")),
         "portfolio_intelligence": PortfolioIntelligenceRequest(100_000, ()),
@@ -131,7 +183,7 @@ def sanitized_result(result: Any) -> dict[str, Any]:
     metadata = getattr(decision, "metadata", {}) or {}
     price = getattr(market, "price", None)
     directional_plan = build_directional_plan(price, direction)
-    grid_plan = build_grid_plan(price) if classification == "grid" else None
+    grid_plan = build_moving_grid_plan(market) if classification == "grid" else None
     return {
         "run_id": result.run_id,
         "correlation_id": result.correlation_id,
@@ -149,16 +201,29 @@ def sanitized_result(result: Any) -> dict[str, Any]:
         "target": directional_plan["target"] if directional_plan else None,
         "reward_risk": None,
         "grid_plan": grid_plan,
+        "entry_confirmation_status": getattr(getattr(price_action, "status", None), "value", "pending"),
         "entry_confirmation_required": bool(getattr(price_action, "entry_confirmation_required", True)),
         "price_action_confirmed": bool(getattr(price_action, "has_confirmation", False)),
+        "price_action_aggregate_confidence": float(getattr(price_action, "aggregate_confidence", 0.0) or 0.0),
+        "price_action_aligned_family_count": int(getattr(price_action, "aligned_family_count", 0) or 0),
+        "price_action_conflicting_family_count": int(getattr(price_action, "conflicting_family_count", 0) or 0),
+        "price_action_reasons": list(getattr(price_action, "reasons", ()) or ()),
         "price_action_signals": [
             {
                 "family": signal.family.value,
                 "pattern": signal.pattern,
                 "direction": signal.direction.value,
                 "confidence": signal.confidence,
+                "age_candles": signal.age_candles,
+                "direction_aligned": signal.direction_aligned,
+                "location_aligned": signal.location_aligned,
+                "fresh": signal.fresh,
+                "invalidated": signal.invalidated,
+                "distance_to_entry_ratio": signal.distance_to_entry_ratio,
+                "evidence_score": signal.evidence_score,
+                "metadata": signal.metadata,
             }
-            for signal in tuple(getattr(price_action, "confirmed_signals", ()) or ())
+            for signal in tuple(getattr(price_action, "signals", ()) or ())
         ],
         "risk_decision": None,
         "risk_issues": [],
