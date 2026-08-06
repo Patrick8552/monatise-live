@@ -7,6 +7,8 @@ from uuid import uuid4
 
 import pytest
 
+from monatise.application.registry import PRODUCTION_ENGINE_ORDER
+
 from monatise.application.deployment import OrchestrationRuntime
 from monatise.application.persistence import PostgresDocumentStore, RedisDocumentStore, connect_postgres_store, connect_redis_store
 
@@ -67,7 +69,9 @@ def test_orchestration_runtime_service_backed_startup_and_shutdown():
             ready, payload = runtime.readiness()
             assert ready is True
             assert payload["execution_enabled"] is False
-            assert payload["dependencies"]["engine_registry"]["count"] == 19
+            assert payload["dependencies"]["engine_registry"]["count"] == len(PRODUCTION_ENGINE_ORDER)
+            assert payload["dependencies"]["engine_registry"]["order"] == list(PRODUCTION_ENGINE_ORDER)
+            assert "risk_validation" not in payload["dependencies"]["engine_registry"]["order"]
             assert payload["dependencies"]["scheduler"]["leader"] is True
         finally:
             await runtime.shutdown()

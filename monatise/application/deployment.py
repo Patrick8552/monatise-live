@@ -17,10 +17,10 @@ from uuid import uuid4
 from urllib.request import Request, urlopen
 
 from monatise.application.composition import create_application, create_durable_infrastructure
-from monatise.application.production_analysis import build_production_analysis_run, sanitized_result
-from monatise.application.registry import CANONICAL_ENGINE_ORDER
+from monatise.application.production_analysis import build_directional_plan, build_grid_plan, build_production_analysis_run, sanitized_result
 from monatise.application.persistence import PostgresDocumentStore
 from monatise.application.workflows import TelegramNotifier
+from monatise.application.registry import PRODUCTION_ENGINE_ORDER
 from monatise.application.hierarchy import HierarchyConfiguration, HierarchyLayerEvaluator, HierarchyRepository, Provenance, ShadowHierarchyCoordinator, ShadowHierarchyService
 from monatise.adapters.coinglass_production import CoinGlassProductionAdapter
 from monatise.adapters.backpack import BackpackAdapter, BackpackCredentials
@@ -494,6 +494,7 @@ class OrchestrationRuntime:
                 market_data_providers=self.market_data_providers(),
                 derivatives_provider=self.coinglass,
                 infrastructure=infrastructure,
+                engine_order=PRODUCTION_ENGINE_ORDER,
             )
             telegram_token = self.environment.get("MONATISE_TELEGRAM_BOT_TOKEN", "")
             telegram_chat = self.environment.get("MONATISE_TELEGRAM_CHAT_ID", "")
@@ -529,7 +530,9 @@ class OrchestrationRuntime:
                 "execution_enabled": False,
             }
             self.dependencies["engine_registry"] = {
-                "status": "ok", "count": len(self.application.registry.ordered()), "order": list(CANONICAL_ENGINE_ORDER)
+                "status": "ok",
+                "count": len(self.application.registry.ordered()),
+                "order": [item.name for item in self.application.registry.ordered()],
             }
             self.dependencies["governance"] = {"status": "ok", "kill_switch": True}
             configured = bool(self.environment.get("COINGLASS_API_KEY", "").strip())
@@ -617,7 +620,7 @@ class OrchestrationRuntime:
                 "fallback_enabled": fallback_available,
                 "execution_enabled": False,
             })
-        registry_ok = bool(self.application and tuple(item.name for item in self.application.registry.ordered()) == CANONICAL_ENGINE_ORDER)
+        registry_ok = bool(self.application and tuple(item.name for item in self.application.registry.ordered()) == PRODUCTION_ENGINE_ORDER)
         mandatory = (
             "configuration", "postgresql", "migrations", "redis", "event_bus", "state_manager",
             "audit_repository", "audit_integrity", "audit_logging", "scheduler", "engine_registry", "pipeline_orchestrator", "governance", "notifications", "coinglass", "market_data", "hierarchy_shadow",
@@ -663,20 +666,28 @@ class OrchestrationRuntime:
         classification = getattr(getattr(decision, "classification", None), "value", "no_trade")
         direction = getattr(getattr(decision, "direction", None), "value", "none")
         threshold = int(metadata.get("minimum_signal_score", 7) or 7)
-        score = int(metadata.get("grid_signal_score", 0) or 0) if classification == "grid" else abs(int(metadata.get("signed_signal_score", 0) or 0))
-        if classification == "no_trade" or score < threshold:
+        signed_score = int(metadata.get("signed_signal_score", 0) or 0)
+        score = int(metadata.get("grid_signal_score", 0) or 0) if classification == "grid" else abs(signed_score)
+        direction_is_qualified = (
+            classification == "grid"
+            or (direction == "long" and signed_score >= threshold)
+            or (direction == "short" and signed_score <= -threshold)
+        )
+        if classification == "no_trade" or score < threshold or not direction_is_qualified:
             return False
-        risk = outputs.get("risk_validation")
-        risk_metadata = getattr(risk, "metadata", {}) or {}
-        grid = risk_metadata.get("grid_plan") or {}
+        if result.status.value != "completed":
+            return False
+        market = outputs.get("market_data")
+        price = getattr(market, "price", None)
+        plan = build_directional_plan(price, direction) or {}
+        grid = (build_grid_plan(price) or {}) if classification == "grid" else {}
         material = {
             "classification": classification,
             "direction": direction,
             "score": score,
-            "risk": getattr(getattr(risk, "decision", None), "value", None),
-            "entry": round(float(getattr(risk, "validated_entry", 0) or 0), 6),
-            "invalidation": round(float(getattr(risk, "validated_invalidation", 0) or 0), 6),
-            "target": round(float(getattr(risk, "validated_target", 0) or 0), 6),
+            "entry": round(float(plan.get("entry", price) or 0), 6),
+            "invalidation": round(float(plan.get("invalidation", 0) or 0), 6),
+            "target": round(float(plan.get("target", 0) or 0), 6),
             "grid_buy": [round(float(value), 6) for value in grid.get("buy_levels", ())],
             "grid_sell": [round(float(value), 6) for value in grid.get("sell_levels", ())],
         }

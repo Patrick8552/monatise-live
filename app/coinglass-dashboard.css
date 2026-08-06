@@ -1032,6 +1032,13 @@ select {
   white-space: nowrap;
 }
 
+#maxPain {
+  max-width: min(60%, 22rem);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
 canvas {
   display: block;
   width: 100%;
@@ -1297,6 +1304,9 @@ canvas {
   font-weight: 800;
   color: var(--text);
   text-align: right;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .positive {

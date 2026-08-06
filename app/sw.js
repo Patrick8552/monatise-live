@@ -1,18 +1,18 @@
-const CACHE_NAME = "monatise-shell-20260805-dynamic-grid-v1";
+const CACHE_NAME = "monatise-shell-20260805-production-fail-closed-v1";
 const SHELL_ASSETS = [
   "./",
   "./cg.html",
   "./dashboard/",
   "./game.html",
   "./memecoins.html",
-  "./coinglass-dashboard.html?v=20260805-dynamic-grid-v1",
+  "./coinglass-dashboard.html?v=20260805-production-fail-closed-v1",
   "./styles.css?v=20260727-dashboard-first-v7",
   "./app.js?v=20260727-brand-v4",
   "./spotify.js?v=20260629-request-access-fix",
   "./game.js?v=20260629-crypto-trainer",
   "./assets/payout-clients.svg",
-  "./coinglass-dashboard.css?v=20260727-integrations-v1",
-  "./coinglass-dashboard.js?v=20260805-dynamic-grid-v1",
+  "./coinglass-dashboard.css?v=20260805-asset-switch-v2",
+  "./coinglass-dashboard.js?v=20260805-production-fail-closed-v1",
   "./memecoins.css?v=20260715-memecoins",
   "./memecoins.js?v=20260715-memecoins",
   "./manifest.webmanifest?v=20260727-brand-v2",

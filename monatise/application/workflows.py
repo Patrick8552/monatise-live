@@ -10,8 +10,8 @@ from typing import Any, Awaitable, Callable, Protocol
 
 from monatise.application.models import AnalysisRun, PipelineResult
 from monatise.application.orchestrator import PipelineOrchestrator
-from monatise.application.production_analysis import build_grid_plan
-from monatise.application.registry import CANONICAL_ENGINE_ORDER
+from monatise.application.production_analysis import build_directional_plan, build_grid_plan
+from monatise.application.registry import CANONICAL_ENGINE_ORDER, PRODUCTION_ENGINE_ORDER
 from monatise.infrastructure.state_manager import StateKey
 from monatise.infrastructure.task_scheduler import JobDefinition, RetryPolicy, ScheduleType
 
@@ -60,8 +60,9 @@ class TelegramNotifier:
     def format(result: PipelineResult) -> str:
         outputs = result.context.outputs
         decision = outputs.get("decision")
-        risk = outputs.get("risk_validation")
         market = outputs.get("market_data")
+        stage_inputs = set(getattr(result.context.run, "stage_inputs", {}))
+        stage_total = len(PRODUCTION_ENGINE_ORDER) if stage_inputs == set(PRODUCTION_ENGINE_ORDER) else len(CANONICAL_ENGINE_ORDER)
 
         classification = _enum_value(getattr(decision, "classification", "no_trade")).upper() if decision is not None else None
         decision_metadata = (getattr(decision, "metadata", {}) or {}) if decision is not None else {}
@@ -72,7 +73,7 @@ class TelegramNotifier:
             reasons = tuple(getattr(decision, "reasons", ()) or ())[:3]
             lines = [
                 f"Monatise NO_TRADE: {result.symbol}",
-                f"Status: {result.status.value} | stages {result.statistics.completed_stages}/{len(CANONICAL_ENGINE_ORDER)}",
+                f"Status: {result.status.value} | stages {result.statistics.completed_stages}/{stage_total}",
                 f"Score: {signed_score:+d}/10 | trade threshold: ±{threshold}",
             ]
             if reasons:
@@ -83,29 +84,30 @@ class TelegramNotifier:
             lines.append(f"Run: {result.run_id}")
             return "\n".join(lines)
 
-        if decision is None or risk is None:
+        if decision is None:
             suffix = f" | blocked by {result.blocked_by}" if result.blocked_by else ""
             return (
                 f"Monatise analysis: {result.symbol} | {result.status.value} | "
-                f"stages {result.statistics.completed_stages}/{len(CANONICAL_ENGINE_ORDER)}{suffix} | run {result.run_id}"
+                f"stages {result.statistics.completed_stages}/{stage_total}{suffix} | run {result.run_id}"
             )
 
         direction = _enum_value(getattr(decision, "direction", "none")).upper()
         classification = _enum_value(getattr(decision, "classification", "no_trade")).upper()
         conviction = float(getattr(decision, "conviction", 0.0) or 0.0)
-        entry = getattr(risk, "validated_entry", None)
-        stop = getattr(risk, "validated_invalidation", None)
-        target = getattr(risk, "validated_target", None)
-        reward_risk = getattr(risk, "reward_risk", None)
-        expires_at = getattr(risk, "signal_expires_at", None)
+        analysis_plan = build_directional_plan(getattr(market, "price", None), direction)
+        entry = analysis_plan["entry"] if analysis_plan else None
+        stop = analysis_plan["invalidation"] if analysis_plan else None
+        target = analysis_plan["target"] if analysis_plan else None
         quality = getattr(market, "quality", None)
         source = getattr(quality, "source", "CoinGlass")
         interval = getattr(market, "interval", "unknown")
         reasons = tuple(getattr(decision, "reasons", ()) or ())[:3]
 
-        risk_decision = _enum_value(getattr(risk, "decision", "")).lower()
-        grid_blocked = classification == "GRID" and (result.status.value == "blocked" or risk_decision == "rejected")
-        heading = f"Monatise GRID {'CANDIDATE — RISK BLOCKED' if grid_blocked else 'DECISION READY — ENTRY CONFIRMATION PENDING'}: {result.symbol} ({direction})" if classification == "GRID" else f"Monatise signal: {result.symbol} {direction} ({classification})"
+        heading = (
+            f"Monatise GRID DECISION READY — ENTRY CONFIRMATION PENDING: {result.symbol} ({direction})"
+            if classification == "GRID"
+            else f"Monatise directional setup: {result.symbol} {direction} ({classification})"
+        )
         lines = [
             heading,
             f"Timeframe: {interval}",
@@ -114,8 +116,7 @@ class TelegramNotifier:
         ]
         if classification == "GRID":
             price_action = outputs.get("price_action")
-            risk_metadata = getattr(risk, "metadata", {}) or {}
-            grid = risk_metadata.get("grid_plan") or build_grid_plan(entry or getattr(market, "price", None))
+            grid = build_grid_plan(entry or getattr(market, "price", None))
             if grid is None:
                 lines.append("Grid levels: unavailable")
             else:
@@ -133,15 +134,8 @@ class TelegramNotifier:
                 lines.append(f"Price action: detected {patterns}; confirm again at the selected grid level")
             else:
                 lines.append("Entry: WAIT — price-action confirmation required at the selected grid level")
-            issues = tuple(getattr(risk, "issues", ()) or ())[:3]
-            if issues:
-                lines.append("Risk review: " + "; ".join(str(getattr(issue, "message", issue)) for issue in issues))
         else:
-            lines.append(f"Entry: {_price(entry)} | Stop: {_price(stop)} | Target: {_price(target)}")
-        if reward_risk is not None and classification != "GRID":
-            lines.append(f"Reward/risk: {float(reward_risk):.2f}")
-        if expires_at is not None:
-            lines.append(f"Expires: {expires_at.astimezone(timezone.utc):%Y-%m-%d %H:%M UTC}")
+            lines.append(f"Projected entry: {_price(entry)} | Invalidation: {_price(stop)} | Target: {_price(target)}")
         lines.append(f"Data: {source} | Status: {result.status.value}")
         if reasons:
             lines.append("Why: " + "; ".join(str(reason) for reason in reasons))

@@ -11,6 +11,8 @@ import pytest
 
 from monatise.application.deployment import COINGLASS_PROVIDER_KEY, MigrationRunner, OrchestrationASGI, OrchestrationRuntime, PaperSafetyConfiguration, RedisSchedulerLeadership, TelegramNotificationTransport, register_coinglass_provider, scheduled_analysis_configuration
 from monatise.application.registry import CANONICAL_ENGINE_ORDER
+from monatise.application.registry import PRODUCTION_ENGINE_ORDER
+from monatise.application.production_analysis import build_production_analysis_run
 from monatise.infrastructure.dependency_injection import Container
 
 
@@ -110,6 +112,17 @@ def test_scheduled_analysis_configuration_is_explicit_bounded_and_crypto_only():
         })
 
 
+def test_production_analysis_graph_completely_excludes_risk_engine_and_consumers():
+    run = build_production_analysis_run("BTC", interval="15m")
+
+    assert tuple(run.stage_inputs) == PRODUCTION_ENGINE_ORDER
+    assert "risk_validation" not in run.stage_inputs
+    assert "capital_allocation" not in run.stage_inputs
+    assert "execution_policy" not in run.stage_inputs
+    assert "governance_loss_control" not in run.stage_inputs
+    assert set(PRODUCTION_ENGINE_ORDER).issubset(CANONICAL_ENGINE_ORDER)
+
+
 def test_runtime_registers_paper_only_analysis_jobs_for_each_configured_symbol():
     class Scheduler:
         def __init__(self): self.definitions = []
@@ -130,6 +143,85 @@ def test_runtime_registers_paper_only_analysis_jobs_for_each_configured_symbol()
     assert all(item.metadata["execution_enabled"] is False for item in scheduler.definitions)
     assert all(item.metadata["notification_policy"] == "qualified_changes" for item in scheduler.definitions)
     assert all("paper-only" in item.tags for item in scheduler.definitions)
+
+
+@pytest.mark.parametrize(("direction", "signed_score"), [("long", 8), ("short", -8)])
+def test_qualified_directional_setups_are_claimed_for_telegram(direction, signed_score):
+    runtime = OrchestrationRuntime(environment={})
+    decision = SimpleNamespace(
+        classification=SimpleNamespace(value="trend"),
+        direction=SimpleNamespace(value=direction),
+        metadata={"signed_signal_score": signed_score, "minimum_signal_score": 7},
+    )
+    risk = SimpleNamespace(
+        decision=SimpleNamespace(value="approved"),
+        validated_entry=65_000,
+        validated_invalidation=63_500 if direction == "long" else 66_500,
+        validated_target=68_000 if direction == "long" else 62_000,
+        metadata={},
+    )
+    result = SimpleNamespace(
+        symbol="BTC",
+        status=SimpleNamespace(value="completed"),
+        context=SimpleNamespace(outputs={"decision": decision, "risk_validation": risk}),
+    )
+
+    assert runtime._claim_material_telegram_signal(result, "1h") is True
+    assert runtime._claim_material_telegram_signal(result, "1h") is False
+
+
+@pytest.mark.parametrize(("direction", "signed_score"), [("long", -8), ("short", 8)])
+def test_mismatched_directional_scores_are_not_claimed_for_telegram(direction, signed_score):
+    runtime = OrchestrationRuntime(environment={})
+    result = SimpleNamespace(
+        symbol="BTC",
+        status=SimpleNamespace(value="completed"),
+        context=SimpleNamespace(outputs={
+            "decision": SimpleNamespace(
+                classification=SimpleNamespace(value="trend"),
+                direction=SimpleNamespace(value=direction),
+                metadata={"signed_signal_score": signed_score, "minimum_signal_score": 7},
+            ),
+            "risk_validation": SimpleNamespace(metadata={}),
+        }),
+    )
+
+    assert runtime._claim_material_telegram_signal(result, "1h") is False
+
+
+def test_incomplete_directional_setups_are_not_claimed_for_telegram():
+    runtime = OrchestrationRuntime(environment={})
+    result = SimpleNamespace(
+        symbol="BTC",
+        status=SimpleNamespace(value="blocked"),
+        context=SimpleNamespace(outputs={
+            "decision": SimpleNamespace(
+                classification=SimpleNamespace(value="trend"),
+                direction=SimpleNamespace(value="long"),
+                metadata={"signed_signal_score": 8, "minimum_signal_score": 7},
+            ),
+        }),
+    )
+
+    assert runtime._claim_material_telegram_signal(result, "1h") is False
+
+
+def test_legacy_risk_rejection_does_not_block_completed_directional_notification():
+    runtime = OrchestrationRuntime(environment={})
+    result = SimpleNamespace(
+        symbol="BTC",
+        status=SimpleNamespace(value="completed"),
+        context=SimpleNamespace(outputs={
+            "decision": SimpleNamespace(
+                classification=SimpleNamespace(value="trend"),
+                direction=SimpleNamespace(value="long"),
+                metadata={"signed_signal_score": 8, "minimum_signal_score": 7},
+            ),
+            "risk_validation": SimpleNamespace(decision=SimpleNamespace(value="rejected")),
+        }),
+    )
+
+    assert runtime._claim_material_telegram_signal(result, "1h") is True
 
 
 def test_runtime_registers_fail_closed_hierarchy_shadow_jobs_without_publication():
@@ -384,7 +476,7 @@ def test_coinglass_request_failure_makes_runtime_not_ready_even_with_fallback_po
 def test_single_coinglass_request_failure_is_degraded_but_still_ready():
     runtime = OrchestrationRuntime()
     runtime.safety = SimpleNamespace()
-    runtime.application = SimpleNamespace(registry=SimpleNamespace(ordered=lambda: tuple(SimpleNamespace(name=name) for name in CANONICAL_ENGINE_ORDER)))
+    runtime.application = SimpleNamespace(registry=SimpleNamespace(ordered=lambda: tuple(SimpleNamespace(name=name) for name in PRODUCTION_ENGINE_ORDER)))
     runtime.dependencies = {key: {"status": "ok"} for key in (
         "configuration", "postgresql", "migrations", "redis", "event_bus", "state_manager",
         "audit_repository", "audit_integrity", "audit_logging", "scheduler", "engine_registry",

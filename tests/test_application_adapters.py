@@ -202,25 +202,27 @@ def test_telegram_message_has_no_execution_capability():
     assert notifier.execution_enabled is False
 
 
-def test_telegram_completed_signal_contains_actionable_levels_and_coinglass_source():
+@pytest.mark.parametrize(
+    ("direction", "score", "entry", "stop", "target"),
+    [
+        ("long", 8, 65000.0, 63500.0, 68000.0),
+        ("short", -8, 65000.0, 66500.0, 62000.0),
+    ],
+)
+def test_telegram_completed_directional_setup_contains_actionable_levels_and_coinglass_source(
+    direction, score, entry, stop, target
+):
     run = AnalysisRun("BTC", {})
     now = run.requested_at
     outputs = {
         "decision": SimpleNamespace(
-            direction=SimpleNamespace(value="long"),
+            direction=SimpleNamespace(value=direction),
             classification=SimpleNamespace(value="trend"),
             conviction=0.78,
             reasons=("bullish structure confirmed", "positive derivatives flow"),
-            metadata={"signed_signal_score": 8, "grid_signal_score": 2, "minimum_signal_score": 7},
+            metadata={"signed_signal_score": score, "grid_signal_score": 2, "minimum_signal_score": 7},
         ),
-        "risk_validation": SimpleNamespace(
-            validated_entry=65000.0,
-            validated_invalidation=63500.0,
-            validated_target=68000.0,
-            reward_risk=2.0,
-            signal_expires_at=now,
-        ),
-        "market_data": SimpleNamespace(quality=SimpleNamespace(source="CoinGlass futures price history")),
+        "market_data": SimpleNamespace(price=entry, quality=SimpleNamespace(source="CoinGlass futures price history")),
     }
     result = PipelineResult(
         run.run_id, run.correlation_id, "BTC", PipelineStage.COMPLETED,
@@ -229,12 +231,12 @@ def test_telegram_completed_signal_contains_actionable_levels_and_coinglass_sour
 
     message = TelegramNotifier.format(result)
 
-    assert "BTC LONG (TREND)" in message
-    assert "Entry: 65,000" in message
-    assert "Stop: 63,500" in message
-    assert "Target: 68,000" in message
+    assert f"Monatise directional setup: BTC {direction.upper()} (TREND)" in message
+    assert "Projected entry: 65,000" in message
+    assert f"Invalidation: {entry * (0.98 if direction == 'long' else 1.02):,.0f}" in message
+    assert f"Target: {entry * (1.04 if direction == 'long' else 0.96):,.0f}" in message
     assert "Confidence: 78%" in message
-    assert "Score: +8/10" in message
+    assert f"Score: {score:+d}/10" in message
     assert "CoinGlass futures price history" in message
 
 
@@ -274,14 +276,7 @@ def test_telegram_grid_analysis_is_included_and_labeled():
             reasons=("balanced two-sided liquidity",),
             metadata={"signed_signal_score": 0, "grid_signal_score": 7, "minimum_signal_score": 7},
         ),
-        "risk_validation": SimpleNamespace(
-            validated_entry=65000.0,
-            validated_invalidation=63700.0,
-            validated_target=67600.0,
-            reward_risk=2.0,
-            signal_expires_at=now,
-        ),
-        "market_data": SimpleNamespace(quality=SimpleNamespace(source="CoinGlass futures price history")),
+        "market_data": SimpleNamespace(price=65000.0, quality=SimpleNamespace(source="CoinGlass futures price history")),
     }
     result = PipelineResult(
         run.run_id, run.correlation_id, "BTC", PipelineStage.COMPLETED,
@@ -298,6 +293,41 @@ def test_telegram_grid_analysis_is_included_and_labeled():
     assert "Entry: WAIT — price-action confirmation required at the selected grid level" in message
     assert "CoinGlass futures price history" in message
     assert "Score: 7/10" in message
+
+
+def test_telegram_directional_setup_ignores_legacy_risk_rejection():
+    run = AnalysisRun("BTC", {})
+    now = run.requested_at
+    outputs = {
+        "decision": SimpleNamespace(
+            direction=SimpleNamespace(value="long"),
+            classification=SimpleNamespace(value="trend"),
+            conviction=0.8,
+            reasons=("directional evidence qualified",),
+            metadata={"signed_signal_score": 8, "grid_signal_score": 1, "minimum_signal_score": 7},
+        ),
+        "risk_validation": SimpleNamespace(
+            decision=SimpleNamespace(value="rejected"),
+            validated_entry=65_000,
+            validated_invalidation=66_000,
+            validated_target=68_000,
+            reward_risk=None,
+            signal_expires_at=now,
+            issues=(SimpleNamespace(message="stop is on the wrong side of entry"),),
+        ),
+        "market_data": SimpleNamespace(interval="15m", quality=SimpleNamespace(source="CoinGlass")),
+    }
+    result = PipelineResult(
+        run.run_id, run.correlation_id, "BTC", PipelineStage.BLOCKED,
+        PipelineContext(run, outputs), PipelineStatistics(1, {}, {}, 12), None, "risk_validation", now, now,
+    )
+
+    message = TelegramNotifier.format(result)
+
+    assert "Monatise directional setup: BTC LONG (TREND)" in message
+    assert "Projected entry:" in message
+    assert "RISK BLOCKED" not in message
+    assert "Risk review:" not in message
 
 
 def test_notification_failure_does_not_corrupt_completed_pipeline_result():

@@ -16,6 +16,15 @@ CANONICAL_ENGINE_ORDER = (
     "intelligence_learning", "integration", "governance_loss_control",
 )
 
+# Production is decision-only. Risk validation and every stage that consumes
+# its approval contract are intentionally absent from the live graph.
+PRODUCTION_ENGINE_ORDER = (
+    "market_data", "regime", "liquidity", "liquidity_sweep",
+    "supply_demand", "reclaim", "market_structure", "fibonacci_liquidity",
+    "order_flow", "price_action", "decision", "rsi", "portfolio_intelligence",
+    "intelligence_learning",
+)
+
 
 @dataclass(frozen=True)
 class EngineRegistration:
@@ -45,12 +54,13 @@ def _property_is_false(output: Any, attribute: str) -> bool:
 
 
 class EngineRegistry:
-    def __init__(self, container: Container) -> None:
+    def __init__(self, container: Container, engine_order: tuple[str, ...] = CANONICAL_ENGINE_ORDER) -> None:
         self._container = container
+        self._engine_order = engine_order
         self._entries: dict[str, EngineRegistration] = {}
 
     def register(self, registration: EngineRegistration, engine: Any) -> None:
-        if registration.name not in CANONICAL_ENGINE_ORDER:
+        if registration.name not in self._engine_order:
             raise ValueError(f"non-canonical engine: {registration.name}")
         if registration.name in self._entries:
             raise ValueError(f"engine already registered: {registration.name}")
@@ -72,19 +82,19 @@ class EngineRegistry:
             raise KeyError(f"engine is not registered: {name}") from exc
 
     def ordered(self) -> tuple[EngineRegistration, ...]:
-        return tuple(self._entries[name] for name in CANONICAL_ENGINE_ORDER if name in self._entries)
+        return tuple(self._entries[name] for name in self._engine_order if name in self._entries)
 
     def validate(self, *, complete: bool = True) -> tuple[str, ...]:
         errors = list(self._container.validate_graph())
         if complete:
-            missing = [name for name in CANONICAL_ENGINE_ORDER if name not in self._entries]
+            missing = [name for name in self._engine_order if name not in self._entries]
             if missing:
                 errors.append("missing engines: " + ", ".join(missing))
         for entry in self.ordered():
             unknown = [name for name in entry.dependencies if name not in self._entries]
             if unknown:
                 errors.append(f"{entry.name} has missing dependencies: {', '.join(unknown)}")
-            if any(CANONICAL_ENGINE_ORDER.index(dep) >= CANONICAL_ENGINE_ORDER.index(entry.name) for dep in entry.dependencies if dep in CANONICAL_ENGINE_ORDER):
+            if any(self._engine_order.index(dep) >= self._engine_order.index(entry.name) for dep in entry.dependencies if dep in self._engine_order):
                 errors.append(f"{entry.name} has an out-of-order dependency")
         return tuple(errors)
 
@@ -93,7 +103,7 @@ class EngineRegistry:
         return {"status": "healthy" if not errors else "unhealthy", "engine_count": len(self._entries), "errors": errors}
 
 
-def canonical_registrations() -> tuple[EngineRegistration, ...]:
+def canonical_registrations(engine_order: tuple[str, ...] = CANONICAL_ENGINE_ORDER) -> tuple[EngineRegistration, ...]:
     from monatise.engines.capital_allocation import CapitalAllocationEngine
     from monatise.engines.decision import DecisionEngine
     from monatise.engines.execution_policy import ExecutionPolicyEngine
@@ -114,8 +124,8 @@ def canonical_registrations() -> tuple[EngineRegistration, ...]:
     from monatise.engines.risk_validation import RiskValidationEngine
     from monatise.engines.rsi import RSIEngine
     from monatise.engines.supply_demand import SupplyDemandEngine
-    types = (MarketDataEngine, RegimeEngine, LiquidityEngine, LiquiditySweepEngine, SupplyDemandEngine, ReclaimEngine, MarketStructureEngine, FibonacciLiquidityEngine, OrderFlowIntelligenceEngine, PriceActionEngine, DecisionEngine, RSIEngine, RiskValidationEngine, CapitalAllocationEngine, ExecutionPolicyEngine, PortfolioIntelligenceEngine, ReportingIntelligenceEngine, IntelligenceLearningEngine, IntegrationEngine, GovernanceLossControlEngine)
-    methods = ("collect", "assess", "assess", "assess", "assess", "assess", "assess", "assess", "assess", "assess", "assess", "assess", "assess", "assess", "assess", "assess", "build", "assess", "build", "assess")
+    engine_types = dict(zip(CANONICAL_ENGINE_ORDER, (MarketDataEngine, RegimeEngine, LiquidityEngine, LiquiditySweepEngine, SupplyDemandEngine, ReclaimEngine, MarketStructureEngine, FibonacciLiquidityEngine, OrderFlowIntelligenceEngine, PriceActionEngine, DecisionEngine, RSIEngine, RiskValidationEngine, CapitalAllocationEngine, ExecutionPolicyEngine, PortfolioIntelligenceEngine, ReportingIntelligenceEngine, IntelligenceLearningEngine, IntegrationEngine, GovernanceLossControlEngine)))
+    engine_methods = dict(zip(CANONICAL_ENGINE_ORDER, ("collect", "assess", "assess", "assess", "assess", "assess", "assess", "assess", "assess", "assess", "assess", "assess", "assess", "assess", "assess", "assess", "build", "assess", "build", "assess")))
     retryable = {"market_data", "order_flow", "integration"}
     blockers = {
         "market_data": lambda value: _property_is_false(getattr(value, "quality", None), "usable"),
@@ -133,4 +143,7 @@ def canonical_registrations() -> tuple[EngineRegistration, ...]:
             or _nested_state_is(value, "state", {"frozen", "kill_switch"})
         ),
     }
-    return tuple(EngineRegistration(name, engine_type, method, CANONICAL_ENGINE_ORDER[:index], name in retryable, blockers.get(name)) for index, (name, engine_type, method) in enumerate(zip(CANONICAL_ENGINE_ORDER, types, methods)))
+    return tuple(
+        EngineRegistration(name, engine_types[name], engine_methods[name], engine_order[:index], name in retryable, blockers.get(name))
+        for index, name in enumerate(engine_order)
+    )

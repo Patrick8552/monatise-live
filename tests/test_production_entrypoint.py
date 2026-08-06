@@ -12,6 +12,7 @@ import pytest
 
 from monatise.adapters.coinglass_production import CoinGlassProductionAdapter
 from monatise.application.production import ProductionASGI, ProductionRuntime
+from monatise.application.registry import PRODUCTION_ENGINE_ORDER
 from monatise.core.models import Candle
 
 
@@ -286,13 +287,7 @@ def test_production_readiness_accepts_healthy_scheduler_contender_during_cutover
     runtime.safety = SimpleNamespace()
     runtime.application = SimpleNamespace(
         registry=SimpleNamespace(
-            ordered=lambda: tuple(SimpleNamespace(name=name) for name in (
-                "market_data", "regime", "liquidity", "liquidity_sweep",
-                    "supply_demand", "reclaim", "market_structure", "fibonacci_liquidity",
-                    "order_flow", "price_action", "decision", "rsi", "risk_validation", "capital_allocation",
-                "execution_policy", "portfolio_intelligence", "reporting_intelligence",
-                "intelligence_learning", "integration", "governance_loss_control",
-            ))
+            ordered=lambda: tuple(SimpleNamespace(name=name) for name in PRODUCTION_ENGINE_ORDER)
         )
     )
     runtime.dependencies = {

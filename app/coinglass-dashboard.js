@@ -19,6 +19,7 @@ const CONFIRMATION_INTERVAL_BY_STRUCTURE = {
   "1d": "12h", "1w": "1d"
 };
 const DEFAULT_VIEW_INTERVAL = "1h";
+const FETCH_TIMEOUT_MS = 20_000;
 
 function cryptoAnalysisFrames() {
   const primary = els?.intervalSelect?.value || DEFAULT_VIEW_INTERVAL;
@@ -197,6 +198,7 @@ const state = {
   apiKey: localStorage.getItem(API_KEY_STORAGE) || "",
   operator: null,
   productionAnalysis: null,
+  refreshVersion: 0,
   serverCoinGlassReady: false,
   priceSeries: [],
   lastPrice: null,
@@ -889,7 +891,9 @@ function publishGeneratedSignal(setup) {
       kind: "monatise signal",
       asset: signal.asset,
       title: `${signal.asset} ${displayFrameworkAction(signal.action)}`,
-      detail: `${signal.buyGridPlan} ${signal.sellGridPlan} Take profit: ${formatUsd(signal.target)}. ${signal.takeProfitPlan || signal.hedgePlan}`,
+      detail: signal.action === "GRID"
+        ? `${signal.buyGridPlan} ${signal.sellGridPlan} ${signal.invalidationPlan}`
+        : `${signal.buyGridPlan} ${signal.sellGridPlan} Take profit: ${formatUsd(signal.target)}. ${signal.takeProfitPlan || signal.hedgePlan}`,
       payload: signal
     });
   }
@@ -897,6 +901,40 @@ function publishGeneratedSignal(setup) {
 
 function snapshotLockedSignal(candidate, setup, price) {
   const now = Date.now();
+  if (setup.productionUnavailable) {
+    const snapshotDurationMs = selectedSnapshotLockMs();
+    setLockedSignal(null);
+    return {
+      ...candidate,
+      action: "WAIT",
+      tradeReady: false,
+      entry: null,
+      target: null,
+      status: "unavailable",
+      stateLabel: "production unavailable",
+      thesis: setup.frameworkGate.summary,
+      snapshotAtMs: now,
+      reassessAtMs: now + snapshotDurationMs,
+      snapshotDurationMs,
+      snapshotInterval: selectedSnapshotInterval(),
+      snapshotTime: formatClock(now),
+      reassessTime: formatClock(now + snapshotDurationMs)
+    };
+  }
+  if (candidate.action === "GRID") {
+    setLockedSignal(null);
+    return {
+      ...candidate,
+      snapshotAtMs: now,
+      reassessAtMs: now + selectedSnapshotLockMs(),
+      snapshotDurationMs: selectedSnapshotLockMs(),
+      snapshotInterval: selectedSnapshotInterval(),
+      snapshotTime: formatClock(now),
+      reassessTime: formatClock(now + selectedSnapshotLockMs()),
+      status: "active",
+      stateLabel: "grid decision ready"
+    };
+  }
   const locked = state.lockedSignal;
   const sameAsset = locked && locked.asset === candidate.asset;
   const snapshotInterval = selectedSnapshotInterval();
@@ -1205,6 +1243,52 @@ function dynamicInvalidationPlan(action, entry, mark) {
 }
 
 function buildGeneratedSignal(setup, price, vwap) {
+  if (setup.direction === "GRID SETUP" && setup.productionGridPlan) {
+    const grid = setup.productionGridPlan;
+    const buyGrid = (grid.buy_levels || []).map(Number).filter(Number.isFinite);
+    const sellGrid = (grid.sell_levels || []).map(Number).filter(Number.isFinite);
+    const lower = Number(grid.lower_invalidation);
+    const upper = Number(grid.upper_invalidation);
+    const center = Number(grid.center);
+    const bestChecks = setup.checks
+      .filter((check) => check.live || Math.abs(check.score) > 0)
+      .slice(0, 4)
+      .map((check) => `${check.name}: ${check.detail}`);
+    return {
+      asset: setup.asset,
+      action: "GRID",
+      confidence: setup.confidence,
+      contextConfidence: setup.contextConfidence,
+      contextPrice: Number.isFinite(price) ? price : center,
+      tradeReady: Boolean(setup.tradeReady),
+      score: setup.score,
+      liveChecks: setup.liveChecks,
+      checksTotal: setup.checks.length,
+      entry: center,
+      entryMode: "grid",
+      invalidation: lower,
+      lowerInvalidation: lower,
+      upperInvalidation: upper,
+      target: center,
+      buyGrid,
+      sellGrid,
+      buyGridText: formatGridLevels(buyGrid),
+      sellGridText: formatGridLevels(sellGrid),
+      entryPlan: setup.gridPlan,
+      invalidationPlan: `Grid invalidates below ${formatUsd(lower)} or above ${formatUsd(upper)}.`,
+      buyGridPlan: `Grid bids: ${formatGridLevels(buyGrid)}.`,
+      sellGridPlan: `Grid offers: ${formatGridLevels(sellGrid)}.`,
+      hedgeDirection: "Two-sided grid",
+      hedgePlan: "Reassess at either grid invalidation boundary.",
+      takeProfitDirection: "Two-sided exits",
+      takeProfitPlan: `Offers ${formatGridLevels(sellGrid)}; bids ${formatGridLevels(buyGrid)}.`,
+      gridHedge: setup.gridPlan,
+      gridHedgePlan: "Production decision geometry.",
+      thesis: `GRID DECISION READY · context strength ${setup.contextConfidence}%`,
+      evidence: bestChecks.length ? bestChecks.join(" · ") : "Production grid decision completed.",
+      time: new Date().toLocaleTimeString()
+    };
+  }
   const setupAction = setup.contextSignalReady && setup.direction === "BUY SETUP" ? "BUY" : setup.contextSignalReady && setup.direction === "SELL SETUP" ? "SELL" : "WAIT";
   const atrPct = averageTrueRangePercent(state.priceSeries.slice(-24)) || 0.6;
   const riskPct = Math.max(0.35, Math.min(1.6, atrPct * 1.15));
@@ -1345,6 +1429,7 @@ function formatGridLevels(levels) {
 }
 
 function setupGridLabel(signal) {
+  if (signal.action === "GRID") return "Two-sided production grid";
   if (signal.action === "BUY") return "Long entry / take-profit grid";
   if (signal.action === "SELL") return "Short entry / cover grid";
   return "--";
@@ -1358,6 +1443,7 @@ function setupGridPlan(signal) {
   if (signal.action === "SELL") {
     return `${entryPlan}Short entries: ${formatGridLevels(signal.sellGrid)}. Cover buys: ${formatGridLevels(signal.buyGrid)}. Active SELL idea is wrong only above ${formatUsd(signal.invalidation)}.`;
   }
+  if (signal.action === "GRID") return signal.entryPlan;
   return signal.entryPlan;
 }
 
@@ -1368,6 +1454,7 @@ function setupInvalidationPlan(signal) {
   if (signal.action === "SELL") {
     return `One overall invalidation for the setup: the sell idea is wrong only above ${formatUsd(signal.invalidation)}.`;
   }
+  if (signal.action === "GRID") return signal.invalidationPlan;
   return "VWAP and market structure are the wait-state guard rails.";
 }
 
@@ -1391,25 +1478,28 @@ function renderSetupGrid(signal) {
   const isBuy = signal.action === "BUY";
   const isSell = signal.action === "SELL";
   const isDirectional = isBuy || isSell;
+  const isGrid = signal.action === "GRID";
   const pending = isDirectional && !signal.tradeReady;
-  const entryLevels = isDirectional ? setupEntryLevels(signal) : [];
-  const profitLevels = isBuy ? signal.sellGrid : isSell ? signal.buyGrid : [];
+  const entryLevels = isGrid ? signal.buyGrid : isDirectional ? setupEntryLevels(signal) : [];
+  const profitLevels = isGrid ? signal.sellGrid : isBuy ? signal.sellGrid : isSell ? signal.buyGrid : [];
   const entryModeLabel = signal.entryMode === "mark" ? "MARK ENTRY" : signal.entryMode === "pullback" || signal.entryMode === "grid" ? "PULLBACK ENTRY" : "ENTRY PENDING";
 
-  els.setupGridStatus.textContent = pending || !isDirectional ? "WAIT · NO TRADE" : `${signal.action} · ACTIVE`;
-  els.setupGridStatus.className = `setup-grid-status ${pending || !isDirectional ? "waiting" : isBuy ? "positive" : "negative"}`;
-  els.setupContextDirection.textContent = isDirectional ? `${signal.action} CONTEXT` : "WAIT CONTEXT";
+  els.setupGridStatus.textContent = isGrid ? "GRID · DECISION READY" : pending || !isDirectional ? "WAIT · NO TRADE" : `${signal.action} · ACTIVE`;
+  els.setupGridStatus.className = `setup-grid-status ${isGrid ? "" : pending || !isDirectional ? "waiting" : isBuy ? "positive" : "negative"}`;
+  els.setupContextDirection.textContent = isGrid ? "GRID CONTEXT" : isDirectional ? `${signal.action} CONTEXT` : "WAIT CONTEXT";
   els.setupContextDirection.className = isBuy ? "positive" : isSell ? "negative" : "";
   els.setupContextPrice.textContent = Number.isFinite(signal.contextPrice) ? formatUsd(signal.contextPrice) : "--";
   els.setupContextStrength.textContent = `${entryModeLabel} · ${signal.contextConfidence || 0}%`;
-  els.setupEntryLabel.textContent = isDirectional ? `Potential ${signal.entryMode === "mark" ? "mark" : "pullback"} entry` : "Entry pending";
-  els.setupProfitLabel.textContent = isSell ? "Cover buys" : "Take profit";
+  els.setupEntryLabel.textContent = isGrid ? "Grid bids" : isDirectional ? `Potential ${signal.entryMode === "mark" ? "mark" : "pullback"} entry` : "Entry pending";
+  els.setupProfitLabel.textContent = isGrid ? "Grid offers" : isSell ? "Cover buys" : "Take profit";
   renderSetupLevels(els.setupEntryLevels, entryLevels, Number(signal.entry));
   renderSetupLevels(els.setupProfitLevels, profitLevels);
-  els.setupInvalidationValue.textContent = isDirectional
+  els.setupInvalidationValue.textContent = isGrid
+    ? `Below ${formatUsd(signal.lowerInvalidation)} / above ${formatUsd(signal.upperInvalidation)}`
+    : isDirectional
     ? `${isBuy ? "Below" : "Above"} ${formatUsd(signal.invalidation)}`
     : "VWAP / structure";
-  els.setupInvalidationStrip.className = `setup-invalidation-strip ${isDirectional ? "active" : ""}`;
+  els.setupInvalidationStrip.className = `setup-invalidation-strip ${isDirectional || isGrid ? "active" : ""}`;
   els.setupGridValidity.textContent = signal.snapshotTime
     ? `1h snapshot · valid until ${signal.reassessTime}`
     : `Generated ${signal.time}`;
@@ -1477,7 +1567,7 @@ function currentFrameworkGate(direction, confidence, liveChecks) {
     missing,
     summary: missing.length
       ? `NO TRADE: waiting for ${missing.slice(0, 4).join(", ")}${missing.length > 4 ? ", ..." : ""}.`
-      : `${side} framework sequence confirmed: sweep, rejection, CHoCH/BOS, retest, grid, risk.`
+      : `${side} framework sequence confirmed: sweep, rejection, CHoCH/BOS, retest, grid, decision evidence.`
   };
 }
 
@@ -1538,10 +1628,14 @@ function renderGeneratedSignal(signal) {
   els.signalEntry.textContent = setupGridLabel(signal);
   els.signalEntryPlan.textContent = setupGridPlan(signal);
   renderSetupGrid(signal);
-  els.signalInvalidation.textContent = signal.action === "WAIT" ? "VWAP / structure" : formatUsd(signal.invalidation);
+  els.signalInvalidation.textContent = signal.action === "GRID"
+    ? `${formatUsd(signal.lowerInvalidation)} — ${formatUsd(signal.upperInvalidation)}`
+    : signal.action === "WAIT" ? "VWAP / structure" : formatUsd(signal.invalidation);
   els.signalInvalidationPlan.textContent = setupInvalidationPlan(signal);
-  els.signalGridHedge.textContent = signal.action === "WAIT" ? "--" : formatUsd(signal.target);
-  els.signalGridHedgePlan.textContent = signal.action === "WAIT"
+  els.signalGridHedge.textContent = signal.action === "GRID" ? "TWO-SIDED" : signal.action === "WAIT" ? "--" : formatUsd(signal.target);
+  els.signalGridHedgePlan.textContent = signal.action === "GRID"
+    ? signal.takeProfitPlan
+    : signal.action === "WAIT"
     ? "No target until the full framework sequence confirms a BUY or SELL snapshot."
     : `Take-profit area locked from snapshot. ${signal.takeProfitPlan || signal.hedgePlan}`;
   els.signalEvidence.textContent = `${signal.liveChecks} / ${signal.checksTotal} checks`;
@@ -1558,7 +1652,7 @@ function renderSignalLog() {
     <div class="signal-row">
       <strong class="${signal.action === "BUY" ? "positive" : signal.action === "SELL" ? "negative" : ""}">${displayFrameworkAction(signal.action)}</strong>
       <span>${signal.asset} · ${signal.snapshotTime || signal.time}</span>
-      <small>${signal.thesis} · ${signal.action === "WAIT" ? "NO TRADE until sequence confirms" : setupGridPlan(signal)} · invalidation ${signal.action === "WAIT" ? "VWAP / structure" : formatUsd(signal.invalidation)} · take profit ${formatUsd(signal.target)} · ${signal.takeProfitDirection || signal.hedgeDirection}</small>
+      <small>${signal.thesis} · ${signal.action === "WAIT" ? "NO TRADE until sequence confirms" : setupGridPlan(signal)} · ${signal.action === "GRID" ? signal.invalidationPlan : `invalidation ${signal.action === "WAIT" ? "VWAP / structure" : formatUsd(signal.invalidation)} · take profit ${formatUsd(signal.target)} · ${signal.takeProfitDirection || signal.hedgeDirection}`}</small>
     </div>
   `).join("");
 }
@@ -1900,8 +1994,10 @@ async function startVoiceRecording() {
 
 async function timedFetch(name, source, url, options = {}) {
   const started = performance.now();
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const response = await fetch(url, options);
+    const response = await fetch(url, { ...options, signal: controller.signal });
     const ms = Math.round(performance.now() - started);
     if (!response.ok) {
       throw new Error(`${response.status} ${response.statusText}`);
@@ -1911,8 +2007,34 @@ async function timedFetch(name, source, url, options = {}) {
     return data;
   } catch (error) {
     const ms = Math.round(performance.now() - started);
-    recordTelemetry(name, source, false, ms, error.message);
-    throw error;
+    const resolved = error.name === "AbortError" ? new Error(`request timed out after ${FETCH_TIMEOUT_MS / 1000}s`) : error;
+    recordTelemetry(name, source, false, ms, resolved.message);
+    throw resolved;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
+async function timedOptionalFetch(name, source, url, options = {}) {
+  const started = performance.now();
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    const ms = Math.round(performance.now() - started);
+    if (!response.ok) {
+      recordTelemetry(name, source, false, ms, `${response.status} ${response.statusText}`);
+      return null;
+    }
+    const data = await response.json();
+    recordTelemetry(name, source, true, ms);
+    return data;
+  } catch (error) {
+    const message = error.name === "AbortError" ? `request timed out after ${FETCH_TIMEOUT_MS / 1000}s` : error.message;
+    recordTelemetry(name, source, false, Math.round(performance.now() - started), message);
+    return null;
+  } finally {
+    window.clearTimeout(timeout);
   }
 }
 
@@ -2032,6 +2154,7 @@ function chooseAsset(coin) {
   if (els.assetSearchInput) els.assetSearchInput.value = "";
   els.assetSearchResults?.classList.remove("open");
   resetMarketContext();
+  state.productionAnalysis = null;
   state.lastPrice = null;
   state.priceSeries = [];
   els.assetPrice.textContent = "$--";
@@ -2040,6 +2163,10 @@ function chooseAsset(coin) {
   els.priceChange.className = "";
   els.headerPriceChange.textContent = "Loading";
   els.headerPriceChange.className = "";
+  els.hyperList.innerHTML = lockedRows("Production analysis", `Refreshing decision pipeline for ${coin}`, [
+    "Previous asset analysis cleared",
+    "Waiting for the current asset response"
+  ], "refreshing");
   setLockedSignal(null);
   state.realtime.lastSetup = null;
   state.realtime.lastEntrySignal = null;
@@ -2301,7 +2428,7 @@ async function getLiquidations() {
     `${CG_BASE}/api/futures/liquidation/aggregated-map?symbol=${asset.pair}&range=${range}`,
     `${CG_BASE}/api/futures/liquidation/aggregated-map?symbol=${asset.coin}&range=${range}`
   ];
-  const painPromise = timedFetch(
+  const painPromise = timedOptionalFetch(
     "Liquidation max pain",
     "CoinGlass",
     `${CG_BASE}/api/futures/liquidation/max-pain?range=24h`,
@@ -2312,7 +2439,11 @@ async function getLiquidations() {
   let mapSymbol = asset.pair;
   for (const url of mapUrls) {
     try {
-      const payload = await timedFetch("Liquidation map", "CoinGlass", url, { headers: cgHeaders() });
+      const payload = await timedOptionalFetch("Liquidation map", "CoinGlass", url, { headers: cgHeaders() });
+      if (!payload) {
+        mapErrors.push("service unavailable");
+        continue;
+      }
       const shapeSummary = summarizeLiquidationPayload(payload);
       document.body.dataset.liqShape = shapeSummary.label;
       const payloadError = coinGlassPayloadError(payload);
@@ -2329,16 +2460,11 @@ async function getLiquidations() {
       mapErrors.push(error.message);
     }
   }
-  const painPayload = await Promise.resolve(painPromise).then(
-    (value) => ({ status: "fulfilled", value }),
-    (reason) => ({ status: "rejected", reason })
-  );
-  const assetPain = painPayload.status === "fulfilled"
-    ? (painPayload.value.data || []).find((item) => item.symbol === asset.coin)
-    : null;
+  const painPayload = await painPromise;
+  const assetPain = (painPayload?.data || []).find((item) => item.symbol === asset.coin) || null;
   if (!levels.length && mapErrors.length) {
     const shape = document.body.dataset.liqShape || "unknown payload";
-    throw new Error(`CoinGlass liquidation map returned no price levels (${mapErrors.join("; ")}; shape ${shape})`);
+    return { levels: [], assetPain, mapSymbol, error: `CoinGlass liquidation map returned no price levels (${mapErrors.join("; ")}; shape ${shape})` };
   }
   return { levels, assetPain, mapSymbol };
 }
@@ -2394,23 +2520,20 @@ function renderProductionAnalysis(analysis) {
   const blocked = analysis.blocked_by ? `Blocked by ${analysis.blocked_by}` : "Pipeline completed";
   const reasons = Array.isArray(analysis.reasons) ? analysis.reasons.slice(0, 3) : [];
   const grid = classification === "GRID" && analysis.grid_plan && typeof analysis.grid_plan === "object" ? analysis.grid_plan : null;
-  const riskIssues = Array.isArray(analysis.risk_issues) ? analysis.risk_issues.slice(0, 3) : [];
-  const gridState = grid
-    ? analysis.risk_decision === "rejected" || analysis.status === "blocked" ? "GRID CANDIDATE · RISK BLOCKED" : "GRID READY"
-    : classification.replace("_", " ");
+  const decisionReady = analysis.status === "completed" && !analysis.blocked_by;
+  const gridState = grid ? decisionReady ? "GRID DECISION READY" : "GRID DECISION PENDING" : classification.replace("_", " ");
   const gridRows = grid ? `
-    <div class="metric-row"><div><strong>Grid center</strong><br /><small>Validated production geometry</small></div><span class="metric-value">${formatUsd(Number(grid.center))}</span></div>
+    <div class="metric-row"><div><strong>Grid center</strong><br /><small>Projected decision geometry</small></div><span class="metric-value">${formatUsd(Number(grid.center))}</span></div>
     <div class="metric-row"><div><strong>Buy levels</strong><br /><small>${escapeHtml((grid.buy_levels || []).map((value) => formatUsd(Number(value))).join(" / "))}</small></div><span class="metric-value">BIDS</span></div>
     <div class="metric-row"><div><strong>Sell levels</strong><br /><small>${escapeHtml((grid.sell_levels || []).map((value) => formatUsd(Number(value))).join(" / "))}</small></div><span class="metric-value">OFFERS</span></div>
     <div class="metric-row"><div><strong>Two-sided invalidation</strong><br /><small>Below ${formatUsd(Number(grid.lower_invalidation))} or above ${formatUsd(Number(grid.upper_invalidation))}</small></div><span class="metric-value">${Number(grid.levels_per_side) || 0} × 2</span></div>
   ` : "";
   els.hyperList.innerHTML = `
-    <div class="metric-row"><div><strong>Production decision</strong><br /><small>Monatise 19-stage pipeline</small></div><span class="metric-value">${classification.replace("_", " ")}</span></div>
-    <div class="metric-row"><div><strong>Pipeline state</strong><br /><small>${blocked}</small></div><span class="metric-value">${analysis.completed_stages || 0}/19</span></div>
+    <div class="metric-row"><div><strong>Production decision</strong><br /><small>Monatise 13-stage decision pipeline</small></div><span class="metric-value">${classification.replace("_", " ")}</span></div>
+    <div class="metric-row"><div><strong>Pipeline state</strong><br /><small>${blocked}</small></div><span class="metric-value">${analysis.completed_stages || 0}/13</span></div>
     ${grid ? `<div class="metric-row"><div><strong>Grid state</strong><br /><small>Score ${Number(analysis.grid_score) || 0}/10 · confidence ${Math.round(Number(analysis.conviction || 0) * 100)}%</small></div><span class="metric-value">${gridState}</span></div>` : ""}
     ${gridRows}
     <div class="metric-row"><div><strong>Market source</strong><br /><small>CoinGlass primary · Backpack fallback</small></div><span class="metric-value">LIVE</span></div>
-    ${riskIssues.map((issue, index) => `<div class="metric-row"><div><strong>${index ? "Risk issue" : "Risk review"}</strong><br /><small>${escapeHtml(String(issue.message || issue.code || "Unknown risk issue"))}</small></div><span class="metric-value">${escapeHtml(String(issue.severity || "review").toUpperCase())}</span></div>`).join("")}
     ${reasons.map((reason, index) => `<div class="metric-row"><div><strong>${index ? "Reason" : "Decision reason"}</strong><br /><small>${escapeHtml(reason)}</small></div><span class="metric-value">READ ONLY</span></div>`).join("")}
   `;
 }
@@ -3340,7 +3463,10 @@ function renderLiquidations(result) {
   const current = state.lastPrice || 100000;
   const levels = result.levels || [];
   const source = result.source || "CoinGlass";
-  if (!levels.length) throw new Error(`${source} returned no liquidity levels`);
+  if (!levels.length) {
+    renderLiquidationsLocked(new Error(result.error || `${source} returned no liquidity levels`));
+    return;
+  }
   const below = levels.filter((row) => row.price < current).reduce((sum, row) => sum + row.level, 0);
   const above = levels.filter((row) => row.price >= current).reduce((sum, row) => sum + row.level, 0);
   const bias = source === "Hyperliquid order book"
@@ -3596,13 +3722,31 @@ function applyMonatiseFramework() {
 
 function applyProductionDecision(setup) {
   const analysis = state.productionAnalysis;
+  const productionRequired = ["BTC", "ETH", "SOL"].includes(String(setup.asset || "").toUpperCase());
+  if (!analysis && productionRequired) {
+    const summary = `Production analysis unavailable for ${setup.asset}; no trade signal can be activated.`;
+    return {
+      ...setup,
+      direction: "WAIT",
+      confidence: 0,
+      contextConfidence: 0,
+      contextSignalReady: false,
+      frameworkReady: false,
+      tradeReady: false,
+      productionClassification: "unavailable",
+      productionUnavailable: true,
+      gridDirection: `Production confirmation unavailable for ${setup.asset}`,
+      gridPlan: summary,
+      frameworkGate: { side: "WAIT", ready: false, missing: ["production analysis"], summary }
+    };
+  }
   if (!analysis) return setup;
   const classification = String(analysis.classification || "no_trade").toLowerCase();
   const direction = String(analysis.direction || "none").toLowerCase();
   const reasons = Array.isArray(analysis.reasons) ? analysis.reasons.filter(Boolean) : [];
   const summary = reasons.length
     ? `Production ${classification.replace("_", " ")}: ${reasons.slice(0, 3).join("; ")}`
-    : `Production ${classification.replace("_", " ")} at ${analysis.completed_stages || 0}/19 stages.`;
+    : `Production ${classification.replace("_", " ")} at ${analysis.completed_stages || 0}/13 stages.`;
   if (classification === "no_trade") {
     if (setup.scoreTradeReady) {
       return {
@@ -3628,7 +3772,7 @@ function applyProductionDecision(setup) {
     };
   }
   const directional = classification === "trend" && ["long", "short"].includes(direction);
-  const approved = Boolean(analysis.risk_validation_invoked && analysis.execution_policy_produced);
+  const decisionReady = analysis.status === "completed" && !analysis.blocked_by;
   if (directional) {
     return {
       ...setup,
@@ -3636,30 +3780,30 @@ function applyProductionDecision(setup) {
       confidence: Math.round(Number(analysis.conviction || 0) * 100),
       contextConfidence: Math.round(Number(analysis.conviction || 0) * 100),
       contextSignalReady: true,
-      frameworkReady: approved,
-      tradeReady: approved,
+      frameworkReady: decisionReady,
+      tradeReady: decisionReady,
       productionClassification: classification,
-      frameworkGate: { side: direction === "long" ? "BUY" : "SELL", ready: approved, missing: approved ? [] : ["risk approval"], summary }
+      frameworkGate: { side: direction === "long" ? "BUY" : "SELL", ready: decisionReady, missing: decisionReady ? [] : ["completed decision pipeline"], summary }
     };
   }
   if (classification === "grid" && analysis.grid_plan) {
     const grid = analysis.grid_plan;
     const buys = Array.isArray(grid.buy_levels) ? grid.buy_levels.map(Number).filter(Number.isFinite) : [];
     const sells = Array.isArray(grid.sell_levels) ? grid.sell_levels.map(Number).filter(Number.isFinite) : [];
-    const gridSummary = `${approved ? "Production GRID READY" : "Production GRID CANDIDATE — RISK BLOCKED"}. Buys ${formatGridLevels(buys)}; sells ${formatGridLevels(sells)}; invalidates below ${formatUsd(Number(grid.lower_invalidation))} or above ${formatUsd(Number(grid.upper_invalidation))}.`;
+    const gridSummary = `${decisionReady ? "Production GRID DECISION READY" : "Production GRID DECISION PENDING"}. Buys ${formatGridLevels(buys)}; sells ${formatGridLevels(sells)}; invalidates below ${formatUsd(Number(grid.lower_invalidation))} or above ${formatUsd(Number(grid.upper_invalidation))}.`;
     return {
       ...setup,
       direction: "GRID SETUP",
       confidence: Math.round(Number(analysis.conviction || 0) * 100),
       contextConfidence: Math.round(Number(analysis.conviction || 0) * 100),
       contextSignalReady: true,
-      frameworkReady: approved,
-      tradeReady: approved,
+      frameworkReady: decisionReady,
+      tradeReady: decisionReady,
       productionClassification: classification,
       productionGridPlan: grid,
-      gridDirection: approved ? `Production grid ready ${setup.asset}` : `Production grid candidate ${setup.asset}`,
+      gridDirection: decisionReady ? `Production grid decision ready ${setup.asset}` : `Production grid decision pending ${setup.asset}`,
       gridPlan: gridSummary,
-      frameworkGate: { side: "GRID", ready: approved, missing: approved ? [] : ["risk approval"], summary: gridSummary }
+      frameworkGate: { side: "GRID", ready: decisionReady, missing: decisionReady ? [] : ["completed decision pipeline"], summary: gridSummary }
     };
   }
   return {
@@ -3673,6 +3817,40 @@ function applyProductionDecision(setup) {
     gridPlan: summary,
     frameworkGate: { side: "WAIT", ready: false, missing: [], summary }
   };
+}
+
+function renderAuthoritativeFramework(setup) {
+  if (!setup?.productionClassification) return;
+  const ready = Boolean(setup.tradeReady);
+  if (setup.productionClassification === "unavailable") {
+    els.setupDirection.textContent = "NO TRADE";
+    els.setupDirection.className = "";
+    els.frameworkBias.textContent = "Production Unavailable · No Trade";
+    els.setupReason.textContent = setup.frameworkGate.summary;
+    els.gridDirection.textContent = setup.gridDirection;
+    els.gridPlan.textContent = setup.gridPlan;
+    els.hedgeDirection.textContent = "TP pending";
+    els.hedgePlan.textContent = "No target until production confirmation returns.";
+    return;
+  }
+  if (setup.productionClassification === "grid") {
+    els.setupDirection.textContent = ready ? "GRID" : "GRID PENDING";
+    els.setupDirection.className = "";
+    els.frameworkBias.textContent = `${ready ? "Decision Ready" : "Decision Pending"} · Context strength ${setup.contextConfidence}% · Production 13-stage pipeline`;
+    els.setupReason.textContent = setup.frameworkGate.summary;
+    els.gridDirection.textContent = setup.gridDirection;
+    els.gridPlan.textContent = setup.gridPlan;
+    els.hedgeDirection.textContent = "Two-sided grid";
+    els.hedgePlan.textContent = "Use the production buy and sell levels; reassess at either invalidation boundary.";
+    return;
+  }
+  if (setup.productionClassification === "trend") {
+    const side = setup.direction === "BUY SETUP" ? "BUY" : setup.direction === "SELL SETUP" ? "SELL" : "WAIT";
+    els.setupDirection.textContent = ready ? side : `${side} PENDING`;
+    els.setupDirection.className = ready && side === "BUY" ? "positive" : ready && side === "SELL" ? "negative" : "";
+    els.frameworkBias.textContent = `${ready ? "Decision Ready" : "Decision Pending"} · Context strength ${setup.contextConfidence}% · Production 13-stage pipeline`;
+    els.setupReason.textContent = setup.frameworkGate.summary;
+  }
 }
 
 function gridPlanForResearch(side, action, vwapSignal) {
@@ -4036,14 +4214,24 @@ function renderSessionTimers(date = new Date()) {
 }
 
 async function refreshDashboard() {
+  const refreshVersion = ++state.refreshVersion;
+  const refreshAsset = selectedCoin();
+  const isCurrentRefresh = () => state.refreshVersion === refreshVersion && selectedCoin() === refreshAsset;
+  const settleCurrent = (promise, onSuccess, onError) => promise.then((value) => {
+    if (isCurrentRefresh()) onSuccess(value);
+  }).catch((error) => {
+    if (isCurrentRefresh()) onError(error);
+  });
   syncAssetLabels();
   els.refreshButton.disabled = true;
   els.refreshButton.textContent = "Refreshing";
   setSessionStatus("warn", "Refreshing market session");
   try {
     const price = await getPrice();
+    if (!isCurrentRefresh()) return;
     renderPrice(price);
   } catch (error) {
+    if (!isCurrentRefresh()) return;
     state.lastPrice = null;
     state.priceSeries = [];
     state.market.priceChange = null;
@@ -4060,10 +4248,10 @@ async function refreshDashboard() {
   }
 
   const jobs = [
-    getFunding().then(renderFunding).catch(renderFundingLocked),
-    getOpenInterest().then(renderOpenInterest).catch(renderOpenInterestLocked),
-    getLiquidations().then(renderLiquidations).catch(renderLiquidationsLocked),
-    getFearGreed().then(renderFearGreed).catch((error) => {
+    settleCurrent(getFunding(), renderFunding, renderFundingLocked),
+    settleCurrent(getOpenInterest(), renderOpenInterest, renderOpenInterestLocked),
+    settleCurrent(getLiquidations(), renderLiquidations, renderLiquidationsLocked),
+    settleCurrent(getFearGreed(), renderFearGreed, (error) => {
       state.market.fearGreed = null;
       els.fearGreed.textContent = "Optional";
       els.fgLabel.textContent = error.message;
@@ -4071,12 +4259,14 @@ async function refreshDashboard() {
       els.fgGauge.style.background = "";
       els.fgSource.textContent = `Optional CoinGlass sentiment unavailable · ${error.message}`;
     }),
-    getProductionAnalysis().then(renderProductionAnalysis).catch(renderProductionAnalysisUnavailable),
-    getNews().then(renderNews).catch(renderNewsLocked)
+    settleCurrent(getProductionAnalysis(), renderProductionAnalysis, renderProductionAnalysisUnavailable),
+    settleCurrent(getNews(), renderNews, renderNewsLocked)
   ];
 
   await Promise.allSettled(jobs);
+  if (!isCurrentRefresh()) return;
   const setup = applyProductionDecision(applyMonatiseFramework());
+  renderAuthoritativeFramework(setup);
   publishGeneratedSignal(setup);
   evaluateLiveAlerts(setup);
   const coreReady = Number.isFinite(state.lastPrice) && state.lastPrice > 0;
