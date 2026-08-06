@@ -117,7 +117,7 @@ class ShadowHierarchyService:
         }
 
     @staticmethod
-    def _format_notification(evaluation: ShadowEvaluation, *, publication_id: str, mark_price: float | None = None, price_observed_at: datetime | None = None) -> str:
+    def _format_notification(evaluation: ShadowEvaluation, *, publication_id: str, mark_price: float | None = None, price_observed_at: datetime | None = None, price_source: str = "backpack_public") -> str:
         bundle = evaluation.bundle
         if bundle is None:
             raise ValueError("notification requires a validated evidence bundle")
@@ -131,7 +131,7 @@ class ShadowHierarchyService:
         return (
             f"Monatise HIERARCHY SHADOW — observation only, not a trade order\n"
             f"{bundle.symbol} | {direction} | 4H + 1H aligned | 15M setup confirmed | 5M trigger confirmed | 1M entry refined\n"
-            f"Current mark price: {mark} | observed {observed}\n"
+            f"Current mark price: {mark} | source {price_source} | observed {observed}\n"
             f"Entry {risk.reference_entry:.8g} | Stop {risk.final_stop:.8g} | Target {risk.target_liquidity:.8g} | R:R {risk.calculated_reward_to_risk:.2f}\n"
             f"Expires {expiry} | Valid for {validity_minutes} min\n"
             f"Strategy {bundle.strategy_version} | Evidence {bundle.bundle_id[:12]} | Publication {publication_id[:16]}"

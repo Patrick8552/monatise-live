@@ -185,7 +185,9 @@ def _current_price_line(market: Any) -> str:
     price_type = metadata.get("price_type", "reference")
     label = "Current mark price" if price_type == "mark" else "Current reference price"
     observed_at = metadata.get("price_observed_at")
-    suffix = f" | observed {observed_at}" if observed_at else ""
+    source = metadata.get("price_source")
+    details = [f"source {source}" if source else "", f"observed {observed_at}" if observed_at else ""]
+    suffix = " | " + " | ".join(detail for detail in details if detail) if any(details) else ""
     return f"{label}: {_price(getattr(market, 'price', None))}{suffix}"
 
 
