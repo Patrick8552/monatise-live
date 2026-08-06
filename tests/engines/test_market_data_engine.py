@@ -19,6 +19,11 @@ class GoodProvider:
         ]
 
 
+class MarkProvider(GoodProvider):
+    def latest_mark_price(self, symbol: str) -> float:
+        return 100.75
+
+
 class BrokenProvider:
     def latest_price(self, symbol: str) -> float:
         raise RuntimeError("feed unavailable")
@@ -62,6 +67,17 @@ def test_ready_snapshot() -> None:
     assert snapshot.quality.source == "primary"
     assert snapshot.derivatives["liquidations"] is None
     assert snapshot.is_trade_analysis_ready is True
+
+
+def test_exchange_mark_price_is_preferred_and_timestamped() -> None:
+    snapshot = MarketDataEngine({"primary": GoodProvider(), "mark": MarkProvider()}, clock=lambda: NOW).collect(
+        MarketDataRequest(symbol="BTC", interval="1m", max_age_seconds=120)
+    )
+
+    assert snapshot.price == 100.75
+    assert snapshot.metadata["price_type"] == "mark"
+    assert snapshot.metadata["price_source"] == "mark"
+    assert snapshot.metadata["price_observed_at"] == NOW.isoformat()
 
 
 def test_falls_back_after_provider_failure() -> None:

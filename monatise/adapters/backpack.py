@@ -77,6 +77,13 @@ class BackpackAdapter(MarketDataPort, ExecutionPort):
                 return float(value)
         raise RuntimeError("Backpack ticker did not include a usable price")
 
+    def latest_mark_price(self, symbol: str) -> float:
+        """Return the exchange mark price without silently substituting a last price."""
+        value = self.ticker(symbol).get("markPrice")
+        if value in (None, ""):
+            raise RuntimeError("Backpack ticker did not include a mark price")
+        return float(value)
+
     def candles(self, symbol: str, limit: int, interval: str = "1h") -> list[Candle]:
         if interval not in SUPPORTED_INTERVALS:
             raise ValueError("unsupported Backpack candle interval")
