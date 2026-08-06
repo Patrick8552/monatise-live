@@ -253,7 +253,7 @@ class _ReadyRuntime:
             "status": "ready",
             "mode": "paper",
             "execution_enabled": False,
-            "dependencies": {"engine_registry": {"status": "ok", "count": 19, "order": list(CANONICAL_ENGINE_ORDER)}},
+            "dependencies": {"engine_registry": {"status": "ok", "count": 20, "order": list(CANONICAL_ENGINE_ORDER)}},
         }
 
 

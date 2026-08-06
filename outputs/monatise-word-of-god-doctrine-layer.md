@@ -146,11 +146,21 @@ Required witnesses:
 - Liquidity location
 - Fibonacci confluence
 - Candle confirmation
+- Price-action confirmation at the intended entry level; a level touch alone is not an entry
 - Stop-loss efficiency
 - Risk-to-reward logic
 - News/event awareness
 
 If witnesses disagree, the system chooses NO TRADE.
+
+Grid levels are areas of interest, not automatic orders. No blind limit entry is
+permitted: execution must wait for confirming price action at the relevant level.
+
+Registered price-action confirmation families:
+- Candlestick patterns
+- Head and shoulders / inverse head and shoulders
+- Order blocks
+- Wyckoff spring and upthrust concepts
 
 ---
 

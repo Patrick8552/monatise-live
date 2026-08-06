@@ -105,7 +105,7 @@ class TelegramNotifier:
 
         risk_decision = _enum_value(getattr(risk, "decision", "")).lower()
         grid_blocked = classification == "GRID" and (result.status.value == "blocked" or risk_decision == "rejected")
-        heading = f"Monatise GRID {'CANDIDATE — RISK BLOCKED' if grid_blocked else 'READY'}: {result.symbol} ({direction})" if classification == "GRID" else f"Monatise signal: {result.symbol} {direction} ({classification})"
+        heading = f"Monatise GRID {'CANDIDATE — RISK BLOCKED' if grid_blocked else 'DECISION READY — ENTRY CONFIRMATION PENDING'}: {result.symbol} ({direction})" if classification == "GRID" else f"Monatise signal: {result.symbol} {direction} ({classification})"
         lines = [
             heading,
             f"Timeframe: {interval}",
@@ -113,6 +113,7 @@ class TelegramNotifier:
             f"Confidence: {conviction * 100:.0f}%",
         ]
         if classification == "GRID":
+            price_action = outputs.get("price_action")
             risk_metadata = getattr(risk, "metadata", {}) or {}
             grid = risk_metadata.get("grid_plan") or build_grid_plan(entry or getattr(market, "price", None))
             if grid is None:
@@ -126,6 +127,12 @@ class TelegramNotifier:
                     f"Invalidation: below {_price(grid['lower_invalidation'])} or above {_price(grid['upper_invalidation'])}",
                     f"Spacing: {_price(grid['spacing'])} | {grid['levels_per_side']} levels per side",
                 ])
+            confirmed = tuple(getattr(price_action, "confirmed_signals", ()) or ())
+            if confirmed:
+                patterns = " | ".join(f"{signal.family.value}:{signal.pattern}" for signal in confirmed[:3])
+                lines.append(f"Price action: detected {patterns}; confirm again at the selected grid level")
+            else:
+                lines.append("Entry: WAIT — price-action confirmation required at the selected grid level")
             issues = tuple(getattr(risk, "issues", ()) or ())[:3]
             if issues:
                 lines.append("Risk review: " + "; ".join(str(getattr(issue, "message", issue)) for issue in issues))

@@ -26,6 +26,7 @@ from monatise.engines.market_structure.models import MarketStructureRequest
 from monatise.engines.order_flow.models import FlowInput, OrderFlowRequest
 from monatise.engines.portfolio_intelligence.engine import PortfolioIntelligenceEngine
 from monatise.engines.portfolio_intelligence.models import PortfolioHealth, PortfolioIntelligenceRequest, PortfolioPosition
+from monatise.engines.price_action.models import PriceActionRequest
 from monatise.engines.reclaim.models import ReclaimRequest
 from monatise.engines.regime.models import RegimeRequest
 from monatise.engines.reporting_intelligence.models import ReportChannel, ReportRequest
@@ -99,6 +100,7 @@ def run_real_pipeline(direction: str = "long", *, grid: bool = False):
         "market_structure": lambda c: MarketStructureRequest(output(c, "market_data"), output(c, "regime"), output(c, "liquidity"), output(c, "liquidity_sweep"), output(c, "reclaim"), output(c, "supply_demand"), swing_window=1, displacement_body_ratio=0.5),
         "fibonacci_liquidity": lambda c: FibonacciRequest(output(c, "market_data"), output(c, "market_structure"), output(c, "liquidity"), output(c, "supply_demand"), output(c, "reclaim"), minimum_structure_confidence=0),
         "order_flow": lambda c: OrderFlowRequest("BTC", FlowInput(open_interest_change_pct=2, price_change_pct=sign, cvd_change=100 * sign, liquidation_short_usd=200 if sign > 0 else 100, liquidation_long_usd=100 if sign > 0 else 200, footprint_delta=0.6 * sign, large_trade_net_usd=1000 * sign, bid_ask_imbalance=0.5 * sign, funding_rate=0.0001 * sign), output(c, "regime"), output(c, "market_structure")),
+        "price_action": lambda c: PriceActionRequest(output(c, "market_data")),
         "decision": lambda c: DecisionRequest(output(c, "market_data"), None, output(c, "regime"), output(c, "liquidity"), output(c, "liquidity_sweep"), output(c, "supply_demand"), output(c, "reclaim"), output(c, "market_structure"), output(c, "fibonacci_liquidity"), output(c, "order_flow"), minimum_conviction=0, maximum_conflict_ratio=1, grid_regime_bonus=1 if grid else 0.12, require_structure_for_trend=False, require_two_sided_liquidity_for_grid=False),
         "rsi": lambda c: RSIRequest(output(c, "market_data"), output(c, "market_structure"), output(c, "regime")),
         "risk_validation": risk_request,
@@ -114,21 +116,21 @@ def run_real_pipeline(direction: str = "long", *, grid: bool = False):
     return result, inputs
 
 
-def test_real_nineteen_engine_trend_long_pipeline():
+def test_real_twenty_engine_trend_long_pipeline():
     result, inputs = run_real_pipeline()
     assert result.status is PipelineStage.COMPLETED, (result.blocked_by, result.failure)
     assert tuple(result.context.outputs) == tuple(inputs)
-    assert result.statistics.completed_stages == 19
+    assert result.statistics.completed_stages == 20
     assert result.context.outputs["decision"].direction.value == "long"
 
 
-def test_real_nineteen_engine_trend_short_pipeline():
+def test_real_twenty_engine_trend_short_pipeline():
     result, _ = run_real_pipeline("short")
     assert result.status is PipelineStage.COMPLETED, (result.blocked_by, result.failure)
     assert result.context.outputs["decision"].direction.value == "short"
 
 
-def test_real_nineteen_engine_grid_pipeline():
+def test_real_twenty_engine_grid_pipeline():
     result, _ = run_real_pipeline(grid=True)
     assert result.status is PipelineStage.COMPLETED, (result.blocked_by, result.failure)
     assert result.context.outputs["decision"].classification.value == "grid"
