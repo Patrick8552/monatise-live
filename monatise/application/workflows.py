@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from datetime import timedelta
@@ -10,7 +11,7 @@ from typing import Any, Awaitable, Callable, Protocol
 
 from monatise.application.models import AnalysisRun, PipelineResult
 from monatise.application.orchestrator import PipelineOrchestrator
-from monatise.application.production_analysis import build_directional_plan, build_grid_plan, build_moving_grid_plan, build_setup_validity
+from monatise.application.production_analysis import build_directional_plan, build_grid_plan, build_moving_grid_plan, build_setup_validity, strongest_confirmation_signal
 from monatise.application.registry import CANONICAL_ENGINE_ORDER, PRODUCTION_ENGINE_ORDER
 from monatise.infrastructure.state_manager import StateKey
 from monatise.infrastructure.task_scheduler import JobDefinition, RetryPolicy, ScheduleType
@@ -50,6 +51,19 @@ class TelegramNotifier:
             "Reason: replaced by the directional setup below",
             "",
             directional,
+        ))
+        return await self._transport.send_message(self._chat_id, text)
+
+    async def deliver_setup_expiry(self, result: PipelineResult, expired_at: str) -> Any:
+        market = result.context.outputs.get("market_data")
+        interval = getattr(market, "interval", "unknown")
+        text = "\n".join((
+            f"Monatise DIRECTIONAL SETUP EXPIRED: {result.symbol}",
+            f"Timeframe: {interval}",
+            _current_price_line(market),
+            f"Expired at: {expired_at}",
+            "Entry: CANCELLED — the setup validity window ended",
+            f"Run: {result.run_id}",
         ))
         return await self._transport.send_message(self._chat_id, text)
 
@@ -149,19 +163,20 @@ class TelegramNotifier:
             f"Score: {grid_score}/10" if classification == "GRID" else f"Score: {signed_score:+d}/10",
             f"Confidence: {conviction * 100:.0f}%",
         ]
-        confirming_signals = tuple(getattr(price_action, "confirming_signals", ()) or ())
-        confirmation_age = min((int(getattr(signal, "age_candles", 0) or 0) for signal in confirming_signals), default=0)
+        confirmation_signal = strongest_confirmation_signal(price_action)
+        confirmation_age = int(getattr(confirmation_signal, "age_candles", 0) or 0)
         validity = build_setup_validity(
             interval,
             getattr(result, "finished_at", result.context.run.requested_at),
             age_candles=confirmation_age if classification == "GRID" else 0,
         )
         if validity is not None and (classification != "GRID" or confirmation_status == "CONFIRMED"):
-            remaining_minutes = max(0, int((validity["expires_at"] - datetime.now(timezone.utc)).total_seconds() // 60))
+            remaining_seconds = max(0, int((validity["expires_at"] - datetime.now(timezone.utc)).total_seconds()))
+            remaining_label = "<1 min" if 0 < remaining_seconds < 60 else f"{math.ceil(remaining_seconds / 60)} min"
             lines.extend((
                 f"Generated at: {validity['generated_at'].strftime('%Y-%m-%d %H:%M:%S UTC')}",
                 f"Valid until: {validity['expires_at'].strftime('%Y-%m-%d %H:%M:%S UTC')}",
-                f"Remaining validity: {remaining_minutes} min | {validity['remaining_candles']} candle(s)",
+                f"Remaining validity: {remaining_label} | {validity['remaining_candles']} candle(s)",
             ))
         if classification == "GRID":
             grid = build_moving_grid_plan(market) or build_grid_plan(entry or getattr(market, "price", None))
@@ -180,8 +195,8 @@ class TelegramNotifier:
             conflicts = tuple(getattr(price_action, "conflicting_signals", ()) or ())
             confirmation_reasons = tuple(getattr(price_action, "reasons", ()) or ())
             if confirmation_status == "CONFIRMED":
-                strongest = getattr(price_action, "strongest_confirming_pattern", None) or "price action"
-                age = min((signal.age_candles for signal in confirming), default=0)
+                strongest = getattr(confirmation_signal, "pattern", None) or getattr(price_action, "strongest_confirming_pattern", None) or "price action"
+                age = int(getattr(confirmation_signal, "age_candles", 0) or 0)
                 lines.append(f"Entry confirmation: {strongest} | confidence {float(getattr(price_action, 'aggregate_confidence', 0)) * 100:.0f}% | aligned families {getattr(price_action, 'aligned_family_count', 0)} | age {age} candle(s)")
             elif confirmation_status == "CONFLICT":
                 bullish = max((s for s in (*confirming, *conflicts) if s.direction.value == "bullish"), key=lambda s: s.confidence, default=None)
