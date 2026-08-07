@@ -43,6 +43,16 @@ class TelegramNotifier:
         ))
         return await self._transport.send_message(self._chat_id, text)
 
+    async def deliver_grid_replacement(self, result: PipelineResult) -> Any:
+        directional = self.format(result)
+        text = "\n".join((
+            f"Monatise GRID ENTRY CANCELLED: {result.symbol}",
+            "Reason: replaced by the directional setup below",
+            "",
+            directional,
+        ))
+        return await self._transport.send_message(self._chat_id, text)
+
     async def deliver_safely(self, result: PipelineResult) -> bool:
         try:
             await self.deliver(result)
