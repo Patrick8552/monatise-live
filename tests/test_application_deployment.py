@@ -224,6 +224,40 @@ def test_legacy_risk_rejection_does_not_block_completed_directional_notification
     assert runtime._claim_material_telegram_signal(result, "1h") is True
 
 
+def _grid_result(confirmation_status="pending", price=65_000):
+    return SimpleNamespace(
+        symbol="BTC",
+        status=SimpleNamespace(value="completed"),
+        context=SimpleNamespace(outputs={
+            "decision": SimpleNamespace(
+                classification=SimpleNamespace(value="grid"),
+                direction=SimpleNamespace(value="two_sided"),
+                metadata={"grid_signal_score": 8, "minimum_signal_score": 7},
+            ),
+            "market_data": SimpleNamespace(symbol="BTC", price=price, candles=()),
+            "price_action": SimpleNamespace(
+                status=SimpleNamespace(value=confirmation_status),
+                strongest_confirming_pattern="bullish_engulfing" if confirmation_status == "confirmed" else None,
+            ),
+        }),
+    )
+
+
+@pytest.mark.parametrize("status", ("pending", "conflict", "expired", "invalidated"))
+def test_unconfirmed_grid_setups_are_not_claimed_for_scheduled_telegram(status):
+    runtime = OrchestrationRuntime(environment={})
+
+    assert runtime._claim_material_telegram_signal(_grid_result(status), "15m") is False
+
+
+def test_confirmed_grid_setup_is_claimed_once_for_scheduled_telegram():
+    runtime = OrchestrationRuntime(environment={})
+    result = _grid_result("confirmed")
+
+    assert runtime._claim_material_telegram_signal(result, "15m") is True
+    assert runtime._claim_material_telegram_signal(result, "15m") is False
+
+
 def test_runtime_registers_fail_closed_hierarchy_shadow_jobs_without_publication():
     class Scheduler:
         def __init__(self): self.definitions = []
