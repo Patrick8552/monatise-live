@@ -17,7 +17,7 @@ from uuid import uuid4
 from urllib.request import Request, urlopen
 
 from monatise.application.composition import create_application, create_durable_infrastructure
-from monatise.application.production_analysis import build_directional_plan, build_production_analysis_run, sanitized_result
+from monatise.application.production_analysis import build_directional_plan, build_production_analysis_run, build_setup_validity, sanitized_result
 from monatise.application.persistence import PostgresDocumentStore
 from monatise.application.workflows import TelegramNotifier
 from monatise.application.registry import PRODUCTION_ENGINE_ORDER
@@ -749,13 +749,13 @@ class OrchestrationRuntime:
         elif previous_confirmed_grid:
             replacement = self._directional_material(classification, direction, score, market, price_action)
             fingerprint = hashlib.sha256(json.dumps(replacement, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-            return {
+            return self._with_setup_validity({
                 "fingerprint": fingerprint,
                 "confirmation_status": "replaced",
                 "classification": classification,
                 "replaces_confirmed_grid": True,
                 "expected_version": int((previous or {}).get("version", 0) or 0),
-            }
+            }, result, market, interval)
         material = {
             "classification": classification,
             "direction": direction,
@@ -769,12 +769,26 @@ class OrchestrationRuntime:
         fingerprint = hashlib.sha256(json.dumps(material, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         if (previous or {}).get("fingerprint") == fingerprint:
             return None
-        return {
+        candidate = {
             "fingerprint": fingerprint,
             "confirmation_status": confirmation_status,
             "classification": classification,
             "expected_version": int((previous or {}).get("version", 0) or 0),
         }
+        return self._with_setup_validity(candidate, result, market, interval)
+
+    @staticmethod
+    def _with_setup_validity(candidate: dict[str, Any], result: Any, market: Any, interval: str) -> dict[str, Any]:
+        run = getattr(getattr(result, "context", None), "run", None)
+        generated_at = getattr(result, "finished_at", None) or getattr(run, "requested_at", None) or datetime.now(timezone.utc)
+        validity = build_setup_validity(getattr(market, "interval", interval), generated_at)
+        if validity is not None:
+            candidate.update({
+                "generated_at": validity["generated_at"].isoformat(),
+                "expires_at": validity["expires_at"].isoformat(),
+                "validity_candles": validity["validity_candles"],
+            })
+        return candidate
 
     @staticmethod
     def _grid_cancellation_candidate(previous: dict[str, Any] | None, previous_confirmed_grid: bool, reason: str) -> dict[str, Any] | None:

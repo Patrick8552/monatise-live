@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from monatise.application.models import AnalysisRun, PipelineExecutionMetadata
@@ -30,6 +30,24 @@ INTERVAL_SECONDS = {
     "1h": 3_600, "4h": 14_400, "6h": 21_600, "8h": 28_800,
     "12h": 43_200, "1d": 86_400, "1w": 604_800,
 }
+SETUP_VALIDITY_CANDLES = 4
+
+
+def build_setup_validity(interval: str | None, generated_at: datetime, *, validity_candles: int = SETUP_VALIDITY_CANDLES) -> dict[str, Any] | None:
+    seconds = INTERVAL_SECONDS.get(str(interval or ""))
+    if seconds is None or generated_at.tzinfo is None or validity_candles < 1:
+        return None
+    generated_utc = generated_at.astimezone(timezone.utc)
+    boundary_epoch = int(generated_utc.timestamp()) // seconds * seconds
+    expires_at = datetime.fromtimestamp(boundary_epoch, tz=timezone.utc) + timedelta(seconds=seconds * validity_candles)
+    if expires_at <= generated_utc:
+        expires_at += timedelta(seconds=seconds)
+    return {
+        "generated_at": generated_utc,
+        "expires_at": expires_at,
+        "validity_candles": validity_candles,
+        "validity_seconds": int((expires_at - generated_utc).total_seconds()),
+    }
 
 
 def build_grid_plan(center: float | None, *, levels_per_side: int = 3, half_width_pct: float = 0.02) -> dict[str, Any] | None:
@@ -196,6 +214,13 @@ def sanitized_result(result: Any) -> dict[str, Any]:
     price = getattr(market, "price", None)
     directional_plan = build_directional_plan(price, direction)
     grid_plan = build_moving_grid_plan(market) if classification == "grid" else None
+    confirmation_status = getattr(getattr(price_action, "status", None), "value", "pending")
+    run = getattr(getattr(result, "context", None), "run", None)
+    generated_at = getattr(result, "finished_at", None) or getattr(run, "requested_at", None) or datetime.now(timezone.utc)
+    validity = build_setup_validity(
+        getattr(market, "interval", None),
+        generated_at,
+    ) if classification != "grid" or confirmation_status == "confirmed" else None
     return {
         "run_id": result.run_id,
         "correlation_id": result.correlation_id,
@@ -213,7 +238,7 @@ def sanitized_result(result: Any) -> dict[str, Any]:
         "target": directional_plan["target"] if directional_plan else None,
         "reward_risk": None,
         "grid_plan": grid_plan,
-        "entry_confirmation_status": getattr(getattr(price_action, "status", None), "value", "pending"),
+        "entry_confirmation_status": confirmation_status,
         "entry_confirmation_required": bool(getattr(price_action, "entry_confirmation_required", True)),
         "price_action_confirmed": bool(getattr(price_action, "has_confirmation", False)),
         "price_action_aggregate_confidence": float(getattr(price_action, "aggregate_confidence", 0.0) or 0.0),
@@ -240,7 +265,10 @@ def sanitized_result(result: Any) -> dict[str, Any]:
         "risk_decision": None,
         "risk_issues": [],
         "risk_reasons": [],
-        "expires_at": None,
+        "generated_at": validity["generated_at"].isoformat() if validity else None,
+        "expires_at": validity["expires_at"].isoformat() if validity else None,
+        "validity_candles": validity["validity_candles"] if validity else None,
+        "validity_seconds": validity["validity_seconds"] if validity else None,
         "data_source": getattr(getattr(market, "quality", None), "source", None),
         "reasons": list(getattr(decision, "reasons", ()) or ()),
         "blockers": list(getattr(decision, "blockers", ()) or ()),

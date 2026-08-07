@@ -10,7 +10,7 @@ from typing import Any, Awaitable, Callable, Protocol
 
 from monatise.application.models import AnalysisRun, PipelineResult
 from monatise.application.orchestrator import PipelineOrchestrator
-from monatise.application.production_analysis import build_directional_plan, build_grid_plan, build_moving_grid_plan
+from monatise.application.production_analysis import build_directional_plan, build_grid_plan, build_moving_grid_plan, build_setup_validity
 from monatise.application.registry import CANONICAL_ENGINE_ORDER, PRODUCTION_ENGINE_ORDER
 from monatise.infrastructure.state_manager import StateKey
 from monatise.infrastructure.task_scheduler import JobDefinition, RetryPolicy, ScheduleType
@@ -149,6 +149,14 @@ class TelegramNotifier:
             f"Score: {grid_score}/10" if classification == "GRID" else f"Score: {signed_score:+d}/10",
             f"Confidence: {conviction * 100:.0f}%",
         ]
+        validity = build_setup_validity(interval, getattr(result, "finished_at", result.context.run.requested_at))
+        if validity is not None and (classification != "GRID" or confirmation_status == "CONFIRMED"):
+            remaining_minutes = max(0, int((validity["expires_at"] - datetime.now(timezone.utc)).total_seconds() // 60))
+            lines.extend((
+                f"Generated at: {validity['generated_at'].strftime('%Y-%m-%d %H:%M:%S UTC')}",
+                f"Valid until: {validity['expires_at'].strftime('%Y-%m-%d %H:%M:%S UTC')}",
+                f"Remaining validity: {remaining_minutes} min | {validity['validity_candles']} candle(s)",
+            ))
         if classification == "GRID":
             grid = build_moving_grid_plan(market) or build_grid_plan(entry or getattr(market, "price", None))
             if grid is None:

@@ -404,6 +404,10 @@ def test_telegram_grid_renders_each_confirmation_status(status, expected):
     message = TelegramNotifier.format(result)
     assert f"ENTRY CONFIRMATION {status.upper()}" in message
     assert expected in message
+    if status == "confirmed":
+        assert "Generated at:" in message
+        assert "Valid until:" in message
+        assert "Remaining validity:" in message
     assert "executed" not in message.lower()
     if status == "invalidated":
         assert "GRID ACTIVE ENTRY BLOCKED" in message
