@@ -33,19 +33,21 @@ INTERVAL_SECONDS = {
 SETUP_VALIDITY_CANDLES = 4
 
 
-def build_setup_validity(interval: str | None, generated_at: datetime, *, validity_candles: int = SETUP_VALIDITY_CANDLES) -> dict[str, Any] | None:
+def build_setup_validity(interval: str | None, generated_at: datetime, *, validity_candles: int = SETUP_VALIDITY_CANDLES, age_candles: int = 0) -> dict[str, Any] | None:
     seconds = INTERVAL_SECONDS.get(str(interval or ""))
-    if seconds is None or generated_at.tzinfo is None or validity_candles < 1:
+    if seconds is None or generated_at.tzinfo is None or validity_candles < 1 or age_candles < 0:
         return None
     generated_utc = generated_at.astimezone(timezone.utc)
     boundary_epoch = int(generated_utc.timestamp()) // seconds * seconds
-    expires_at = datetime.fromtimestamp(boundary_epoch, tz=timezone.utc) + timedelta(seconds=seconds * validity_candles)
+    remaining_candles = max(1, validity_candles - age_candles)
+    expires_at = datetime.fromtimestamp(boundary_epoch, tz=timezone.utc) + timedelta(seconds=seconds * remaining_candles)
     if expires_at <= generated_utc:
         expires_at += timedelta(seconds=seconds)
     return {
         "generated_at": generated_utc,
         "expires_at": expires_at,
         "validity_candles": validity_candles,
+        "remaining_candles": remaining_candles,
         "validity_seconds": int((expires_at - generated_utc).total_seconds()),
     }
 
@@ -215,11 +217,13 @@ def sanitized_result(result: Any) -> dict[str, Any]:
     directional_plan = build_directional_plan(price, direction)
     grid_plan = build_moving_grid_plan(market) if classification == "grid" else None
     confirmation_status = getattr(getattr(price_action, "status", None), "value", "pending")
+    confirming = tuple(getattr(price_action, "confirming_signals", ()) or ())
+    confirmation_age = min((int(getattr(signal, "age_candles", 0) or 0) for signal in confirming), default=0)
     run = getattr(getattr(result, "context", None), "run", None)
     generated_at = getattr(result, "finished_at", None) or getattr(run, "requested_at", None) or datetime.now(timezone.utc)
     validity = build_setup_validity(
         getattr(market, "interval", None),
-        generated_at,
+        generated_at, age_candles=confirmation_age if classification == "grid" else 0,
     ) if classification != "grid" or confirmation_status == "confirmed" else None
     return {
         "run_id": result.run_id,
@@ -268,6 +272,7 @@ def sanitized_result(result: Any) -> dict[str, Any]:
         "generated_at": validity["generated_at"].isoformat() if validity else None,
         "expires_at": validity["expires_at"].isoformat() if validity else None,
         "validity_candles": validity["validity_candles"] if validity else None,
+        "remaining_validity_candles": validity["remaining_candles"] if validity else None,
         "validity_seconds": validity["validity_seconds"] if validity else None,
         "data_source": getattr(getattr(market, "quality", None), "source", None),
         "reasons": list(getattr(decision, "reasons", ()) or ()),

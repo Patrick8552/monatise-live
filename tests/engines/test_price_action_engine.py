@@ -253,7 +253,18 @@ def test_setup_validity_uses_four_candle_boundaries():
     assert validity["generated_at"] == generated_at
     assert validity["expires_at"] == datetime(2026, 8, 7, 15, 15, tzinfo=timezone.utc)
     assert validity["validity_candles"] == 4
+    assert validity["remaining_candles"] == 4
     assert validity["validity_seconds"] == 3_590
+
+
+def test_setup_validity_does_not_refresh_an_aged_confirmation():
+    generated_at = datetime(2026, 8, 7, 14, 15, 10, tzinfo=timezone.utc)
+
+    validity = build_setup_validity("15m", generated_at, age_candles=3)
+
+    assert validity["expires_at"] == datetime(2026, 8, 7, 14, 30, tzinfo=timezone.utc)
+    assert validity["remaining_candles"] == 1
+    assert validity["validity_seconds"] == 890
 
 
 def test_moving_grid_uses_rolling_range_instead_of_latest_price():
