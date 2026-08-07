@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from monatise.application.deployment import COINGLASS_PROVIDER_KEY, MigrationRunner, OrchestrationASGI, OrchestrationRuntime, PaperSafetyConfiguration, RedisSchedulerLeadership, TelegramNotificationTransport, register_coinglass_provider, scheduled_analysis_configuration
+from monatise.application.deployment import COINGLASS_PROVIDER_KEY, MigrationRunner, OrchestrationASGI, OrchestrationRuntime, PaperSafetyConfiguration, RedisCoordinationStore, RedisSchedulerLeadership, TelegramNotificationTransport, register_coinglass_provider, scheduled_analysis_configuration
 from monatise.application.registry import CANONICAL_ENGINE_ORDER
 from monatise.application.registry import PRODUCTION_ENGINE_ORDER
 from monatise.application.production_analysis import build_production_analysis_run
@@ -166,8 +166,10 @@ def test_qualified_directional_setups_are_claimed_for_telegram(direction, signed
         context=SimpleNamespace(outputs={"decision": decision, "risk_validation": risk}),
     )
 
-    assert runtime._claim_material_telegram_signal(result, "1h") is True
-    assert runtime._claim_material_telegram_signal(result, "1h") is False
+    candidate = asyncio.run(runtime._telegram_notification_candidate(result, "1h"))
+    assert candidate is not None
+    asyncio.run(runtime._commit_telegram_notification("BTC", "1h", candidate))
+    assert asyncio.run(runtime._telegram_notification_candidate(result, "1h")) is None
 
 
 @pytest.mark.parametrize(("direction", "signed_score"), [("long", -8), ("short", 8)])
@@ -186,7 +188,7 @@ def test_mismatched_directional_scores_are_not_claimed_for_telegram(direction, s
         }),
     )
 
-    assert runtime._claim_material_telegram_signal(result, "1h") is False
+    assert asyncio.run(runtime._telegram_notification_candidate(result, "1h")) is None
 
 
 def test_incomplete_directional_setups_are_not_claimed_for_telegram():
@@ -203,7 +205,7 @@ def test_incomplete_directional_setups_are_not_claimed_for_telegram():
         }),
     )
 
-    assert runtime._claim_material_telegram_signal(result, "1h") is False
+    assert asyncio.run(runtime._telegram_notification_candidate(result, "1h")) is None
 
 
 def test_legacy_risk_rejection_does_not_block_completed_directional_notification():
@@ -221,7 +223,7 @@ def test_legacy_risk_rejection_does_not_block_completed_directional_notification
         }),
     )
 
-    assert runtime._claim_material_telegram_signal(result, "1h") is True
+    assert asyncio.run(runtime._telegram_notification_candidate(result, "1h")) is not None
 
 
 def _grid_result(confirmation_status="pending", price=65_000):
@@ -247,15 +249,83 @@ def _grid_result(confirmation_status="pending", price=65_000):
 def test_unconfirmed_grid_setups_are_not_claimed_for_scheduled_telegram(status):
     runtime = OrchestrationRuntime(environment={})
 
-    assert runtime._claim_material_telegram_signal(_grid_result(status), "15m") is False
+    assert asyncio.run(runtime._telegram_notification_candidate(_grid_result(status), "15m")) is None
 
 
 def test_confirmed_grid_setup_is_claimed_once_for_scheduled_telegram():
     runtime = OrchestrationRuntime(environment={})
     result = _grid_result("confirmed")
 
-    assert runtime._claim_material_telegram_signal(result, "15m") is True
-    assert runtime._claim_material_telegram_signal(result, "15m") is False
+    candidate = asyncio.run(runtime._telegram_notification_candidate(result, "15m"))
+    assert candidate is not None
+    asyncio.run(runtime._commit_telegram_notification("BTC", "15m", candidate))
+    assert asyncio.run(runtime._telegram_notification_candidate(result, "15m")) is None
+
+
+def test_grid_level_drift_does_not_repeat_same_confirmation():
+    runtime = OrchestrationRuntime(environment={})
+    candidate = asyncio.run(runtime._telegram_notification_candidate(_grid_result("confirmed", price=65_000), "15m"))
+    assert candidate is not None
+    asyncio.run(runtime._commit_telegram_notification("BTC", "15m", candidate))
+
+    assert asyncio.run(runtime._telegram_notification_candidate(_grid_result("confirmed", price=65_500), "15m")) is None
+
+
+@pytest.mark.parametrize("status", ("conflict", "expired", "invalidated"))
+def test_terminal_grid_transition_is_sent_once_after_confirmation(status):
+    runtime = OrchestrationRuntime(environment={})
+    confirmed = asyncio.run(runtime._telegram_notification_candidate(_grid_result("confirmed"), "15m"))
+    assert confirmed is not None
+    asyncio.run(runtime._commit_telegram_notification("BTC", "15m", confirmed))
+
+    terminal = asyncio.run(runtime._telegram_notification_candidate(_grid_result(status), "15m"))
+    assert terminal is not None
+    asyncio.run(runtime._commit_telegram_notification("BTC", "15m", terminal))
+    assert asyncio.run(runtime._telegram_notification_candidate(_grid_result(status), "15m")) is None
+
+
+def test_failed_telegram_delivery_does_not_consume_confirmed_signal():
+    class Orchestrator:
+        async def run(self, run):
+            result = _grid_result("confirmed")
+            result.run_id = "run-failed-delivery"
+            result.correlation_id = run.correlation_id
+            result.statistics = SimpleNamespace(completed_stages=1)
+            result.blocked_by = None
+            return result
+
+    class Telegram:
+        async def deliver(self, result):
+            raise RuntimeError("offline")
+
+    class Audit:
+        async def append(self, **kwargs):
+            return None
+
+    runtime = OrchestrationRuntime(environment={})
+    runtime.application = SimpleNamespace(orchestrator=Orchestrator(), infrastructure=SimpleNamespace(audit=Audit()))
+    runtime.telegram = Telegram()
+
+    asyncio.run(runtime.analyse("BTC", interval="15m", notification_policy="qualified_changes"))
+    assert asyncio.run(runtime._telegram_notification_candidate(_grid_result("confirmed"), "15m")) is not None
+
+
+def test_redis_notification_state_survives_runtime_restart():
+    class Redis:
+        def __init__(self): self.values = {}
+        async def get(self, key): return self.values.get(key)
+        async def set(self, key, value, **kwargs): self.values[key] = value; return True
+
+    redis = Redis()
+    first = OrchestrationRuntime(environment={})
+    first.redis_coordination = RedisCoordinationStore(redis, namespace="test")
+    candidate = asyncio.run(first._telegram_notification_candidate(_grid_result("confirmed"), "15m"))
+    assert candidate is not None
+    asyncio.run(first._commit_telegram_notification("BTC", "15m", candidate))
+
+    restarted = OrchestrationRuntime(environment={})
+    restarted.redis_coordination = RedisCoordinationStore(redis, namespace="test")
+    assert asyncio.run(restarted._telegram_notification_candidate(_grid_result("confirmed"), "15m")) is None
 
 
 def test_runtime_registers_fail_closed_hierarchy_shadow_jobs_without_publication():
