@@ -57,6 +57,7 @@ jobs:
   ui-quality:
     name: UI quality
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -66,10 +67,18 @@ jobs:
           node-version: "22"
           cache: npm
       - name: Install UI tooling
+        timeout-minutes: 3
         run: npm ci
-      - name: Install Chromium
-        run: npx playwright install --with-deps chromium
+      - name: Use runner Chrome
+        timeout-minutes: 1
+        run: |
+          chrome_path="$(command -v google-chrome)"
+          test -x "$chrome_path"
+          "$chrome_path" --version
+          echo "CHROME_PATH=$chrome_path" >> "$GITHUB_ENV"
       - name: Run responsive UI checks
+        timeout-minutes: 3
         run: npm run test:visual
       - name: Run Lighthouse budgets
+        timeout-minutes: 3
         run: npm run test:lighthouse

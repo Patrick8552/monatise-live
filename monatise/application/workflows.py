@@ -149,13 +149,19 @@ class TelegramNotifier:
             f"Score: {grid_score}/10" if classification == "GRID" else f"Score: {signed_score:+d}/10",
             f"Confidence: {conviction * 100:.0f}%",
         ]
-        validity = build_setup_validity(interval, getattr(result, "finished_at", result.context.run.requested_at))
+        confirming_signals = tuple(getattr(price_action, "confirming_signals", ()) or ())
+        confirmation_age = min((int(getattr(signal, "age_candles", 0) or 0) for signal in confirming_signals), default=0)
+        validity = build_setup_validity(
+            interval,
+            getattr(result, "finished_at", result.context.run.requested_at),
+            age_candles=confirmation_age if classification == "GRID" else 0,
+        )
         if validity is not None and (classification != "GRID" or confirmation_status == "CONFIRMED"):
             remaining_minutes = max(0, int((validity["expires_at"] - datetime.now(timezone.utc)).total_seconds() // 60))
             lines.extend((
                 f"Generated at: {validity['generated_at'].strftime('%Y-%m-%d %H:%M:%S UTC')}",
                 f"Valid until: {validity['expires_at'].strftime('%Y-%m-%d %H:%M:%S UTC')}",
-                f"Remaining validity: {remaining_minutes} min | {validity['validity_candles']} candle(s)",
+                f"Remaining validity: {remaining_minutes} min | {validity['remaining_candles']} candle(s)",
             ))
         if classification == "GRID":
             grid = build_moving_grid_plan(market) or build_grid_plan(entry or getattr(market, "price", None))

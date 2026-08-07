@@ -781,12 +781,20 @@ class OrchestrationRuntime:
     def _with_setup_validity(candidate: dict[str, Any], result: Any, market: Any, interval: str) -> dict[str, Any]:
         run = getattr(getattr(result, "context", None), "run", None)
         generated_at = getattr(result, "finished_at", None) or getattr(run, "requested_at", None) or datetime.now(timezone.utc)
-        validity = build_setup_validity(getattr(market, "interval", interval), generated_at)
+        price_action = getattr(getattr(result, "context", None), "outputs", {}).get("price_action")
+        confirming = tuple(getattr(price_action, "confirming_signals", ()) or ())
+        confirmation_age = min((int(getattr(signal, "age_candles", 0) or 0) for signal in confirming), default=0)
+        validity = build_setup_validity(
+            getattr(market, "interval", interval),
+            generated_at,
+            age_candles=confirmation_age if candidate.get("classification") == "grid" else 0,
+        )
         if validity is not None:
             candidate.update({
                 "generated_at": validity["generated_at"].isoformat(),
                 "expires_at": validity["expires_at"].isoformat(),
                 "validity_candles": validity["validity_candles"],
+                "remaining_validity_candles": validity["remaining_candles"],
             })
         return candidate
 
