@@ -17,7 +17,7 @@ from uuid import uuid4
 from urllib.request import Request, urlopen
 
 from monatise.application.composition import create_application, create_durable_infrastructure
-from monatise.application.production_analysis import build_directional_plan, build_moving_grid_plan, build_production_analysis_run, sanitized_result
+from monatise.application.production_analysis import build_directional_plan, build_production_analysis_run, sanitized_result
 from monatise.application.persistence import PostgresDocumentStore
 from monatise.application.workflows import TelegramNotifier
 from monatise.application.registry import PRODUCTION_ENGINE_ORDER
@@ -301,6 +301,13 @@ class RedisCoordinationStore:
     async def claim_nonce(self, nonce: str, *, ttl_seconds: int = 300) -> bool:
         return bool(await self.client.set(self.key("replay-nonce", nonce), "1", nx=True, ex=ttl_seconds))
 
+    async def notification_state_get(self, channel: str) -> dict[str, Any] | None:
+        value = await self.client.get(self.key("notification-state", channel))
+        return json.loads(value) if value is not None else None
+
+    async def notification_state_put(self, channel: str, value: dict[str, Any]) -> None:
+        await self.client.set(self.key("notification-state", channel), json.dumps(value, sort_keys=True, separators=(",", ":")))
+
 
 @dataclass
 class OrchestrationRuntime:
@@ -320,7 +327,7 @@ class OrchestrationRuntime:
     dependencies: dict[str, dict[str, Any]] = field(default_factory=dict)
     hierarchy: ShadowHierarchyCoordinator | None = None
     hierarchy_service: ShadowHierarchyService | None = None
-    _telegram_signal_fingerprints: dict[tuple[str, str], str] = field(default_factory=dict)
+    _telegram_signal_states: dict[tuple[str, str], dict[str, Any]] = field(default_factory=dict)
 
     def market_data_providers(self) -> dict[str, Any]:
         if self.coinglass is None:
@@ -640,11 +647,15 @@ class OrchestrationRuntime:
             raise RuntimeError("orchestration runtime is unavailable")
         result = await self.application.orchestrator.run(build_production_analysis_run(symbol, interval=interval, correlation_id=correlation_id, source=source))
         should_notify = notify and self.telegram is not None
+        notification_state = None
         if should_notify and notification_policy == "qualified_changes":
-            should_notify = self._claim_material_telegram_signal(result, interval)
+            notification_state = await self._telegram_notification_candidate(result, interval)
+            should_notify = notification_state is not None
         if should_notify:
             try:
                 await self.telegram.deliver(result)
+                if notification_state is not None:
+                    await self._commit_telegram_notification(result.symbol, interval, notification_state)
             except Exception as exc:
                 await self.application.infrastructure.audit.append(
                     record_type=AuditRecordType.SYSTEM,
@@ -658,11 +669,11 @@ class OrchestrationRuntime:
                 LOGGER.warning("Telegram notification delivery failed", extra={"error_type": type(exc).__name__, "run_id": result.run_id})
         return sanitized_result(result)
 
-    def _claim_material_telegram_signal(self, result: Any, interval: str) -> bool:
+    async def _telegram_notification_candidate(self, result: Any, interval: str) -> dict[str, Any] | None:
         outputs = result.context.outputs
         decision = outputs.get("decision")
         if decision is None:
-            return False
+            return None
         metadata = getattr(decision, "metadata", {}) or {}
         classification = getattr(getattr(decision, "classification", None), "value", "no_trade")
         direction = getattr(getattr(decision, "direction", None), "value", "none")
@@ -675,35 +686,82 @@ class OrchestrationRuntime:
             or (direction == "short" and signed_score <= -threshold)
         )
         if classification == "no_trade" or score < threshold or not direction_is_qualified:
-            return False
+            return None
         if result.status.value != "completed":
-            return False
+            return None
         market = outputs.get("market_data")
         price_action = outputs.get("price_action")
         confirmation_status = getattr(getattr(price_action, "status", None), "value", "pending")
-        if classification == "grid" and confirmation_status != "confirmed":
-            return False
+        key = (result.symbol, interval)
+        previous = await self._telegram_notification_state(key)
+        terminal_grid_statuses = {"conflict", "expired", "invalidated"}
+        if classification == "grid":
+            if confirmation_status == "pending":
+                return None
+            if confirmation_status in terminal_grid_statuses and (previous or {}).get("confirmation_status") != "confirmed":
+                return None
+            if confirmation_status not in {"confirmed", *terminal_grid_statuses}:
+                return None
         price = getattr(market, "price", None)
         plan = build_directional_plan(price, direction) or {}
-        grid = (build_moving_grid_plan(market) or {}) if classification == "grid" else {}
         material = {
             "classification": classification,
             "direction": direction,
-            "score": score,
-            "entry": round(float(plan.get("entry", price) or 0), 6),
-            "invalidation": round(float(plan.get("invalidation", 0) or 0), 6),
-            "target": round(float(plan.get("target", 0) or 0), 6),
-            "grid_buy": [round(float(value), 6) for value in grid.get("buy_levels", ())],
-            "grid_sell": [round(float(value), 6) for value in grid.get("sell_levels", ())],
             "confirmation_status": confirmation_status,
             "confirmation_pattern": getattr(price_action, "strongest_confirming_pattern", None),
         }
+        if classification == "grid" and confirmation_status == "confirmed":
+            material["confirmation_signal"] = self._grid_confirmation_signal_id(market, price_action)
+        elif classification != "grid":
+            material.update({
+                "score": score,
+                "entry": round(float(plan.get("entry", price) or 0), 6),
+                "invalidation": round(float(plan.get("invalidation", 0) or 0), 6),
+                "target": round(float(plan.get("target", 0) or 0), 6),
+            })
         fingerprint = hashlib.sha256(json.dumps(material, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-        key = (result.symbol, interval)
-        if self._telegram_signal_fingerprints.get(key) == fingerprint:
-            return False
-        self._telegram_signal_fingerprints[key] = fingerprint
-        return True
+        if (previous or {}).get("fingerprint") == fingerprint:
+            return None
+        return {"fingerprint": fingerprint, "confirmation_status": confirmation_status, "classification": classification}
+
+    async def _telegram_notification_state(self, key: tuple[str, str]) -> dict[str, Any] | None:
+        channel = f"{key[0].casefold()}:{key[1]}"
+        if self.redis_coordination is not None:
+            try:
+                state = await self.redis_coordination.notification_state_get(channel)
+                if state is not None:
+                    self._telegram_signal_states[key] = state
+                    return state
+            except Exception as exc:
+                LOGGER.warning("Telegram notification state read failed; using process state", extra={"error_type": type(exc).__name__, "channel": channel})
+        return self._telegram_signal_states.get(key)
+
+    async def _commit_telegram_notification(self, symbol: str, interval: str, state: dict[str, Any]) -> None:
+        key = (symbol, interval)
+        channel = f"{symbol.casefold()}:{interval}"
+        self._telegram_signal_states[key] = state
+        if self.redis_coordination is not None:
+            try:
+                await self.redis_coordination.notification_state_put(channel, state)
+            except Exception as exc:
+                LOGGER.warning("Telegram notification state persistence failed", extra={"error_type": type(exc).__name__, "channel": channel})
+
+    @staticmethod
+    def _grid_confirmation_signal_id(market: Any, price_action: Any) -> dict[str, Any]:
+        strongest_pattern = getattr(price_action, "strongest_confirming_pattern", None)
+        signals = tuple(getattr(price_action, "confirming_signals", ()) or ())
+        signal = next((item for item in signals if getattr(item, "pattern", None) == strongest_pattern), signals[0] if signals else None)
+        detected_at = None
+        index = getattr(signal, "detected_at_index", -1)
+        candles = tuple(getattr(market, "candles", ()) or ())
+        if isinstance(index, int) and 0 <= index < len(candles):
+            detected_at = getattr(candles[index], "timestamp", None)
+        return {
+            "pattern": strongest_pattern,
+            "family": getattr(getattr(signal, "family", None), "value", None),
+            "direction": getattr(getattr(signal, "direction", None), "value", None),
+            "detected_at": detected_at,
+        }
 
 class OrchestrationASGI:
     def __init__(self, runtime: OrchestrationRuntime | None = None) -> None:
