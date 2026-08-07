@@ -216,6 +216,35 @@ def test_telegram_message_has_no_execution_capability():
     assert notifier.execution_enabled is False
 
 
+def test_telegram_grid_cancellation_cannot_render_as_entry_ready():
+    sent = []
+
+    class Transport:
+        async def send_message(self, chat_id, text):
+            sent.append((chat_id, text))
+
+    run = AnalysisRun("BTC", {})
+    now = run.requested_at
+    market = SimpleNamespace(
+        price=65_000,
+        interval="15m",
+        metadata={"price_type": "current", "price_source": "coinglass"},
+    )
+    result = PipelineResult(
+        run.run_id, run.correlation_id, "BTC", PipelineStage.COMPLETED,
+        PipelineContext(run, {"market_data": market}),
+        PipelineStatistics(1, {}, {}, 1), None, None, now, now,
+    )
+    notifier = TelegramNotifier(Transport(), "42")
+
+    asyncio.run(notifier.deliver_grid_cancellation(result, "signal score fell below threshold"))
+
+    message = sent[0][1]
+    assert "Monatise GRID ENTRY CANCELLED: BTC" in message
+    assert "Current CoinGlass price: 65,000" in message
+    assert "ENTRY READY" not in message
+
+
 @pytest.mark.parametrize(
     ("direction", "score", "entry", "stop", "target"),
     [

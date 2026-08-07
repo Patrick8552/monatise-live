@@ -30,6 +30,19 @@ class TelegramNotifier:
         text = self.format(result)
         return await self._transport.send_message(self._chat_id, text)
 
+    async def deliver_grid_cancellation(self, result: PipelineResult, reason: str) -> Any:
+        market = result.context.outputs.get("market_data")
+        interval = getattr(market, "interval", "unknown")
+        text = "\n".join((
+            f"Monatise GRID ENTRY CANCELLED: {result.symbol}",
+            f"Timeframe: {interval}",
+            _current_price_line(market),
+            f"Entry: CANCELLED — {reason}",
+            f"Status: {result.status.value}",
+            f"Run: {result.run_id}",
+        ))
+        return await self._transport.send_message(self._chat_id, text)
+
     async def deliver_safely(self, result: PipelineResult) -> bool:
         try:
             await self.deliver(result)

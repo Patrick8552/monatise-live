@@ -284,6 +284,29 @@ def test_terminal_grid_transition_is_sent_once_after_confirmation(status):
     assert asyncio.run(runtime._telegram_notification_candidate(_grid_result(status), "15m")) is None
 
 
+def test_grid_score_drop_cancels_previously_confirmed_entry():
+    runtime = OrchestrationRuntime(environment={})
+    confirmed = asyncio.run(runtime._telegram_notification_candidate(_grid_result("confirmed"), "15m"))
+    assert confirmed is not None
+    asyncio.run(runtime._commit_telegram_notification("BTC", "15m", confirmed))
+    disqualified = _grid_result("confirmed")
+    disqualified.context.outputs["decision"].metadata["grid_signal_score"] = 6
+
+    cancellation = asyncio.run(runtime._telegram_notification_candidate(disqualified, "15m"))
+
+    assert cancellation is not None
+    assert cancellation["confirmation_status"] == "cancelled"
+    assert cancellation["cancellation_reason"] == "signal score 6/10 fell below the 7/10 threshold"
+
+
+def test_no_trade_does_not_notify_without_previous_confirmed_grid():
+    runtime = OrchestrationRuntime(environment={})
+    result = _grid_result("pending")
+    result.context.outputs["decision"].classification = SimpleNamespace(value="no_trade")
+
+    assert asyncio.run(runtime._telegram_notification_candidate(result, "15m")) is None
+
+
 def test_failed_telegram_delivery_does_not_consume_confirmed_signal():
     class Orchestrator:
         async def run(self, run):
@@ -326,6 +349,35 @@ def test_redis_notification_state_survives_runtime_restart():
     restarted = OrchestrationRuntime(environment={})
     restarted.redis_coordination = RedisCoordinationStore(redis, namespace="test")
     assert asyncio.run(restarted._telegram_notification_candidate(_grid_result("confirmed"), "15m")) is None
+
+
+def test_newer_memory_notification_state_repairs_stale_redis_state():
+    class Redis:
+        def __init__(self): self.values = {}
+        async def get(self, key): return self.values.get(key)
+        async def set(self, key, value, **kwargs): self.values[key] = value; return True
+
+    redis = Redis()
+    runtime = OrchestrationRuntime(environment={})
+    runtime.redis_coordination = RedisCoordinationStore(redis, namespace="test")
+    key = ("BTC", "15m")
+    runtime._telegram_signal_states[key] = {
+        "fingerprint": "new",
+        "classification": "grid",
+        "confirmation_status": "confirmed",
+        "version": 20,
+    }
+    redis.values["test:notification-state:btc:15m"] = json.dumps({
+        "fingerprint": "old",
+        "classification": "grid",
+        "confirmation_status": "confirmed",
+        "version": 10,
+    })
+
+    state = asyncio.run(runtime._telegram_notification_state(key))
+
+    assert state["fingerprint"] == "new"
+    assert json.loads(redis.values["test:notification-state:btc:15m"])["fingerprint"] == "new"
 
 
 def test_runtime_registers_fail_closed_hierarchy_shadow_jobs_without_publication():
