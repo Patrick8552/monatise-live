@@ -17,7 +17,7 @@ from uuid import uuid4
 from urllib.request import Request, urlopen
 
 from monatise.application.composition import create_application, create_durable_infrastructure
-from monatise.application.production_analysis import build_directional_plan, build_production_analysis_run, build_setup_validity, sanitized_result
+from monatise.application.production_analysis import build_directional_plan, build_production_analysis_run, build_setup_validity, sanitized_result, strongest_confirmation_signal
 from monatise.application.persistence import PostgresDocumentStore
 from monatise.application.workflows import TelegramNotifier
 from monatise.application.registry import PRODUCTION_ENGINE_ORDER
@@ -681,6 +681,8 @@ class OrchestrationRuntime:
                 cancellation_reason = (notification_state or {}).get("cancellation_reason")
                 if (notification_state or {}).get("replaces_confirmed_grid"):
                     message_id = await self.telegram.deliver_grid_replacement(result)
+                elif (notification_state or {}).get("expires_directional_setup"):
+                    message_id = await self.telegram.deliver_setup_expiry(result, notification_state["expired_at"])
                 elif cancellation_reason:
                     message_id = await self.telegram.deliver_grid_cancellation(result, cancellation_reason)
                 else:
@@ -706,6 +708,9 @@ class OrchestrationRuntime:
         outputs = result.context.outputs
         key = (result.symbol, interval)
         previous = await self._telegram_notification_state(key)
+        expired_directional = self._expired_directional_candidate(previous)
+        if expired_directional is not None:
+            return expired_directional
         previous_confirmed_grid = (
             (previous or {}).get("classification") == "grid"
             and (previous or {}).get("confirmation_status") == "confirmed"
@@ -778,12 +783,37 @@ class OrchestrationRuntime:
         return self._with_setup_validity(candidate, result, market, interval)
 
     @staticmethod
+    def _expired_directional_candidate(previous: dict[str, Any] | None) -> dict[str, Any] | None:
+        if (
+            not previous
+            or previous.get("classification") in {None, "grid"}
+            or previous.get("delivery_status") != "delivered"
+            or not previous.get("expires_at")
+        ):
+            return None
+        try:
+            expires_at = datetime.fromisoformat(str(previous["expires_at"]).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if expires_at.tzinfo is None or datetime.now(timezone.utc) < expires_at.astimezone(timezone.utc):
+            return None
+        fingerprint = hashlib.sha256(f"directional:expired:{previous.get('fingerprint')}:{expires_at.isoformat()}".encode()).hexdigest()
+        return {
+            "fingerprint": fingerprint,
+            "confirmation_status": "expired",
+            "classification": previous["classification"],
+            "expires_directional_setup": True,
+            "expired_at": expires_at.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+            "expected_version": int(previous.get("version", 0) or 0),
+        }
+
+    @staticmethod
     def _with_setup_validity(candidate: dict[str, Any], result: Any, market: Any, interval: str) -> dict[str, Any]:
         run = getattr(getattr(result, "context", None), "run", None)
         generated_at = getattr(result, "finished_at", None) or getattr(run, "requested_at", None) or datetime.now(timezone.utc)
         price_action = getattr(getattr(result, "context", None), "outputs", {}).get("price_action")
-        confirming = tuple(getattr(price_action, "confirming_signals", ()) or ())
-        confirmation_age = min((int(getattr(signal, "age_candles", 0) or 0) for signal in confirming), default=0)
+        confirmation_signal = strongest_confirmation_signal(price_action)
+        confirmation_age = int(getattr(confirmation_signal, "age_candles", 0) or 0)
         validity = build_setup_validity(
             getattr(market, "interval", interval),
             generated_at,
@@ -882,8 +912,7 @@ class OrchestrationRuntime:
     @staticmethod
     def _grid_confirmation_signal_id(market: Any, price_action: Any) -> dict[str, Any]:
         strongest_pattern = getattr(price_action, "strongest_confirming_pattern", None)
-        signals = tuple(getattr(price_action, "confirming_signals", ()) or ())
-        signal = next((item for item in signals if getattr(item, "pattern", None) == strongest_pattern), signals[0] if signals else None)
+        signal = strongest_confirmation_signal(price_action)
         detected_at = None
         index = getattr(signal, "detected_at_index", -1)
         candles = tuple(getattr(market, "candles", ()) or ())

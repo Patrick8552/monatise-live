@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from monatise.core.models import Candle
-from monatise.application.production_analysis import build_moving_grid_plan, build_production_analysis_run, build_setup_validity, sanitized_result
+from monatise.application.production_analysis import build_moving_grid_plan, build_production_analysis_run, build_setup_validity, sanitized_result, strongest_confirmation_signal
 from monatise.engines.market_data.models import DataQuality, DataStatus, MarketSnapshot
 from monatise.engines.price_action import (
     PriceActionConfirmationStatus,
@@ -265,6 +265,20 @@ def test_setup_validity_does_not_refresh_an_aged_confirmation():
     assert validity["expires_at"] == datetime(2026, 8, 7, 14, 30, tzinfo=timezone.utc)
     assert validity["remaining_candles"] == 1
     assert validity["validity_seconds"] == 890
+
+
+def test_strongest_confirmation_signal_does_not_select_younger_weaker_pattern():
+    old_strongest = SimpleNamespace(pattern="strong", confidence=0.9, evidence_score=0.9, age_candles=3)
+    new_weaker = SimpleNamespace(pattern="weak", confidence=0.7, evidence_score=0.7, age_candles=0)
+    price_action = SimpleNamespace(
+        strongest_confirming_pattern="strong",
+        confirming_signals=(new_weaker, old_strongest),
+    )
+
+    selected = strongest_confirmation_signal(price_action)
+
+    assert selected is old_strongest
+    assert selected.age_candles == 3
 
 
 def test_moving_grid_uses_rolling_range_instead_of_latest_price():

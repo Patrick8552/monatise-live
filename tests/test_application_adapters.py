@@ -278,6 +278,40 @@ def test_telegram_grid_replacement_combines_cancellation_and_directional_setup()
     assert "directional setup: BTC LONG" in sent[0][1]
 
 
+def test_telegram_subminute_validity_is_not_rendered_as_zero_minutes():
+    run = AnalysisRun("BTC", {})
+    now = run.requested_at
+    signal = SimpleNamespace(pattern="bullish_engulfing", confidence=0.9, evidence_score=0.9, age_candles=3)
+    outputs = {
+        "decision": SimpleNamespace(
+            direction=SimpleNamespace(value="two_sided"),
+            classification=SimpleNamespace(value="grid"),
+            conviction=0.8,
+            reasons=(),
+            metadata={"grid_signal_score": 8, "minimum_signal_score": 7},
+        ),
+        "market_data": SimpleNamespace(price=65_000, interval="1m", quality=SimpleNamespace(source="CoinGlass")),
+        "price_action": SimpleNamespace(
+            status=SimpleNamespace(value="confirmed"),
+            confirming_signals=(signal,),
+            conflicting_signals=(),
+            strongest_confirming_pattern="bullish_engulfing",
+            aggregate_confidence=0.9,
+            aligned_family_count=1,
+            reasons=(),
+        ),
+    }
+    result = PipelineResult(
+        run.run_id, run.correlation_id, "BTC", PipelineStage.COMPLETED,
+        PipelineContext(run, outputs), PipelineStatistics(1, {}, {}, 14), None, None, now, now,
+    )
+
+    message = TelegramNotifier.format(result)
+
+    assert "Remaining validity: <1 min | 1 candle(s)" in message
+    assert "Remaining validity: 0 min" not in message
+
+
 @pytest.mark.parametrize(
     ("direction", "score", "entry", "stop", "target"),
     [

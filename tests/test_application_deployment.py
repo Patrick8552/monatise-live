@@ -306,6 +306,24 @@ def test_grid_score_drop_cancels_previously_confirmed_entry():
     assert cancellation["cancellation_reason"] == "signal score 6/10 fell below the 7/10 threshold"
 
 
+def test_expired_directional_setup_is_transitioned_before_new_analysis():
+    runtime = OrchestrationRuntime(environment={})
+    runtime._telegram_signal_states[("BTC", "15m")] = {
+        "fingerprint": "directional-1",
+        "classification": "trend",
+        "confirmation_status": "pending",
+        "delivery_status": "delivered",
+        "expires_at": "2026-08-07T10:00:00+00:00",
+        "version": 7,
+    }
+
+    expiry = asyncio.run(runtime._telegram_notification_candidate(_grid_result("pending"), "15m"))
+
+    assert expiry["expires_directional_setup"] is True
+    assert expiry["confirmation_status"] == "expired"
+    assert expiry["expected_version"] == 7
+
+
 def test_no_trade_does_not_notify_without_previous_confirmed_grid():
     runtime = OrchestrationRuntime(environment={})
     result = _grid_result("pending")

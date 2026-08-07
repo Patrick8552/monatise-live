@@ -33,6 +33,21 @@ INTERVAL_SECONDS = {
 SETUP_VALIDITY_CANDLES = 4
 
 
+def strongest_confirmation_signal(price_action: Any) -> Any | None:
+    signals = tuple(getattr(price_action, "confirming_signals", ()) or ())
+    pattern = getattr(price_action, "strongest_confirming_pattern", None)
+    matching = tuple(signal for signal in signals if getattr(signal, "pattern", None) == pattern)
+    candidates = matching or signals
+    return max(
+        candidates,
+        key=lambda signal: (
+            float(getattr(signal, "confidence", 0.0) or 0.0),
+            float(getattr(signal, "evidence_score", 0.0) or 0.0),
+        ),
+        default=None,
+    )
+
+
 def build_setup_validity(interval: str | None, generated_at: datetime, *, validity_candles: int = SETUP_VALIDITY_CANDLES, age_candles: int = 0) -> dict[str, Any] | None:
     seconds = INTERVAL_SECONDS.get(str(interval or ""))
     if seconds is None or generated_at.tzinfo is None or validity_candles < 1 or age_candles < 0:
@@ -217,8 +232,8 @@ def sanitized_result(result: Any) -> dict[str, Any]:
     directional_plan = build_directional_plan(price, direction)
     grid_plan = build_moving_grid_plan(market) if classification == "grid" else None
     confirmation_status = getattr(getattr(price_action, "status", None), "value", "pending")
-    confirming = tuple(getattr(price_action, "confirming_signals", ()) or ())
-    confirmation_age = min((int(getattr(signal, "age_candles", 0) or 0) for signal in confirming), default=0)
+    confirmation_signal = strongest_confirmation_signal(price_action)
+    confirmation_age = int(getattr(confirmation_signal, "age_candles", 0) or 0)
     run = getattr(getattr(result, "context", None), "run", None)
     generated_at = getattr(result, "finished_at", None) or getattr(run, "requested_at", None) or datetime.now(timezone.utc)
     validity = build_setup_validity(
