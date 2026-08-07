@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from monatise.core.models import Candle
-from monatise.application.production_analysis import build_moving_grid_plan, build_production_analysis_run, sanitized_result
+from monatise.application.production_analysis import build_moving_grid_plan, build_production_analysis_run, build_setup_validity, sanitized_result
 from monatise.engines.market_data.models import DataQuality, DataStatus, MarketSnapshot
 from monatise.engines.price_action import (
     PriceActionConfirmationStatus,
@@ -238,7 +238,22 @@ def test_sanitized_output_exposes_contextual_confirmation_fields():
     assert payload["price_action_signals"][0]["age_candles"] == 0
     assert payload["price_action_signals"][0]["location_aligned"] is True
     assert isinstance(payload["price_action_signals"][0]["metadata"], dict)
+    assert payload["generated_at"] is not None
+    assert payload["expires_at"] is not None
+    assert payload["validity_candles"] == 4
+    assert payload["validity_seconds"] > 0
     assert payload["execution_enabled"] is False
+
+
+def test_setup_validity_uses_four_candle_boundaries():
+    generated_at = datetime(2026, 8, 7, 14, 15, 10, tzinfo=timezone.utc)
+
+    validity = build_setup_validity("15m", generated_at)
+
+    assert validity["generated_at"] == generated_at
+    assert validity["expires_at"] == datetime(2026, 8, 7, 15, 15, tzinfo=timezone.utc)
+    assert validity["validity_candles"] == 4
+    assert validity["validity_seconds"] == 3_590
 
 
 def test_moving_grid_uses_rolling_range_instead_of_latest_price():

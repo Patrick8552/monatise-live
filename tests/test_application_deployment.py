@@ -263,6 +263,8 @@ def test_confirmed_grid_setup_is_claimed_once_for_scheduled_telegram():
 
     candidate = asyncio.run(runtime._telegram_notification_candidate(result, "15m"))
     assert candidate is not None
+    assert candidate["expires_at"] is not None
+    assert candidate["validity_candles"] == 4
     _record_delivered(runtime, "BTC", "15m", candidate)
     assert asyncio.run(runtime._telegram_notification_candidate(result, "15m")) is None
 
