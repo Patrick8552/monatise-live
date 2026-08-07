@@ -17,7 +17,7 @@ from uuid import uuid4
 from urllib.request import Request, urlopen
 
 from monatise.application.composition import create_application, create_durable_infrastructure
-from monatise.application.production_analysis import build_directional_plan, build_grid_plan, build_production_analysis_run, sanitized_result
+from monatise.application.production_analysis import build_directional_plan, build_moving_grid_plan, build_production_analysis_run, sanitized_result
 from monatise.application.persistence import PostgresDocumentStore
 from monatise.application.workflows import TelegramNotifier
 from monatise.application.registry import PRODUCTION_ENGINE_ORDER
@@ -679,9 +679,13 @@ class OrchestrationRuntime:
         if result.status.value != "completed":
             return False
         market = outputs.get("market_data")
+        price_action = outputs.get("price_action")
+        confirmation_status = getattr(getattr(price_action, "status", None), "value", "pending")
+        if classification == "grid" and confirmation_status != "confirmed":
+            return False
         price = getattr(market, "price", None)
         plan = build_directional_plan(price, direction) or {}
-        grid = (build_grid_plan(price) or {}) if classification == "grid" else {}
+        grid = (build_moving_grid_plan(market) or {}) if classification == "grid" else {}
         material = {
             "classification": classification,
             "direction": direction,
@@ -691,6 +695,8 @@ class OrchestrationRuntime:
             "target": round(float(plan.get("target", 0) or 0), 6),
             "grid_buy": [round(float(value), 6) for value in grid.get("buy_levels", ())],
             "grid_sell": [round(float(value), 6) for value in grid.get("sell_levels", ())],
+            "confirmation_status": confirmation_status,
+            "confirmation_pattern": getattr(price_action, "strongest_confirming_pattern", None),
         }
         fingerprint = hashlib.sha256(json.dumps(material, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         key = (result.symbol, interval)
