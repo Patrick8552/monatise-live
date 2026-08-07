@@ -11,7 +11,7 @@ import os
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from time import perf_counter, time_ns
+from time import perf_counter
 from typing import Any, Mapping
 from uuid import uuid4
 from urllib.request import Request, urlopen
@@ -281,6 +281,23 @@ class RedisSchedulerLeadership:
 class RedisCoordinationStore:
     """Namespaced ephemeral coordination for cache, deduplication, and nonces."""
 
+    NOTIFICATION_CAS_SCRIPT = """
+local current = redis.call('GET', KEYS[1])
+local current_version = 0
+if current then
+  local decoded = cjson.decode(current)
+  current_version = tonumber(decoded.version or 0)
+end
+if current_version ~= tonumber(ARGV[1]) then
+  return nil
+end
+local incoming = cjson.decode(ARGV[2])
+incoming.version = current_version + 1
+local encoded = cjson.encode(incoming)
+redis.call('SET', KEYS[1], encoded)
+return encoded
+"""
+
     def __init__(self, client: Any, *, namespace: str) -> None:
         self.client = client
         self.namespace = namespace.strip(":")
@@ -305,8 +322,16 @@ class RedisCoordinationStore:
         value = await self.client.get(self.key("notification-state", channel))
         return json.loads(value) if value is not None else None
 
-    async def notification_state_put(self, channel: str, value: dict[str, Any]) -> None:
-        await self.client.set(self.key("notification-state", channel), json.dumps(value, sort_keys=True, separators=(",", ":")))
+    async def notification_state_compare_and_put(self, channel: str, expected_version: int, value: dict[str, Any]) -> dict[str, Any] | None:
+        encoded = json.dumps(value, sort_keys=True, separators=(",", ":"))
+        result = await self.client.eval(
+            self.NOTIFICATION_CAS_SCRIPT,
+            1,
+            self.key("notification-state", channel),
+            expected_version,
+            encoded,
+        )
+        return json.loads(result) if result is not None else None
 
 
 @dataclass
@@ -650,17 +675,21 @@ class OrchestrationRuntime:
         notification_state = None
         if should_notify and notification_policy == "qualified_changes":
             notification_state = await self._telegram_notification_candidate(result, interval)
-            should_notify = notification_state is not None
+            should_notify = notification_state is not None and await self._reserve_telegram_notification(result.symbol, interval, notification_state)
         if should_notify:
             try:
                 cancellation_reason = (notification_state or {}).get("cancellation_reason")
-                if cancellation_reason:
-                    await self.telegram.deliver_grid_cancellation(result, cancellation_reason)
+                if (notification_state or {}).get("replaces_confirmed_grid"):
+                    message_id = await self.telegram.deliver_grid_replacement(result)
+                elif cancellation_reason:
+                    message_id = await self.telegram.deliver_grid_cancellation(result, cancellation_reason)
                 else:
-                    await self.telegram.deliver(result)
+                    message_id = await self.telegram.deliver(result)
                 if notification_state is not None:
-                    await self._commit_telegram_notification(result.symbol, interval, notification_state)
+                    await self._finish_telegram_notification(result.symbol, interval, notification_state, "delivered", message_id=message_id)
             except Exception as exc:
+                if notification_state is not None:
+                    await self._finish_telegram_notification(result.symbol, interval, notification_state, "failed", error_type=type(exc).__name__)
                 await self.application.infrastructure.audit.append(
                     record_type=AuditRecordType.SYSTEM,
                     action=AuditAction.FAILED,
@@ -680,10 +709,11 @@ class OrchestrationRuntime:
         previous_confirmed_grid = (
             (previous or {}).get("classification") == "grid"
             and (previous or {}).get("confirmation_status") == "confirmed"
+            and (previous or {}).get("delivery_status") in {None, "delivered"}
         )
         decision = outputs.get("decision")
         if decision is None:
-            return self._grid_cancellation_candidate(previous_confirmed_grid, "analysis no longer produced a decision")
+            return self._grid_cancellation_candidate(previous, previous_confirmed_grid, "analysis no longer produced a decision")
         metadata = getattr(decision, "metadata", {}) or {}
         classification = getattr(getattr(decision, "classification", None), "value", "no_trade")
         direction = getattr(getattr(decision, "direction", None), "value", "none")
@@ -702,9 +732,9 @@ class OrchestrationRuntime:
                 reason = f"signal score {score}/10 fell below the {threshold}/10 threshold"
             else:
                 reason = "signal direction no longer qualifies"
-            return self._grid_cancellation_candidate(previous_confirmed_grid, reason)
+            return self._grid_cancellation_candidate(previous, previous_confirmed_grid, reason)
         if result.status.value != "completed":
-            return self._grid_cancellation_candidate(previous_confirmed_grid, f"analysis status changed to {result.status.value}")
+            return self._grid_cancellation_candidate(previous, previous_confirmed_grid, f"analysis status changed to {result.status.value}")
         market = outputs.get("market_data")
         price_action = outputs.get("price_action")
         confirmation_status = getattr(getattr(price_action, "status", None), "value", "pending")
@@ -712,12 +742,20 @@ class OrchestrationRuntime:
         if classification == "grid":
             if confirmation_status == "pending":
                 return None
-            if confirmation_status in terminal_grid_statuses and (previous or {}).get("confirmation_status") != "confirmed":
+            if confirmation_status in terminal_grid_statuses and not previous_confirmed_grid:
                 return None
             if confirmation_status not in {"confirmed", *terminal_grid_statuses}:
                 return None
-        price = getattr(market, "price", None)
-        plan = build_directional_plan(price, direction) or {}
+        elif previous_confirmed_grid:
+            replacement = self._directional_material(classification, direction, score, market, price_action)
+            fingerprint = hashlib.sha256(json.dumps(replacement, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+            return {
+                "fingerprint": fingerprint,
+                "confirmation_status": "replaced",
+                "classification": classification,
+                "replaces_confirmed_grid": True,
+                "expected_version": int((previous or {}).get("version", 0) or 0),
+            }
         material = {
             "classification": classification,
             "direction": direction,
@@ -727,19 +765,19 @@ class OrchestrationRuntime:
         if classification == "grid" and confirmation_status == "confirmed":
             material["confirmation_signal"] = self._grid_confirmation_signal_id(market, price_action)
         elif classification != "grid":
-            material.update({
-                "score": score,
-                "entry": round(float(plan.get("entry", price) or 0), 6),
-                "invalidation": round(float(plan.get("invalidation", 0) or 0), 6),
-                "target": round(float(plan.get("target", 0) or 0), 6),
-            })
+            material.update(self._directional_material(classification, direction, score, market, price_action))
         fingerprint = hashlib.sha256(json.dumps(material, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         if (previous or {}).get("fingerprint") == fingerprint:
             return None
-        return {"fingerprint": fingerprint, "confirmation_status": confirmation_status, "classification": classification}
+        return {
+            "fingerprint": fingerprint,
+            "confirmation_status": confirmation_status,
+            "classification": classification,
+            "expected_version": int((previous or {}).get("version", 0) or 0),
+        }
 
     @staticmethod
-    def _grid_cancellation_candidate(previous_confirmed_grid: bool, reason: str) -> dict[str, Any] | None:
+    def _grid_cancellation_candidate(previous: dict[str, Any] | None, previous_confirmed_grid: bool, reason: str) -> dict[str, Any] | None:
         if not previous_confirmed_grid:
             return None
         fingerprint = hashlib.sha256(f"grid:cancelled:{reason}".encode()).hexdigest()
@@ -748,37 +786,76 @@ class OrchestrationRuntime:
             "confirmation_status": "cancelled",
             "classification": "grid",
             "cancellation_reason": reason,
+            "expected_version": int((previous or {}).get("version", 0) or 0),
+        }
+
+    @staticmethod
+    def _directional_material(classification: str, direction: str, score: int, market: Any, price_action: Any) -> dict[str, Any]:
+        price = getattr(market, "price", None)
+        plan = build_directional_plan(price, direction) or {}
+        return {
+            "classification": classification,
+            "direction": direction,
+            "score": score,
+            "entry": round(float(plan.get("entry", price) or 0), 6),
+            "invalidation": round(float(plan.get("invalidation", 0) or 0), 6),
+            "target": round(float(plan.get("target", 0) or 0), 6),
+            "confirmation_pattern": getattr(price_action, "strongest_confirming_pattern", None),
         }
 
     async def _telegram_notification_state(self, key: tuple[str, str]) -> dict[str, Any] | None:
         channel = f"{key[0].casefold()}:{key[1]}"
-        memory_state = self._telegram_signal_states.get(key)
         if self.redis_coordination is not None:
             try:
                 durable_state = await self.redis_coordination.notification_state_get(channel)
-                memory_version = int((memory_state or {}).get("version", 0) or 0)
-                durable_version = int((durable_state or {}).get("version", 0) or 0)
-                if memory_state is not None and memory_version > durable_version:
-                    await self.redis_coordination.notification_state_put(channel, memory_state)
-                    return memory_state
                 if durable_state is not None:
                     self._telegram_signal_states[key] = durable_state
                     return durable_state
             except Exception as exc:
                 LOGGER.warning("Telegram notification state read failed; using process state", extra={"error_type": type(exc).__name__, "channel": channel})
-        return memory_state
+        return self._telegram_signal_states.get(key)
 
-    async def _commit_telegram_notification(self, symbol: str, interval: str, state: dict[str, Any]) -> None:
+    async def _reserve_telegram_notification(self, symbol: str, interval: str, state: dict[str, Any]) -> bool:
         key = (symbol, interval)
         channel = f"{symbol.casefold()}:{interval}"
-        previous_version = int((self._telegram_signal_states.get(key) or {}).get("version", 0) or 0)
-        committed_state = {**state, "version": max(time_ns(), previous_version + 1)}
-        self._telegram_signal_states[key] = committed_state
+        expected_version = int(state.get("expected_version", 0) or 0)
+        reserved_state = {key: value for key, value in state.items() if key != "expected_version"}
+        reserved_state["delivery_status"] = "pending"
         if self.redis_coordination is not None:
             try:
-                await self.redis_coordination.notification_state_put(channel, committed_state)
+                stored = await self.redis_coordination.notification_state_compare_and_put(channel, expected_version, reserved_state)
+                if stored is None:
+                    return False
+                self._telegram_signal_states[key] = stored
+                state["reservation_version"] = stored["version"]
+                return True
             except Exception as exc:
-                LOGGER.warning("Telegram notification state persistence failed", extra={"error_type": type(exc).__name__, "channel": channel})
+                LOGGER.warning("Telegram notification reservation failed", extra={"error_type": type(exc).__name__, "channel": channel})
+                return False
+        reserved_state["version"] = expected_version + 1
+        self._telegram_signal_states[key] = reserved_state
+        state["reservation_version"] = reserved_state["version"]
+        return True
+
+    async def _finish_telegram_notification(self, symbol: str, interval: str, state: dict[str, Any], delivery_status: str, *, message_id: Any = None, error_type: str | None = None) -> None:
+        key = (symbol, interval)
+        channel = f"{symbol.casefold()}:{interval}"
+        reservation_version = int(state.get("reservation_version", 0) or 0)
+        finished_state = {key: value for key, value in state.items() if key not in {"expected_version", "reservation_version"}}
+        finished_state.update({"delivery_status": delivery_status, "telegram_message_id": message_id if isinstance(message_id, int) else None})
+        if error_type is not None:
+            finished_state["error_type"] = error_type
+        if self.redis_coordination is not None:
+            try:
+                stored = await self.redis_coordination.notification_state_compare_and_put(channel, reservation_version, finished_state)
+                if stored is not None:
+                    self._telegram_signal_states[key] = stored
+                return
+            except Exception as exc:
+                LOGGER.warning("Telegram notification completion persistence failed", extra={"error_type": type(exc).__name__, "channel": channel})
+                return
+        finished_state["version"] = reservation_version + 1
+        self._telegram_signal_states[key] = finished_state
 
     @staticmethod
     def _grid_confirmation_signal_id(market: Any, price_action: Any) -> dict[str, Any]:

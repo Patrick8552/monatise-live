@@ -145,6 +145,11 @@ def test_runtime_registers_paper_only_analysis_jobs_for_each_configured_symbol()
     assert all("paper-only" in item.tags for item in scheduler.definitions)
 
 
+def _record_delivered(runtime, symbol, interval, candidate, message_id=1):
+    assert asyncio.run(runtime._reserve_telegram_notification(symbol, interval, candidate)) is True
+    asyncio.run(runtime._finish_telegram_notification(symbol, interval, candidate, "delivered", message_id=message_id))
+
+
 @pytest.mark.parametrize(("direction", "signed_score"), [("long", 8), ("short", -8)])
 def test_qualified_directional_setups_are_claimed_for_telegram(direction, signed_score):
     runtime = OrchestrationRuntime(environment={})
@@ -168,7 +173,7 @@ def test_qualified_directional_setups_are_claimed_for_telegram(direction, signed
 
     candidate = asyncio.run(runtime._telegram_notification_candidate(result, "1h"))
     assert candidate is not None
-    asyncio.run(runtime._commit_telegram_notification("BTC", "1h", candidate))
+    _record_delivered(runtime, "BTC", "1h", candidate)
     assert asyncio.run(runtime._telegram_notification_candidate(result, "1h")) is None
 
 
@@ -258,7 +263,7 @@ def test_confirmed_grid_setup_is_claimed_once_for_scheduled_telegram():
 
     candidate = asyncio.run(runtime._telegram_notification_candidate(result, "15m"))
     assert candidate is not None
-    asyncio.run(runtime._commit_telegram_notification("BTC", "15m", candidate))
+    _record_delivered(runtime, "BTC", "15m", candidate)
     assert asyncio.run(runtime._telegram_notification_candidate(result, "15m")) is None
 
 
@@ -266,7 +271,7 @@ def test_grid_level_drift_does_not_repeat_same_confirmation():
     runtime = OrchestrationRuntime(environment={})
     candidate = asyncio.run(runtime._telegram_notification_candidate(_grid_result("confirmed", price=65_000), "15m"))
     assert candidate is not None
-    asyncio.run(runtime._commit_telegram_notification("BTC", "15m", candidate))
+    _record_delivered(runtime, "BTC", "15m", candidate)
 
     assert asyncio.run(runtime._telegram_notification_candidate(_grid_result("confirmed", price=65_500), "15m")) is None
 
@@ -276,11 +281,11 @@ def test_terminal_grid_transition_is_sent_once_after_confirmation(status):
     runtime = OrchestrationRuntime(environment={})
     confirmed = asyncio.run(runtime._telegram_notification_candidate(_grid_result("confirmed"), "15m"))
     assert confirmed is not None
-    asyncio.run(runtime._commit_telegram_notification("BTC", "15m", confirmed))
+    _record_delivered(runtime, "BTC", "15m", confirmed)
 
     terminal = asyncio.run(runtime._telegram_notification_candidate(_grid_result(status), "15m"))
     assert terminal is not None
-    asyncio.run(runtime._commit_telegram_notification("BTC", "15m", terminal))
+    _record_delivered(runtime, "BTC", "15m", terminal)
     assert asyncio.run(runtime._telegram_notification_candidate(_grid_result(status), "15m")) is None
 
 
@@ -288,7 +293,7 @@ def test_grid_score_drop_cancels_previously_confirmed_entry():
     runtime = OrchestrationRuntime(environment={})
     confirmed = asyncio.run(runtime._telegram_notification_candidate(_grid_result("confirmed"), "15m"))
     assert confirmed is not None
-    asyncio.run(runtime._commit_telegram_notification("BTC", "15m", confirmed))
+    _record_delivered(runtime, "BTC", "15m", confirmed)
     disqualified = _grid_result("confirmed")
     disqualified.context.outputs["decision"].metadata["grid_signal_score"] = 6
 
@@ -307,7 +312,7 @@ def test_no_trade_does_not_notify_without_previous_confirmed_grid():
     assert asyncio.run(runtime._telegram_notification_candidate(result, "15m")) is None
 
 
-def test_failed_telegram_delivery_does_not_consume_confirmed_signal():
+def test_failed_telegram_delivery_is_recorded_without_automatic_duplicate_retry():
     class Orchestrator:
         async def run(self, run):
             result = _grid_result("confirmed")
@@ -330,7 +335,28 @@ def test_failed_telegram_delivery_does_not_consume_confirmed_signal():
     runtime.telegram = Telegram()
 
     asyncio.run(runtime.analyse("BTC", interval="15m", notification_policy="qualified_changes"))
-    assert asyncio.run(runtime._telegram_notification_candidate(_grid_result("confirmed"), "15m")) is not None
+    assert asyncio.run(runtime._telegram_notification_candidate(_grid_result("confirmed"), "15m")) is None
+    state = runtime._telegram_signal_states[("BTC", "15m")]
+    assert state["delivery_status"] == "failed"
+    assert state["error_type"] == "RuntimeError"
+
+
+def test_confirmed_grid_to_directional_setup_is_one_replacement_candidate():
+    runtime = OrchestrationRuntime(environment={})
+    confirmed = asyncio.run(runtime._telegram_notification_candidate(_grid_result("confirmed"), "15m"))
+    _record_delivered(runtime, "BTC", "15m", confirmed)
+    directional = _grid_result("pending")
+    directional.context.outputs["decision"] = SimpleNamespace(
+        classification=SimpleNamespace(value="trend"),
+        direction=SimpleNamespace(value="long"),
+        metadata={"signed_signal_score": 8, "minimum_signal_score": 7},
+    )
+
+    replacement = asyncio.run(runtime._telegram_notification_candidate(directional, "15m"))
+
+    assert replacement is not None
+    assert replacement["replaces_confirmed_grid"] is True
+    assert replacement["classification"] == "trend"
 
 
 def test_redis_notification_state_survives_runtime_restart():
@@ -338,45 +364,79 @@ def test_redis_notification_state_survives_runtime_restart():
         def __init__(self): self.values = {}
         async def get(self, key): return self.values.get(key)
         async def set(self, key, value, **kwargs): self.values[key] = value; return True
+        async def eval(self, script, count, key, expected_version, encoded):
+            current = json.loads(self.values[key]) if key in self.values else {}
+            if int(current.get("version", 0)) != int(expected_version): return None
+            incoming = json.loads(encoded)
+            incoming["version"] = int(expected_version) + 1
+            self.values[key] = json.dumps(incoming)
+            return self.values[key]
 
     redis = Redis()
     first = OrchestrationRuntime(environment={})
     first.redis_coordination = RedisCoordinationStore(redis, namespace="test")
     candidate = asyncio.run(first._telegram_notification_candidate(_grid_result("confirmed"), "15m"))
     assert candidate is not None
-    asyncio.run(first._commit_telegram_notification("BTC", "15m", candidate))
+    _record_delivered(first, "BTC", "15m", candidate)
 
     restarted = OrchestrationRuntime(environment={})
     restarted.redis_coordination = RedisCoordinationStore(redis, namespace="test")
     assert asyncio.run(restarted._telegram_notification_candidate(_grid_result("confirmed"), "15m")) is None
 
 
-def test_newer_memory_notification_state_repairs_stale_redis_state():
+def test_atomic_reservation_allows_only_one_overlapping_sender():
+    class Redis:
+        def __init__(self): self.values = {}
+        async def get(self, key): return self.values.get(key)
+        async def eval(self, script, count, key, expected_version, encoded):
+            current = json.loads(self.values[key]) if key in self.values else {}
+            if int(current.get("version", 0)) != int(expected_version): return None
+            incoming = json.loads(encoded)
+            incoming["version"] = int(expected_version) + 1
+            self.values[key] = json.dumps(incoming)
+            return self.values[key]
+
+    redis = Redis()
+    first = OrchestrationRuntime(environment={})
+    second = OrchestrationRuntime(environment={})
+    first.redis_coordination = RedisCoordinationStore(redis, namespace="test")
+    second.redis_coordination = RedisCoordinationStore(redis, namespace="test")
+    first_candidate = asyncio.run(first._telegram_notification_candidate(_grid_result("confirmed"), "15m"))
+    second_candidate = asyncio.run(second._telegram_notification_candidate(_grid_result("confirmed"), "15m"))
+
+    assert asyncio.run(first._reserve_telegram_notification("BTC", "15m", first_candidate)) is True
+    assert asyncio.run(second._reserve_telegram_notification("BTC", "15m", second_candidate)) is False
+
+
+def test_redis_notification_state_rejects_stale_compare_and_set():
     class Redis:
         def __init__(self): self.values = {}
         async def get(self, key): return self.values.get(key)
         async def set(self, key, value, **kwargs): self.values[key] = value; return True
+        async def eval(self, script, count, key, expected_version, encoded):
+            current = json.loads(self.values[key]) if key in self.values else {}
+            if int(current.get("version", 0)) != int(expected_version): return None
+            incoming = json.loads(encoded)
+            incoming["version"] = int(expected_version) + 1
+            self.values[key] = json.dumps(incoming)
+            return self.values[key]
 
     redis = Redis()
     runtime = OrchestrationRuntime(environment={})
     runtime.redis_coordination = RedisCoordinationStore(redis, namespace="test")
     key = ("BTC", "15m")
-    runtime._telegram_signal_states[key] = {
+    redis.values["test:notification-state:btc:15m"] = json.dumps({
         "fingerprint": "new",
         "classification": "grid",
         "confirmation_status": "confirmed",
         "version": 20,
-    }
-    redis.values["test:notification-state:btc:15m"] = json.dumps({
-        "fingerprint": "old",
-        "classification": "grid",
-        "confirmation_status": "confirmed",
-        "version": 10,
     })
 
-    state = asyncio.run(runtime._telegram_notification_state(key))
+    stored = asyncio.run(runtime.redis_coordination.notification_state_compare_and_put(
+        "btc:15m", 10, {"fingerprint": "old"},
+    ))
 
-    assert state["fingerprint"] == "new"
+    assert stored is None
     assert json.loads(redis.values["test:notification-state:btc:15m"])["fingerprint"] == "new"
 
 

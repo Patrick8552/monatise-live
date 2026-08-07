@@ -245,6 +245,39 @@ def test_telegram_grid_cancellation_cannot_render_as_entry_ready():
     assert "ENTRY READY" not in message
 
 
+def test_telegram_grid_replacement_combines_cancellation_and_directional_setup():
+    sent = []
+
+    class Transport:
+        async def send_message(self, chat_id, text):
+            sent.append((chat_id, text))
+            return 42
+
+    run = AnalysisRun("BTC", {})
+    now = run.requested_at
+    outputs = {
+        "decision": SimpleNamespace(
+            direction=SimpleNamespace(value="long"),
+            classification=SimpleNamespace(value="trend"),
+            conviction=0.8,
+            reasons=(),
+            metadata={"signed_signal_score": 8, "minimum_signal_score": 7},
+        ),
+        "market_data": SimpleNamespace(price=65_000, interval="15m", quality=SimpleNamespace(source="CoinGlass")),
+    }
+    result = PipelineResult(
+        run.run_id, run.correlation_id, "BTC", PipelineStage.COMPLETED,
+        PipelineContext(run, outputs), PipelineStatistics(1, {}, {}, 14), None, None, now, now,
+    )
+
+    message_id = asyncio.run(TelegramNotifier(Transport(), "42").deliver_grid_replacement(result))
+
+    assert message_id == 42
+    assert "GRID ENTRY CANCELLED" in sent[0][1]
+    assert "replaced by the directional setup" in sent[0][1]
+    assert "directional setup: BTC LONG" in sent[0][1]
+
+
 @pytest.mark.parametrize(
     ("direction", "score", "entry", "stop", "target"),
     [
