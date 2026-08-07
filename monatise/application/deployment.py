@@ -11,7 +11,7 @@ import os
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from time import perf_counter
+from time import perf_counter, time_ns
 from typing import Any, Mapping
 from uuid import uuid4
 from urllib.request import Request, urlopen
@@ -653,7 +653,11 @@ class OrchestrationRuntime:
             should_notify = notification_state is not None
         if should_notify:
             try:
-                await self.telegram.deliver(result)
+                cancellation_reason = (notification_state or {}).get("cancellation_reason")
+                if cancellation_reason:
+                    await self.telegram.deliver_grid_cancellation(result, cancellation_reason)
+                else:
+                    await self.telegram.deliver(result)
                 if notification_state is not None:
                     await self._commit_telegram_notification(result.symbol, interval, notification_state)
             except Exception as exc:
@@ -671,9 +675,15 @@ class OrchestrationRuntime:
 
     async def _telegram_notification_candidate(self, result: Any, interval: str) -> dict[str, Any] | None:
         outputs = result.context.outputs
+        key = (result.symbol, interval)
+        previous = await self._telegram_notification_state(key)
+        previous_confirmed_grid = (
+            (previous or {}).get("classification") == "grid"
+            and (previous or {}).get("confirmation_status") == "confirmed"
+        )
         decision = outputs.get("decision")
         if decision is None:
-            return None
+            return self._grid_cancellation_candidate(previous_confirmed_grid, "analysis no longer produced a decision")
         metadata = getattr(decision, "metadata", {}) or {}
         classification = getattr(getattr(decision, "classification", None), "value", "no_trade")
         direction = getattr(getattr(decision, "direction", None), "value", "none")
@@ -686,14 +696,18 @@ class OrchestrationRuntime:
             or (direction == "short" and signed_score <= -threshold)
         )
         if classification == "no_trade" or score < threshold or not direction_is_qualified:
-            return None
+            if classification == "no_trade":
+                reason = "analysis changed to NO_TRADE"
+            elif score < threshold:
+                reason = f"signal score {score}/10 fell below the {threshold}/10 threshold"
+            else:
+                reason = "signal direction no longer qualifies"
+            return self._grid_cancellation_candidate(previous_confirmed_grid, reason)
         if result.status.value != "completed":
-            return None
+            return self._grid_cancellation_candidate(previous_confirmed_grid, f"analysis status changed to {result.status.value}")
         market = outputs.get("market_data")
         price_action = outputs.get("price_action")
         confirmation_status = getattr(getattr(price_action, "status", None), "value", "pending")
-        key = (result.symbol, interval)
-        previous = await self._telegram_notification_state(key)
         terminal_grid_statuses = {"conflict", "expired", "invalidated"}
         if classification == "grid":
             if confirmation_status == "pending":
@@ -724,25 +738,45 @@ class OrchestrationRuntime:
             return None
         return {"fingerprint": fingerprint, "confirmation_status": confirmation_status, "classification": classification}
 
+    @staticmethod
+    def _grid_cancellation_candidate(previous_confirmed_grid: bool, reason: str) -> dict[str, Any] | None:
+        if not previous_confirmed_grid:
+            return None
+        fingerprint = hashlib.sha256(f"grid:cancelled:{reason}".encode()).hexdigest()
+        return {
+            "fingerprint": fingerprint,
+            "confirmation_status": "cancelled",
+            "classification": "grid",
+            "cancellation_reason": reason,
+        }
+
     async def _telegram_notification_state(self, key: tuple[str, str]) -> dict[str, Any] | None:
         channel = f"{key[0].casefold()}:{key[1]}"
+        memory_state = self._telegram_signal_states.get(key)
         if self.redis_coordination is not None:
             try:
-                state = await self.redis_coordination.notification_state_get(channel)
-                if state is not None:
-                    self._telegram_signal_states[key] = state
-                    return state
+                durable_state = await self.redis_coordination.notification_state_get(channel)
+                memory_version = int((memory_state or {}).get("version", 0) or 0)
+                durable_version = int((durable_state or {}).get("version", 0) or 0)
+                if memory_state is not None and memory_version > durable_version:
+                    await self.redis_coordination.notification_state_put(channel, memory_state)
+                    return memory_state
+                if durable_state is not None:
+                    self._telegram_signal_states[key] = durable_state
+                    return durable_state
             except Exception as exc:
                 LOGGER.warning("Telegram notification state read failed; using process state", extra={"error_type": type(exc).__name__, "channel": channel})
-        return self._telegram_signal_states.get(key)
+        return memory_state
 
     async def _commit_telegram_notification(self, symbol: str, interval: str, state: dict[str, Any]) -> None:
         key = (symbol, interval)
         channel = f"{symbol.casefold()}:{interval}"
-        self._telegram_signal_states[key] = state
+        previous_version = int((self._telegram_signal_states.get(key) or {}).get("version", 0) or 0)
+        committed_state = {**state, "version": max(time_ns(), previous_version + 1)}
+        self._telegram_signal_states[key] = committed_state
         if self.redis_coordination is not None:
             try:
-                await self.redis_coordination.notification_state_put(channel, state)
+                await self.redis_coordination.notification_state_put(channel, committed_state)
             except Exception as exc:
                 LOGGER.warning("Telegram notification state persistence failed", extra={"error_type": type(exc).__name__, "channel": channel})
 
