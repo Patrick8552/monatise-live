@@ -221,6 +221,8 @@ def test_openclaw_status_reuses_recent_analysis_by_symbol_and_interval():
 def test_openclaw_status_returns_quiver_stock_watch_without_execution(monkeypatch):
     adapter = SimpleNamespace(context=lambda symbol: {"symbol": symbol, "available": True, "source": "Quiver Quantitative", "summary": {"score": 4, "drivers": ["insider buying"]}})
     monkeypatch.setattr(production_module.QuiverAdapter, "from_env", classmethod(lambda cls: adapter))
+    alpaca = SimpleNamespace(stock_bars=lambda symbol: [], stock_snapshot=lambda symbol: {})
+    monkeypatch.setattr(production_module.AlpacaMarketDataAdapter, "from_env", classmethod(lambda cls: alpaca))
 
     code, payload = openclaw_status(ProductionASGI(Runtime()), query="symbol=NVDA&interval=1h")
 
