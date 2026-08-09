@@ -4,16 +4,16 @@ import math
 from typing import Any
 
 
-def build_stock_analysis(context: dict[str, Any], *, bars: list[dict[str, Any]] | None = None, snapshot: dict[str, Any] | None = None) -> dict[str, Any]:
+def build_stock_analysis(context: dict[str, Any], *, bars: list[dict[str, Any]] | None = None, snapshot: dict[str, Any] | None = None, finnhub: dict[str, Any] | None = None) -> dict[str, Any]:
     """Convert Quiver alternative data into an analysis-only stock watch signal."""
     summary = context.get("summary") if isinstance(context.get("summary"), dict) else {}
     score = int(summary.get("score") or 0)
     available = bool(context.get("available"))
     if not available:
         decision, reason = "NO_TRADE", "QUIVER_DATA_UNAVAILABLE"
-    elif score >= 3:
+    elif score >= 2:
         decision, reason = "BUY_WATCH", "ALTERNATIVE_DATA_SUPPORTIVE"
-    elif score <= -3:
+    elif score <= -2:
         decision, reason = "SELL_WATCH", "ALTERNATIVE_DATA_CAUTIOUS"
     else:
         decision, reason = "NO_TRADE", "CONFLUENCE_BELOW_THRESHOLD"
@@ -22,16 +22,38 @@ def build_stock_analysis(context: dict[str, Any], *, bars: list[dict[str, Any]] 
         "asset_class": "stock",
         "decision": decision,
         "score": score,
-        "score_threshold": 3,
+        "score_threshold": 2,
         "reason_code": reason,
         "reasons": list(summary.get("drivers") or [])[:4],
         "cautions": list(summary.get("cautions") or [])[:3],
         "activity": summary.get("activity") or {},
         "data_source": context.get("source") or "Quiver Quantitative",
+        "direction_authority": "Quiver insider and Congress activity",
+        "additional_context": summarize_finnhub_context(finnhub or {}, snapshot or {}),
         "execution": {"enabled": False, "orders_placed": 0},
     }
     result.update(build_directional_levels(decision, bars or [], snapshot or {}))
     return result
+
+
+def summarize_finnhub_context(finnhub: dict[str, Any], snapshot: dict[str, Any]) -> dict[str, Any]:
+    quote = finnhub.get("quote") if isinstance(finnhub.get("quote"), dict) else {}
+    recommendations = finnhub.get("recommendations") if isinstance(finnhub.get("recommendations"), list) else []
+    latest = recommendations[0] if recommendations and isinstance(recommendations[0], dict) else {}
+    alpaca_quote = snapshot.get("latestQuote") if isinstance(snapshot.get("latestQuote"), dict) else {}
+    alpaca_mid = None
+    if _positive_number(alpaca_quote.get("bp")) and _positive_number(alpaca_quote.get("ap")):
+        alpaca_mid = (float(alpaca_quote["bp"]) + float(alpaca_quote["ap"])) / 2
+    finnhub_price = float(quote.get("c")) if _positive_number(quote.get("c")) else None
+    divergence = abs(finnhub_price - alpaca_mid) / alpaca_mid * 100 if finnhub_price and alpaca_mid else None
+    return {
+        "source": finnhub.get("source") or "Finnhub",
+        "quote": finnhub_price,
+        "alpaca_quote_divergence_pct": round(divergence, 3) if divergence is not None else None,
+        "news_count": len(finnhub.get("news") or []),
+        "analyst_consensus": {key: int(latest.get(key) or 0) for key in ("strongBuy", "buy", "hold", "sell", "strongSell")},
+        "authoritative_for_direction": False,
+    }
 
 
 def build_directional_levels(decision: str, bars: list[dict[str, Any]], snapshot: dict[str, Any]) -> dict[str, Any]:

@@ -12,6 +12,17 @@ def test_weak_context_stays_no_trade() -> None:
     assert result["decision"] == "NO_TRADE"
 
 
+def test_finnhub_enriches_but_cannot_change_quiver_direction() -> None:
+    result = build_stock_analysis(
+        {"symbol": "AAPL", "available": True, "summary": {"score": -2}},
+        snapshot={"latestQuote": {"bp": 99, "ap": 101}},
+        finnhub={"source": "Finnhub", "quote": {"c": 100}, "news": [{}, {}], "recommendations": [{"strongBuy": 99}]},
+    )
+    assert result["decision"] == "SELL_WATCH"
+    assert result["additional_context"]["authoritative_for_direction"] is False
+    assert result["additional_context"]["news_count"] == 2
+
+
 def test_confirmed_breakout_builds_structural_entry_stop_and_two_r_target() -> None:
     bars = [{"h": 101 + index, "l": 98 + index, "c": 100 + index} for index in range(21)]
     bars.append({"h": 124, "l": 119, "c": 123})

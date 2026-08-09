@@ -46,7 +46,8 @@ def test_quiver_context_summarizes_mocked_dataset_rows(monkeypatch) -> None:  # 
     assert context["configured"] is True
     assert context["available"] is True
     assert context["summary"]["bias"] == "supportive"
-    assert context["summary"]["score"] >= 4
+    assert context["summary"]["score"] == 2
+    assert context["summary"]["authority"] == "Quiver insider and Congress activity"
     assert len(context["datasets"]["insider"]) == 2
     assert "secret" not in str(context)
     assert any("/beta/historical/congresstrading/NVDA" in url for url in requested_urls)

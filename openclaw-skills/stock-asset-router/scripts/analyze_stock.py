@@ -50,6 +50,9 @@ def telegram(result: dict) -> str:
         ]
     elif decision in {"BUY_WATCH", "SELL_WATCH"}:
         lines.append("Price confirmation pending; no entry or stop is active.")
+    additional = result.get("additional_context") or {}
+    if additional.get("quote"):
+        lines.append(f"Finnhub validation: ${float(additional['quote']):,.2f} | {int(additional.get('news_count') or 0)} recent news items")
     lines += ["Quiver alternative-data watch signal only.", "No trade was executed; confirm price structure, entry, invalidation, and risk before acting."]
     return "\n".join(lines)
 
