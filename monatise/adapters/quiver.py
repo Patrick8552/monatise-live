@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -11,6 +12,8 @@ from urllib.request import Request, urlopen
 
 QUIVER_BASE_URL = "https://api.quiverquant.com"
 QUIVER_TIMEOUT_SECONDS = 8
+QUIVER_CONGRESS_FRESH_DAYS = 90
+QUIVER_INSIDER_FRESH_DAYS = 30
 QUIVER_STOCK_SYMBOLS = {"AAPL", "TSLA", "NVDA", "QQQ", "SPY"}
 QUIVER_INDEX_SYMBOLS = {"SPX", "NDX", "NASDAQ"}
 
@@ -57,8 +60,8 @@ class QuiverAdapter:
         datasets = {name: result[0] for name, result in results.items()}
         dataset_health = {name: {"ok": result[1], "error": result[2]} for name, result in results.items()}
         authority_healthy = all(dataset_health[name]["ok"] for name in ("congress", "insider"))
-        authority_has_rows = any(datasets[name] for name in ("congress", "insider"))
         summary = summarize_quiver_context(ticker, datasets)
+        authority_has_rows = any(summary.get("fresh_counts", {}).get(name, 0) for name in ("congress", "insider"))
         return {
             "symbol": ticker,
             "source": "Quiver Quantitative",
@@ -135,22 +138,23 @@ def unavailable_context(symbol: str, reason: str) -> dict:
     }
 
 
-def summarize_quiver_context(symbol: str, datasets: dict[str, list[dict]]) -> dict:
+def summarize_quiver_context(symbol: str, datasets: dict[str, list[dict]], *, now: datetime | None = None) -> dict:
     drivers: list[str] = []
     cautions: list[str] = []
     score = 0
 
-    congress_count = len(datasets.get("congress") or [])
-    insider_count = len(datasets.get("insider") or [])
+    current_time = now or datetime.now(timezone.utc)
+    congress_rows = _fresh_rows(datasets.get("congress") or [], ("ReportDate", "TransactionDate"), QUIVER_CONGRESS_FRESH_DAYS, current_time)
+    insider_rows = _fresh_rows(datasets.get("insider") or [], ("fileDate", "Date"), QUIVER_INSIDER_FRESH_DAYS, current_time)
+    congress_count = len(congress_rows)
+    insider_count = len(insider_rows)
     contract_count = len(datasets.get("governmentContracts") or [])
     lobbying_count = len(datasets.get("lobbying") or [])
     off_exchange_count = len(datasets.get("offExchange") or [])
     news_count = len(datasets.get("news") or [])
 
-    congress_rows = datasets.get("congress") or []
     purchases = sum(str(row.get("Transaction", "")).casefold() in {"purchase", "buy"} for row in congress_rows)
     sales = sum(str(row.get("Transaction", "")).casefold() in {"sale", "sell"} for row in congress_rows)
-    insider_rows = datasets.get("insider") or []
     def insider_side(row: dict) -> int:
         transaction_code = str(row.get("TransactionCode", "")).upper().strip()
         transaction = str(row.get("Transaction", "")).casefold().strip()
@@ -196,4 +200,36 @@ def summarize_quiver_context(symbol: str, datasets: dict[str, list[dict]]) -> di
         "drivers": drivers,
         "cautions": cautions,
         "detail": detail,
+        "freshness_days": {"congress": QUIVER_CONGRESS_FRESH_DAYS, "insider": QUIVER_INSIDER_FRESH_DAYS},
+        "fresh_counts": {"congress": congress_count, "insider": insider_count},
     }
+
+
+def _fresh_rows(rows: list[dict], date_fields: tuple[str, ...], maximum_age_days: int, now: datetime) -> list[dict]:
+    cutoff = now - timedelta(days=maximum_age_days)
+    future_limit = now + timedelta(days=1)
+    fresh = []
+    for row in rows:
+        timestamp = None
+        for field in date_fields:
+            timestamp = _parse_quiver_date(row.get(field))
+            if timestamp is not None:
+                break
+        if timestamp is not None and cutoff <= timestamp <= future_limit:
+            fresh.append(row)
+    return fresh
+
+
+def _parse_quiver_date(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, date):
+        parsed = datetime.combine(value, datetime.min.time(), tzinfo=timezone.utc)
+    elif isinstance(value, str) and value.strip():
+        try:
+            parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        return None
+    return parsed.astimezone(timezone.utc) if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)

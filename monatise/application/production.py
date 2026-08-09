@@ -343,13 +343,16 @@ class ProductionASGI(OrchestrationASGI):
             return 503, {"status": "unavailable", "source": "Quiver Quantitative"}
         datasets = context.get("datasets") if isinstance(context.get("datasets"), dict) else {}
         health = context.get("dataset_health") if isinstance(context.get("dataset_health"), dict) else {}
+        summary = context.get("summary") if isinstance(context.get("summary"), dict) else {}
+        dataset_counts = {name: len(rows) if isinstance(rows, list) else 0 for name, rows in datasets.items()}
+        dataset_counts.update({name: int(count) for name, count in summary.get("fresh_counts", {}).items() if name in {"congress", "insider"}})
         payload = {
             "symbol": symbol,
             "source": "Quiver Quantitative",
             "configured": bool(context.get("configured")),
             "available": bool(context.get("available")),
-            "summary": context.get("summary") if isinstance(context.get("summary"), dict) else {},
-            "datasetCounts": {name: len(rows) if isinstance(rows, list) else 0 for name, rows in datasets.items()},
+            "summary": summary,
+            "datasetCounts": dataset_counts,
             "datasetHealth": {name: bool(item.get("ok")) for name, item in health.items() if isinstance(item, dict)},
             "cache_hit": False,
         }

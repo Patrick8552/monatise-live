@@ -1,8 +1,16 @@
 import json
+from datetime import datetime, timedelta, timezone
 from urllib.error import URLError
 
 import monatise.adapters.quiver as quiver_module
 from monatise.adapters.quiver import QuiverAdapter, normalize_quiver_symbol, summarize_quiver_context
+
+
+NOW = datetime(2026, 8, 9, 12, tzinfo=timezone.utc)
+
+
+def recent(days: int = 0) -> str:
+    return (NOW - timedelta(days=days)).isoformat()
 
 
 class FakeResponse:
@@ -32,9 +40,9 @@ def test_quiver_context_summarizes_mocked_dataset_rows(monkeypatch) -> None:  # 
         url = request.full_url
         requested_urls.append(url)
         if "congresstrading" in url:
-            return FakeResponse([{"Ticker": "NVDA", "Transaction": "Purchase"}])
+            return FakeResponse([{"Ticker": "NVDA", "Transaction": "Purchase", "ReportDate": datetime.now(timezone.utc).date().isoformat()}])
         if "insiders" in url:
-            return FakeResponse([{"Ticker": "NVDA", "Transaction": "Buy"}, {"Ticker": "NVDA", "Transaction": "Sale"}])
+            return FakeResponse([{"Ticker": "NVDA", "Transaction": "Buy", "Date": datetime.now(timezone.utc).isoformat()}, {"Ticker": "NVDA", "Transaction": "Sale", "Date": datetime.now(timezone.utc).isoformat()}])
         if "govcontracts" in url:
             return FakeResponse({"data": [{"Ticker": "NVDA", "Amount": 1000000}]})
         if "offexchange" in url:
@@ -76,15 +84,37 @@ def test_quiver_summary_handles_empty_rows() -> None:
 
 
 def test_quiver_summary_scores_sales_as_cautious() -> None:
-    summary = summarize_quiver_context("NVDA", {"congress": [{"Transaction": "Sale"}] * 3, "insider": [{"TransactionCode": "S", "AcquiredDisposedCode": "D"}] * 2})
+    summary = summarize_quiver_context("NVDA", {"congress": [{"Transaction": "Sale", "ReportDate": recent(5)}] * 3, "insider": [{"TransactionCode": "S", "AcquiredDisposedCode": "D", "Date": recent(2)}] * 2}, now=NOW)
     assert summary["score"] == -4
     assert summary["bias"] == "cautious"
 
 
 def test_quiver_summary_ignores_non_market_insider_acquisitions() -> None:
-    summary = summarize_quiver_context("NVDA", {"congress": [], "insider": [{"TransactionCode": "A", "AcquiredDisposedCode": "A"}] * 5})
+    summary = summarize_quiver_context("NVDA", {"congress": [], "insider": [{"TransactionCode": "A", "AcquiredDisposedCode": "A", "Date": recent(2)}] * 5}, now=NOW)
     assert summary["score"] == 0
     assert summary["activity"]["insiderBuys"] == 0
+
+
+def test_quiver_summary_excludes_stale_or_undated_authority_rows() -> None:
+    summary = summarize_quiver_context(
+        "NVDA",
+        {
+            "congress": [
+                {"Transaction": "Purchase", "ReportDate": recent(10)},
+                {"Transaction": "Purchase", "ReportDate": recent(120)},
+                {"Transaction": "Purchase"},
+            ],
+            "insider": [
+                {"TransactionCode": "P", "Date": recent(5)},
+                {"TransactionCode": "S", "Date": recent(40)},
+                {"TransactionCode": "S", "Date": "invalid"},
+            ],
+        },
+        now=NOW,
+    )
+    assert summary["score"] == 2
+    assert summary["activity"] == {"congressBuys": 1, "congressSales": 0, "insiderBuys": 1, "insiderSales": 0}
+    assert summary["freshness_days"] == {"congress": 90, "insider": 30}
 
 
 def test_auxiliary_rows_do_not_mask_authoritative_dataset_failure(monkeypatch) -> None:  # noqa: ANN001

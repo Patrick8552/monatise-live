@@ -30,3 +30,17 @@ def test_dashboard_does_not_restore_payment_or_execution_controls() -> None:
     source = (APP_JS.read_text(encoding="utf-8") + INDEX_HTML.read_text(encoding="utf-8")).lower()
     for removed_surface in ("stripe", "billingcheckout", "support with usdc", "usdc payment required"):
         assert removed_surface not in source
+
+
+def test_stock_watch_fails_closed_without_premium_price_data() -> None:
+    source = APP_JS.read_text(encoding="utf-8")
+    assert 'type: stockWatchOnly ? "unavailable" : "sample"' in source
+    assert 'if (isQuiverAsset(symbol)) renderStockWatchOnly();' in source
+    assert "BTC sample candles are never reused for stocks" in source
+    assert "Alpaca entries, stops, targets, and Finnhub enrichment require premium access" in source
+
+
+def test_quiver_panel_requires_healthy_authoritative_datasets() -> None:
+    source = APP_JS.read_text(encoding="utf-8")
+    assert 'const authorityHealthy = ["congress", "insider"].every' in source
+    assert "!quiverContext.available || !authorityHealthy" in source

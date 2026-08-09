@@ -3446,6 +3446,7 @@ function applySelectedAsset(symbol, options = {}) {
   lastStructuredSignal = null;
   lastStructuredSignalCreatedAt = "";
   lastTicketHealth = null;
+  lastTicketSnapshot = null;
   latestTradingViewSignal = null;
   latestTradingViewSignalSignature = "";
   fibLastSymbol = "";
@@ -3455,12 +3456,19 @@ function applySelectedAsset(symbol, options = {}) {
   candleLoadSequence += 1;
   candleLoading = false;
   candleLoadingSymbol = "";
-  candleSource = { interval: "sample", symbol: nextSymbol, type: "sample" };
+  const stockWatchOnly = isQuiverAsset(nextSymbol);
+  candleSource = { interval: stockWatchOnly ? "unavailable" : "sample", symbol: nextSymbol, type: stockWatchOnly ? "unavailable" : "sample" };
+  els.runButton.disabled = stockWatchOnly;
+  els.stepButton.disabled = stockWatchOnly;
+  els.resetButton.disabled = stockWatchOnly;
   syncSelectedAsset();
   renderTradingViewChart();
   renderCoinGlassServices();
   renderQuiverContext();
-  if (options.render !== false) rebuildFromInputs();
+  if (options.render !== false) {
+    if (stockWatchOnly) renderStockWatchOnly();
+    else rebuildFromInputs();
+  }
   if (options.load !== false && hasLivePlan()) {
     loadLiveCandles({ force: true, limit: 120, symbol: nextSymbol }).catch(() => {});
     loadFibonacciAnalysis({ force: true });
@@ -4272,15 +4280,16 @@ function renderQuiverContext() {
     `;
     return;
   }
-  if (quiverContext.error || quiverContext.reason) {
-    const reason = quiverContext.error || quiverContext.reason || "Quiver unavailable";
+  const authorityHealthy = ["congress", "insider"].every((name) => quiverContext.datasetHealth?.[name] === true);
+  if (quiverContext.error || quiverContext.reason || !quiverContext.available || !authorityHealthy) {
+    const reason = quiverContext.error || quiverContext.reason || "Fresh Congress and insider data are unavailable";
     els.quiverContext.innerHTML = `
       <div class="context-head">
         <strong>Quiver Context</strong>
         <span>${assetLabel(selectedAsset)} · unavailable</span>
       </div>
       <div class="context-action watch">
-        <strong>Optional</strong>
+        <strong>Unavailable</strong>
         <span>${escapeHtml(reason)}</span>
       </div>
     `;
@@ -4965,7 +4974,8 @@ async function loadLiveCandles(options = {}) {
     rebuildFromInputs();
   } catch (error) {
     if (requestId === candleLoadSequence && symbol === selectedAsset) {
-      candleSource = { interval: "sample", symbol, type: "sample" };
+      candleSource = { interval: isQuiverAsset(symbol) ? "unavailable" : "sample", symbol, type: isQuiverAsset(symbol) ? "unavailable" : "sample" };
+      if (isQuiverAsset(symbol)) renderStockWatchOnly();
     }
     void error;
   } finally {
@@ -5528,6 +5538,29 @@ function render() {
     els.riskStatus.textContent = "local";
     updateLiveDesk();
   }
+}
+
+function renderStockWatchOnly() {
+  lastSignalCandidate = null;
+  lastTicketSnapshot = null;
+  els.markPrice.textContent = "Premium";
+  els.marketTitle.textContent = `${selectedAsset} stock watch`;
+  els.candleCount.textContent = "Price levels restricted";
+  els.fillCount.textContent = "Quiver context only";
+  els.liquiditySource.textContent = "Quiver direction context is public. Alpaca entries, stops, targets, and Finnhub enrichment require premium access.";
+  els.strategyReadout.innerHTML = `
+    <div class="signal-call">
+      <strong>WATCH ONLY</strong>
+      <span>No public stock price or executable levels are shown.</span>
+    </div>
+    <p>Select a premium stock-analysis channel for Alpaca entry, stop, target, and Finnhub context.</p>
+  `;
+  els.openGridTitle.textContent = "Stock Levels";
+  els.openOrderCount.textContent = "Premium";
+  els.openOrderBook.innerHTML = '<article><strong>No public price levels</strong><em>BTC sample candles are never reused for stocks.</em></article>';
+  renderTradingViewChart();
+  renderQuiverContext();
+  updateDecisionSurface(null);
 }
 
 function reset() {
