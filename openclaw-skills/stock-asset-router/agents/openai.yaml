@@ -1,0 +1,4 @@
+interface:
+  display_name: "Monatise Stock Analysis"
+  short_description: "Analyze stocks with Quiver through Monatise"
+  default_prompt: "Analyze a supported stock with Quiver and return an analysis-only Telegram-ready result."

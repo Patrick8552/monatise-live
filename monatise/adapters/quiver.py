@@ -86,6 +86,7 @@ class QuiverAdapter:
             headers={
                 "Accept": "application/json",
                 "Authorization": f"Bearer {self.api_key}",
+                "User-Agent": "Monatise/1.0",
             },
         )
         try:
@@ -140,11 +141,18 @@ def summarize_quiver_context(symbol: str, datasets: dict[str, list[dict]]) -> di
     off_exchange_count = len(datasets.get("offExchange") or [])
     news_count = len(datasets.get("news") or [])
 
+    congress_rows = datasets.get("congress") or []
+    purchases = sum(str(row.get("Transaction", "")).casefold() in {"purchase", "buy"} for row in congress_rows)
+    sales = sum(str(row.get("Transaction", "")).casefold() in {"sale", "sell"} for row in congress_rows)
+    insider_rows = datasets.get("insider") or []
+    insider_buys = sum(str(row.get("AcquiredDisposedCode", "")).upper() == "A" for row in insider_rows)
+    insider_sales = sum(str(row.get("AcquiredDisposedCode", "")).upper() == "D" for row in insider_rows)
+
     if congress_count:
-        score += min(2, congress_count)
+        score += max(-2, min(2, purchases - sales))
         drivers.append(f"{congress_count} Congress trade update{'s' if congress_count != 1 else ''}")
     if insider_count:
-        score += min(2, insider_count)
+        score += max(-2, min(2, insider_buys - insider_sales)) if insider_buys or insider_sales else 1
         drivers.append(f"{insider_count} insider activity item{'s' if insider_count != 1 else ''}")
     if contract_count:
         score += min(2, contract_count)
@@ -161,7 +169,7 @@ def summarize_quiver_context(symbol: str, datasets: dict[str, list[dict]]) -> di
     if not drivers:
         cautions.append("No fresh Quiver alternative-data rows returned")
 
-    bias = "supportive" if score >= 4 else "watch" if score > 0 else "neutral"
+    bias = "supportive" if score >= 3 else "cautious" if score <= -3 else "watch" if score else "neutral"
     detail = (
         f"{symbol} Quiver context: {', '.join(drivers[:4])}."
         if drivers
@@ -169,7 +177,8 @@ def summarize_quiver_context(symbol: str, datasets: dict[str, list[dict]]) -> di
     )
     return {
         "bias": bias,
-        "score": min(10, score),
+        "score": max(-10, min(10, score)),
+        "activity": {"congressBuys": purchases, "congressSales": sales, "insiderBuys": insider_buys, "insiderSales": insider_sales},
         "drivers": drivers,
         "cautions": cautions,
         "detail": detail,
