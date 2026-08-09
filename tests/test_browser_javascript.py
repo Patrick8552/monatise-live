@@ -36,6 +36,7 @@ def test_stock_watch_fails_closed_without_premium_price_data() -> None:
     source = APP_JS.read_text(encoding="utf-8")
     assert 'type: stockWatchOnly ? "unavailable" : "sample"' in source
     assert 'if (isQuiverAsset(symbol)) renderStockWatchOnly();' in source
+    assert 'if (isQuiverAsset(selectedAsset) && candleSource.type !== "live")' in source
     assert "BTC sample candles are never reused for stocks" in source
     assert "Alpaca entries, stops, targets, and Finnhub enrichment require premium access" in source
 

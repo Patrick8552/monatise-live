@@ -5487,6 +5487,10 @@ async function saveTradingRules() {
 }
 
 function render() {
+  if (isQuiverAsset(selectedAsset) && candleSource.type !== "live") {
+    renderStockWatchOnly();
+    return;
+  }
   if (backendOnline && lastBackendSnapshot) {
     renderBackend(lastBackendSnapshot);
     return;
