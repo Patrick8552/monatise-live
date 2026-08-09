@@ -15,6 +15,9 @@ from time import monotonic, time
 from typing import Any
 from urllib.parse import parse_qs
 
+from monatise.adapters.quiver import QuiverAdapter, normalize_quiver_symbol
+from monatise.application.stock_analysis import build_stock_analysis
+
 from monatise.adapters.coinglass_production import CoinGlassProductionAdapter
 from monatise.application.deployment import OrchestrationASGI, OrchestrationRuntime
 from monatise.engines.market_data import MarketDataEngine, MarketDataRequest
@@ -244,11 +247,16 @@ class ProductionASGI(OrchestrationASGI):
         query = parse_qs(scope.get("query_string", b"").decode())
         symbol = str(query.get("symbol", [self.runtime.environment.get("MONATISE_SYMBOL", "BTC")])[0]).strip().upper()
         interval = str(query.get("interval", ["1h"])[0]).strip() or "1h"
-        if symbol not in {"BTC", "ETH", "SOL"} or interval not in self.MARKET_INTERVALS:
+        stock_symbols = {"AAPL", "TSLA", "NVDA", "QQQ", "SPY"}
+        if symbol not in {"BTC", "ETH", "SOL", *stock_symbols} or interval not in self.MARKET_INTERVALS:
             return 400, {"status": "invalid_request", "reason": "unsupported symbol or interval"}
         cache_key = (symbol, interval)
         try:
-            analysis, cache_hit = await self._cached_openclaw_analysis(cache_key)
+            if symbol in stock_symbols:
+                analysis = await asyncio.to_thread(lambda: build_stock_analysis(QuiverAdapter.from_env().context(normalize_quiver_symbol(symbol))))
+                cache_hit = False
+            else:
+                analysis, cache_hit = await self._cached_openclaw_analysis(cache_key)
         except (TypeError, ValueError) as exc:
             return 400, {"status": "invalid_request", "reason": str(exc)}
         except Exception as exc:

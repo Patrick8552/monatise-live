@@ -71,3 +71,9 @@ def test_quiver_summary_handles_empty_rows() -> None:
     assert summary["bias"] == "neutral"
     assert summary["score"] == 0
     assert summary["cautions"]
+
+
+def test_quiver_summary_scores_sales_as_cautious() -> None:
+    summary = summarize_quiver_context("NVDA", {"congress": [{"Transaction": "Sale"}] * 3, "insider": [{"AcquiredDisposedCode": "D"}] * 2})
+    assert summary["score"] == -4
+    assert summary["bias"] == "cautious"

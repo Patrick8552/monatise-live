@@ -1,0 +1,4 @@
+interface:
+  display_name: "Stock Telegram Publisher"
+  short_description: "Publish Monatise stock analysis alerts"
+  default_prompt: "Publish a completed Monatise stock analysis alert to the authorized Telegram chat."

@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import monatise.application.production as production_module
 from monatise.adapters.coinglass_production import CoinGlassProductionAdapter
 from monatise.application.production import ProductionASGI, ProductionRuntime
 from monatise.application.registry import PRODUCTION_ENGINE_ORDER
@@ -215,6 +216,17 @@ def test_openclaw_status_reuses_recent_analysis_by_symbol_and_interval():
     assert second["cache_hit"] is True
     assert first["analysis"] == second["analysis"]
     assert runtime.calls == [("BTC", {"interval": "1h", "source": "monatise.openclaw"})]
+
+
+def test_openclaw_status_returns_quiver_stock_watch_without_execution(monkeypatch):
+    adapter = SimpleNamespace(context=lambda symbol: {"symbol": symbol, "available": True, "source": "Quiver Quantitative", "summary": {"score": 4, "drivers": ["insider buying"]}})
+    monkeypatch.setattr(production_module.QuiverAdapter, "from_env", classmethod(lambda cls: adapter))
+
+    code, payload = openclaw_status(ProductionASGI(Runtime()), query="symbol=NVDA&interval=1h")
+
+    assert code == 200
+    assert payload["analysis"]["decision"] == "BUY_WATCH"
+    assert payload["analysis"]["execution"] == {"enabled": False, "orders_placed": 0}
 
 
 def test_openclaw_status_rejects_wrong_or_missing_credentials():
