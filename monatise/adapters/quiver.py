@@ -155,13 +155,10 @@ def summarize_quiver_context(symbol: str, datasets: dict[str, list[dict]]) -> di
         score += max(-2, min(2, insider_buys - insider_sales)) if insider_buys or insider_sales else 1
         drivers.append(f"{insider_count} insider activity item{'s' if insider_count != 1 else ''}")
     if contract_count:
-        score += min(2, contract_count)
         drivers.append(f"{contract_count} government contract item{'s' if contract_count != 1 else ''}")
     if lobbying_count:
-        score += 1
         drivers.append(f"{lobbying_count} lobbying disclosure{'s' if lobbying_count != 1 else ''}")
     if off_exchange_count:
-        score += 1
         drivers.append("off-exchange flow available")
     if news_count:
         drivers.append(f"{news_count} Quiver news item{'s' if news_count != 1 else ''}")
@@ -169,7 +166,7 @@ def summarize_quiver_context(symbol: str, datasets: dict[str, list[dict]]) -> di
     if not drivers:
         cautions.append("No fresh Quiver alternative-data rows returned")
 
-    bias = "supportive" if score >= 3 else "cautious" if score <= -3 else "watch" if score else "neutral"
+    bias = "supportive" if score >= 2 else "cautious" if score <= -2 else "watch" if score else "neutral"
     detail = (
         f"{symbol} Quiver context: {', '.join(drivers[:4])}."
         if drivers
@@ -179,6 +176,7 @@ def summarize_quiver_context(symbol: str, datasets: dict[str, list[dict]]) -> di
         "bias": bias,
         "score": max(-10, min(10, score)),
         "activity": {"congressBuys": purchases, "congressSales": sales, "insiderBuys": insider_buys, "insiderSales": insider_sales},
+        "authority": "Quiver insider and Congress activity",
         "drivers": drivers,
         "cautions": cautions,
         "detail": detail,

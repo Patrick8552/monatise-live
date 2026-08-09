@@ -17,6 +17,7 @@ from urllib.parse import parse_qs
 
 from monatise.adapters.quiver import QuiverAdapter, normalize_quiver_symbol
 from monatise.adapters.alpaca import AlpacaMarketDataAdapter
+from monatise.adapters.finnhub import FinnhubAdapter, FinnhubAdapterError
 from monatise.application.stock_analysis import build_stock_analysis
 
 from monatise.adapters.coinglass_production import CoinGlassProductionAdapter
@@ -256,10 +257,15 @@ class ProductionASGI(OrchestrationASGI):
             if symbol in stock_symbols:
                 def stock_analysis() -> dict[str, Any]:
                     alpaca = AlpacaMarketDataAdapter.from_env()
+                    try:
+                        finnhub = FinnhubAdapter.from_env().context(symbol)
+                    except FinnhubAdapterError:
+                        finnhub = {"source": "Finnhub", "unavailable": True}
                     return build_stock_analysis(
                         QuiverAdapter.from_env().context(normalize_quiver_symbol(symbol)),
                         bars=alpaca.stock_bars(symbol),
                         snapshot=alpaca.stock_snapshot(symbol),
+                        finnhub=finnhub,
                     )
                 analysis = await asyncio.to_thread(stock_analysis)
                 cache_hit = False
