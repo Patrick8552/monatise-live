@@ -40,6 +40,16 @@ def telegram(result: dict) -> str:
         lines += ["Evidence:", *[f"• {item}" for item in reasons]]
     if cautions:
         lines += ["Cautions:", *[f"• {item}" for item in cautions]]
+    if result.get("setup_status") == "confirmed":
+        lines += [
+            f"Entry: ${float(result['entry']):,.2f}",
+            f"Stop: ${float(result['stop_loss']):,.2f}",
+            f"Target: ${float(result['target']):,.2f}",
+            f"Reward/risk: {float(result['reward_risk']):.2f}",
+            f"Levels: {result.get('level_source', 'Alpaca market data')}",
+        ]
+    elif decision in {"BUY_WATCH", "SELL_WATCH"}:
+        lines.append("Price confirmation pending; no entry or stop is active.")
     lines += ["Quiver alternative-data watch signal only.", "No trade was executed; confirm price structure, entry, invalidation, and risk before acting."]
     return "\n".join(lines)
 
