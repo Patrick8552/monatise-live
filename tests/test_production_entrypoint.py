@@ -113,6 +113,40 @@ def test_market_dashboard_uses_server_backed_read_only_data_routes():
     assert json.loads(dataset[1]["body"])["data"][0]["symbol"] == "BTC"
 
 
+def test_web_dashboard_exposes_stock_assets_and_sanitized_quiver_context(monkeypatch):
+    context = {
+        "symbol": "NVDA",
+        "source": "Quiver Quantitative",
+        "configured": True,
+        "available": True,
+        "summary": {"score": 2, "bias": "supportive", "drivers": ["Congress purchase"]},
+        "datasets": {"congress": [{"secret_raw_row": True}], "insider": [{}, {}], "news": [{}]},
+        "dataset_health": {"congress": {"ok": True}, "insider": {"ok": True}},
+    }
+    adapter = SimpleNamespace(context=lambda symbol: {**context, "symbol": symbol})
+    monkeypatch.setattr(production_module.QuiverAdapter, "from_env", classmethod(lambda cls: adapter))
+    app = ProductionASGI(Runtime())
+
+    assets_response = get(app, "/api/assets")
+    assets = json.loads(assets_response[1]["body"])["assets"]
+    assert assets_response[0]["status"] == 200
+    assert {item["symbol"] for item in assets} >= {"AAPL", "TSLA", "NVDA", "QQQ", "SPY"}
+
+    first = get(app, "/api/quiver/context", query="symbol=NVDA")
+    second = get(app, "/api/quiver/context", query="symbol=NVDA")
+    payload = json.loads(first[1]["body"])
+    assert first[0]["status"] == second[0]["status"] == 200
+    assert payload["datasetCounts"] == {"congress": 1, "insider": 2, "news": 1}
+    assert payload["summary"]["bias"] == "supportive"
+    assert "datasets" not in payload
+    assert json.loads(second[1]["body"])["cache_hit"] is True
+
+
+def test_web_quiver_context_rejects_unsupported_symbols() -> None:
+    response = get(ProductionASGI(Runtime()), "/api/quiver/context", query="symbol=BTC")
+    assert response[0]["status"] == 400
+
+
 def test_market_candles_default_to_supported_startup_interval():
     response = get(ProductionASGI(Runtime()), "/api/market/candles", query="symbol=BTC&limit=2")
 

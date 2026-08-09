@@ -75,6 +75,7 @@ class ProductionASGI(OrchestrationASGI):
         self._openclaw_cache: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
         self._openclaw_inflight: dict[tuple[str, str], asyncio.Task[dict[str, Any]]] = {}
         self._public_analysis_cache: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
+        self._quiver_web_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         path = scope.get("path", "")
@@ -83,6 +84,21 @@ class ProductionASGI(OrchestrationASGI):
                 await self._respond(send, 405, {"status": "method_not_allowed"})
                 return
             await self._respond(send, 200, {"ok": True, "status": "alive", "execution_enabled": False})
+            return
+        if scope.get("type") == "http" and path == "/api/assets":
+            if scope.get("method", "GET").upper() != "GET":
+                await self._respond(send, 405, {"status": "method_not_allowed"})
+                return
+            stocks = ("AAPL", "TSLA", "NVDA", "QQQ", "SPY")
+            crypto = ("BTC", "ETH", "SOL")
+            await self._respond(send, 200, {
+                "assets": [
+                    *({"symbol": symbol, "assetClass": "crypto", "tradable": False} for symbol in crypto),
+                    *({"symbol": symbol, "assetClass": "stock", "tradable": False, "dataSource": "Quiver Quantitative"} for symbol in stocks),
+                ],
+                "groups": {"crypto": list(crypto), "stocks": list(stocks)},
+                "execution_enabled": False,
+            })
             return
         if scope.get("type") == "http" and path in {"/api/market/candles", "/api/operator"}:
             if scope.get("method", "GET").upper() != "GET":
@@ -116,6 +132,16 @@ class ProductionASGI(OrchestrationASGI):
                 await self._respond(send, 405, {"status": "method_not_allowed"})
                 return
             code, payload = await self._openclaw_status(scope)
+            await self._respond(send, code, payload)
+            return
+        if scope.get("type") == "http" and scope.get("path") == "/api/quiver/context":
+            if scope.get("method", "GET").upper() != "GET":
+                await self._respond(send, 405, {"status": "method_not_allowed"})
+                return
+            if self._market_rate_limited(scope, maximum=30):
+                await self._respond(send, 429, {"status": "rate_limited"})
+                return
+            code, payload = await self._quiver_context_status(scope)
             await self._respond(send, code, payload)
             return
         if scope.get("type") == "http" and scope.get("path") == "/api/public/analysis":
@@ -300,6 +326,35 @@ class ProductionASGI(OrchestrationASGI):
             return 503, {"status": "analysis_unavailable", "error_type": type(exc).__name__}
         self._public_analysis_cache[cache_key] = (monotonic(), analysis)
         return 200, {"ok": True, "source": "monatise-live", "interval": interval, "analysis": analysis, "cache_hit": False, "execution_enabled": False}
+
+    async def _quiver_context_status(self, scope: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        query = parse_qs(scope.get("query_string", b"").decode())
+        symbol = normalize_quiver_symbol(str(query.get("symbol", [""])[0]))
+        if symbol not in {"AAPL", "TSLA", "NVDA", "QQQ", "SPY"}:
+            return 400, {"status": "invalid_request", "reason": "unsupported Quiver stock or ETF"}
+        cached = self._quiver_web_cache.get(symbol)
+        now = monotonic()
+        if cached is not None and now - cached[0] < 120:
+            return 200, {**cached[1], "cache_hit": True}
+        try:
+            context = await asyncio.to_thread(QuiverAdapter.from_env().context, symbol)
+        except Exception as exc:
+            LOGGER.warning("Quiver web context unavailable", extra={"symbol": symbol, "error_type": type(exc).__name__})
+            return 503, {"status": "unavailable", "source": "Quiver Quantitative"}
+        datasets = context.get("datasets") if isinstance(context.get("datasets"), dict) else {}
+        health = context.get("dataset_health") if isinstance(context.get("dataset_health"), dict) else {}
+        payload = {
+            "symbol": symbol,
+            "source": "Quiver Quantitative",
+            "configured": bool(context.get("configured")),
+            "available": bool(context.get("available")),
+            "summary": context.get("summary") if isinstance(context.get("summary"), dict) else {},
+            "datasetCounts": {name: len(rows) if isinstance(rows, list) else 0 for name, rows in datasets.items()},
+            "datasetHealth": {name: bool(item.get("ok")) for name, item in health.items() if isinstance(item, dict)},
+            "cache_hit": False,
+        }
+        self._quiver_web_cache[symbol] = (monotonic(), payload)
+        return 200, payload
 
     async def _cached_openclaw_analysis(self, cache_key: tuple[str, str]) -> tuple[dict[str, Any], bool]:
         raw_ttl = self.runtime.environment.get("MONATISE_OPENCLAW_CACHE_TTL_SECONDS", "300")

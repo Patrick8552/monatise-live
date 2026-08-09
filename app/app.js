@@ -4288,7 +4288,7 @@ function renderQuiverContext() {
   }
   const summary = quiverContext.summary || {};
   const drivers = Array.isArray(summary.drivers) && summary.drivers.length ? summary.drivers : ["No fresh Quiver rows returned"];
-  const datasets = quiverContext.datasets || {};
+  const datasetCounts = quiverContext.datasetCounts || {};
   const bias = String(summary.bias || "neutral").toLowerCase();
   els.quiverContext.innerHTML = `
     <div class="context-head">
@@ -4300,11 +4300,11 @@ function renderQuiverContext() {
       <span>Alt-data score ${Number(summary.score || 0).toFixed(0)}/10</span>
     </div>
     <div class="context-metrics">
-      <span>Congress <strong>${(datasets.congress || []).length}</strong></span>
-      <span>Insider <strong>${(datasets.insider || []).length}</strong></span>
-      <span>Contracts <strong>${(datasets.governmentContracts || []).length}</strong></span>
-      <span>Dark Pool <strong>${(datasets.offExchange || []).length}</strong></span>
-      <span>News <strong>${(datasets.news || []).length}</strong></span>
+      <span>Congress <strong>${Number(datasetCounts.congress || 0)}</strong></span>
+      <span>Insider <strong>${Number(datasetCounts.insider || 0)}</strong></span>
+      <span>Contracts <strong>${Number(datasetCounts.governmentContracts || 0)}</strong></span>
+      <span>Dark Pool <strong>${Number(datasetCounts.offExchange || 0)}</strong></span>
+      <span>News <strong>${Number(datasetCounts.news || 0)}</strong></span>
     </div>
     <div class="quiver-drivers">${drivers.slice(0, 4).map((driver) => `<span>${escapeHtml(driver)}</span>`).join("")}</div>
   `;
@@ -4336,7 +4336,6 @@ function renderCoinGlassServices() {
 }
 
 async function loadQuiverContext(options = {}) {
-  if (!hasLivePlan()) return;
   if (quiverLoading && !options.force) return;
   const now = Date.now();
   if (!isQuiverAsset(selectedAsset)) {
