@@ -230,6 +230,12 @@ def test_openclaw_status_returns_quiver_stock_watch_without_execution(monkeypatc
     assert payload["analysis"]["decision"] == "BUY_WATCH"
     assert payload["analysis"]["execution"] == {"enabled": False, "orders_placed": 0}
 
+    second_code, second = openclaw_status(app := ProductionASGI(Runtime()), query="symbol=NVDA&interval=1h")
+    third_code, third = openclaw_status(app, query="symbol=NVDA&interval=1h")
+    assert second_code == third_code == 200
+    assert second["cache_hit"] is False
+    assert third["cache_hit"] is True
+
 
 def test_openclaw_status_rejects_wrong_or_missing_credentials():
     runtime = Runtime()

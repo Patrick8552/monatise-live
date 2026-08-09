@@ -255,20 +255,7 @@ class ProductionASGI(OrchestrationASGI):
         cache_key = (symbol, interval)
         try:
             if symbol in stock_symbols:
-                def stock_analysis() -> dict[str, Any]:
-                    alpaca = AlpacaMarketDataAdapter.from_env()
-                    try:
-                        finnhub = FinnhubAdapter.from_env().context(symbol)
-                    except FinnhubAdapterError:
-                        finnhub = {"source": "Finnhub", "unavailable": True}
-                    return build_stock_analysis(
-                        QuiverAdapter.from_env().context(normalize_quiver_symbol(symbol)),
-                        bars=alpaca.stock_bars(symbol),
-                        snapshot=alpaca.stock_snapshot(symbol),
-                        finnhub=finnhub,
-                    )
-                analysis = await asyncio.to_thread(stock_analysis)
-                cache_hit = False
+                analysis, cache_hit = await self._cached_openclaw_stock_analysis(cache_key)
             else:
                 analysis, cache_hit = await self._cached_openclaw_analysis(cache_key)
         except (TypeError, ValueError) as exc:
@@ -329,6 +316,44 @@ class ProductionASGI(OrchestrationASGI):
         joined_existing = task is not None
         if task is None:
             task = asyncio.create_task(self.runtime.analyse(cache_key[0], interval=cache_key[1], source="monatise.openclaw"))
+            self._openclaw_inflight[cache_key] = task
+        try:
+            analysis = await asyncio.shield(task)
+        finally:
+            if task.done() and self._openclaw_inflight.get(cache_key) is task:
+                self._openclaw_inflight.pop(cache_key, None)
+        self._openclaw_cache[cache_key] = (monotonic(), analysis)
+        return analysis, joined_existing
+
+    async def _cached_openclaw_stock_analysis(self, cache_key: tuple[str, str]) -> tuple[dict[str, Any], bool]:
+        cached = self._openclaw_cache.get(cache_key)
+        now = monotonic()
+        if cached is not None and now - cached[0] < 300:
+            return cached[1], True
+
+        task = self._openclaw_inflight.get(cache_key)
+        joined_existing = task is not None
+        if task is None:
+            symbol = cache_key[0]
+
+            async def collect() -> dict[str, Any]:
+                alpaca = AlpacaMarketDataAdapter.from_env()
+                quiver_task = asyncio.to_thread(QuiverAdapter.from_env().context, normalize_quiver_symbol(symbol))
+                bars_task = asyncio.to_thread(alpaca.stock_bars, symbol)
+                snapshot_task = asyncio.to_thread(alpaca.stock_snapshot, symbol)
+
+                def finnhub_context() -> dict[str, Any]:
+                    try:
+                        return FinnhubAdapter.from_env().context(symbol)
+                    except FinnhubAdapterError:
+                        return {"source": "Finnhub", "unavailable": True}
+
+                context, bars, snapshot, finnhub = await asyncio.gather(
+                    quiver_task, bars_task, snapshot_task, asyncio.to_thread(finnhub_context)
+                )
+                return build_stock_analysis(context, bars=bars, snapshot=snapshot, finnhub=finnhub)
+
+            task = asyncio.create_task(collect())
             self._openclaw_inflight[cache_key] = task
         try:
             analysis = await asyncio.shield(task)

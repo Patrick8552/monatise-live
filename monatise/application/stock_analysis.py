@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 
@@ -56,10 +57,14 @@ def summarize_finnhub_context(finnhub: dict[str, Any], snapshot: dict[str, Any])
     }
 
 
-def build_directional_levels(decision: str, bars: list[dict[str, Any]], snapshot: dict[str, Any]) -> dict[str, Any]:
+def build_directional_levels(decision: str, bars: list[dict[str, Any]], snapshot: dict[str, Any], *, now: datetime | None = None) -> dict[str, Any]:
     clean = [row for row in bars if all(_positive_number(row.get(key)) for key in ("h", "l", "c"))]
     if decision not in {"BUY_WATCH", "SELL_WATCH"} or len(clean) < 22:
         return {"setup_status": "watch", "entry": None, "stop_loss": None, "target": None, "reward_risk": None}
+    current_time = now or datetime.now(timezone.utc)
+    latest_time = _bar_time(clean[-1].get("t"))
+    if latest_time is None or latest_time + timedelta(hours=1) > current_time or current_time - latest_time > timedelta(days=4):
+        return {"setup_status": "market_data_unavailable", "entry": None, "stop_loss": None, "target": None, "reward_risk": None}
     previous, latest = clean[-21:-1], clean[-1]
     ranges = []
     for index in range(max(1, len(clean) - 14), len(clean)):
@@ -87,8 +92,20 @@ def build_directional_levels(decision: str, bars: list[dict[str, Any]], snapshot
         target = entry - risk * 2
     if not confirmed or not all(math.isfinite(value) and value > 0 for value in (mark, entry, stop, target, risk)):
         return {"setup_status": "awaiting_price_confirmation", "current_price": round(mark, 4), "entry": None, "stop_loss": None, "target": None, "reward_risk": None, "atr": round(atr, 4)}
+    if abs(mark - entry) > atr * 0.75:
+        return {"setup_status": "entry_missed", "current_price": round(mark, 4), "entry": None, "stop_loss": None, "target": None, "reward_risk": None, "atr": round(atr, 4)}
     return {"setup_status": "confirmed", "current_price": round(mark, 4), "entry": round(entry, 4), "stop_loss": round(stop, 4), "target": round(target, 4), "reward_risk": 2.0, "atr": round(atr, 4), "level_source": "Alpaca IEX hourly bars"}
 
 
 def _positive_number(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(float(value)) and float(value) > 0
+
+
+def _bar_time(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed.astimezone(timezone.utc) if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)

@@ -45,37 +45,43 @@ class QuiverAdapter:
         if ticker in QUIVER_INDEX_SYMBOLS:
             return unavailable_context(ticker, "Quiver context is for single stocks and ETFs")
 
-        datasets = {
-            "congress": self._optional_get(f"/beta/historical/congresstrading/{ticker}"),
-            "insider": self._optional_get("/beta/live/insiders", {"ticker": ticker, "page_size": 20}),
-            "governmentContracts": self._optional_get(f"/beta/historical/govcontracts/{ticker}"),
-            "lobbying": self._optional_get(f"/beta/historical/lobbying/{ticker}", {"page_size": 20}),
-            "offExchange": self._optional_get(f"/beta/historical/offexchange/{ticker}"),
-            "news": self._optional_get("/beta/live/quivernews", {"ticker": ticker, "page_size": 20}),
+        requests = {
+            "congress": (f"/beta/historical/congresstrading/{ticker}", None),
+            "insider": ("/beta/live/insiders", {"ticker": ticker, "page_size": 20}),
+            "governmentContracts": (f"/beta/historical/govcontracts/{ticker}", None),
+            "lobbying": (f"/beta/historical/lobbying/{ticker}", {"page_size": 20}),
+            "offExchange": (f"/beta/historical/offexchange/{ticker}", None),
+            "news": ("/beta/live/quivernews", {"ticker": ticker, "page_size": 20}),
         }
+        results = {name: self._optional_get(path, query) for name, (path, query) in requests.items()}
+        datasets = {name: result[0] for name, result in results.items()}
+        dataset_health = {name: {"ok": result[1], "error": result[2]} for name, result in results.items()}
+        authority_healthy = all(dataset_health[name]["ok"] for name in ("congress", "insider"))
+        authority_has_rows = any(datasets[name] for name in ("congress", "insider"))
         summary = summarize_quiver_context(ticker, datasets)
         return {
             "symbol": ticker,
             "source": "Quiver Quantitative",
             "configured": True,
-            "available": any(isinstance(rows, list) and rows for rows in datasets.values()),
+            "available": authority_healthy and authority_has_rows,
             "datasets": datasets,
+            "dataset_health": dataset_health,
             "summary": summary,
         }
 
-    def _optional_get(self, path: str, query: dict[str, Any] | None = None) -> list[dict]:
+    def _optional_get(self, path: str, query: dict[str, Any] | None = None) -> tuple[list[dict], bool, str | None]:
         try:
             payload = self._get(path, query)
-        except QuiverAdapterError:
-            return []
+        except QuiverAdapterError as error:
+            return [], False, str(error)
         if isinstance(payload, list):
-            return [row for row in payload if isinstance(row, dict)][:20]
+            return [row for row in payload if isinstance(row, dict)][:20], True, None
         if isinstance(payload, dict):
             rows = payload.get("data") or payload.get("results") or payload.get("items") or []
             if isinstance(rows, list):
-                return [row for row in rows if isinstance(row, dict)][:20]
-            return [payload]
-        return []
+                return [row for row in rows if isinstance(row, dict)][:20], True, None
+            return [payload], True, None
+        return [], True, None
 
     def _get(self, path: str, query: dict[str, Any] | None = None) -> Any:
         url = f"{self.base_url}{path}"
@@ -145,14 +151,24 @@ def summarize_quiver_context(symbol: str, datasets: dict[str, list[dict]]) -> di
     purchases = sum(str(row.get("Transaction", "")).casefold() in {"purchase", "buy"} for row in congress_rows)
     sales = sum(str(row.get("Transaction", "")).casefold() in {"sale", "sell"} for row in congress_rows)
     insider_rows = datasets.get("insider") or []
-    insider_buys = sum(str(row.get("AcquiredDisposedCode", "")).upper() == "A" for row in insider_rows)
-    insider_sales = sum(str(row.get("AcquiredDisposedCode", "")).upper() == "D" for row in insider_rows)
+    def insider_side(row: dict) -> int:
+        transaction_code = str(row.get("TransactionCode", "")).upper().strip()
+        transaction = str(row.get("Transaction", "")).casefold().strip()
+        if transaction_code == "P" or transaction in {"buy", "purchase", "open market purchase"}:
+            return 1
+        if transaction_code == "S" or transaction in {"sell", "sale", "open market sale"}:
+            return -1
+        return 0
+
+    insider_sides = [insider_side(row) for row in insider_rows]
+    insider_buys = insider_sides.count(1)
+    insider_sales = insider_sides.count(-1)
 
     if congress_count:
         score += max(-2, min(2, purchases - sales))
         drivers.append(f"{congress_count} Congress trade update{'s' if congress_count != 1 else ''}")
     if insider_count:
-        score += max(-2, min(2, insider_buys - insider_sales)) if insider_buys or insider_sales else 1
+        score += max(-2, min(2, insider_buys - insider_sales))
         drivers.append(f"{insider_count} insider activity item{'s' if insider_count != 1 else ''}")
     if contract_count:
         drivers.append(f"{contract_count} government contract item{'s' if contract_count != 1 else ''}")

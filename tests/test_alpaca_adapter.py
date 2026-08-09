@@ -15,10 +15,11 @@ def test_alpaca_bars_use_market_data_auth_and_iex(monkeypatch):
     requests = []
     def fake_urlopen(request, timeout=12):
         requests.append(request)
-        return Response({"bars": [{"h": 11, "l": 9, "c": 10}]})
+        return Response({"bars": [{"h": 12, "l": 10, "c": 11}, {"h": 11, "l": 9, "c": 10}]})
     monkeypatch.setattr(alpaca_module, "urlopen", fake_urlopen)
     rows = AlpacaMarketDataAdapter("key", "secret").stock_bars("NVDA")
     assert rows[0]["c"] == 10
     assert "feed=iex" in requests[0].full_url
+    assert "sort=desc" in requests[0].full_url
     assert requests[0].headers["Apca-api-key-id"] == "key"
     assert requests[0].headers["Apca-api-secret-key"] == "secret"

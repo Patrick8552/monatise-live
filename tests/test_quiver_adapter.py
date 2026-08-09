@@ -1,4 +1,5 @@
 import json
+from urllib.error import URLError
 
 import monatise.adapters.quiver as quiver_module
 from monatise.adapters.quiver import QuiverAdapter, normalize_quiver_symbol, summarize_quiver_context
@@ -45,8 +46,8 @@ def test_quiver_context_summarizes_mocked_dataset_rows(monkeypatch) -> None:  # 
 
     assert context["configured"] is True
     assert context["available"] is True
-    assert context["summary"]["bias"] == "supportive"
-    assert context["summary"]["score"] == 2
+    assert context["summary"]["bias"] == "watch"
+    assert context["summary"]["score"] == 1
     assert context["summary"]["authority"] == "Quiver insider and Congress activity"
     assert len(context["datasets"]["insider"]) == 2
     assert "secret" not in str(context)
@@ -75,6 +76,25 @@ def test_quiver_summary_handles_empty_rows() -> None:
 
 
 def test_quiver_summary_scores_sales_as_cautious() -> None:
-    summary = summarize_quiver_context("NVDA", {"congress": [{"Transaction": "Sale"}] * 3, "insider": [{"AcquiredDisposedCode": "D"}] * 2})
+    summary = summarize_quiver_context("NVDA", {"congress": [{"Transaction": "Sale"}] * 3, "insider": [{"TransactionCode": "S", "AcquiredDisposedCode": "D"}] * 2})
     assert summary["score"] == -4
     assert summary["bias"] == "cautious"
+
+
+def test_quiver_summary_ignores_non_market_insider_acquisitions() -> None:
+    summary = summarize_quiver_context("NVDA", {"congress": [], "insider": [{"TransactionCode": "A", "AcquiredDisposedCode": "A"}] * 5})
+    assert summary["score"] == 0
+    assert summary["activity"]["insiderBuys"] == 0
+
+
+def test_auxiliary_rows_do_not_mask_authoritative_dataset_failure(monkeypatch) -> None:  # noqa: ANN001
+    def fake_urlopen(request, timeout=8):  # noqa: ANN001, ARG001
+        if "congresstrading" in request.full_url or "insiders" in request.full_url:
+            raise URLError("timeout")
+        return FakeResponse([{"Ticker": "NVDA"}])
+
+    monkeypatch.setattr(quiver_module, "urlopen", fake_urlopen)
+    context = QuiverAdapter(api_key="secret").context("NVDA")
+    assert context["available"] is False
+    assert context["dataset_health"]["congress"]["ok"] is False
+    assert context["dataset_health"]["news"]["ok"] is True

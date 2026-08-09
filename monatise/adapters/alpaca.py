@@ -42,10 +42,12 @@ class AlpacaMarketDataAdapter:
         start = (datetime.now(timezone.utc) - timedelta(days=45)).isoformat()
         payload = self._get(
             f"/v2/stocks/{symbol.upper()}/bars",
-            {"timeframe": timeframe, "start": start, "limit": min(max(limit, 30), 1000), "sort": "asc", "feed": self.feed},
+            {"timeframe": timeframe, "start": start, "limit": min(max(limit, 30), 1000), "sort": "desc", "feed": self.feed},
         )
         rows = payload.get("bars", []) if isinstance(payload, dict) else []
-        return [row for row in rows if isinstance(row, dict)]
+        # Descending order makes the limited page the most recent page.  The
+        # analysis engine expects chronological order for ATR and breakouts.
+        return list(reversed([row for row in rows if isinstance(row, dict)]))
 
     def _get(self, path: str, query: dict[str, Any]) -> dict[str, Any]:
         if not self.configured:

@@ -1,4 +1,16 @@
+from datetime import datetime, timedelta, timezone
+
 from monatise.application.stock_analysis import build_directional_levels, build_stock_analysis
+
+
+NOW = datetime(2026, 8, 7, 20, tzinfo=timezone.utc)
+
+
+def timestamped_bars() -> list[dict]:
+    start = NOW - timedelta(hours=22)
+    bars = [{"h": 101 + index, "l": 98 + index, "c": 100 + index, "t": (start + timedelta(hours=index)).isoformat()} for index in range(21)]
+    bars.append({"h": 124, "l": 119, "c": 123, "t": (NOW - timedelta(hours=1)).isoformat()})
+    return bars
 
 
 def test_supportive_quiver_context_creates_analysis_only_buy_watch() -> None:
@@ -24,16 +36,30 @@ def test_finnhub_enriches_but_cannot_change_quiver_direction() -> None:
 
 
 def test_confirmed_breakout_builds_structural_entry_stop_and_two_r_target() -> None:
-    bars = [{"h": 101 + index, "l": 98 + index, "c": 100 + index} for index in range(21)]
-    bars.append({"h": 124, "l": 119, "c": 123})
-    levels = build_directional_levels("BUY_WATCH", bars, {"latestQuote": {"bp": 122.9, "ap": 123.1}})
+    levels = build_directional_levels("BUY_WATCH", timestamped_bars(), {"latestQuote": {"bp": 122.9, "ap": 123.1}}, now=NOW)
     assert levels["setup_status"] == "confirmed"
     assert levels["stop_loss"] < levels["entry"] < levels["target"]
     assert levels["reward_risk"] == 2.0
 
 
 def test_unconfirmed_direction_never_invents_trade_levels() -> None:
-    bars = [{"h": 110, "l": 100, "c": 105} for _ in range(22)]
-    levels = build_directional_levels("BUY_WATCH", bars, {})
+    bars = [{"h": 110, "l": 100, "c": 105, "t": (NOW - timedelta(hours=22-index)).isoformat()} for index in range(22)]
+    levels = build_directional_levels("BUY_WATCH", bars, {}, now=NOW)
     assert levels["setup_status"] == "awaiting_price_confirmation"
     assert levels["entry"] is None and levels["stop_loss"] is None
+
+
+def test_open_or_stale_bar_never_confirms_levels() -> None:
+    open_bar = timestamped_bars()
+    open_bar[-1]["t"] = (NOW - timedelta(minutes=30)).isoformat()
+    assert build_directional_levels("BUY_WATCH", open_bar, {}, now=NOW)["setup_status"] == "market_data_unavailable"
+
+    stale = timestamped_bars()
+    stale[-1]["t"] = (NOW - timedelta(days=5)).isoformat()
+    assert build_directional_levels("BUY_WATCH", stale, {}, now=NOW)["setup_status"] == "market_data_unavailable"
+
+
+def test_breakout_far_beyond_entry_is_marked_missed() -> None:
+    levels = build_directional_levels("BUY_WATCH", timestamped_bars(), {"latestQuote": {"bp": 149, "ap": 151}}, now=NOW)
+    assert levels["setup_status"] == "entry_missed"
+    assert levels["entry"] is None
