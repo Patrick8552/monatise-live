@@ -1,4 +1,4 @@
-const CACHE_NAME = "monatise-shell-20260809-stock-safety-v3";
+const CACHE_NAME = "monatise-shell-20260809-quiver-upgrade-v4";
 const SHELL_ASSETS = [
   "./",
   "./cg.html",
@@ -7,7 +7,7 @@ const SHELL_ASSETS = [
   "./memecoins.html",
   "./coinglass-dashboard.html?v=20260805-production-fail-closed-v1",
   "./styles.css?v=20260727-dashboard-first-v7",
-  "./app.js?v=20260809-stock-safety-v3",
+  "./app.js?v=20260809-quiver-upgrade-v4",
   "./spotify.js?v=20260629-request-access-fix",
   "./game.js?v=20260629-crypto-trainer",
   "./assets/payout-clients.svg",

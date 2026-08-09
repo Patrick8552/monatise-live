@@ -2438,6 +2438,16 @@ canvas {
   margin-top: 2px;
 }
 
+.context-metrics small {
+  color: rgba(249, 255, 251, 0.56);
+  display: block;
+  font-size: 0.58rem;
+  line-height: 1.25;
+  margin-top: 3px;
+  overflow-wrap: anywhere;
+  text-transform: uppercase;
+}
+
 .quiver-drivers {
   display: grid;
   gap: 6px;

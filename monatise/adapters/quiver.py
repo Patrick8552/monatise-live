@@ -14,6 +14,14 @@ QUIVER_BASE_URL = "https://api.quiverquant.com"
 QUIVER_TIMEOUT_SECONDS = 8
 QUIVER_CONGRESS_FRESH_DAYS = 90
 QUIVER_INSIDER_FRESH_DAYS = 30
+QUIVER_DATASET_FRESHNESS = {
+    "congress": (("ReportDate", "TransactionDate"), 90),
+    "insider": (("fileDate", "Date"), 30),
+    "governmentContracts": (("Date", "action_date"), 90),
+    "lobbying": (("Date",), 180),
+    "offExchange": (("Date",), 14),
+    "news": (("Date", "date", "Time", "Published", "published_at", "Timestamp"), 7),
+}
 QUIVER_STOCK_SYMBOLS = {"AAPL", "TSLA", "NVDA", "QQQ", "SPY"}
 QUIVER_INDEX_SYMBOLS = {"SPX", "NDX", "NASDAQ"}
 
@@ -144,14 +152,18 @@ def summarize_quiver_context(symbol: str, datasets: dict[str, list[dict]], *, no
     score = 0
 
     current_time = now or datetime.now(timezone.utc)
-    congress_rows = _fresh_rows(datasets.get("congress") or [], ("ReportDate", "TransactionDate"), QUIVER_CONGRESS_FRESH_DAYS, current_time)
-    insider_rows = _fresh_rows(datasets.get("insider") or [], ("fileDate", "Date"), QUIVER_INSIDER_FRESH_DAYS, current_time)
+    dataset_freshness = {
+        name: _dataset_freshness(datasets.get(name) or [], date_fields, maximum_age_days, current_time)
+        for name, (date_fields, maximum_age_days) in QUIVER_DATASET_FRESHNESS.items()
+    }
+    congress_rows = _fresh_rows(datasets.get("congress") or [], *QUIVER_DATASET_FRESHNESS["congress"], current_time)
+    insider_rows = _fresh_rows(datasets.get("insider") or [], *QUIVER_DATASET_FRESHNESS["insider"], current_time)
     congress_count = len(congress_rows)
     insider_count = len(insider_rows)
-    contract_count = len(datasets.get("governmentContracts") or [])
-    lobbying_count = len(datasets.get("lobbying") or [])
-    off_exchange_count = len(datasets.get("offExchange") or [])
-    news_count = len(datasets.get("news") or [])
+    contract_count = dataset_freshness["governmentContracts"]["fresh_count"]
+    lobbying_count = dataset_freshness["lobbying"]["fresh_count"]
+    off_exchange_count = dataset_freshness["offExchange"]["fresh_count"]
+    news_count = dataset_freshness["news"]["fresh_count"]
 
     purchases = sum(str(row.get("Transaction", "")).casefold() in {"purchase", "buy"} for row in congress_rows)
     sales = sum(str(row.get("Transaction", "")).casefold() in {"sale", "sell"} for row in congress_rows)
@@ -182,6 +194,10 @@ def summarize_quiver_context(symbol: str, datasets: dict[str, list[dict]], *, no
         drivers.append("off-exchange flow available")
     if news_count:
         drivers.append(f"{news_count} Quiver news item{'s' if news_count != 1 else ''}")
+    for name, label in (("governmentContracts", "Government contracts"), ("lobbying", "Lobbying"), ("offExchange", "Off-exchange flow"), ("news", "Quiver news")):
+        metadata = dataset_freshness[name]
+        if metadata["raw_count"] and metadata["status"] != "fresh":
+            cautions.append(f"{label} context is {metadata['status']}")
 
     if not drivers:
         cautions.append("No fresh Quiver alternative-data rows returned")
@@ -202,6 +218,7 @@ def summarize_quiver_context(symbol: str, datasets: dict[str, list[dict]], *, no
         "detail": detail,
         "freshness_days": {"congress": QUIVER_CONGRESS_FRESH_DAYS, "insider": QUIVER_INSIDER_FRESH_DAYS},
         "fresh_counts": {"congress": congress_count, "insider": insider_count},
+        "dataset_freshness": dataset_freshness,
     }
 
 
@@ -233,3 +250,22 @@ def _parse_quiver_date(value: object) -> datetime | None:
     else:
         return None
     return parsed.astimezone(timezone.utc) if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _dataset_freshness(rows: list[dict], date_fields: tuple[str, ...], maximum_age_days: int, now: datetime) -> dict[str, object]:
+    timestamps = []
+    for row in rows:
+        for field in date_fields:
+            timestamp = _parse_quiver_date(row.get(field))
+            if timestamp is not None:
+                timestamps.append(timestamp)
+                break
+    fresh_count = len(_fresh_rows(rows, date_fields, maximum_age_days, now))
+    status = "fresh" if fresh_count else "historical" if timestamps else "undated" if rows else "empty"
+    return {
+        "status": status,
+        "raw_count": len(rows),
+        "fresh_count": fresh_count,
+        "as_of": max(timestamps).date().isoformat() if timestamps else None,
+        "freshness_days": maximum_age_days,
+    }

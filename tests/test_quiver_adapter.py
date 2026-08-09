@@ -117,6 +117,29 @@ def test_quiver_summary_excludes_stale_or_undated_authority_rows() -> None:
     assert summary["freshness_days"] == {"congress": 90, "insider": 30}
 
 
+def test_quiver_summary_labels_auxiliary_freshness_by_dataset() -> None:
+    summary = summarize_quiver_context(
+        "NVDA",
+        {
+            "congress": [{"Transaction": "Purchase", "ReportDate": recent(5)}],
+            "insider": [{"TransactionCode": "P", "Date": recent(5)}],
+            "governmentContracts": [{"Date": recent(120)}],
+            "lobbying": [{"Date": recent(100)}],
+            "offExchange": [{"Date": recent(2)}],
+            "news": [{"Date": recent(20)}],
+        },
+        now=NOW,
+    )
+    metadata = summary["dataset_freshness"]
+    assert metadata["governmentContracts"]["status"] == "historical"
+    assert metadata["governmentContracts"]["as_of"] == (NOW - timedelta(days=120)).date().isoformat()
+    assert metadata["lobbying"]["status"] == "fresh"
+    assert metadata["offExchange"]["status"] == "fresh"
+    assert metadata["news"]["status"] == "historical"
+    assert "Government contracts context is historical" in summary["cautions"]
+    assert "Quiver news context is historical" in summary["cautions"]
+
+
 def test_auxiliary_rows_do_not_mask_authoritative_dataset_failure(monkeypatch) -> None:  # noqa: ANN001
     def fake_urlopen(request, timeout=8):  # noqa: ANN001, ARG001
         if "congresstrading" in request.full_url or "insiders" in request.full_url:

@@ -4298,6 +4298,14 @@ function renderQuiverContext() {
   const summary = quiverContext.summary || {};
   const drivers = Array.isArray(summary.drivers) && summary.drivers.length ? summary.drivers : ["No fresh Quiver rows returned"];
   const datasetCounts = quiverContext.datasetCounts || {};
+  const datasetMeta = quiverContext.datasetMeta || {};
+  const metric = (name, label) => {
+    const metadata = datasetMeta[name] || {};
+    const status = String(metadata.status || "unknown");
+    const count = status === "fresh" ? Number(metadata.fresh_count || 0) : Number(metadata.raw_count ?? datasetCounts[name] ?? 0);
+    const asOf = metadata.as_of ? ` · as of ${escapeHtml(metadata.as_of)}` : "";
+    return `<span>${label} <strong>${count}</strong><small>${escapeHtml(status)}${asOf}</small></span>`;
+  };
   const bias = String(summary.bias || "neutral").toLowerCase();
   els.quiverContext.innerHTML = `
     <div class="context-head">
@@ -4309,11 +4317,11 @@ function renderQuiverContext() {
       <span>Alt-data score ${Number(summary.score || 0).toFixed(0)}/10</span>
     </div>
     <div class="context-metrics">
-      <span>Congress <strong>${Number(datasetCounts.congress || 0)}</strong></span>
-      <span>Insider <strong>${Number(datasetCounts.insider || 0)}</strong></span>
-      <span>Contracts <strong>${Number(datasetCounts.governmentContracts || 0)}</strong></span>
-      <span>Dark Pool <strong>${Number(datasetCounts.offExchange || 0)}</strong></span>
-      <span>News <strong>${Number(datasetCounts.news || 0)}</strong></span>
+      ${metric("congress", "Congress")}
+      ${metric("insider", "Insider")}
+      ${metric("governmentContracts", "Contracts")}
+      ${metric("offExchange", "Dark Pool")}
+      ${metric("news", "News")}
     </div>
     <div class="quiver-drivers">${drivers.slice(0, 4).map((driver) => `<span>${escapeHtml(driver)}</span>`).join("")}</div>
   `;
@@ -5562,6 +5570,13 @@ function renderStockWatchOnly() {
   els.openGridTitle.textContent = "Stock Levels";
   els.openOrderCount.textContent = "Premium";
   els.openOrderBook.innerHTML = '<article><strong>No public price levels</strong><em>BTC sample candles are never reused for stocks.</em></article>';
+  els.decisionExposure.textContent = "Unavailable";
+  els.opportunityScore.textContent = "--";
+  els.opportunityScore.className = "blocked";
+  els.opportunityAction.textContent = "Premium stock analysis is required for exposure and opportunity scoring.";
+  els.cioPosture.textContent = "Restricted";
+  els.cioBrief.textContent = `${assetLabel(selectedAsset)} public watch shows Quiver context only. Premium analysis unlocks price, exposure, and opportunity quality.`;
+  els.cioDrivers.innerHTML = "<span>Quiver context only</span><span>No public price levels</span>";
   renderTradingViewChart();
   renderQuiverContext();
   updateDecisionSurface(null);

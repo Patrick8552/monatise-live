@@ -76,6 +76,7 @@ class ProductionASGI(OrchestrationASGI):
         self._openclaw_inflight: dict[tuple[str, str], asyncio.Task[dict[str, Any]]] = {}
         self._public_analysis_cache: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
         self._quiver_web_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+        self._quiver_web_inflight: dict[str, asyncio.Task[dict[str, Any]]] = {}
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         path = scope.get("path", "")
@@ -336,11 +337,18 @@ class ProductionASGI(OrchestrationASGI):
         now = monotonic()
         if cached is not None and now - cached[0] < 120:
             return 200, {**cached[1], "cache_hit": True}
+        task = self._quiver_web_inflight.get(symbol)
+        if task is None:
+            task = asyncio.create_task(asyncio.to_thread(QuiverAdapter.from_env().context, symbol))
+            self._quiver_web_inflight[symbol] = task
         try:
-            context = await asyncio.to_thread(QuiverAdapter.from_env().context, symbol)
+            context = await asyncio.shield(task)
         except Exception as exc:
             LOGGER.warning("Quiver web context unavailable", extra={"symbol": symbol, "error_type": type(exc).__name__})
             return 503, {"status": "unavailable", "source": "Quiver Quantitative"}
+        finally:
+            if task.done() and self._quiver_web_inflight.get(symbol) is task:
+                self._quiver_web_inflight.pop(symbol, None)
         datasets = context.get("datasets") if isinstance(context.get("datasets"), dict) else {}
         health = context.get("dataset_health") if isinstance(context.get("dataset_health"), dict) else {}
         summary = context.get("summary") if isinstance(context.get("summary"), dict) else {}
@@ -353,6 +361,7 @@ class ProductionASGI(OrchestrationASGI):
             "available": bool(context.get("available")),
             "summary": summary,
             "datasetCounts": dataset_counts,
+            "datasetMeta": summary.get("dataset_freshness", {}),
             "datasetHealth": {name: bool(item.get("ok")) for name, item in health.items() if isinstance(item, dict)},
             "cache_hit": False,
         }

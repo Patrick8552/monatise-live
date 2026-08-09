@@ -147,6 +147,36 @@ def test_web_quiver_context_rejects_unsupported_symbols() -> None:
     assert response[0]["status"] == 400
 
 
+def test_web_quiver_context_singleflights_concurrent_cache_misses(monkeypatch) -> None:
+    calls = []
+    context = {
+        "symbol": "NVDA",
+        "source": "Quiver Quantitative",
+        "configured": True,
+        "available": True,
+        "summary": {"score": 0, "bias": "neutral", "dataset_freshness": {}},
+        "datasets": {"congress": [{}], "insider": [{}]},
+        "dataset_health": {"congress": {"ok": True}, "insider": {"ok": True}},
+    }
+
+    def load_context(symbol):  # noqa: ANN001, ANN202
+        calls.append(symbol)
+        time.sleep(0.05)
+        return {**context, "symbol": symbol}
+
+    adapter = SimpleNamespace(context=load_context)
+    monkeypatch.setattr(production_module.QuiverAdapter, "from_env", classmethod(lambda cls: adapter))
+    app = ProductionASGI(Runtime())
+    scope = {"query_string": b"symbol=NVDA"}
+
+    async def concurrent_requests():  # noqa: ANN202
+        return await asyncio.gather(app._quiver_context_status(scope), app._quiver_context_status(scope))
+
+    results = asyncio.run(concurrent_requests())
+    assert [result[0] for result in results] == [200, 200]
+    assert calls == ["NVDA"]
+
+
 def test_market_candles_default_to_supported_startup_interval():
     response = get(ProductionASGI(Runtime()), "/api/market/candles", query="symbol=BTC&limit=2")
 

@@ -45,3 +45,15 @@ def test_quiver_panel_requires_healthy_authoritative_datasets() -> None:
     source = APP_JS.read_text(encoding="utf-8")
     assert 'const authorityHealthy = ["congress", "insider"].every' in source
     assert "!quiverContext.available || !authorityHealthy" in source
+    assert 'const datasetMeta = quiverContext.datasetMeta || {}' in source
+    assert 'metadata.status || "unknown"' in source
+
+
+def test_stock_watch_clears_crypto_command_metrics() -> None:
+    source = APP_JS.read_text(encoding="utf-8")
+    for expected in (
+        'els.decisionExposure.textContent = "Unavailable"',
+        'els.opportunityScore.textContent = "--"',
+        'els.cioPosture.textContent = "Restricted"',
+    ):
+        assert expected in source
