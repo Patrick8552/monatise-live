@@ -2870,6 +2870,15 @@ function localWealthCommand() {
 
 function renderWealthCommand(snapshot = null) {
   if (!els.cioBrief || !els.opportunityScore) return;
+  if (isQuiverAsset(selectedAsset) && candleSource.type !== "live") {
+    els.opportunityScore.textContent = "--";
+    els.opportunityScore.className = "blocked";
+    els.opportunityAction.textContent = "Premium stock analysis is required for exposure and opportunity scoring.";
+    els.cioPosture.textContent = "Restricted";
+    els.cioBrief.textContent = `${assetLabel(selectedAsset)} public watch shows Quiver context only. Premium analysis unlocks price, exposure, and opportunity quality.`;
+    els.cioDrivers.innerHTML = "<span>Quiver context only</span><span>No public price levels</span>";
+    return;
+  }
   const command = snapshot?.wealthCommand || localWealthCommand();
   const score = Number(command.score);
   const scoreText = Number.isFinite(score) ? String(Math.round(score)) : "--";

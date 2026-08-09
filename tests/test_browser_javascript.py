@@ -55,5 +55,6 @@ def test_stock_watch_clears_crypto_command_metrics() -> None:
         'els.decisionExposure.textContent = "Unavailable"',
         'els.opportunityScore.textContent = "--"',
         'els.cioPosture.textContent = "Restricted"',
+        'if (isQuiverAsset(selectedAsset) && candleSource.type !== "live")',
     ):
         assert expected in source
