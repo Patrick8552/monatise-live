@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import asyncio
+import time
 
 import pytest
 
@@ -40,7 +41,7 @@ class FakeEngine:
         return Output(self.name, self.decision)
 
 
-def make_orchestrator(*, blocked_at: str | None = None, flaky_at: str | None = None):
+def make_orchestrator(*, blocked_at: str | None = None, flaky_at: str | None = None, stage_timeout_seconds: float = 30.0):
     container = Container()
     registry = EngineRegistry(container)
     calls: list[str] = []
@@ -55,7 +56,7 @@ def make_orchestrator(*, blocked_at: str | None = None, flaky_at: str | None = N
     security.register_actor(ActorIdentity("test", "application", ("test",), (Permission.RUN_ANALYSIS,)))
     security.register_policy(SecurityPolicy("analysis_pipeline", "run", (Permission.RUN_ANALYSIS,), allowed_actor_types=("application",)))
     infra = ApplicationInfrastructure(container, bus, config, PluginManager(context=PluginContext(container, bus, config)), TaskScheduler(), StateManager(), InMemoryAuditRepository(), FeatureFlagManager(), security, ObservabilityManager())
-    return PipelineOrchestrator(registry, infra), calls, bus
+    return PipelineOrchestrator(registry, infra, stage_timeout_seconds=stage_timeout_seconds), calls, bus
 
 
 def test_pipeline_executes_all_twenty_engines_in_canonical_order():
@@ -102,6 +103,39 @@ def test_engine_error_produces_structured_failure_and_stops_pipeline():
     assert result.failure is not None
     assert result.failure.engine == "market_data"
     assert calls == ["market_data", "market_data"]
+
+
+def test_synchronous_engine_runs_off_event_loop_and_times_out():
+    orchestrator, calls, _ = make_orchestrator(stage_timeout_seconds=0.01)
+    engine = orchestrator.registry.resolve("market_data")
+
+    def slow_assess(request):  # noqa: ANN001, ANN202, ARG001
+        calls.append("market_data")
+        time.sleep(0.1)
+        return Output("market_data")
+
+    engine.assess = slow_assess
+    inputs = {name: object() for name in CANONICAL_ENGINE_ORDER}
+
+    async def exercise():
+        heartbeat = asyncio.Event()
+
+        async def prove_event_loop_is_responsive():
+            await asyncio.sleep(0.002)
+            heartbeat.set()
+
+        result, _ = await asyncio.gather(
+            orchestrator.run(AnalysisRun("BTC", inputs, metadata=PipelineExecutionMetadata(actor_id="test", retry_delay_seconds=0))),
+            prove_event_loop_is_responsive(),
+        )
+        return result, heartbeat.is_set()
+
+    result, heartbeat_seen = asyncio.run(exercise())
+    assert heartbeat_seen is True
+    assert result.status is PipelineStage.FAILED
+    assert result.failure is not None
+    assert result.failure.engine == "market_data"
+    assert result.failure.code == "TimeoutError"
 
 
 @pytest.mark.parametrize(

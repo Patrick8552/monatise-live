@@ -63,12 +63,15 @@ def _json_safe(value: Any) -> Any:
 class PipelineOrchestrator:
     """Coordinates engines without modifying or bypassing their decisions."""
 
-    def __init__(self, registry: EngineRegistry, infrastructure: ApplicationInfrastructure) -> None:
+    def __init__(self, registry: EngineRegistry, infrastructure: ApplicationInfrastructure, *, stage_timeout_seconds: float = 30.0) -> None:
         errors = registry.validate()
         if errors:
             raise ValueError("invalid engine registry: " + "; ".join(errors))
+        if stage_timeout_seconds <= 0:
+            raise ValueError("stage_timeout_seconds must be positive")
         self.registry = registry
         self.infrastructure = infrastructure
+        self.stage_timeout_seconds = stage_timeout_seconds
 
     async def run(self, run: AnalysisRun) -> PipelineResult:
         started_at = datetime.now(timezone.utc)
@@ -146,8 +149,16 @@ class PipelineOrchestrator:
         for attempt in range(1, maximum + 1):
             try:
                 engine = self.registry.resolve(name)
-                result = getattr(engine, method)(request)
-                return (await result if inspect.isawaitable(result) else result), attempt
+                invocation = getattr(engine, method)
+
+                async def invoke() -> Any:
+                    if inspect.iscoroutinefunction(invocation):
+                        return await invocation(request)
+                    result = await asyncio.to_thread(invocation, request)
+                    return await result if inspect.isawaitable(result) else result
+
+                result = await asyncio.wait_for(invoke(), timeout=self.stage_timeout_seconds)
+                return result, attempt
             except Exception as exc:
                 last_error = exc
                 if attempt < maximum and run.metadata.retry_delay_seconds:
