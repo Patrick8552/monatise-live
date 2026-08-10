@@ -1,0 +1,27 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "monatise-live",
+  "main": "./cloudflare/worker.ts",
+  "compatibility_date": "2026-08-10",
+  "compatibility_flags": ["nodejs_compat"],
+  "routes": [
+    {
+      "pattern": "monatise.com",
+      "custom_domain": true
+    }
+  ],
+  "assets": {
+    "directory": "./app",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*", "/health/*"],
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page"
+  },
+  "vars": {
+    "ORIGIN_URL": "https://monatise-live.onrender.com"
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  }
+}

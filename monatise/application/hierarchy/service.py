@@ -9,6 +9,7 @@ from monatise.application.hierarchy.coordinator import ShadowComparison, ShadowH
 from monatise.application.hierarchy.evaluator import HierarchyLayerEvaluator, ShadowEvaluation
 from monatise.application.hierarchy.lifecycle import HierarchyRepository
 from monatise.application.hierarchy.models import TriggerState
+from monatise.application.time_display import format_nigeria_time, nigeria_isoformat
 
 
 LOGGER = logging.getLogger("monatise.hierarchy")
@@ -125,8 +126,8 @@ class ShadowHierarchyService:
         direction = bundle.trigger_5m.direction.upper()
         validity_seconds = max(0, int((risk.expires_at - evaluation.evaluated_at).total_seconds()))
         validity_minutes = (validity_seconds + 59) // 60
-        expiry = risk.expires_at.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-        observed = (price_observed_at or evaluation.evaluated_at).astimezone(timezone.utc).isoformat()
+        expiry = format_nigeria_time(risk.expires_at)
+        observed = nigeria_isoformat(price_observed_at or evaluation.evaluated_at)
         current = f"{current_price:,.8f}".rstrip("0").rstrip(".") if current_price is not None else "unavailable"
         return (
             f"Monatise HIERARCHY SHADOW — observation only, not a trade order\n"

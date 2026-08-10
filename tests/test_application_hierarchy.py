@@ -139,7 +139,7 @@ def test_hierarchy_short_notification_preserves_directional_risk_geometry():
     message = ShadowHierarchyService._format_notification(evaluation, publication_id="short-publication", current_price=100.25, price_observed_at=NOW)
 
     assert "BTC | SHORT" in message
-    assert "Current CoinGlass price: 100.25 | source coinglass | observed 2026-08-02T12:00:20+00:00" in message
+    assert "Current CoinGlass price: 100.25 | source coinglass | observed 2026-08-02T13:00:20+01:00" in message
     assert f"Entry {risk.reference_entry:.8g}" in message
     assert f"Stop {risk.final_stop:.8g}" in message
     assert f"Target {risk.target_liquidity:.8g}" in message
@@ -508,7 +508,7 @@ def test_confirmed_hierarchy_produces_valid_shadow_bundle_and_risk_bridge():
     assert result.bundle.risk_inputs.structural_invalidation == 115
     assert result.execution_enabled is False
     message = ShadowHierarchyService._format_notification(result, publication_id="publication-123456789")
-    assert "Expires 2026-08-02 12:15:20 UTC" in message
+    assert "Expires 2026-08-02 13:15:20 WAT" in message
     assert "Valid for 15 min" in message
     assert "Publication publication-1234" in message
 

@@ -21,6 +21,7 @@ from monatise.application.production_analysis import build_directional_plan, bui
 from monatise.application.persistence import PostgresDocumentStore
 from monatise.application.workflows import TelegramNotifier
 from monatise.application.registry import PRODUCTION_ENGINE_ORDER
+from monatise.application.time_display import format_nigeria_time
 from monatise.application.hierarchy import HierarchyConfiguration, HierarchyLayerEvaluator, HierarchyRepository, Provenance, ShadowHierarchyCoordinator, ShadowHierarchyService
 from monatise.adapters.coinglass_production import CoinGlassProductionAdapter
 from monatise.adapters.backpack import BackpackAdapter, BackpackCredentials
@@ -803,7 +804,7 @@ class OrchestrationRuntime:
             "confirmation_status": "expired",
             "classification": previous["classification"],
             "expires_directional_setup": True,
-            "expired_at": expires_at.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+            "expired_at": format_nigeria_time(expires_at),
             "expected_version": int(previous.get("version", 0) or 0),
         }
 

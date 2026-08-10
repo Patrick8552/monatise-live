@@ -4171,25 +4171,32 @@ function durationShort(minutes) {
   return hours ? `${hours}h ${mins}m` : `${mins}m`;
 }
 
-function utcHour(hour) {
-  return `${String(hour).padStart(2, "0")}:00 UTC`;
-}
-
-function localHour(hour) {
+function nigeriaHour(hour) {
   const now = new Date();
   const date = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), hour, 0, 0));
-  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return new Intl.DateTimeFormat("en-NG", {
+    hour: "2-digit",
+    hour12: false,
+    minute: "2-digit",
+    timeZone: "Africa/Lagos"
+  }).format(date);
 }
 
 function renderSessionTimers(date = new Date()) {
   if (!els.sessionTimers) return;
-  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "local";
+  const nigeriaTime = new Intl.DateTimeFormat("en-NG", {
+    hour: "2-digit",
+    hour12: false,
+    minute: "2-digit",
+    second: "2-digit",
+    timeZone: "Africa/Lagos"
+  }).format(date);
   const rows = SESSION_WINDOWS.map((session) => {
     if (session.asset === "crypto") {
       return `<article class="session-card open">
         <span>${escapeHtml(session.focus)}</span>
         <strong>Open 24/7</strong>
-        <small>Best: 12:00-16:00 UTC (${localHour(12)}-${localHour(16)} local) · ${escapeHtml(session.note)}</small>
+        <small>Best: ${nigeriaHour(12)}-${nigeriaHour(16)} WAT · ${escapeHtml(session.note)}</small>
       </article>`;
     }
     const open = isUtcWindowOpen(session.open, session.close, date);
@@ -4197,13 +4204,13 @@ function renderSessionTimers(date = new Date()) {
     return `<article class="session-card ${open ? "open" : "closed"}">
       <span>${escapeHtml(session.focus)}</span>
       <strong>${open ? `Closes in ${durationShort(change)}` : `Opens in ${durationShort(change)}`}</strong>
-      <small>${utcHour(session.open)}-${utcHour(session.close)} · ${localHour(session.open)}-${localHour(session.close)} local · ${escapeHtml(session.note)}</small>
+      <small>${nigeriaHour(session.open)}-${nigeriaHour(session.close)} WAT · ${escapeHtml(session.note)}</small>
     </article>`;
   }).join("");
   els.sessionTimers.innerHTML = `
     <div class="timezone-strip">
-      <strong>${date.toISOString().slice(11, 19)} UTC</strong>
-      <span>${date.toLocaleTimeString()} · ${escapeHtml(tz)}</span>
+      <strong>${nigeriaTime} WAT</strong>
+      <span>Nigeria time · Africa/Lagos</span>
     </div>
     <div class="best-window">
       <strong>Best windows</strong>

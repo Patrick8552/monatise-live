@@ -13,6 +13,7 @@ from monatise.application.models import AnalysisRun, PipelineResult
 from monatise.application.orchestrator import PipelineOrchestrator
 from monatise.application.production_analysis import build_directional_plan, build_grid_plan, build_moving_grid_plan, build_setup_validity, strongest_confirmation_signal
 from monatise.application.registry import CANONICAL_ENGINE_ORDER, PRODUCTION_ENGINE_ORDER
+from monatise.application.time_display import format_nigeria_time
 from monatise.infrastructure.state_manager import StateKey
 from monatise.infrastructure.task_scheduler import JobDefinition, RetryPolicy, ScheduleType
 
@@ -174,8 +175,8 @@ class TelegramNotifier:
             remaining_seconds = max(0, int((validity["expires_at"] - datetime.now(timezone.utc)).total_seconds()))
             remaining_label = "<1 min" if 0 < remaining_seconds < 60 else f"{math.ceil(remaining_seconds / 60)} min"
             lines.extend((
-                f"Generated at: {validity['generated_at'].strftime('%Y-%m-%d %H:%M:%S UTC')}",
-                f"Valid until: {validity['expires_at'].strftime('%Y-%m-%d %H:%M:%S UTC')}",
+                f"Generated at: {format_nigeria_time(validity['generated_at'])}",
+                f"Valid until: {format_nigeria_time(validity['expires_at'])}",
                 f"Remaining validity: {remaining_label} | {validity['remaining_candles']} candle(s)",
             ))
         if classification == "GRID":

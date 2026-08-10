@@ -3036,7 +3036,7 @@ function renderTradingViewChart() {
   const tvSymbol = tradingViewSymbolForAsset(selectedAsset);
   const interval = tradingViewIntervals[tradingRules.chartInterval] || "60";
   const chartTheme = selectedTheme === "dark" ? "dark" : "light";
-  const src = `https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent(tvSymbol)}&interval=${encodeURIComponent(interval)}&theme=${chartTheme}&style=1&timezone=Etc%2FUTC&hide_top_toolbar=1&hide_side_toolbar=0&allow_symbol_change=0&save_image=0&studies=%5B%5D`;
+  const src = `https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent(tvSymbol)}&interval=${encodeURIComponent(interval)}&theme=${chartTheme}&style=1&timezone=Africa%2FLagos&hide_top_toolbar=1&hide_side_toolbar=0&allow_symbol_change=0&save_image=0&studies=%5B%5D`;
   const signature = `${tvSymbol}:${interval}:${chartTheme}`;
   if (lastTradingViewSignature === signature && els.tradingViewWidget.querySelector("iframe")) return;
   lastTradingViewSignature = signature;
@@ -3350,20 +3350,14 @@ function utcMidnight(date) {
 
 function formatSignalTime(date) {
   if (!(date instanceof Date) || Number.isNaN(date.getTime())) return "pending";
-  const local = new Intl.DateTimeFormat(undefined, {
+  return new Intl.DateTimeFormat("en-NG", {
     day: "2-digit",
     hour: "numeric",
     minute: "2-digit",
     month: "short",
+    timeZone: "Africa/Lagos",
     timeZoneName: "short"
   }).format(date);
-  const utc = new Intl.DateTimeFormat(undefined, {
-    hour: "2-digit",
-    hour12: false,
-    minute: "2-digit",
-    timeZone: "UTC"
-  }).format(date);
-  return `${local} (${utc} UTC)`;
 }
 
 function utcHourLabel(hour) {
