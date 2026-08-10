@@ -106,6 +106,25 @@ class ProductionASGI(OrchestrationASGI):
                 "execution_enabled": False,
             })
             return
+        if scope.get("type") == "http" and path == "/api/me":
+            if scope.get("method", "GET").upper() != "GET":
+                await self._respond(send, 405, {"status": "method_not_allowed"})
+                return
+            await self._respond(send, 200, {"authenticated": False, "credentialsConfigured": False, "execution_enabled": False})
+            return
+        if scope.get("type") == "http" and path == "/api/tradingview/signals":
+            if scope.get("method", "GET").upper() != "GET":
+                await self._respond(send, 405, {"status": "method_not_allowed"})
+                return
+            await self._respond(send, 200, {
+                "configured": False,
+                "alerts": [],
+                "count": 0,
+                "source": "TradingView webhook alerts",
+                "role": "tradingview_primary_signal",
+                "execution_enabled": False,
+            })
+            return
         if scope.get("type") == "http" and path in {"/api/market/candles", "/api/operator"}:
             if scope.get("method", "GET").upper() != "GET":
                 await self._respond(send, 405, {"status": "method_not_allowed"})

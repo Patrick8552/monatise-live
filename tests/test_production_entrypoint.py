@@ -151,6 +151,14 @@ def test_frontend_read_routes_are_implemented_by_production_app():
     assert context_payload["fundingRate"][0]["exchange"] == "Binance"
     assert context_payload["execution_enabled"] is False
 
+    me = get(app, "/api/me")
+    assert me[0]["status"] == 200
+    assert json.loads(me[1]["body"])["authenticated"] is False
+
+    tradingview = get(app, "/api/tradingview/signals", query="symbol=BTC")
+    assert tradingview[0]["status"] == 200
+    assert json.loads(tradingview[1]["body"])["alerts"] == []
+
 
 def test_web_dashboard_exposes_stock_assets_and_sanitized_quiver_context(monkeypatch):
     context = {
