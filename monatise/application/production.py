@@ -18,11 +18,15 @@ from urllib.parse import parse_qs
 from monatise.adapters.quiver import QuiverAdapter, normalize_quiver_symbol
 from monatise.adapters.alpaca import AlpacaMarketDataAdapter
 from monatise.adapters.finnhub import FinnhubAdapter, FinnhubAdapterError
+from monatise.analysis.context import context_assets, grid_instruction, indicator_snapshot
+from monatise.analysis.fibonacci import analyze_fibonacci
+from monatise.analysis.fvg import analyze_fvg
 from monatise.application.stock_analysis import build_stock_analysis
 
 from monatise.adapters.coinglass_production import CoinGlassProductionAdapter
 from monatise.application.deployment import OrchestrationASGI, OrchestrationRuntime
 from monatise.engines.market_data import MarketDataEngine, MarketDataRequest
+from monatise.core.models import Candle
 
 
 LOGGER = logging.getLogger("monatise.production")
@@ -77,6 +81,7 @@ class ProductionASGI(OrchestrationASGI):
         self._public_analysis_cache: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
         self._quiver_web_cache: dict[str, tuple[float, dict[str, Any]]] = {}
         self._quiver_web_inflight: dict[str, asyncio.Task[dict[str, Any]]] = {}
+        self._market_summary_cache: tuple[float, dict[str, Any]] | None = None
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         path = scope.get("path", "")
@@ -109,6 +114,27 @@ class ProductionASGI(OrchestrationASGI):
                 await self._respond(send, 429, {"status": "rate_limited"})
                 return
             code, payload = await (self._market_candles(scope) if path == "/api/market/candles" else self._operator_status())
+            await self._respond(send, code, payload)
+            return
+        if scope.get("type") == "http" and path in {
+            "/api/markets",
+            "/api/analysis/fibonacci",
+            "/api/context/radar",
+            "/api/coinglass/context",
+        }:
+            if scope.get("method", "GET").upper() != "GET":
+                await self._respond(send, 405, {"status": "method_not_allowed"})
+                return
+            if self._market_rate_limited(scope):
+                await self._respond(send, 429, {"status": "rate_limited"})
+                return
+            handlers = {
+                "/api/markets": self._market_summary,
+                "/api/analysis/fibonacci": self._fibonacci_analysis,
+                "/api/context/radar": self._context_radar,
+                "/api/coinglass/context": self._coinglass_context,
+            }
+            code, payload = await handlers[path](scope)
             await self._respond(send, code, payload)
             return
         if scope.get("type") == "http" and path.startswith("/api/coinglass/proxy/"):
@@ -182,6 +208,146 @@ class ProductionASGI(OrchestrationASGI):
                 "intervals": list(CoinGlassProductionAdapter.SUPPORTED_INTERVALS),
                 "datasets": sorted(CoinGlassProductionAdapter.DASHBOARD_PATHS),
             }},
+            "execution_enabled": False,
+        }
+
+    async def _market_summary(self, _scope: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        now = monotonic()
+        if self._market_summary_cache is not None and now - self._market_summary_cache[0] < 5:
+            return 200, {**self._market_summary_cache[1], "cache_hit": True}
+        provider = self.runtime.coinglass
+        if provider is None:
+            return 503, {"status": "unavailable", "dataset": "markets"}
+
+        async def current_price(symbol: str) -> dict[str, Any] | None:
+            try:
+                price = await asyncio.to_thread(provider.latest_current_price, symbol)
+            except Exception as exc:
+                LOGGER.warning("market summary price unavailable", extra={"symbol": symbol, "error_type": type(exc).__name__})
+                return None
+            return {"symbol": symbol, "price": float(price), "source": "coinglass", "assetClass": "crypto", "tradable": False}
+
+        assets = [item for item in await asyncio.gather(*(current_price(symbol) for symbol in ("BTC", "ETH", "SOL"))) if item is not None]
+        if not assets:
+            return 503, {"status": "unavailable", "dataset": "markets", "source": "coinglass"}
+        payload = {
+            "status": "ready",
+            "assets": assets,
+            "groups": {"crypto": [item["symbol"] for item in assets], "stocks": ["AAPL", "TSLA", "NVDA", "QQQ", "SPY"]},
+            "source": "coinglass",
+            "cache_hit": False,
+            "execution_enabled": False,
+        }
+        self._market_summary_cache = (now, payload)
+        return 200, payload
+
+    async def _analysis_candles(self, scope: dict[str, Any], *, minimum: int) -> tuple[int, dict[str, Any] | list[Candle], str, str]:
+        query = parse_qs(scope.get("query_string", b"").decode())
+        symbol = str(query.get("symbol", ["BTC"])[0]).strip().upper()
+        interval = str(query.get("interval", ["1h"])[0]).strip() or "1h"
+        try:
+            requested_limit = int(query.get("limit", ["120"])[0])
+        except ValueError:
+            return 400, {"status": "invalid_request", "reason": "limit must be an integer"}, symbol, interval
+        limit = max(minimum, min(200, requested_limit))
+        candle_scope = {**scope, "query_string": f"symbol={symbol}&interval={interval}&limit={limit}".encode()}
+        code, payload = await self._market_candles(candle_scope)
+        if code != 200:
+            return code, payload, symbol, interval
+        candles = [
+            Candle(
+                datetime.fromtimestamp(float(row["time"]) / 1000, tz=timezone.utc).isoformat(),
+                float(row["open"]), float(row["high"]), float(row["low"]), float(row["close"]), float(row.get("volume", 0)),
+            )
+            for row in payload["candles"]
+        ]
+        return 200, candles, symbol, interval
+
+    async def _fibonacci_analysis(self, scope: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        code, result, symbol, interval = await self._analysis_candles(scope, minimum=20)
+        if code != 200:
+            return code, result if isinstance(result, dict) else {"status": "unavailable"}
+        candles = result
+        assert isinstance(candles, list)
+        try:
+            mark = candles[-1].close
+            return 200, {
+                "analysis": analyze_fibonacci(symbol, interval, candles, mark=mark).to_dict(),
+                "fvg": analyze_fvg(symbol, interval, candles, mark=mark).to_dict(),
+                "source": "coinglass",
+                "execution_enabled": False,
+            }
+        except (TypeError, ValueError) as exc:
+            return 422, {"status": "analysis_unavailable", "reason": str(exc)}
+
+    async def _context_radar(self, scope: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        code, result, symbol, interval = await self._analysis_candles(scope, minimum=50)
+        if code != 200:
+            return code, result if isinstance(result, dict) else {"status": "unavailable"}
+        candles = result
+        assert isinstance(candles, list)
+        try:
+            indicators = indicator_snapshot(candles)
+            mark = candles[-1].close
+            return 200, {
+                "symbol": symbol,
+                "interval": interval,
+                "source": "coinglass",
+                "indicator": indicators.__dict__,
+                "instruction": grid_instruction(indicators),
+                "contextAssets": context_assets(symbol, {symbol: mark}),
+                "execution_enabled": False,
+            }
+        except (TypeError, ValueError) as exc:
+            return 422, {"status": "analysis_unavailable", "reason": str(exc)}
+
+    @staticmethod
+    def _coinglass_rows(payload: Any) -> list[dict[str, Any]]:
+        data = payload.get("data", []) if isinstance(payload, dict) else []
+        if isinstance(data, list):
+            return [item for item in data if isinstance(item, dict)]
+        if isinstance(data, dict):
+            for key in ("list", "data", "rows"):
+                rows = data.get(key)
+                if isinstance(rows, list):
+                    return [item for item in rows if isinstance(item, dict)]
+            return [data]
+        return []
+
+    async def _coinglass_context(self, scope: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        query = parse_qs(scope.get("query_string", b"").decode())
+        symbol = str(query.get("symbol", ["BTC"])[0]).strip().upper()
+        interval = str(query.get("interval", ["1h"])[0]).strip() or "1h"
+        if symbol not in self.MARKET_SYMBOLS or interval not in self.MARKET_INTERVALS:
+            return 400, {"status": "invalid_request", "reason": "unsupported symbol or interval"}
+        provider = self.runtime.coinglass
+        if provider is None:
+            return 503, {"status": "unavailable", "source": "coinglass"}
+        datasets = {
+            "fundingRate": ("/api/futures/funding-rate/exchange-list", {"symbol": symbol}),
+            "openInterest": ("/api/futures/open-interest/exchange-list", {"symbol": symbol}),
+            "liquidations": ("/api/futures/liquidation/aggregated-history", {"symbol": symbol, "interval": interval}),
+            "fearGreed": ("/api/index/fear-greed-history", {}),
+        }
+
+        async def load(name: str, path: str, params: dict[str, str]) -> tuple[str, list[dict[str, Any]], str | None]:
+            try:
+                payload = await asyncio.to_thread(provider.dashboard_query, path, params)
+                return name, self._coinglass_rows(payload), None
+            except Exception as exc:
+                LOGGER.warning("CoinGlass context dataset unavailable", extra={"dataset": name, "error_type": type(exc).__name__})
+                return name, [], type(exc).__name__
+
+        results = await asyncio.gather(*(load(name, path, params) for name, (path, params) in datasets.items()))
+        rows = {name: data for name, data, _error in results}
+        unavailable = [{"feature": name, "reason": error} for name, _data, error in results if error]
+        return 200, {
+            "symbol": symbol,
+            "interval": interval,
+            "source": "CoinGlass",
+            "available": not unavailable,
+            "unavailable": unavailable,
+            **rows,
             "execution_enabled": False,
         }
 

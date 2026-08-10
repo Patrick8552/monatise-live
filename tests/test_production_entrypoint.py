@@ -33,6 +33,7 @@ class Runtime:
         }
         self.coinglass = SimpleNamespace(
             candles=lambda symbol, limit, interval: [Candle("2026-08-02T12:00:00+00:00", 100, 110, 90, 105, 1000)],
+            latest_current_price=lambda symbol: {"BTC": 65_000, "ETH": 3_500, "SOL": 170}[symbol],
             dashboard_query=lambda path, query: {"code": "0", "data": [{"path": path, "symbol": query.get("symbol")}]},
         )
         self.redis_coordination = Coordination()
@@ -111,6 +112,38 @@ def test_market_dashboard_uses_server_backed_read_only_data_routes():
     dataset = get(app, "/api/coinglass/proxy/api/futures/open-interest/exchange-list", query="symbol=BTC")
     assert dataset[0]["status"] == 200
     assert json.loads(dataset[1]["body"])["data"][0]["symbol"] == "BTC"
+
+
+def test_frontend_read_routes_are_implemented_by_production_app():
+    runtime = Runtime()
+    runtime.coinglass.candles = lambda symbol, limit, interval: [
+        Candle(f"2026-08-02T{index % 24:02d}:00:00+00:00", 100 + index, 102 + index, 99 + index, 101 + index, 1000)
+        for index in range(limit)
+    ]
+    app = ProductionASGI(runtime)
+
+    markets = get(app, "/api/markets")
+    assert markets[0]["status"] == 200
+    assert {item["symbol"] for item in json.loads(markets[1]["body"])["assets"]} == {"BTC", "ETH", "SOL"}
+
+    fibonacci = get(app, "/api/analysis/fibonacci", query="symbol=BTC&interval=1h&limit=120")
+    assert fibonacci[0]["status"] == 200
+    fibonacci_payload = json.loads(fibonacci[1]["body"])
+    assert fibonacci_payload["analysis"]["symbol"] == "BTC"
+    assert fibonacci_payload["source"] == "coinglass"
+
+    radar = get(app, "/api/context/radar", query="symbol=BTC&interval=1h&limit=120")
+    assert radar[0]["status"] == 200
+    radar_payload = json.loads(radar[1]["body"])
+    assert radar_payload["indicator"]["trend"] == "up"
+    assert radar_payload["contextAssets"][0]["price"] is not None
+
+    context = get(app, "/api/coinglass/context", query="symbol=BTC&interval=1h")
+    assert context[0]["status"] == 200
+    context_payload = json.loads(context[1]["body"])
+    assert context_payload["available"] is True
+    assert context_payload["fundingRate"][0]["symbol"] == "BTC"
+    assert context_payload["execution_enabled"] is False
 
 
 def test_web_dashboard_exposes_stock_assets_and_sanitized_quiver_context(monkeypatch):
