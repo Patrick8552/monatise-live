@@ -324,9 +324,9 @@ class ProductionASGI(OrchestrationASGI):
         if provider is None:
             return 503, {"status": "unavailable", "source": "coinglass"}
         datasets = {
-            "fundingRate": ("/api/futures/funding-rate/exchange-list", {"symbol": symbol}),
+            "fundingRate": ("/api/futures/funding-rate/exchange-list", {}),
             "openInterest": ("/api/futures/open-interest/exchange-list", {"symbol": symbol}),
-            "liquidations": ("/api/futures/liquidation/aggregated-history", {"symbol": symbol, "interval": interval}),
+            "liquidations": ("/api/futures/liquidation/aggregated-history", {"exchange_list": "Binance", "symbol": symbol, "interval": interval, "limit": "24"}),
             "fearGreed": ("/api/index/fear-greed-history", {}),
         }
 
@@ -340,6 +340,10 @@ class ProductionASGI(OrchestrationASGI):
 
         results = await asyncio.gather(*(load(name, path, params) for name, (path, params) in datasets.items()))
         rows = {name: data for name, data, _error in results}
+        funding_asset = next((item for item in rows["fundingRate"] if str(item.get("symbol", "")).upper() == symbol), None)
+        if funding_asset is not None:
+            stablecoin_rows = funding_asset.get("stablecoin_margin_list", [])
+            rows["fundingRate"] = [item for item in stablecoin_rows if isinstance(item, dict)]
         unavailable = [{"feature": name, "reason": error} for name, _data, error in results if error]
         return 200, {
             "symbol": symbol,

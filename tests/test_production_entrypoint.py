@@ -116,6 +116,12 @@ def test_market_dashboard_uses_server_backed_read_only_data_routes():
 
 def test_frontend_read_routes_are_implemented_by_production_app():
     runtime = Runtime()
+    def dashboard_query(path, query):  # noqa: ANN001, ANN202
+        if path == "/api/futures/funding-rate/exchange-list":
+            return {"code": "0", "data": [{"symbol": "BTC", "stablecoin_margin_list": [{"exchange": "Binance", "funding_rate": 0.0001}]}]}
+        return {"code": "0", "data": [{"path": path, "symbol": query.get("symbol")}]}
+
+    runtime.coinglass.dashboard_query = dashboard_query
     runtime.coinglass.candles = lambda symbol, limit, interval: [
         Candle(f"2026-08-02T{index % 24:02d}:00:00+00:00", 100 + index, 102 + index, 99 + index, 101 + index, 1000)
         for index in range(limit)
@@ -142,7 +148,7 @@ def test_frontend_read_routes_are_implemented_by_production_app():
     assert context[0]["status"] == 200
     context_payload = json.loads(context[1]["body"])
     assert context_payload["available"] is True
-    assert context_payload["fundingRate"][0]["symbol"] == "BTC"
+    assert context_payload["fundingRate"][0]["exchange"] == "Binance"
     assert context_payload["execution_enabled"] is False
 
 
