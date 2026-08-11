@@ -279,6 +279,17 @@ def test_public_dashboard_analysis_is_read_only_production_output_without_notifi
     assert runtime.calls == [("BTC", {"interval": "1h", "source": "monatise.web", "notify": False})]
 
 
+def test_public_dashboard_analysis_cache_spans_dashboard_refresh_interval():
+    runtime = Runtime()
+    app = ProductionASGI(runtime)
+    first = get(app, "/api/public/analysis", query="symbol=BTC&interval=1h")
+    second = get(app, "/api/public/analysis", query="symbol=BTC&interval=1h")
+
+    assert json.loads(first[1]["body"])["cache_hit"] is False
+    assert json.loads(second[1]["body"])["cache_hit"] is True
+    assert len(runtime.calls) == 1
+
+
 def test_public_dashboard_analysis_rejects_unsupported_assets_and_intervals():
     app = ProductionASGI(Runtime())
     assert get(app, "/api/public/analysis", query="symbol=XRP&interval=1h")[0]["status"] == 400

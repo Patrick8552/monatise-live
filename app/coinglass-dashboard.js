@@ -358,7 +358,7 @@ refreshXConnection();
 
 function setupDashboardInstall() {
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("./sw.js?v=20260811-notification-reliability-v1").catch(() => {});
+    navigator.serviceWorker.register("./sw.js?v=20260811-dashboard-reliability-v2").catch(() => {});
   }
   window.addEventListener("beforeinstallprompt", (event) => {
     event.preventDefault();
@@ -2464,12 +2464,6 @@ async function getLiquidations() {
   const mapUrls = [
     `${CG_BASE}/api/futures/liquidation/aggregated-map?symbol=${asset.coin}&range=${range}`
   ];
-  const painPromise = timedOptionalFetch(
-    "Liquidation max pain",
-    "CoinGlass",
-    `${CG_BASE}/api/futures/liquidation/max-pain?range=24h`,
-    { headers: cgHeaders() }
-  );
   const mapErrors = [];
   let levels = [];
   let mapSymbol = asset.pair;
@@ -2496,7 +2490,19 @@ async function getLiquidations() {
       mapErrors.push(error.message);
     }
   }
-  const painPayload = await painPromise;
+  if (!levels.length) {
+    try {
+      return await getHyperliquidBookLiquidity();
+    } catch (fallbackError) {
+      mapErrors.push(`Hyperliquid fallback: ${fallbackError.message}`);
+    }
+  }
+  const painPayload = levels.length ? await timedOptionalFetch(
+    "Liquidation max pain",
+    "CoinGlass",
+    `${CG_BASE}/api/futures/liquidation/max-pain?range=24h`,
+    { headers: cgHeaders() }
+  ) : null;
   const assetPain = (painPayload?.data || []).find((item) => item.symbol === asset.coin) || null;
   if (!levels.length && mapErrors.length) {
     const shape = document.body.dataset.liqShape || "unknown payload";
@@ -2513,7 +2519,7 @@ async function getFearGreed() {
     `${CG_BASE}/api/index/fear-greed-history`,
     { headers: cgHeaders() }
   );
-  const first = Array.isArray(payload.data) ? payload.data[0] : null;
+  const first = Array.isArray(payload.data) ? payload.data[0] : payload.data;
   const values = first?.data_list || [];
   const times = first?.time_list || [];
   const rows = values.map((value, index) => ({ value: Number(value), time: Number(times[index]) * 1000 })).filter((row) => Number.isFinite(row.value));
@@ -2557,6 +2563,7 @@ function renderProductionAnalysis(analysis) {
   const reasons = Array.isArray(analysis.reasons) ? analysis.reasons.slice(0, 3) : [];
   const grid = classification === "GRID" && analysis.grid_plan && typeof analysis.grid_plan === "object" ? analysis.grid_plan : null;
   const decisionReady = analysis.status === "completed" && !analysis.blocked_by;
+  const stageTotal = Math.max(1, Number(analysis.stage_total) || 14);
   const gridState = grid ? decisionReady ? "GRID DECISION READY" : "GRID DECISION PENDING" : classification.replace("_", " ");
   const gridRows = grid ? `
     <div class="metric-row"><div><strong>Grid center</strong><br /><small>Projected decision geometry</small></div><span class="metric-value">${formatUsd(Number(grid.center))}</span></div>
@@ -2565,8 +2572,8 @@ function renderProductionAnalysis(analysis) {
     <div class="metric-row"><div><strong>Two-sided invalidation</strong><br /><small>Below ${formatUsd(Number(grid.lower_invalidation))} or above ${formatUsd(Number(grid.upper_invalidation))}</small></div><span class="metric-value">${Number(grid.levels_per_side) || 0} × 2</span></div>
   ` : "";
   els.hyperList.innerHTML = `
-    <div class="metric-row"><div><strong>Production decision</strong><br /><small>Monatise 13-stage decision pipeline</small></div><span class="metric-value">${classification.replace("_", " ")}</span></div>
-    <div class="metric-row"><div><strong>Pipeline state</strong><br /><small>${blocked}</small></div><span class="metric-value">${analysis.completed_stages || 0}/13</span></div>
+    <div class="metric-row"><div><strong>Production decision</strong><br /><small>Monatise ${stageTotal}-stage decision pipeline</small></div><span class="metric-value">${classification.replace("_", " ")}</span></div>
+    <div class="metric-row"><div><strong>Pipeline state</strong><br /><small>${blocked}</small></div><span class="metric-value">${analysis.completed_stages || 0}/${stageTotal}</span></div>
     ${grid ? `<div class="metric-row"><div><strong>Grid state</strong><br /><small>Score ${Number(analysis.grid_score) || 0}/10 · confidence ${Math.round(Number(analysis.conviction || 0) * 100)}%</small></div><span class="metric-value">${gridState}</span></div>` : ""}
     ${gridRows}
     <div class="metric-row"><div><strong>Market source</strong><br /><small>CoinGlass primary · Backpack fallback</small></div><span class="metric-value">LIVE</span></div>
@@ -3782,7 +3789,7 @@ function applyProductionDecision(setup) {
   const reasons = Array.isArray(analysis.reasons) ? analysis.reasons.filter(Boolean) : [];
   const summary = reasons.length
     ? `Production ${classification.replace("_", " ")}: ${reasons.slice(0, 3).join("; ")}`
-    : `Production ${classification.replace("_", " ")} at ${analysis.completed_stages || 0}/13 stages.`;
+    : `Production ${classification.replace("_", " ")} at ${analysis.completed_stages || 0}/${Math.max(1, Number(analysis.stage_total) || 14)} stages.`;
   if (classification === "no_trade") {
     if (setup.scoreTradeReady) {
       return {
