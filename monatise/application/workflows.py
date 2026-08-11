@@ -94,6 +94,11 @@ class TelegramNotifier:
             raise ValueError("notification message is required")
         return await self._transport.send_message(self._chat_id, f"Monatise X INTELLIGENCE\n{message}")
 
+    async def coin_discovery_notification(self, message: str) -> Any:
+        if not message.strip():
+            raise ValueError("notification message is required")
+        return await self._transport.send_message(self._chat_id, f"Monatise COINGLASS SCANNER\n{message}")
+
     async def _alert(self, category: str, message: str) -> Any:
         if not message.strip():
             raise ValueError("notification message is required")

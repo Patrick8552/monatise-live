@@ -514,6 +514,88 @@ class OrchestrationRuntime:
         }
         return (job_id,)
 
+    async def _register_coin_discovery_monitor(self) -> tuple[str, ...]:
+        if not _true(self.environment.get("MONATISE_COIN_DISCOVERY_ENABLED", "true")):
+            self.dependencies["coin_discovery"] = {"status": "ok", "enabled": False}
+            return ()
+        if self.application is None or self.coinglass is None or self.telegram is None or self.redis is None:
+            self.dependencies["coin_discovery"] = {"status": "error", "enabled": True}
+            raise RuntimeError("Coin discovery monitoring dependencies are unavailable")
+        namespace = self.environment.get("MONATISE_REDIS_NAMESPACE", "monatise:production-analysis")
+        baseline_key = f"{namespace}:coinglass:supported-coins"
+        threshold = max(1.0, float(self.environment.get("MONATISE_VOLATILITY_ALERT_PERCENT", "15")))
+        interval_seconds = max(60, int(self.environment.get("MONATISE_COIN_DISCOVERY_INTERVAL_SECONDS", "300")))
+
+        async def monitor() -> dict[str, Any]:
+            coins, changes = await asyncio.gather(
+                asyncio.to_thread(self.coinglass.supported_futures_coins),
+                asyncio.to_thread(self.coinglass.futures_price_changes),
+            )
+            previous_raw = await self.redis.get(baseline_key)
+            previous = set(json.loads(previous_raw)) if previous_raw else set()
+            current = set(coins)
+            new_coins = sorted(current - previous) if previous else []
+            await self.redis.set(baseline_key, json.dumps(sorted(current)), ex=2_592_000)
+            delivered = 0
+            for symbol in new_coins:
+                if await self._claim_coin_alert(f"new:{symbol}", ttl_seconds=604_800):
+                    await self.telegram.coin_discovery_notification("\n".join((
+                        f"NEW COIN · {symbol}",
+                        "CoinGlass has added this asset to its supported futures universe.",
+                        "Status: discovery only — wait for liquidity, price history, and risk validation before considering a setup.",
+                    )))
+                    delivered += 1
+            movers = []
+            for row in changes:
+                symbol = str(row.get("symbol") or row.get("coin") or "").strip().upper()
+                change = self._price_change_24h(row)
+                if not symbol or change is None or abs(change) < threshold:
+                    continue
+                direction = "up" if change > 0 else "down"
+                if not await self._claim_coin_alert(f"volatility:{symbol}:{direction}", ttl_seconds=86_400):
+                    continue
+                movers.append((symbol, change))
+            for symbol, change in sorted(movers, key=lambda item: abs(item[1]), reverse=True)[:10]:
+                await self.telegram.coin_discovery_notification("\n".join((
+                    f"VOLATILITY PICKUP · {symbol}",
+                    f"24h move: {change:+.2f}% · threshold {threshold:.2f}%",
+                    "Status: watchlist alert — CoinGlass structure, funding, OI, liquidation, and liquidity confirmation required.",
+                )))
+                delivered += 1
+            return {"supported_coins": len(current), "new_coins": len(new_coins), "movers": len(movers), "delivered": delivered}
+
+        job_id = "coinglass-coin-discovery-telegram"
+        await self.application.infrastructure.scheduler.register(JobDefinition(
+            job_id=job_id,
+            name="CoinGlass new coin and volatility Telegram scanner",
+            task=monitor,
+            schedule_type=ScheduleType.INTERVAL,
+            interval=timedelta(seconds=interval_seconds),
+            timeout_seconds=min(max(interval_seconds - 1, 30), 180),
+            retry_policy=RetryPolicy(maximum_attempts=2, delay_seconds=5, maximum_delay_seconds=15),
+            tags=("coinglass", "new-coins", "volatility", "telegram", "read-only"),
+            metadata={"notification_only": True, "execution_enabled": False, "volatility_threshold_percent": threshold},
+        ))
+        self.dependencies["coin_discovery"] = {
+            "status": "ok", "enabled": True, "job": job_id,
+            "poll_interval_seconds": interval_seconds, "volatility_threshold_percent": threshold,
+        }
+        return (job_id,)
+
+    async def _claim_coin_alert(self, identity: str, *, ttl_seconds: int) -> bool:
+        key = f"{self.environment.get('MONATISE_REDIS_NAMESPACE', 'monatise:production-analysis')}:coin-alert:{identity}"
+        return bool(await self.redis.set(key, "1", nx=True, ex=ttl_seconds))
+
+    @staticmethod
+    def _price_change_24h(row: Mapping[str, Any]) -> float | None:
+        for key in ("price_change_percent_24h", "price_change_24h", "change_24h", "price_change_percent"):
+            try:
+                if row.get(key) is not None:
+                    return float(row[key])
+            except (TypeError, ValueError):
+                return None
+        return None
+
     @staticmethod
     def _format_x_macro_post(post: XMacroPost) -> str:
         category = "BTC WHALE-SALE WATCH" if post.category == "btc_whale_sale" else "MACRO WATCH"
@@ -601,6 +683,7 @@ class OrchestrationRuntime:
             scheduled_jobs = await self._register_scheduled_analysis()
             await self._register_hierarchy_shadow(store)
             await self._register_x_macro_monitor()
+            await self._register_coin_discovery_monitor()
             self.leadership = RedisSchedulerLeadership(
                 self.redis, namespace=self.environment.get("MONATISE_REDIS_NAMESPACE", "monatise:production-analysis")
             )
@@ -651,6 +734,7 @@ class OrchestrationRuntime:
                 "telegram": "configured_notification_only" if self.environment.get("MONATISE_TELEGRAM_BOT_TOKEN") and self.environment.get("MONATISE_TELEGRAM_CHAT_ID") else "unavailable_optional",
                 "openclaw": "configured_analysis_only" if self.environment.get("MONATISE_OPENCLAW_TOKEN") else "unavailable_optional",
                 "x_macro": "configured_read_only" if self.x_macro is not None else "unavailable_optional",
+                "coin_discovery": "configured_notification_only",
             }
             self.dependencies["audit_logging"] = {"status": "ok", "enabled": True}
             startup_phase = "audit_integrity"
