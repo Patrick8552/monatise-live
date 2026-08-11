@@ -22,7 +22,10 @@ def test_coinglass_dashboard_handles_current_sentiment_shape_and_liquidity_fallb
     source = (ROOT / "app" / "coinglass-dashboard.js").read_text(encoding="utf-8")
     assert "Array.isArray(payload.data) ? payload.data[0] : payload.data" in source
     assert "return await getHyperliquidBookLiquidity()" in source
+    assert 'const HYPER_BASE = "https://api.hyperliquid.xyz/info"' in source
+    assert "rawTime < 1_000_000_000_000 ? rawTime * 1000 : rawTime" in source
     assert "Number(analysis.stage_total) || 14" in source
+    assert "Production 13-stage pipeline" not in source
 
 
 def test_dashboard_does_not_restore_removed_london_runtime_gate() -> None:

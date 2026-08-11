@@ -1,6 +1,7 @@
 const CG_BASE = "/api/coinglass/proxy";
 const ELEVEN_BASE = "https://api.elevenlabs.io";
 const OPENAI_BASE = "https://api.openai.com";
+const HYPER_BASE = "https://api.hyperliquid.xyz/info";
 const SESSION_KEY = "btc-coinglass-dashboard-session-coinglass-only";
 const API_KEY_STORAGE = "btc-coinglass-api-key";
 const ABLY_KEY_STORAGE = "monatise-ably-api-key";
@@ -358,7 +359,7 @@ refreshXConnection();
 
 function setupDashboardInstall() {
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("./sw.js?v=20260811-dashboard-reliability-v2").catch(() => {});
+    navigator.serviceWorker.register("./sw.js?v=20260811-dashboard-reliability-v3").catch(() => {});
   }
   window.addEventListener("beforeinstallprompt", (event) => {
     event.preventDefault();
@@ -2522,7 +2523,11 @@ async function getFearGreed() {
   const first = Array.isArray(payload.data) ? payload.data[0] : payload.data;
   const values = first?.data_list || [];
   const times = first?.time_list || [];
-  const rows = values.map((value, index) => ({ value: Number(value), time: Number(times[index]) * 1000 })).filter((row) => Number.isFinite(row.value));
+  const rows = values.map((value, index) => {
+    const rawTime = Number(times[index]);
+    const time = rawTime > 0 && rawTime < 1_000_000_000_000 ? rawTime * 1000 : rawTime;
+    return { value: Number(value), time };
+  }).filter((row) => Number.isFinite(row.value) && Number.isFinite(row.time));
   if (!rows.length) throw new Error("CoinGlass returned no fear and greed rows");
   els.fgSource.textContent = "CoinGlass crypto fear and greed history";
   return rows;
@@ -3865,6 +3870,7 @@ function applyProductionDecision(setup) {
 function renderAuthoritativeFramework(setup) {
   if (!setup?.productionClassification) return;
   const ready = Boolean(setup.tradeReady);
+  const stageTotal = Math.max(1, Number(state.productionAnalysis?.stage_total) || 14);
   if (setup.productionClassification === "unavailable") {
     els.setupDirection.textContent = "NO TRADE";
     els.setupDirection.className = "";
@@ -3879,7 +3885,7 @@ function renderAuthoritativeFramework(setup) {
   if (setup.productionClassification === "grid") {
     els.setupDirection.textContent = ready ? "GRID" : "GRID PENDING";
     els.setupDirection.className = "";
-    els.frameworkBias.textContent = `${ready ? "Decision Ready" : "Decision Pending"} · Context strength ${setup.contextConfidence}% · Production 13-stage pipeline`;
+    els.frameworkBias.textContent = `${ready ? "Decision Ready" : "Decision Pending"} · Context strength ${setup.contextConfidence}% · Production ${stageTotal}-stage pipeline`;
     els.setupReason.textContent = setup.frameworkGate.summary;
     els.gridDirection.textContent = setup.gridDirection;
     els.gridPlan.textContent = setup.gridPlan;
@@ -3891,7 +3897,7 @@ function renderAuthoritativeFramework(setup) {
     const side = setup.direction === "BUY SETUP" ? "BUY" : setup.direction === "SELL SETUP" ? "SELL" : "WAIT";
     els.setupDirection.textContent = ready ? side : `${side} PENDING`;
     els.setupDirection.className = ready && side === "BUY" ? "positive" : ready && side === "SELL" ? "negative" : "";
-    els.frameworkBias.textContent = `${ready ? "Decision Ready" : "Decision Pending"} · Context strength ${setup.contextConfidence}% · Production 13-stage pipeline`;
+    els.frameworkBias.textContent = `${ready ? "Decision Ready" : "Decision Pending"} · Context strength ${setup.contextConfidence}% · Production ${stageTotal}-stage pipeline`;
     els.setupReason.textContent = setup.frameworkGate.summary;
   }
 }
