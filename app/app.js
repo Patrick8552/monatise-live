@@ -587,7 +587,7 @@ function setPasswordAutocomplete(isRegister) {
 
 function setupAppInstall() {
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("./sw.js?v=20260811-notification-reliability-v1").catch(() => {});
+    navigator.serviceWorker.register("./sw.js?v=20260811-dashboard-reliability-v2").catch(() => {});
   }
   window.addEventListener("beforeinstallprompt", (event) => {
     event.preventDefault();

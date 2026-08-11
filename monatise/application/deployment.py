@@ -687,7 +687,13 @@ class OrchestrationRuntime:
             startup_phase = "application_composition"
             store = PostgresDocumentStore(self.postgres)
             infrastructure = create_durable_infrastructure(store)
-            self.coinglass = register_coinglass_provider(infrastructure.container, self.environment)
+            self.coinglass = register_coinglass_provider(
+                infrastructure.container,
+                self.environment,
+                timeout_seconds=max(2.0, float(self.environment.get("MONATISE_COINGLASS_TIMEOUT_SECONDS", "8"))),
+                maximum_attempts=max(1, int(self.environment.get("MONATISE_COINGLASS_MAXIMUM_ATTEMPTS", "1"))),
+                cache_ttl_seconds=max(30.0, float(self.environment.get("MONATISE_COINGLASS_CACHE_TTL_SECONDS", "300"))),
+            )
             # Public Backpack endpoints provide an independent candle/price
             # fallback. Empty credentials make this adapter incapable of
             # authenticated account access, while its execution methods remain

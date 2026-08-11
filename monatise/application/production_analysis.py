@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from monatise.application.models import AnalysisRun, PipelineExecutionMetadata
+from monatise.application.registry import PRODUCTION_ENGINE_ORDER
 from monatise.engines.decision.models import DecisionRequest
 from monatise.engines.fibonacci_liquidity.models import FibonacciRequest
 from monatise.engines.intelligence_learning.models import LearningRequest
@@ -294,6 +295,7 @@ def sanitized_result(result: Any) -> dict[str, Any]:
         "blockers": list(getattr(decision, "blockers", ()) or ()),
         "blocked_by": result.blocked_by,
         "completed_stages": result.statistics.completed_stages,
+        "stage_total": len(PRODUCTION_ENGINE_ORDER),
         "risk_validation_invoked": False,
         "allocation_produced": False,
         "execution_policy_produced": False,

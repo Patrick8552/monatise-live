@@ -79,6 +79,7 @@ class ProductionASGI(OrchestrationASGI):
         self._openclaw_cache: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
         self._openclaw_inflight: dict[tuple[str, str], asyncio.Task[dict[str, Any]]] = {}
         self._public_analysis_cache: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
+        self._public_analysis_inflight: dict[tuple[str, str], asyncio.Task[dict[str, Any]]] = {}
         self._quiver_web_cache: dict[str, tuple[float, dict[str, Any]]] = {}
         self._quiver_web_inflight: dict[str, asyncio.Task[dict[str, Any]]] = {}
         self._market_summary_cache: tuple[float, dict[str, Any]] | None = None
@@ -527,13 +528,20 @@ class ProductionASGI(OrchestrationASGI):
         cache_key = (symbol, interval)
         cached = self._public_analysis_cache.get(cache_key)
         now = monotonic()
-        if cached is not None and now - cached[0] < 55:
+        if cached is not None and now - cached[0] < 300:
             return 200, {"ok": True, "source": "monatise-live", "interval": interval, "analysis": cached[1], "cache_hit": True, "execution_enabled": False}
+        task = self._public_analysis_inflight.get(cache_key)
+        if task is None:
+            task = asyncio.create_task(self.runtime.analyse(symbol, interval=interval, source="monatise.web", notify=False))
+            self._public_analysis_inflight[cache_key] = task
         try:
-            analysis = await self.runtime.analyse(symbol, interval=interval, source="monatise.web", notify=False)
+            analysis = await asyncio.shield(task)
         except Exception as exc:
             LOGGER.exception("public analysis failed", extra={"error_type": type(exc).__name__})
             return 503, {"status": "analysis_unavailable", "error_type": type(exc).__name__}
+        finally:
+            if task.done():
+                self._public_analysis_inflight.pop(cache_key, None)
         self._public_analysis_cache[cache_key] = (monotonic(), analysis)
         return 200, {"ok": True, "source": "monatise-live", "interval": interval, "analysis": analysis, "cache_hit": False, "execution_enabled": False}
 
