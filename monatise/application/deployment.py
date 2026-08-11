@@ -527,42 +527,51 @@ class OrchestrationRuntime:
         interval_seconds = max(60, int(self.environment.get("MONATISE_COIN_DISCOVERY_INTERVAL_SECONDS", "300")))
 
         async def monitor() -> dict[str, Any]:
-            coins, changes = await asyncio.gather(
-                asyncio.to_thread(self.coinglass.supported_futures_coins),
-                asyncio.to_thread(self.coinglass.futures_price_changes),
-            )
-            previous_raw = await self.redis.get(baseline_key)
-            previous = set(json.loads(previous_raw)) if previous_raw else set()
-            current = set(coins)
-            new_coins = sorted(current - previous) if previous else []
-            await self.redis.set(baseline_key, json.dumps(sorted(current)), ex=2_592_000)
-            delivered = 0
-            for symbol in new_coins:
-                if await self._claim_coin_alert(f"new:{symbol}", ttl_seconds=604_800):
-                    await self.telegram.coin_discovery_notification("\n".join((
+            started_at = datetime.now(timezone.utc)
+            self.dependencies["coin_discovery"].update({"last_started_at": started_at.isoformat(), "last_error": None})
+            try:
+                coins, changes = await asyncio.gather(
+                    asyncio.to_thread(self.coinglass.supported_futures_coins),
+                    asyncio.to_thread(self.coinglass.futures_price_changes),
+                )
+                previous_raw = await self.redis.get(baseline_key)
+                previous = set(json.loads(previous_raw)) if previous_raw else set()
+                current = set(coins)
+                new_coins = sorted(current - previous) if previous else []
+                delivered = 0
+                for symbol in new_coins:
+                    message = "\n".join((
                         f"NEW COIN · {symbol}",
                         "CoinGlass has added this asset to its supported futures universe.",
                         "Status: discovery only — wait for liquidity, price history, and risk validation before considering a setup.",
-                    )))
-                    delivered += 1
-            movers = []
-            for row in changes:
-                symbol = str(row.get("symbol") or row.get("coin") or "").strip().upper()
-                change = self._price_change_24h(row)
-                if not symbol or change is None or abs(change) < threshold:
-                    continue
-                direction = "up" if change > 0 else "down"
-                if not await self._claim_coin_alert(f"volatility:{symbol}:{direction}", ttl_seconds=86_400):
-                    continue
-                movers.append((symbol, change))
-            for symbol, change in sorted(movers, key=lambda item: abs(item[1]), reverse=True)[:10]:
-                await self.telegram.coin_discovery_notification("\n".join((
-                    f"VOLATILITY PICKUP · {symbol}",
-                    f"24h move: {change:+.2f}% · threshold {threshold:.2f}%",
-                    "Status: watchlist alert — CoinGlass structure, funding, OI, liquidation, and liquidity confirmation required.",
-                )))
-                delivered += 1
-            return {"supported_coins": len(current), "new_coins": len(new_coins), "movers": len(movers), "delivered": delivered}
+                    ))
+                    delivered += int(await self._deliver_coin_alert(f"new:{symbol}", message, ttl_seconds=604_800))
+                await self.redis.set(baseline_key, json.dumps(sorted(current)), ex=2_592_000)
+                movers = []
+                for row in changes:
+                    symbol = str(row.get("symbol") or row.get("coin") or "").strip().upper()
+                    change = self._price_change_24h(row)
+                    if symbol and change is not None and abs(change) >= threshold:
+                        movers.append((symbol, change))
+                selected_movers = sorted(movers, key=lambda item: abs(item[1]), reverse=True)[:10]
+                for symbol, change in selected_movers:
+                    direction = "up" if change > 0 else "down"
+                    message = "\n".join((
+                        f"VOLATILITY PICKUP · {symbol}",
+                        f"24h move: {change:+.2f}% · threshold {threshold:.2f}%",
+                        "Status: watchlist alert — CoinGlass structure, funding, OI, liquidation, and liquidity confirmation required.",
+                    ))
+                    delivered += int(await self._deliver_coin_alert(f"volatility:{symbol}:{direction}", message, ttl_seconds=86_400))
+                result = {"supported_coins": len(current), "new_coins": len(new_coins), "movers": len(selected_movers), "delivered": delivered}
+                self.dependencies["coin_discovery"].update({
+                    "last_success_at": datetime.now(timezone.utc).isoformat(), "last_result": result, "last_error": None,
+                })
+                return result
+            except Exception as exc:
+                self.dependencies["coin_discovery"].update({
+                    "last_failure_at": datetime.now(timezone.utc).isoformat(), "last_error": type(exc).__name__,
+                })
+                raise
 
         job_id = "coinglass-coin-discovery-telegram"
         await self.application.infrastructure.scheduler.register(JobDefinition(
@@ -582,9 +591,17 @@ class OrchestrationRuntime:
         }
         return (job_id,)
 
-    async def _claim_coin_alert(self, identity: str, *, ttl_seconds: int) -> bool:
+    async def _deliver_coin_alert(self, identity: str, message: str, *, ttl_seconds: int) -> bool:
         key = f"{self.environment.get('MONATISE_REDIS_NAMESPACE', 'monatise:production-analysis')}:coin-alert:{identity}"
-        return bool(await self.redis.set(key, "1", nx=True, ex=ttl_seconds))
+        if not await self.redis.set(key, "reserved", nx=True, ex=300):
+            return False
+        try:
+            await self.telegram.coin_discovery_notification(message)
+            await self.redis.set(key, "delivered", ex=ttl_seconds)
+            return True
+        except Exception:
+            await self.redis.delete(key)
+            raise
 
     @staticmethod
     def _price_change_24h(row: Mapping[str, Any]) -> float | None:

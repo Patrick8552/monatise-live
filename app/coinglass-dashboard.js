@@ -358,7 +358,7 @@ refreshXConnection();
 
 function setupDashboardInstall() {
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("./sw.js?v=20260727-brand-v4").catch(() => {});
+    navigator.serviceWorker.register("./sw.js?v=20260811-notification-reliability-v1").catch(() => {});
   }
   window.addEventListener("beforeinstallprompt", (event) => {
     event.preventDefault();
@@ -911,6 +911,10 @@ function publishGeneratedSignal(setup) {
   const candidate = buildGeneratedSignal(setup, price, vwap);
   const signal = snapshotLockedSignal(candidate, setup, price);
   renderGeneratedSignal(signal);
+
+  // A temporary backend refresh failure is a UI availability state, not a
+  // market decision. Never persist or notify it as a generated signal.
+  if (setup.productionUnavailable) return;
 
   const snapshotDurationMs = Number(signal.snapshotDurationMs) || selectedSnapshotLockMs();
   const signature = `${signal.asset}:${signal.action}:${Math.round(signal.entry || 0)}:${signal.score}:${Math.floor(signal.snapshotAtMs / snapshotDurationMs)}`;
@@ -2455,8 +2459,9 @@ async function getLiquidations() {
   const asset = selectedAsset();
   requireCoinGlass(`${asset.coin} liquidation map`);
   const range = els.liqRangeSelect.value;
+  // CoinGlass's aggregated-map endpoint accepts a coin (BTC), not a pair
+  // (BTCUSDT). Sending both caused a guaranteed failed request on every poll.
   const mapUrls = [
-    `${CG_BASE}/api/futures/liquidation/aggregated-map?symbol=${asset.pair}&range=${range}`,
     `${CG_BASE}/api/futures/liquidation/aggregated-map?symbol=${asset.coin}&range=${range}`
   ];
   const painPromise = timedOptionalFetch(
