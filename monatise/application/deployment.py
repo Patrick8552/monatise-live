@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import html
 import inspect
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -106,7 +108,11 @@ class TelegramNotificationTransport:
         token = self._token_provider()
         if not token:
             raise RuntimeError("Telegram credential is unavailable")
-        body = json.dumps({"chat_id": chat_id, "text": text}, separators=(",", ":")).encode()
+        body = json.dumps({
+            "chat_id": chat_id,
+            "text": _bold_telegram_labels(text),
+            "parse_mode": "HTML",
+        }, separators=(",", ":")).encode()
         request = Request(f"https://api.telegram.org/bot{token}/sendMessage", data=body, headers={"content-type": "application/json"}, method="POST")
         try:
             with urlopen(request, timeout=15) as response:  # noqa: S310
@@ -119,6 +125,15 @@ class TelegramNotificationTransport:
                 return message_id
         except Exception as exc:
             raise RuntimeError("Telegram notification delivery failed") from exc
+
+
+_TELEGRAM_LABEL = re.compile(r"(^|\|\s*)([^|:\n]+):(?=\s)", re.MULTILINE)
+
+
+def _bold_telegram_labels(text: str) -> str:
+    """Escape Telegram HTML and bold colon labels without altering values."""
+    escaped = html.escape(text, quote=False)
+    return _TELEGRAM_LABEL.sub(lambda match: f"{match.group(1)}<b>{match.group(2)}</b>:", escaped)
 
 
 @dataclass(frozen=True)

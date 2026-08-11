@@ -62,16 +62,28 @@ def test_lifespan_failure_is_sanitized_and_logged(caplog):
 
 
 def test_telegram_transport_returns_provider_message_id(monkeypatch):
+    captured = {}
+
     class Response:
         status = 200
         def __enter__(self): return self
         def __exit__(self, *args): return None
         def read(self): return b'{"ok":true,"result":{"message_id":321}}'
 
-    monkeypatch.setattr("monatise.application.deployment.urlopen", lambda request, timeout: Response())
+    def open_request(request, timeout):
+        captured.update(json.loads(request.data.decode()))
+        return Response()
+
+    monkeypatch.setattr("monatise.application.deployment.urlopen", open_request)
     transport = TelegramNotificationTransport(lambda: "test-token")
 
-    assert asyncio.run(transport.send_message("chat", "hello")) == 321
+    message = "Status: ready | Run: 42\nDetail: BTC < ETH\nR:R remains unchanged"
+    assert asyncio.run(transport.send_message("chat", message)) == 321
+    assert captured == {
+        "chat_id": "chat",
+        "text": "<b>Status</b>: ready | <b>Run</b>: 42\n<b>Detail</b>: BTC &lt; ETH\nR:R remains unchanged",
+        "parse_mode": "HTML",
+    }
 
 
 @pytest.mark.parametrize(
