@@ -863,6 +863,20 @@ class OrchestrationRuntime:
         if should_notify and notification_policy == "qualified_changes":
             notification_state = await self._telegram_notification_candidate(result, interval)
             should_notify = notification_state is not None and await self._reserve_telegram_notification(result.symbol, interval, notification_state)
+            if notification_state is not None:
+                LOGGER.info(
+                    "Telegram notification transition selected",
+                    extra={
+                        "symbol": result.symbol,
+                        "interval": interval,
+                        "run_id": result.run_id,
+                        "source": source,
+                        "classification": notification_state.get("classification"),
+                        "confirmation_status": notification_state.get("confirmation_status"),
+                        "cancellation_reason": notification_state.get("cancellation_reason"),
+                        "reserved": should_notify,
+                    },
+                )
         if should_notify:
             try:
                 cancellation_reason = (notification_state or {}).get("cancellation_reason")
@@ -917,7 +931,16 @@ class OrchestrationRuntime:
             or (direction == "long" and signed_score >= threshold)
             or (direction == "short" and signed_score <= -threshold)
         )
-        if classification == "no_trade" or score < threshold or not direction_is_qualified:
+        # A confirmed grid must survive ordinary score noise. A single NO_TRADE
+        # recalculation or a one-point score dip is not structural invalidation.
+        # Directional replacements are handled below, while terminal price-action
+        # states remain immediate cancellation events.
+        cancellation_threshold = max(0, threshold - 2)
+        if previous_confirmed_grid and classification == "no_trade":
+            return None
+        if score < threshold or not direction_is_qualified:
+            if previous_confirmed_grid and classification == "grid" and score > cancellation_threshold:
+                return None
             if classification == "no_trade":
                 reason = "analysis changed to NO_TRADE"
             elif score < threshold:
@@ -934,7 +957,13 @@ class OrchestrationRuntime:
         if classification == "grid":
             if confirmation_status == "pending":
                 return None
-            if confirmation_status in terminal_grid_statuses and not previous_confirmed_grid:
+            if confirmation_status in terminal_grid_statuses:
+                if previous_confirmed_grid:
+                    return self._grid_cancellation_candidate(
+                        previous,
+                        previous_confirmed_grid,
+                        f"price-action confirmation became {confirmation_status}",
+                    )
                 return None
             if confirmation_status not in {"confirmed", *terminal_grid_statuses}:
                 return None

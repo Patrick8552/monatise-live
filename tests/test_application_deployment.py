@@ -14,6 +14,7 @@ from monatise.application.registry import CANONICAL_ENGINE_ORDER
 from monatise.application.registry import PRODUCTION_ENGINE_ORDER
 from monatise.application.production_analysis import build_production_analysis_run
 from monatise.infrastructure.dependency_injection import Container
+from monatise.engines.decision.models import DecisionClassification
 
 
 def test_paper_safety_defaults_are_immutable_and_disabled():
@@ -291,7 +292,7 @@ def test_grid_level_drift_does_not_repeat_same_confirmation():
 
 
 @pytest.mark.parametrize("status", ("conflict", "expired", "invalidated"))
-def test_terminal_grid_transition_is_sent_once_after_confirmation(status):
+def test_terminal_grid_transition_cancels_once_after_confirmation(status):
     runtime = OrchestrationRuntime(environment={})
     confirmed = asyncio.run(runtime._telegram_notification_candidate(_grid_result("confirmed"), "15m"))
     assert confirmed is not None
@@ -299,11 +300,13 @@ def test_terminal_grid_transition_is_sent_once_after_confirmation(status):
 
     terminal = asyncio.run(runtime._telegram_notification_candidate(_grid_result(status), "15m"))
     assert terminal is not None
+    assert terminal["confirmation_status"] == "cancelled"
+    assert terminal["cancellation_reason"] == f"price-action confirmation became {status}"
     _record_delivered(runtime, "BTC", "15m", terminal)
     assert asyncio.run(runtime._telegram_notification_candidate(_grid_result(status), "15m")) is None
 
 
-def test_grid_score_drop_cancels_previously_confirmed_entry():
+def test_one_point_grid_score_drop_does_not_cancel_confirmed_entry():
     runtime = OrchestrationRuntime(environment={})
     confirmed = asyncio.run(runtime._telegram_notification_candidate(_grid_result("confirmed"), "15m"))
     assert confirmed is not None
@@ -313,9 +316,33 @@ def test_grid_score_drop_cancels_previously_confirmed_entry():
 
     cancellation = asyncio.run(runtime._telegram_notification_candidate(disqualified, "15m"))
 
+    assert cancellation is None
+
+
+def test_two_point_grid_score_drop_cancels_previously_confirmed_entry():
+    runtime = OrchestrationRuntime(environment={})
+    confirmed = asyncio.run(runtime._telegram_notification_candidate(_grid_result("confirmed"), "15m"))
+    assert confirmed is not None
+    _record_delivered(runtime, "BTC", "15m", confirmed)
+    disqualified = _grid_result("confirmed")
+    disqualified.context.outputs["decision"].metadata["grid_signal_score"] = 5
+
+    cancellation = asyncio.run(runtime._telegram_notification_candidate(disqualified, "15m"))
+
     assert cancellation is not None
     assert cancellation["confirmation_status"] == "cancelled"
-    assert cancellation["cancellation_reason"] == "signal score 6/10 fell below the 7/10 threshold"
+    assert cancellation["cancellation_reason"] == "signal score 5/10 fell below the 7/10 threshold"
+
+
+def test_no_trade_does_not_cancel_previously_confirmed_grid():
+    runtime = OrchestrationRuntime(environment={})
+    confirmed = asyncio.run(runtime._telegram_notification_candidate(_grid_result("confirmed"), "15m"))
+    assert confirmed is not None
+    _record_delivered(runtime, "BTC", "15m", confirmed)
+    disqualified = _grid_result("confirmed")
+    disqualified.context.outputs["decision"].classification = DecisionClassification.NO_TRADE
+
+    assert asyncio.run(runtime._telegram_notification_candidate(disqualified, "15m")) is None
 
 
 def test_expired_directional_setup_is_transitioned_before_new_analysis():
