@@ -91,6 +91,26 @@ class ProductionASGI(OrchestrationASGI):
                 return
             await self._respond(send, 200, {"ok": True, "status": "alive", "execution_enabled": False})
             return
+        if scope.get("type") == "http" and path == "/api/x/status":
+            if scope.get("method", "GET").upper() not in {"GET", "HEAD"}:
+                await self._respond(send, 405, {"status": "method_not_allowed"})
+                return
+            accounts = tuple(dict.fromkeys(
+                item.strip().lstrip("@")
+                for item in self.runtime.environment.get("MONATISE_X_WATCH_ACCOUNTS", "").split(",")
+                if item.strip()
+            ))
+            connect_url = self.runtime.environment.get("MONATISE_X_OAUTH_CONNECT_URL", "").strip()
+            connected = self.runtime.x_macro is not None
+            await self._respond(send, 200, {
+                "connected": connected,
+                "monitoring": connected and self.runtime.dependencies.get("x_macro", {}).get("enabled") is True,
+                "authorization": "read_only",
+                "watch_accounts": list(accounts),
+                "connect_url": connect_url,
+                "execution_enabled": False,
+            })
+            return
         if scope.get("type") == "http" and path == "/api/assets":
             if scope.get("method", "GET").upper() != "GET":
                 await self._respond(send, 405, {"status": "method_not_allowed"})

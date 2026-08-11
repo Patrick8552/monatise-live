@@ -70,6 +70,9 @@ const els = {
   voiceAskButton: document.querySelector("#voiceAskButton"),
   voiceStopButton: document.querySelector("#voiceStopButton"),
   openaiKeyInput: document.querySelector("#openaiKeyInput"),
+  xConnectionStatus: document.querySelector("#xConnectionStatus"),
+  xConnectionDetail: document.querySelector("#xConnectionDetail"),
+  xConnectButton: document.querySelector("#xConnectButton"),
   openaiModelInput: document.querySelector("#openaiModelInput"),
   copilotQuestionInput: document.querySelector("#copilotQuestionInput"),
   copilotAskButton: document.querySelector("#copilotAskButton"),
@@ -324,6 +327,34 @@ function readSession() {
 function saveSession() {
   sessionStorage.setItem(SESSION_KEY, JSON.stringify(state.telemetry.slice(-60)));
 }
+
+async function refreshXConnection() {
+  try {
+    const response = await fetch("/api/x/status", { headers: { accept: "application/json" } });
+    if (!response.ok) throw new Error(`status ${response.status}`);
+    const payload = await response.json();
+    const connected = Boolean(payload.connected);
+    els.xConnectionStatus.textContent = connected ? "Connected · read only" : "Not connected";
+    const accounts = Array.isArray(payload.watch_accounts) ? payload.watch_accounts : [];
+    els.xConnectionDetail.textContent = connected
+      ? `${payload.monitoring ? "Monitoring active" : "Connection ready"}${accounts.length ? ` · ${accounts.map((item) => `@${item}`).join(", ")}` : ""} · Telegram alerts enabled`
+      : "Connect X through the secure server flow. Credentials are never stored in this browser.";
+    els.xConnectButton.textContent = connected ? "Reconnect X account" : "Connect X account";
+    els.xConnectButton.disabled = !payload.connect_url;
+    els.xConnectButton.dataset.connectUrl = payload.connect_url || "";
+  } catch {
+    els.xConnectionStatus.textContent = "Connection unavailable";
+    els.xConnectionDetail.textContent = "The server could not confirm the X connection.";
+    els.xConnectButton.disabled = true;
+  }
+}
+
+els.xConnectButton.addEventListener("click", () => {
+  const url = els.xConnectButton.dataset.connectUrl;
+  if (url) window.location.assign(url);
+});
+
+refreshXConnection();
 
 function setupDashboardInstall() {
   if ("serviceWorker" in navigator) {

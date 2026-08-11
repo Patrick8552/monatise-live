@@ -96,6 +96,26 @@ def test_notification_verification_route_is_not_exposed():
     assert request(ProductionASGI(Runtime()), "/api/notifications/test", {"confirmation": "TEST_NOTIFICATION_ONLY"})[0] == 404
 
 
+def test_x_connection_status_is_visible_without_exposing_credentials():
+    runtime = Runtime()
+    runtime.environment.update({
+        "MONATISE_X_BEARER_TOKEN": "secret-token",
+        "MONATISE_X_WATCH_ACCOUNTS": "whale_alert, federalreserve",
+        "MONATISE_X_OAUTH_CONNECT_URL": "https://openclaw.example/connect/x",
+    })
+    runtime.x_macro = object()
+    runtime.dependencies = {}
+    runtime.dependencies["x_macro"] = {"enabled": True}
+    messages = get(ProductionASGI(runtime), "/api/x/status")
+    code, payload = messages[0]["status"], json.loads(messages[1]["body"])
+    assert code == 200
+    assert payload["connected"] is True
+    assert payload["monitoring"] is True
+    assert payload["watch_accounts"] == ["whale_alert", "federalreserve"]
+    assert payload["connect_url"] == "https://openclaw.example/connect/x"
+    assert "secret-token" not in str(payload)
+
+
 def test_market_dashboard_uses_server_backed_read_only_data_routes():
     app = ProductionASGI(Runtime())
     candles = get(app, "/api/market/candles", query="symbol=BTC&interval=30m&limit=96")

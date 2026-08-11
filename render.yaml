@@ -74,6 +74,16 @@ services:
         sync: false
       - key: MONATISE_OPENCLAW_TOKEN
         sync: false
+      - key: MONATISE_X_BEARER_TOKEN
+        sync: false
+      - key: MONATISE_X_MONITOR_ENABLED
+        value: true
+      - key: MONATISE_X_WATCH_ACCOUNTS
+        sync: false
+      - key: MONATISE_X_OAUTH_CONNECT_URL
+        sync: false
+      - key: MONATISE_X_POLL_INTERVAL_SECONDS
+        value: 300
 
   - type: keyvalue
     name: monatise-live-redis

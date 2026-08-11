@@ -25,6 +25,7 @@ from monatise.application.time_display import format_nigeria_time
 from monatise.application.hierarchy import HierarchyConfiguration, HierarchyLayerEvaluator, HierarchyRepository, Provenance, ShadowHierarchyCoordinator, ShadowHierarchyService
 from monatise.adapters.coinglass_production import CoinGlassProductionAdapter
 from monatise.adapters.backpack import BackpackAdapter, BackpackCredentials
+from monatise.adapters.x_macro import XMacroAdapter, XMacroPost
 from monatise.live.config import RuntimeConfig
 from monatise.infrastructure.audit_database import AuditAction, AuditActor, AuditRecordType
 from monatise.infrastructure.task_scheduler import JobDefinition, RetryPolicy, ScheduleType
@@ -350,6 +351,7 @@ class OrchestrationRuntime:
     coinglass: CoinGlassProductionAdapter | None = None
     backpack: BackpackAdapter | None = None
     telegram: TelegramNotifier | None = None
+    x_macro: XMacroAdapter | None = None
     dependencies: dict[str, dict[str, Any]] = field(default_factory=dict)
     hierarchy: ShadowHierarchyCoordinator | None = None
     hierarchy_service: ShadowHierarchyService | None = None
@@ -468,6 +470,62 @@ class OrchestrationRuntime:
         }
         return tuple(job_ids)
 
+    async def _register_x_macro_monitor(self) -> tuple[str, ...]:
+        if not _true(self.environment.get("MONATISE_X_MONITOR_ENABLED")):
+            self.dependencies["x_macro"] = {"status": "ok", "enabled": False, "read_only": True}
+            return ()
+        if self.application is None or self.x_macro is None or self.telegram is None or self.redis is None:
+            self.dependencies["x_macro"] = {"status": "error", "enabled": True, "read_only": True}
+            raise RuntimeError("X macro monitoring dependencies are unavailable")
+        accounts = tuple(dict.fromkeys(
+            item.strip().lstrip("@") for item in self.environment.get("MONATISE_X_WATCH_ACCOUNTS", "").split(",") if item.strip()
+        ))
+        account_query = " OR ".join(f"from:{account}" for account in accounts)
+        topic_query = '(bitcoin OR BTC OR "Federal Reserve" OR inflation OR CPI OR "bitcoin ETF") -is:retweet'
+        query = f"({account_query}) ({topic_query})" if account_query else topic_query
+        interval_seconds = max(60, int(self.environment.get("MONATISE_X_POLL_INTERVAL_SECONDS", "300")))
+
+        async def monitor() -> dict[str, Any]:
+            posts = await self.x_macro.recent(query)
+            delivered = 0
+            for post in reversed(posts):
+                dedupe_key = f"{self.environment.get('MONATISE_REDIS_NAMESPACE', 'monatise:production-analysis')}:x-post:{post.post_id}"
+                if not await self.redis.set(dedupe_key, "1", nx=True, ex=604_800):
+                    continue
+                await self.telegram.x_macro_notification(self._format_x_macro_post(post))
+                delivered += 1
+            return {"fetched": len(posts), "delivered": delivered, "execution_enabled": False}
+
+        job_id = "x-macro-telegram-monitor"
+        await self.application.infrastructure.scheduler.register(JobDefinition(
+            job_id=job_id,
+            name="Read-only X macro and Bitcoin whale monitor",
+            task=monitor,
+            schedule_type=ScheduleType.INTERVAL,
+            interval=timedelta(seconds=interval_seconds),
+            timeout_seconds=min(max(interval_seconds - 1, 30), 120),
+            retry_policy=RetryPolicy(maximum_attempts=2, delay_seconds=5, maximum_delay_seconds=15),
+            tags=("x", "macro", "bitcoin", "telegram", "read-only"),
+            metadata={"read_only": True, "telegram_publish_enabled": True, "execution_enabled": False},
+        ))
+        self.dependencies["x_macro"] = {
+            "status": "ok", "enabled": True, "read_only": True, "job": job_id,
+            "watch_accounts": len(accounts), "poll_interval_seconds": interval_seconds,
+        }
+        return (job_id,)
+
+    @staticmethod
+    def _format_x_macro_post(post: XMacroPost) -> str:
+        category = "BTC WHALE-SALE WATCH" if post.category == "btc_whale_sale" else "MACRO WATCH"
+        text = post.text if len(post.text) <= 500 else post.text[:497] + "..."
+        return "\n".join((
+            f"{category} · {post.severity.upper()}",
+            text,
+            f"Observed: {format_nigeria_time(post.created_at)}",
+            f"Source: {post.url}",
+            "Status: context only — CoinGlass/price confirmation required before any SELL signal",
+        ))
+
     async def start(self) -> None:
         startup_phase = "configuration"
         LOGGER.info("validating paper-only orchestration configuration")
@@ -535,9 +593,14 @@ class OrchestrationRuntime:
             if telegram_token and telegram_chat:
                 secrets = EnvironmentSecretBoundary(self.environment)
                 self.telegram = TelegramNotifier(TelegramNotificationTransport(lambda: secrets.get("MONATISE_TELEGRAM_BOT_TOKEN")), telegram_chat)
+            x_token = self.environment.get("MONATISE_X_BEARER_TOKEN", "")
+            if x_token:
+                secrets = EnvironmentSecretBoundary(self.environment)
+                self.x_macro = XMacroAdapter(lambda: secrets.get("MONATISE_X_BEARER_TOKEN"))
             startup_phase = "scheduler_registration"
             scheduled_jobs = await self._register_scheduled_analysis()
             await self._register_hierarchy_shadow(store)
+            await self._register_x_macro_monitor()
             self.leadership = RedisSchedulerLeadership(
                 self.redis, namespace=self.environment.get("MONATISE_REDIS_NAMESPACE", "monatise:production-analysis")
             )
@@ -587,6 +650,7 @@ class OrchestrationRuntime:
                 "status": "ok",
                 "telegram": "configured_notification_only" if self.environment.get("MONATISE_TELEGRAM_BOT_TOKEN") and self.environment.get("MONATISE_TELEGRAM_CHAT_ID") else "unavailable_optional",
                 "openclaw": "configured_analysis_only" if self.environment.get("MONATISE_OPENCLAW_TOKEN") else "unavailable_optional",
+                "x_macro": "configured_read_only" if self.x_macro is not None else "unavailable_optional",
             }
             self.dependencies["audit_logging"] = {"status": "ok", "enabled": True}
             startup_phase = "audit_integrity"
