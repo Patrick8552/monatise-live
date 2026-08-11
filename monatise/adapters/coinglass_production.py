@@ -67,6 +67,9 @@ class CoinGlassProductionAdapter:
         "/api/futures/orderbook/large-limit-order": {"exchange", "symbol"},
         "/api/futures/orderbook/v2/large-limit-order-history": {"exchange", "symbol", "start_time", "end_time"},
         "/api/futures/price/history": {"exchange", "symbol", "interval", "limit", "start_time", "end_time"},
+        "/api/futures/supported-coins": set(),
+        "/api/futures/coins-price-change": set(),
+        "/api/futures/avg-true-range/list": set(),
         "/api/futures/top-long-short-account-ratio/history": {"exchange", "symbol", "interval", "limit", "start_time", "end_time"},
         "/api/futures/top-long-short-position-ratio/history": {"exchange", "symbol", "interval", "limit", "start_time", "end_time"},
         "/api/index/fear-greed-history": set(),
@@ -206,6 +209,20 @@ class CoinGlassProductionAdapter:
                 if attempt < self._attempts:
                     time.sleep(min(2.0, 0.2 * 2 ** (attempt - 1)) + random.uniform(0, 0.05))
         raise CoinGlassError("CoinGlass dashboard request failed") from last_error
+
+    def supported_futures_coins(self) -> tuple[str, ...]:
+        payload = self.dashboard_query("/api/futures/supported-coins", {})
+        rows = payload.get("data", [])
+        if not isinstance(rows, list):
+            raise CoinGlassError("CoinGlass supported coins must be a list")
+        return tuple(dict.fromkeys(str(row).strip().upper() for row in rows if str(row).strip()))
+
+    def futures_price_changes(self) -> tuple[dict[str, Any], ...]:
+        payload = self.dashboard_query("/api/futures/coins-price-change", {})
+        rows = payload.get("data", [])
+        if not isinstance(rows, list):
+            raise CoinGlassError("CoinGlass price changes must be a list")
+        return tuple(row for row in rows if isinstance(row, dict))
 
     def derivatives_snapshot(self, symbol: str) -> dict[str, float | None]:
         symbol = self._crypto_symbol(symbol)

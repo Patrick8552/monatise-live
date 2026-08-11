@@ -84,6 +84,12 @@ services:
         sync: false
       - key: MONATISE_X_POLL_INTERVAL_SECONDS
         value: 300
+      - key: MONATISE_COIN_DISCOVERY_ENABLED
+        value: true
+      - key: MONATISE_COIN_DISCOVERY_INTERVAL_SECONDS
+        value: 300
+      - key: MONATISE_VOLATILITY_ALERT_PERCENT
+        value: 15
 
   - type: keyvalue
     name: monatise-live-redis
