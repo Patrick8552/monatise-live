@@ -105,7 +105,7 @@
             <span class="integration-summary-icon" aria-hidden="true">+</span>
             <span class="integration-summary-copy">
               <strong>Integrations &amp; API keys</strong>
-              <small>Click to expand and connect CoinGlass, alerts, voice, and AI</small>
+              <small>Click to expand and connect CoinGlass, X, alerts, voice, and AI</small>
             </span>
             <span class="integration-summary-action" aria-hidden="true">Expand <b>⌄</b></span>
           </summary>
@@ -131,6 +131,14 @@
               <span>OpenAI</span>
               <input id="openaiKeyInput" type="password" autocomplete="off" placeholder="sk-proj..." />
             </label>
+            <section class="x-connection-card" aria-label="X account connection">
+              <div>
+                <span>X account</span>
+                <strong id="xConnectionStatus">Checking connection</strong>
+                <small id="xConnectionDetail">Read-only macro and Bitcoin whale monitoring.</small>
+              </div>
+              <button id="xConnectButton" type="button" class="ghost-button" disabled>Connect X account</button>
+            </section>
           </div>
         </details>
 

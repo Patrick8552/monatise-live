@@ -1585,3 +1585,22 @@ canvas {
   .feedback-launcher { right: 12px; bottom: 12px; }
   .feedback-dialog form { padding: 18px; }
 }
+.x-connection-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+}
+
+.x-connection-card div {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.x-connection-card small {
+  color: var(--muted);
+}
