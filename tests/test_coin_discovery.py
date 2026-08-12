@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from monatise.application.deployment import OrchestrationRuntime
+from monatise.application.workflows import TelegramNotifier
 
 
 def test_price_change_parser_accepts_coinglass_24h_shape():
@@ -33,6 +34,10 @@ class _AlertRedis:
             return False
         self.values[key] = (value, kwargs.get("ex"))
         return True
+
+    async def get(self, key):
+        entry = self.values.get(key)
+        return entry[0] if entry else None
 
     async def delete(self, key):
         self.values.pop(key, None)
@@ -66,3 +71,128 @@ def test_failed_coin_alert_releases_reservation_for_retry():
     with pytest.raises(RuntimeError, match="temporary Telegram failure"):
         asyncio.run(runtime._deliver_coin_alert("new:ABC", "new coin", ttl_seconds=604800))
     assert "test:coin-alert:new:ABC" not in runtime.redis.values
+
+
+def test_analyze_volatile_movers_respects_cap_and_delivers_dynamic_analysis():
+    class Telegram:
+        def __init__(self):
+            self.delivered = []
+
+        async def dynamic_analysis_notification(self, message):
+            self.delivered.append(message)
+
+    class Runtime(OrchestrationRuntime):
+        pass
+
+    runtime = Runtime.__new__(Runtime)
+    runtime.redis = _AlertRedis()
+    runtime.telegram = Telegram()
+    runtime.calls = []
+
+    async def analyse_dynamic_coinglass(symbol, *, interval, source):
+        runtime.calls.append((symbol, interval, source))
+        return {
+            "symbol": symbol, "interval": interval, "classification": "trend", "direction": "long",
+            "provenance": {"instrument": f"{symbol}USDT", "exchange": "Binance", "source": "CoinGlass"},
+            "evidence": {"current_price": 1.23}, "data_quality": {"passed": True, "failures": [], "warnings": []},
+            "entry_zone": {"low": 1.1, "high": 1.2}, "entry_trigger": "confirmed retest",
+            "invalidation": 1.0, "targets": [1.5], "reward_risk": 2.0,
+            "score": 8, "score_threshold": 7, "volatility_assessment": "continuation requires confirmation",
+            "expires_at": "2026-08-13T00:00:00+00:00", "run_id": "run-1",
+        }
+
+    runtime.analyse_dynamic_coinglass = analyse_dynamic_coinglass
+
+    movers = [("PEPE", 42.0), ("WIF", -30.0), ("BONK", 25.0)]
+    analyzed = asyncio.run(runtime._analyze_volatile_movers(movers, True, 2, "1h", 21_600, "test"))
+
+    assert analyzed == 2
+    assert [symbol for symbol, _interval, _source in runtime.calls] == ["PEPE", "WIF"]
+    assert len(runtime.telegram.delivered) == 2
+    assert "Monatise dynamic scan: PEPE LONG (TREND)" in runtime.telegram.delivered[0]
+
+
+def test_analyze_volatile_movers_disabled_by_config():
+    runtime = OrchestrationRuntime.__new__(OrchestrationRuntime)
+    analyzed = asyncio.run(runtime._analyze_volatile_movers([("PEPE", 42.0)], False, 5, "1h", 21_600, "test"))
+    assert analyzed == 0
+
+
+def test_analyze_volatile_movers_releases_cooldown_on_analysis_failure():
+    runtime = OrchestrationRuntime.__new__(OrchestrationRuntime)
+    runtime.redis = _AlertRedis()
+
+    class Telegram:
+        async def dynamic_analysis_notification(self, message):
+            raise AssertionError("should not deliver a failed analysis")
+
+    runtime.telegram = Telegram()
+
+    async def analyse_dynamic_coinglass(symbol, *, interval, source):
+        raise ValueError("CoinGlass does not list SCAM as a supported futures coin")
+
+    runtime.analyse_dynamic_coinglass = analyse_dynamic_coinglass
+
+    analyzed = asyncio.run(runtime._analyze_volatile_movers([("SCAM", 99.0)], True, 5, "1h", 21_600, "test"))
+
+    assert analyzed == 0
+    assert "test:coin-alert:analysis:SCAM" not in runtime.redis.values
+
+
+def test_analyze_volatile_movers_is_cooldown_gated_across_calls():
+    runtime = OrchestrationRuntime.__new__(OrchestrationRuntime)
+    runtime.redis = _AlertRedis()
+
+    class Telegram:
+        def __init__(self):
+            self.delivered = []
+
+        async def dynamic_analysis_notification(self, message):
+            self.delivered.append(message)
+
+    runtime.telegram = Telegram()
+    calls = []
+
+    async def analyse_dynamic_coinglass(symbol, *, interval, source):
+        calls.append(symbol)
+        return {"symbol": symbol, "classification": "no_trade", "data_quality": {"passed": True}}
+
+    runtime.analyse_dynamic_coinglass = analyse_dynamic_coinglass
+
+    asyncio.run(runtime._analyze_volatile_movers([("PEPE", 42.0)], True, 5, "1h", 21_600, "test"))
+    asyncio.run(runtime._analyze_volatile_movers([("PEPE", 45.0)], True, 5, "1h", 21_600, "test"))
+
+    assert calls == ["PEPE"]  # second call is still within the cooldown window
+
+
+def test_format_dynamic_analysis_shows_zone_targets_and_never_an_entry_field():
+    message = TelegramNotifier.format_dynamic_analysis({
+        "symbol": "PEPE", "interval": "1h", "classification": "trend", "direction": "long",
+        "provenance": {"instrument": "PEPEUSDT", "exchange": "Binance", "source": "CoinGlass"},
+        "evidence": {"current_price": 0.00001234},
+        "data_quality": {"passed": True, "failures": [], "warnings": []},
+        "entry_zone": {"low": 0.0000121, "high": 0.0000125}, "entry_trigger": "confirmed retest",
+        "invalidation": 0.0000119, "targets": [0.0000140], "reward_risk": 2.1,
+        "score": 8, "score_threshold": 7, "volatility_assessment": "note",
+        "expires_at": "2026-08-13T00:00:00+00:00", "run_id": "run-1",
+    })
+
+    assert "Monatise dynamic scan: PEPE LONG (TREND)" in message
+    assert "Resolved market: PEPEUSDT on Binance" in message
+    assert "Entry zone:" in message
+    assert "trigger required, not an automatic entry" in message
+    assert '"entry"' not in message
+    assert "Run: run-1" in message
+
+
+def test_format_dynamic_analysis_shows_quality_failures_for_no_trade():
+    message = TelegramNotifier.format_dynamic_analysis({
+        "symbol": "SCAM", "interval": "1h", "classification": "no_trade", "direction": "none",
+        "provenance": {}, "evidence": {},
+        "data_quality": {"passed": False, "failures": ["insufficient candle history: 20/120"], "warnings": []},
+        "score": 1, "score_threshold": 7, "run_id": "run-2",
+    })
+
+    assert "Monatise dynamic scan: SCAM NONE (NO_TRADE)" in message
+    assert "Status: NO_TRADE — quality gate failed" in message
+    assert "insufficient candle history" in message

@@ -541,6 +541,10 @@ class OrchestrationRuntime:
         baseline_key = f"{namespace}:coinglass:supported-coins"
         threshold = max(1.0, float(self.environment.get("MONATISE_VOLATILITY_ALERT_PERCENT", "15")))
         interval_seconds = max(60, int(self.environment.get("MONATISE_COIN_DISCOVERY_INTERVAL_SECONDS", "300")))
+        analysis_enabled = _true(self.environment.get("MONATISE_COIN_DISCOVERY_ANALYSIS_ENABLED", "true"))
+        analysis_cap = max(0, int(self.environment.get("MONATISE_COIN_DISCOVERY_ANALYSIS_CAP", "5")))
+        analysis_interval = self.environment.get("MONATISE_COIN_DISCOVERY_ANALYSIS_INTERVAL", "1h")
+        analysis_cooldown_seconds = max(300, int(self.environment.get("MONATISE_COIN_DISCOVERY_ANALYSIS_COOLDOWN_SECONDS", "21600")))
 
         async def monitor() -> dict[str, Any]:
             started_at = datetime.now(timezone.utc)
@@ -578,7 +582,12 @@ class OrchestrationRuntime:
                         "Status: watchlist alert — CoinGlass structure, funding, OI, liquidation, and liquidity confirmation required.",
                     ))
                     delivered += int(await self._deliver_coin_alert(f"volatility:{symbol}:{direction}", message, ttl_seconds=86_400))
-                result = {"supported_coins": len(current), "new_coins": len(new_coins), "movers": len(selected_movers), "delivered": delivered}
+
+                analyzed = await self._analyze_volatile_movers(selected_movers, analysis_enabled, analysis_cap, analysis_interval, analysis_cooldown_seconds, namespace)
+                result = {
+                    "supported_coins": len(current), "new_coins": len(new_coins), "movers": len(selected_movers),
+                    "delivered": delivered, "extended_universe_analyzed": analyzed,
+                }
                 self.dependencies["coin_discovery"].update({
                     "last_success_at": datetime.now(timezone.utc).isoformat(), "last_result": result, "last_error": None,
                 })
@@ -604,8 +613,65 @@ class OrchestrationRuntime:
         self.dependencies["coin_discovery"] = {
             "status": "ok", "enabled": True, "job": job_id,
             "poll_interval_seconds": interval_seconds, "volatility_threshold_percent": threshold,
+            "extended_universe_analysis_enabled": analysis_enabled,
+            "extended_universe_analysis_cap": analysis_cap,
+            "extended_universe_analysis_interval": analysis_interval,
+            "extended_universe_analysis_cooldown_seconds": analysis_cooldown_seconds,
         }
         return (job_id,)
+
+    async def _analyze_volatile_movers(
+        self,
+        selected_movers: list[tuple[str, float]],
+        analysis_enabled: bool,
+        analysis_cap: int,
+        analysis_interval: str,
+        analysis_cooldown_seconds: int,
+        namespace: str,
+    ) -> int:
+        """Run verified dynamic analysis (resolve_futures_asset + full engine chain)
+        on the strongest movers and deliver the result, instead of leaving the
+        watchlist alert as the only signal. Capped and cooldown-gated per symbol
+        so a persistently volatile coin is re-analyzed a few times a day, not on
+        every 5-minute scan and not only once."""
+        if not (analysis_enabled and analysis_cap > 0 and selected_movers):
+            return 0
+
+        claimed: list[str] = []
+        for symbol, _change in selected_movers[:analysis_cap]:
+            cooldown_key = f"{namespace}:coin-alert:analysis:{symbol}"
+            if await self.redis.set(cooldown_key, "reserved", nx=True, ex=analysis_cooldown_seconds):
+                claimed.append(symbol)
+        if not claimed:
+            return 0
+
+        outcomes = await asyncio.gather(
+            *(
+                self.analyse_dynamic_coinglass(symbol, interval=analysis_interval, source="monatise.coin_discovery")
+                for symbol in claimed
+            ),
+            return_exceptions=True,
+        )
+        analyzed = 0
+        for symbol, outcome in zip(claimed, outcomes):
+            if isinstance(outcome, Exception):
+                LOGGER.warning(
+                    "Extended-universe volatility analysis failed",
+                    extra={"symbol": symbol, "error_type": type(outcome).__name__},
+                )
+                await self.redis.delete(f"{namespace}:coin-alert:analysis:{symbol}")
+                continue
+            try:
+                message = TelegramNotifier.format_dynamic_analysis(outcome)
+                await self.telegram.dynamic_analysis_notification(message)
+            except Exception as exc:
+                LOGGER.warning(
+                    "Dynamic analysis delivery failed",
+                    extra={"symbol": symbol, "error_type": type(exc).__name__},
+                )
+                continue
+            analyzed += 1
+        return analyzed
 
     async def _deliver_coin_alert(self, identity: str, message: str, *, ttl_seconds: int) -> bool:
         key = f"{self.environment.get('MONATISE_REDIS_NAMESPACE', 'monatise:production-analysis')}:coin-alert:{identity}"

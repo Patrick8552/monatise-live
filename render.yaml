@@ -90,6 +90,14 @@ services:
         value: 300
       - key: MONATISE_VOLATILITY_ALERT_PERCENT
         value: 15
+      - key: MONATISE_COIN_DISCOVERY_ANALYSIS_ENABLED
+        value: true
+      - key: MONATISE_COIN_DISCOVERY_ANALYSIS_CAP
+        value: 5
+      - key: MONATISE_COIN_DISCOVERY_ANALYSIS_INTERVAL
+        value: 1h
+      - key: MONATISE_COIN_DISCOVERY_ANALYSIS_COOLDOWN_SECONDS
+        value: 21600
 
   - type: keyvalue
     name: monatise-live-redis

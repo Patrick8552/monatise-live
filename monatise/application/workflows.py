@@ -99,6 +99,11 @@ class TelegramNotifier:
             raise ValueError("notification message is required")
         return await self._transport.send_message(self._chat_id, f"Monatise COINGLASS SCANNER\n{message}")
 
+    async def dynamic_analysis_notification(self, message: str) -> Any:
+        if not message.strip():
+            raise ValueError("notification message is required")
+        return await self._transport.send_message(self._chat_id, f"Monatise DYNAMIC ANALYSIS\n{message}")
+
     async def _alert(self, category: str, message: str) -> Any:
         if not message.strip():
             raise ValueError("notification message is required")
@@ -228,6 +233,70 @@ class TelegramNotifier:
         if reasons:
             lines.append("Why: " + "; ".join(str(reason) for reason in reasons))
         lines.append(f"Run: {result.run_id}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def format_dynamic_analysis(analysis: dict[str, Any]) -> str:
+        """Format the sanitized+finalized dict from analyse_dynamic_coinglass.
+
+        Distinct dict shape from `format(PipelineResult)` — dynamic analysis
+        adds entry_zone/targets/data_quality/provenance/volatility_assessment
+        fields that a raw PipelineResult does not carry.
+        """
+        symbol = analysis.get("symbol", "UNKNOWN")
+        classification = str(analysis.get("classification") or "no_trade").upper()
+        direction = str(analysis.get("direction") or "none").upper()
+        provenance = analysis.get("provenance") or {}
+        quality = analysis.get("data_quality") or {}
+        evidence = analysis.get("evidence") or {}
+        interval = analysis.get("interval", "unknown")
+
+        lines = [
+            f"Monatise dynamic scan: {symbol} {direction} ({classification})",
+            f"Timeframe: {interval}",
+        ]
+        instrument = provenance.get("instrument")
+        exchange = provenance.get("exchange")
+        if instrument and exchange:
+            lines.append(f"Resolved market: {instrument} on {exchange} (verified via {provenance.get('source', 'CoinGlass')})")
+        price = evidence.get("current_price")
+        if price is not None:
+            lines.append(f"Current price: {_price(price)}")
+
+        if not quality.get("passed", True):
+            lines.append("Status: NO_TRADE — quality gate failed")
+            failures = tuple(quality.get("failures") or ())[:3]
+            if failures:
+                lines.append("Why: " + "; ".join(str(item) for item in failures))
+        else:
+            zone = analysis.get("entry_zone")
+            if zone:
+                lines.append(f"Entry zone: {_price(zone.get('low'))} — {_price(zone.get('high'))} (trigger required, not an automatic entry)")
+                lines.append(f"Trigger: {analysis.get('entry_trigger', 'confirmation required')}")
+            if analysis.get("invalidation") is not None:
+                lines.append(f"Invalidation: {_price(analysis['invalidation'])}")
+            targets = analysis.get("targets") or []
+            if targets:
+                lines.append("Targets: " + " | ".join(_price(item) for item in targets))
+            if analysis.get("reward_risk") is not None:
+                lines.append(f"Reward:risk: {analysis['reward_risk']:.2f}")
+
+        score = analysis.get("score")
+        if score is not None:
+            lines.append(f"Score: {score:+d}/10 | trade threshold: ±{analysis.get('score_threshold', 7)}")
+
+        warnings = tuple(quality.get("warnings") or ())[:3]
+        if warnings:
+            lines.append("Warnings: " + "; ".join(str(item) for item in warnings))
+
+        assessment = analysis.get("volatility_assessment")
+        if assessment:
+            lines.append(f"Note: {assessment}")
+
+        if analysis.get("expires_at"):
+            lines.append(f"Expires: {analysis['expires_at']}")
+
+        lines.append(f"Run: {analysis.get('run_id', 'n/a')}")
         return "\n".join(lines)
 
     @property
