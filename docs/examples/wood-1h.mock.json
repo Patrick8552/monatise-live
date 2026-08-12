@@ -1,0 +1,30 @@
+{
+  "symbol": "WOOD",
+  "interval": "1h",
+  "classification": "no_trade",
+  "direction": "none",
+  "entry": null,
+  "entry_zone": null,
+  "entry_trigger": null,
+  "invalidation": null,
+  "targets": [],
+  "reward_risk": null,
+  "expires_at": "2030-01-01T04:00:00+00:00",
+  "provenance": {
+    "base_asset": "WOOD",
+    "instrument": "WOODUSDT",
+    "exchange": "Bybit",
+    "quote_asset": "USDT",
+    "source": "CoinGlass futures supported-coins + supported-exchange-pairs + pairs-markets",
+    "supported_coins_observed_at": "2030-01-01T00:00:00+00:00",
+    "market_observed_at": "2030-01-01T00:00:01+00:00"
+  },
+  "data_quality": {
+    "passed": false,
+    "failures": ["entry confirmation is not complete; require retracement/reclaim or breakout-and-retest"],
+    "warnings": ["optional derivatives dataset unavailable: order_book_imbalance"]
+  },
+  "position_size": null,
+  "leverage": null,
+  "execution_enabled": false
+}

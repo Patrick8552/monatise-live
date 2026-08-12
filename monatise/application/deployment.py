@@ -20,6 +20,7 @@ from urllib.request import Request, urlopen
 
 from monatise.application.composition import create_application, create_durable_infrastructure
 from monatise.application.production_analysis import build_directional_plan, build_production_analysis_run, build_setup_validity, sanitized_result, strongest_confirmation_signal
+from monatise.application.dynamic_analysis import finalize_dynamic_analysis
 from monatise.application.persistence import PostgresDocumentStore
 from monatise.application.workflows import TelegramNotifier
 from monatise.application.registry import PRODUCTION_ENGINE_ORDER
@@ -904,6 +905,16 @@ class OrchestrationRuntime:
                 )
                 LOGGER.warning("Telegram notification delivery failed", extra={"error_type": type(exc).__name__, "run_id": result.run_id})
         return sanitized_result(result)
+
+    async def analyse_dynamic_coinglass(self, symbol: str, *, interval: str = "1h", source: str = "monatise.openclaw.dynamic") -> dict[str, Any]:
+        """Resolve and analyze one CoinGlass futures asset without notifications or execution."""
+        if self.application is None or self.coinglass is None:
+            raise RuntimeError("dynamic CoinGlass analysis is unavailable")
+        asset = await asyncio.to_thread(self.coinglass.resolve_futures_asset, symbol)
+        result = await self.application.orchestrator.run(
+            build_production_analysis_run(asset.base_asset, interval=interval, source=source, verified_dynamic=True)
+        )
+        return finalize_dynamic_analysis(sanitized_result(result), result, asset)
 
     async def _telegram_notification_candidate(self, result: Any, interval: str) -> dict[str, Any] | None:
         outputs = result.context.outputs

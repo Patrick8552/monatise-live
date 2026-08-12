@@ -153,10 +153,12 @@ def build_directional_plan(price: float | None, direction: str | None) -> dict[s
     return {"entry": round(entry, 8), "invalidation": round(invalidation, 8), "target": round(target, 8)}
 
 
-def build_production_analysis_run(symbol: str, *, interval: str = "1h", correlation_id: str | None = None, source: str = "monatise.production") -> AnalysisRun:
+def build_production_analysis_run(symbol: str, *, interval: str = "1h", correlation_id: str | None = None, source: str = "monatise.production", verified_dynamic: bool = False) -> AnalysisRun:
     normalized = symbol.strip().upper()
-    if normalized not in SUPPORTED_PRODUCTION_SYMBOLS:
+    if normalized not in SUPPORTED_PRODUCTION_SYMBOLS and not verified_dynamic:
         raise ValueError("supported production symbols are BTC, ETH, and SOL")
+    if verified_dynamic and (not normalized.isalnum() or not 2 <= len(normalized) <= 20):
+        raise ValueError("invalid verified dynamic crypto symbol")
     interval = interval.strip()
     if interval not in SUPPORTED_PRODUCTION_INTERVALS:
         raise ValueError("unsupported production analysis interval")
@@ -203,7 +205,7 @@ def build_production_analysis_run(symbol: str, *, interval: str = "1h", correlat
         )
 
     inputs = {
-        "market_data": MarketDataRequest(normalized, interval=interval, candle_limit=200, max_age_seconds=maximum_age_seconds),
+        "market_data": MarketDataRequest(normalized, interval=interval, candle_limit=240, max_age_seconds=maximum_age_seconds),
         "regime": lambda c: RegimeRequest(output(c, "market_data")),
         "liquidity": lambda c: LiquidityRequest(output(c, "market_data"), output(c, "regime")),
         "liquidity_sweep": lambda c: SweepRequest(output(c, "market_data"), output(c, "liquidity"), output(c, "regime")),

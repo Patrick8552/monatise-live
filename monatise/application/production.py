@@ -487,14 +487,16 @@ class ProductionASGI(OrchestrationASGI):
         symbol = str(query.get("symbol", [self.runtime.environment.get("MONATISE_SYMBOL", "BTC")])[0]).strip().upper()
         interval = str(query.get("interval", ["1h"])[0]).strip() or "1h"
         stock_symbols = {"AAPL", "TSLA", "NVDA", "QQQ", "SPY"}
-        if symbol not in {"BTC", "ETH", "SOL", *stock_symbols} or interval not in self.MARKET_INTERVALS:
-            return 400, {"status": "invalid_request", "reason": "unsupported symbol or interval"}
+        if interval not in self.MARKET_INTERVALS:
+            return 400, {"status": "invalid_request", "reason": "unsupported interval"}
         cache_key = (symbol, interval)
         try:
             if symbol in stock_symbols:
                 analysis, cache_hit = await self._cached_openclaw_stock_analysis(cache_key)
-            else:
+            elif symbol in {"BTC", "ETH", "SOL"}:
                 analysis, cache_hit = await self._cached_openclaw_analysis(cache_key)
+            else:
+                analysis, cache_hit = await self._cached_openclaw_dynamic_analysis(cache_key)
         except (TypeError, ValueError) as exc:
             return 400, {"status": "invalid_request", "reason": str(exc)}
         except Exception as exc:
@@ -518,6 +520,24 @@ class ProductionASGI(OrchestrationASGI):
                 "deploymentWrites": False,
             },
         }
+
+    async def _cached_openclaw_dynamic_analysis(self, cache_key: tuple[str, str]) -> tuple[dict[str, Any], bool]:
+        cached = self._openclaw_cache.get(cache_key)
+        now = monotonic()
+        if cached is not None and now - cached[0] < 300:
+            return cached[1], True
+        task = self._openclaw_inflight.get(cache_key)
+        joined_existing = task is not None
+        if task is None:
+            task = asyncio.create_task(self.runtime.analyse_dynamic_coinglass(cache_key[0], interval=cache_key[1]))
+            self._openclaw_inflight[cache_key] = task
+        try:
+            analysis = await asyncio.shield(task)
+        finally:
+            if task.done() and self._openclaw_inflight.get(cache_key) is task:
+                self._openclaw_inflight.pop(cache_key, None)
+        self._openclaw_cache[cache_key] = (monotonic(), analysis)
+        return analysis, joined_existing
 
     async def _public_analysis_status(self, scope: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         query = parse_qs(scope.get("query_string", b"").decode())

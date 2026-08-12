@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import random
+import re
 import threading
 import time
 from copy import deepcopy
@@ -26,6 +27,28 @@ class CoinGlassHealth:
     last_success_at: float | None
     consecutive_failures: int
     cache_entries: int
+
+
+@dataclass(frozen=True)
+class CoinGlassFuturesAsset:
+    base_asset: str
+    instrument: str
+    exchange: str
+    quote_asset: str
+    source: str
+    supported_coins_observed_at: str
+    market_observed_at: str
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "base_asset": self.base_asset,
+            "instrument": self.instrument,
+            "exchange": self.exchange,
+            "quote_asset": self.quote_asset,
+            "source": self.source,
+            "supported_coins_observed_at": self.supported_coins_observed_at,
+            "market_observed_at": self.market_observed_at,
+        }
 
 
 class CoinGlassProductionAdapter:
@@ -68,6 +91,7 @@ class CoinGlassProductionAdapter:
         "/api/futures/orderbook/v2/large-limit-order-history": {"exchange", "symbol", "start_time", "end_time"},
         "/api/futures/price/history": {"exchange", "symbol", "interval", "limit", "start_time", "end_time"},
         "/api/futures/supported-coins": set(),
+        "/api/futures/supported-exchange-pairs": {"exchange"},
         "/api/futures/coins-price-change": set(),
         "/api/futures/avg-true-range/list": set(),
         "/api/futures/top-long-short-account-ratio/history": {"exchange", "symbol", "interval", "limit", "start_time", "end_time"},
@@ -94,6 +118,60 @@ class CoinGlassProductionAdapter:
         # enrichment dataset. Some CoinGlass plans legitimately omit order-book
         # or CVD history while price candles remain fully operational.
         self._critical_failures = 0
+        self._resolved_assets: dict[str, CoinGlassFuturesAsset] = {}
+
+    def resolve_futures_asset(self, value: str) -> CoinGlassFuturesAsset:
+        """Resolve a user ticker to a verified CoinGlass futures market."""
+        base, requested_pair = self._requested_crypto_asset(value)
+        observed_at = self._utc_timestamp()
+        supported = set(self.supported_futures_coins())
+        if base not in supported:
+            raise ValueError(f"CoinGlass does not list {base} as a supported futures coin")
+        instruments = self.supported_exchange_pairs()
+        verified = {
+            (exchange.casefold(), instrument.upper()): (row_base, quote)
+            for exchange, instrument, row_base, quote in instruments
+            if row_base == base
+        }
+        rows = self._fetch("pairs_markets", base)
+        if not isinstance(rows, list):
+            raise CoinGlassError("CoinGlass pairs markets data must be a list")
+        candidates: list[tuple[float, str, str, str]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            instrument = str(row.get("instrument_id") or row.get("symbol") or "").strip().upper()
+            exchange = str(row.get("exchange_name") or row.get("exchange") or "").strip()
+            row_base = str(row.get("base_asset") or base).strip().upper()
+            quote = str(row.get("quote_asset") or "").strip().upper()
+            if not quote and instrument.startswith(base):
+                quote = instrument[len(base):].removesuffix("PERP").strip("-_/")
+            authoritative = verified.get((exchange.casefold(), instrument))
+            if authoritative is None or authoritative != (row_base, quote):
+                continue
+            if row_base != base or not instrument or not exchange or quote not in {"USDT", "USDC", "USD"}:
+                continue
+            if requested_pair and instrument.replace("-", "").replace("_", "").replace("/", "") != requested_pair:
+                continue
+            price = self._safe_positive(row.get("current_price"))
+            if price is None:
+                continue
+            activity = self._safe_positive(row.get("volume_usd") or row.get("volume_24h_usd") or row.get("turnover_24h")) or 0.0
+            candidates.append((activity, exchange, instrument, quote))
+        if not candidates:
+            raise ValueError(f"CoinGlass returned no usable futures market for {value.strip().upper()}")
+        candidates.sort(key=lambda item: (-item[0], item[1].casefold(), item[2]))
+        if len(candidates) > 1 and candidates[0][0] == candidates[1][0] == 0 and (candidates[0][2], candidates[0][3]) != (candidates[1][2], candidates[1][3]):
+            raise ValueError(f"ambiguous CoinGlass futures symbol: {value.strip().upper()}")
+        _, exchange, instrument, quote = candidates[0]
+        resolved = CoinGlassFuturesAsset(base, instrument, exchange, quote, "CoinGlass futures supported-coins + supported-exchange-pairs + pairs-markets", observed_at, self._utc_timestamp())
+        with self._lock:
+            self._resolved_assets[base] = resolved
+        return resolved
+
+    def _resolved(self, symbol: str) -> CoinGlassFuturesAsset | None:
+        with self._lock:
+            return self._resolved_assets.get(self._crypto_symbol(symbol))
 
     def open_interest(self, symbol: str) -> Any:
         return self._fetch("open_interest", symbol)
@@ -109,27 +187,30 @@ class CoinGlassProductionAdapter:
         rows = self._fetch("pairs_markets", coin)
         if not isinstance(rows, list):
             raise CoinGlassError("CoinGlass pairs markets data must be a list")
-        expected_pair = self.PAIRS.get(coin, f"{coin}USDT")
+        resolved = self._resolved(coin)
+        expected_pair = resolved.instrument if resolved else self.PAIRS.get(coin, f"{coin}USDT")
+        expected_exchange = resolved.exchange.casefold() if resolved else "binance"
         for row in rows:
             if not isinstance(row, dict):
                 continue
             exchange = str(row.get("exchange_name", "")).casefold()
             instrument = str(row.get("instrument_id", "")).upper()
-            if exchange == "binance" and instrument == expected_pair:
+            if exchange == expected_exchange and instrument == expected_pair:
                 try:
                     return float(row["current_price"])
                 except (KeyError, TypeError, ValueError) as exc:
                     raise CoinGlassError("CoinGlass returned an invalid current price") from exc
-        raise CoinGlassError(f"CoinGlass returned no Binance current price for {expected_pair}")
+        raise CoinGlassError(f"CoinGlass returned no {expected_exchange} current price for {expected_pair}")
 
     def candles(self, symbol: str, limit: int, interval: str = "1h") -> list[Candle]:
         coin = self._crypto_symbol(symbol)
+        resolved = self._resolved(coin)
         data = self._fetch(
             "price_history",
             coin,
             params={
-                "exchange": "Binance",
-                "symbol": self.PAIRS.get(coin, f"{coin}USDT"),
+                "exchange": resolved.exchange if resolved else "Binance",
+                "symbol": resolved.instrument if resolved else self.PAIRS.get(coin, f"{coin}USDT"),
                 "interval": interval,
                 "limit": str(max(2, min(1000, int(limit)))),
             },
@@ -217,6 +298,26 @@ class CoinGlassProductionAdapter:
             raise CoinGlassError("CoinGlass supported coins must be a list")
         return tuple(dict.fromkeys(str(row).strip().upper() for row in rows if str(row).strip()))
 
+    def supported_exchange_pairs(self) -> tuple[tuple[str, str, str, str], ...]:
+        """Return authoritative (exchange, instrument, base, quote) futures tuples."""
+        payload = self.dashboard_query("/api/futures/supported-exchange-pairs", {})
+        data = payload.get("data", {})
+        if not isinstance(data, dict):
+            raise CoinGlassError("CoinGlass supported exchange pairs must be an object")
+        result: list[tuple[str, str, str, str]] = []
+        for exchange, rows in data.items():
+            if not isinstance(rows, list):
+                continue
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                instrument = str(row.get("instrument_id") or "").strip().upper()
+                base = str(row.get("base_asset") or "").strip().upper()
+                quote = str(row.get("quote_asset") or "").strip().upper()
+                if exchange and instrument and base and quote:
+                    result.append((str(exchange).strip(), instrument, base, quote))
+        return tuple(result)
+
     def futures_price_changes(self) -> tuple[dict[str, Any], ...]:
         payload = self.dashboard_query("/api/futures/coins-price-change", {})
         rows = payload.get("data", [])
@@ -236,6 +337,40 @@ class CoinGlassProductionAdapter:
             "order_book_imbalance": self._order_book_imbalance(order_book),
             "cvd": self._extract_number(self.cvd(symbol), ("cum_vol_delta", "cvd", "value")),
         }
+
+    @staticmethod
+    def _utc_timestamp() -> str:
+        from datetime import datetime, timezone
+        return datetime.now(timezone.utc).isoformat()
+
+    @staticmethod
+    def _safe_positive(value: Any) -> float | None:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        return number if number > 0 else None
+
+    @staticmethod
+    def _requested_crypto_asset(value: str) -> tuple[str, str | None]:
+        if not isinstance(value, str):
+            raise ValueError("crypto symbol must be a string")
+        raw = value.strip().upper()
+        if not raw or len(raw) > 32 or not re.fullmatch(r"[A-Z0-9]+(?:[-_/][A-Z0-9]+)?", raw):
+            raise ValueError("malformed crypto ticker or pair")
+        compact = raw.replace("-", "").replace("_", "").replace("/", "")
+        fiat = {"USD", "EUR", "GBP", "JPY", "CHF", "CAD", "AUD", "NZD"}
+        if len(compact) == 6 and compact[:3] in fiat and compact[3:] in fiat:
+            raise ValueError("forex markets are not supported")
+        for quote in ("USDT", "USDC", "USD"):
+            if compact.endswith(quote) and len(compact) > len(quote):
+                base = compact[:-len(quote)]
+                if base in fiat:
+                    raise ValueError("forex markets are not supported")
+                return base, compact
+        if compact in fiat or not re.fullmatch(r"[A-Z0-9]{2,20}", compact):
+            raise ValueError("unsupported crypto ticker")
+        return compact, None
 
     def health(self) -> CoinGlassHealth:
         with self._lock:
@@ -280,7 +415,9 @@ class CoinGlassProductionAdapter:
         raise CoinGlassError(f"CoinGlass {dataset} request failed") from last_error
 
     def _dataset_params(self, dataset: str, coin: str) -> dict[str, str]:
-        pair = self.PAIRS.get(coin, f"{coin}USDT")
+        resolved = self._resolved(coin)
+        pair = resolved.instrument if resolved else self.PAIRS.get(coin, f"{coin}USDT")
+        exchange = resolved.exchange if resolved else "Binance"
         if dataset == "pairs_markets":
             return {"symbol": coin}
         if dataset == "open_interest":
@@ -289,17 +426,17 @@ class CoinGlassProductionAdapter:
             return {"symbol": coin, "interval": "1h", "limit": "2"}
         if dataset == "liquidations":
             return {
-                "exchange_list": "Binance",
+                "exchange_list": exchange,
                 "symbol": coin,
                 "interval": "1h",
                 "limit": "2",
             }
         if dataset in {"volume", "cvd"}:
-            return {"exchange_list": "Binance", "symbol": coin, "interval": "1h", "limit": "2"}
+            return {"exchange_list": exchange, "symbol": coin, "interval": "1h", "limit": "2"}
         if dataset == "order_book":
-            return {"exchange_list": "Binance", "symbol": coin, "interval": "1h", "limit": "2", "range": "1"}
+            return {"exchange_list": exchange, "symbol": coin, "interval": "1h", "limit": "2", "range": "1"}
         if dataset == "price_history":
-            return {"exchange": "Binance", "symbol": pair, "interval": "1h", "limit": "2"}
+            return {"exchange": exchange, "symbol": pair, "interval": "1h", "limit": "2"}
         raise CoinGlassError("unsupported CoinGlass dataset")
 
     def _http_get(self, path: str, params: dict[str, str], timeout: float) -> dict[str, Any]:

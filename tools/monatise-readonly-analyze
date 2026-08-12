@@ -1,0 +1,33 @@
+#!/usr/bin/env python3
+"""Call Monatise's authenticated, read-only OpenClaw analysis endpoint."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Read-only CoinGlass futures analysis")
+    parser.add_argument("symbol")
+    parser.add_argument("interval")
+    parser.add_argument("--url", default=os.environ.get("MONATISE_READONLY_URL", "http://127.0.0.1:4174"))
+    args = parser.parse_args()
+    token = os.environ.get("MONATISE_OPENCLAW_TOKEN", "").strip()
+    if not token:
+        print(json.dumps({"status": "unavailable", "reason": "MONATISE_OPENCLAW_TOKEN is not available to the process"}), file=sys.stderr)
+        return 2
+    url = args.url.rstrip("/") + "/api/openclaw/status?" + urlencode({"symbol": args.symbol, "interval": args.interval})
+    request = Request(url, headers={"Authorization": f"Bearer {token}", "Accept": "application/json"}, method="GET")
+    with urlopen(request, timeout=30) as response:  # noqa: S310
+        payload = json.loads(response.read().decode("utf-8"))
+    print(json.dumps(payload, separators=(",", ":"), sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

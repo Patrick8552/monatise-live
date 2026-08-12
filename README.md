@@ -85,6 +85,21 @@ not risk approval or execution instructions.
 MONATISE_OPENCLAW_TOKEN=use-a-long-random-secret
 ```
 
+OpenClaw may request a verified CoinGlass futures asset without adding it to the
+scheduled BTC/ETH/SOL universe:
+
+```bash
+tools/monatise-readonly-analyze WOOD 1h
+```
+
+The bridge never writes its environment-provided bearer token to arguments,
+output, or logs. The service verifies CoinGlass `supported-coins`, resolves a
+real exchange/instrument using `supported-exchange-pairs` and `pairs-markets`, and returns `GRID`, `TREND`, or
+fail-closed `NO_TRADE`. Missing optional evidence is labeled unavailable. Valid
+setups include a planned zone, trigger, invalidation, targets, reward/risk,
+expiry, provenance, warnings, and timestamps; size and leverage stay null. See
+`docs/OPENCLAW_DYNAMIC_ANALYSIS.md` for the contract and safety boundary.
+
 Stripe and USDC payment flows are not part of the current production architecture.
 Public analysis remains open; login is used only for saved preferences and
 optional private read-only context.

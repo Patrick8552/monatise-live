@@ -386,9 +386,8 @@ def test_openclaw_status_rejects_wrong_or_missing_credentials():
     assert openclaw_status(ProductionASGI(runtime))[0] == 503
 
 
-def test_openclaw_status_rejects_unsupported_assets_and_intervals():
+def test_openclaw_status_rejects_unsupported_intervals():
     app = ProductionASGI(Runtime())
-    assert openclaw_status(app, query="symbol=XRP&interval=1h")[0] == 400
     assert openclaw_status(app, query="symbol=BTC&interval=2h")[0] == 400
     assert app.runtime.calls == []
 
