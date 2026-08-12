@@ -385,6 +385,74 @@ def test_qualified_grid_score_takes_priority_over_directional_conflict() -> None
     assert "market structure is unstable" not in result.blockers
 
 
+def test_signal_score_override_does_not_beat_a_clean_stronger_trend() -> None:
+    # Regime RANGE (no trend penalty on grid_score, unlike TREND_UP/DOWN),
+    # but structure/order_flow/fibonacci are all clean, healthy, and
+    # unambiguously bullish with zero conflicting evidence. No blockers are
+    # present at all, so the minimum_signal_score override must not fire —
+    # _classify()'s own directional_score > grid_score comparison should
+    # stand. (bug: the override used to fire whenever grid_blockers was
+    # empty, which is also true when there were never any blockers to
+    # exempt in the first place, silently discarding a stronger trend call.)
+    request = base_request()
+    balanced_liquidity = LiquidityAssessment(
+        symbol=request.market.symbol,
+        current_price=100.0,
+        buy_side_levels=(object(),),
+        sell_side_levels=(object(),),
+        nearest_buy_side=object(),
+        nearest_sell_side=object(),
+        reasons=(),
+    )
+    range_regime = RegimeAssessment(
+        symbol=request.market.symbol,
+        state=RegimeState.RANGE,
+        confidence=RegimeConfidence.HIGH,
+        score=0.80,
+        reasons=(),
+    )
+    strong_structure = MarketStructureAssessment(
+        symbol=request.market.symbol,
+        bias=StructureBias.BULLISH,
+        state=StructureState.BULLISH_CONTINUATION,
+        events=(),
+        latest_event=None,
+        swing_highs=(),
+        swing_lows=(),
+        confidence=0.95,
+        reasons=(),
+    )
+    strong_order_flow = OrderFlowAssessment(**{
+        **request.order_flow.__dict__,
+        "bias": FlowBias.BULLISH,
+        "score": 0.95,
+        "execution_timing_score": 0.95,
+    })
+    strong_fibonacci = FibonacciAssessment(**{
+        **request.fibonacci.__dict__,
+        "primary_anchor": FibonacciAnchor(**{**request.fibonacci.primary_anchor.__dict__, "score": 0.90}),
+    })
+    qualified = DecisionRequest(**{
+        **request.__dict__,
+        "macro": None,  # isolate directional strength to structure/order_flow/fibonacci only
+        "liquidity": balanced_liquidity,
+        "regime": range_regime,
+        "structure": strong_structure,
+        "order_flow": strong_order_flow,
+        "fibonacci": strong_fibonacci,
+        "minimum_signal_score": 7,
+        "maximum_conflict_ratio": 1.0,
+    })
+
+    result = DecisionEngine().assess(qualified)
+
+    assert result.long_score > result.grid_score
+    assert result.short_score == 0.0
+    assert not result.blockers
+    assert result.classification is DecisionClassification.TREND
+    assert result.direction is DecisionDirection.LONG
+
+
 def test_decision_engine_remains_non_executable() -> None:
     result = DecisionEngine().assess(base_request())
 

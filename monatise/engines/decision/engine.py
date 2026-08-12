@@ -92,9 +92,20 @@ class DecisionEngine:
             "market structure is unstable",
         }
         grid_blockers = [blocker for blocker in blockers if blocker not in grid_context_warnings]
+        # This override exists to rescue a GRID call from soft blockers that
+        # shouldn't apply to grid logic (e.g. an unstable regime doesn't
+        # invalidate two-sided liquidity). It must only fire when there were
+        # actual blockers being exempted — not whenever grid_blockers happens
+        # to be empty, which is also true when there were no blockers at all.
+        # Bug: the original `not grid_blockers` check was true in both cases,
+        # so a clean, unblocked, and objectively stronger TREND classification
+        # from _classify() (grid_score < directional_score) could be silently
+        # overwritten by GRID just because grid_signal_score cleared an
+        # absolute bar, with no comparison to how strong the trend was.
+        exempted_soft_blockers = bool(blockers) and not grid_blockers
         if (
             request.minimum_signal_score > 0
-            and not grid_blockers
+            and exempted_soft_blockers
             and grid_signal_score >= request.minimum_signal_score
         ):
             classification = DecisionClassification.GRID
