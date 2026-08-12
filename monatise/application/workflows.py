@@ -182,7 +182,9 @@ class TelegramNotifier:
             age_candles=confirmation_age if classification == "GRID" else 0,
         )
         if validity is not None and (classification != "GRID" or confirmation_status == "CONFIRMED"):
-            remaining_seconds = max(0, int((validity["expires_at"] - datetime.now(timezone.utc)).total_seconds()))
+            # Preserve a positive sub-second remainder instead of truncating it
+            # to zero at the formatting boundary.
+            remaining_seconds = max(0, math.ceil((validity["expires_at"] - datetime.now(timezone.utc)).total_seconds()))
             remaining_label = "<1 min" if 0 < remaining_seconds < 60 else f"{math.ceil(remaining_seconds / 60)} min"
             lines.extend((
                 f"Generated at: {format_nigeria_time(validity['generated_at'])}",

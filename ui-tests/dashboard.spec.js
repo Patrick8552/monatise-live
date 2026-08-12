@@ -22,7 +22,7 @@ test("market integrations clearly expand and collapse", async ({ page }) => {
   const summary = page.getByText("Integrations & API keys", { exact: true });
 
   await expect(summary).toBeVisible();
-  await expect(page.getByText("Click to expand and connect CoinGlass, alerts, voice, and AI")).toBeVisible();
+  await expect(page.getByText("Click to expand and connect CoinGlass, X, alerts, voice, and AI")).toBeVisible();
   await expect(drawer).not.toHaveAttribute("open", "");
   await summary.click();
   await expect(drawer).toHaveAttribute("open", "");
