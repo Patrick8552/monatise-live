@@ -171,12 +171,17 @@ class RegimeEngine:
             return RegimeState.UNSTABLE
         if volatility_ratio >= high_volatility_threshold:
             return RegimeState.HIGH_VOLATILITY
-        if volatility_ratio >= expansion_threshold:
-            return RegimeState.EXPANSION
+        # A strong, efficient trend takes priority over expansion/compression —
+        # a breakout with expanding volatility is still a trend, not
+        # "expansion" (bug: EXPANSION was checked before the trend checks,
+        # so a trending+expanding market was misclassified; COMPRESSION was
+        # already correctly ordered after the trend checks below).
         if slope >= trend_threshold and directional_efficiency >= 0.35:
             return RegimeState.TREND_UP
         if slope <= -trend_threshold and directional_efficiency >= 0.35:
             return RegimeState.TREND_DOWN
+        if volatility_ratio >= expansion_threshold:
+            return RegimeState.EXPANSION
         if volatility_ratio <= compression_threshold:
             return RegimeState.COMPRESSION
         if abs(slope) < trend_threshold and directional_efficiency < 0.35:
