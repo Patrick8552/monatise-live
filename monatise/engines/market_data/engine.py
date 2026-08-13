@@ -86,7 +86,7 @@ class MarketDataEngine:
                         f"limit {request.max_age_seconds}s)"
                     )
 
-                derivatives, derivative_issues = self._collect_derivatives(request.symbol)
+                derivatives, derivative_issues = self._collect_derivatives(request.symbol, request.interval)
                 issues.extend(derivative_issues)
 
                 status = self._derive_status(
@@ -176,12 +176,12 @@ class MarketDataEngine:
         return [preferred, *(name for name in names if name != preferred)]
 
     def _collect_derivatives(
-        self, symbol: str
+        self, symbol: str, interval: str
     ) -> tuple[dict[str, float | None], list[str]]:
         if self._derivatives_provider is None:
             return {}, []
         try:
-            payload = self._derivatives_provider.derivatives_snapshot(symbol)
+            payload = self._derivatives_provider.derivatives_snapshot(symbol, interval)
         except Exception as exc:
             return {}, [f"derivatives: provider error: {type(exc).__name__}: {exc}"]
 

@@ -174,10 +174,10 @@ def build_production_analysis_run(symbol: str, *, interval: str = "1h", correlat
         return OrderFlowRequest(
             normalized,
             FlowInput(
-                open_interest_change_pct=derivatives.get("open_interest"),
-                cvd_change=derivatives.get("cvd"),
-                liquidation_short_usd=derivatives.get("liquidation_volume"),
-                liquidation_long_usd=derivatives.get("liquidation_volume"),
+                open_interest_change_pct=derivatives.get("open_interest_change_pct"),
+                cvd_change=derivatives.get("cvd_delta"),
+                liquidation_short_usd=derivatives.get("liquidation_short_usd"),
+                liquidation_long_usd=derivatives.get("liquidation_long_usd"),
                 bid_ask_imbalance=derivatives.get("order_book_imbalance"),
                 funding_rate=derivatives.get("funding_rate"),
             ),

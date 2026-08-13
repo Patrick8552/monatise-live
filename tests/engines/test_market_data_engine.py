@@ -43,7 +43,7 @@ class CandleOnlyProvider(GoodProvider):
 
 
 class DerivativesProvider:
-    def derivatives_snapshot(self, symbol: str) -> dict[str, float | None]:
+    def derivatives_snapshot(self, symbol: str, interval: str = "1h") -> dict[str, float | None]:
         return {
             "open_interest": 1_000_000,
             "funding_rate": 0.0001,

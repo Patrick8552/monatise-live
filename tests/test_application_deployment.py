@@ -136,6 +136,32 @@ def test_production_analysis_graph_completely_excludes_risk_engine_and_consumers
     assert set(PRODUCTION_ENGINE_ORDER).issubset(CANONICAL_ENGINE_ORDER)
 
 
+def test_order_flow_input_uses_real_change_and_split_liquidations_not_duplicated_levels():
+    run = build_production_analysis_run("BTC", interval="15m")
+    flow = run.stage_inputs["order_flow"]
+    context = SimpleNamespace(outputs={
+        "market_data": SimpleNamespace(derivatives={
+            "open_interest": 500_000.0, "open_interest_change_pct": -2.4,
+            "cvd": 900.0, "cvd_delta": -350.0,
+            "liquidation_volume": 70_000.0, "liquidation_long_usd": 55_000.0, "liquidation_short_usd": 15_000.0,
+            "order_book_imbalance": 0.12, "funding_rate": 0.0003,
+        }),
+        "regime": None,
+        "market_structure": None,
+    })
+
+    request = flow(context)
+
+    # open_interest_change_pct must be the signed percentage change, never the
+    # always-positive absolute level -- that would make every symbol read as
+    # permanently "expanding" regardless of actual direction.
+    assert request.flow.open_interest_change_pct == -2.4
+    assert request.flow.cvd_change == -350.0
+    assert request.flow.liquidation_long_usd == 55_000.0
+    assert request.flow.liquidation_short_usd == 15_000.0
+    assert request.flow.liquidation_long_usd != request.flow.liquidation_short_usd
+
+
 def test_runtime_registers_paper_only_analysis_jobs_for_each_configured_symbol():
     class Scheduler:
         def __init__(self): self.definitions = []

@@ -9,5 +9,5 @@ class DerivativesDataPort(Protocol):
     Missing fields must be returned as None, never silently converted to zero.
     """
 
-    def derivatives_snapshot(self, symbol: str) -> dict[str, float | None]:
+    def derivatives_snapshot(self, symbol: str, interval: str = "1h") -> dict[str, float | None]:
         raise NotImplementedError

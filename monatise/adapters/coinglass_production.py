@@ -56,6 +56,18 @@ class CoinGlassProductionAdapter:
 
     SUPPORTED_INTERVALS = ("1m", "3m", "5m", "15m", "30m", "1h", "4h", "6h", "8h", "12h", "1d", "1w")
 
+    # /api/futures/open-interest/exchange-list only ever exposes six discrete
+    # change windows (5m/15m/30m/1h/4h/24h) -- confirmed exhaustive against the
+    # documented response shape, not just an example. Every SUPPORTED_INTERVALS
+    # entry maps to its exact window where one exists, otherwise the nearest
+    # available window, so no analysis interval silently loses OI-change data.
+    OPEN_INTEREST_CHANGE_WINDOW = {
+        "1m": "5m", "3m": "5m", "5m": "5m",
+        "15m": "15m", "30m": "30m", "1h": "1h",
+        "4h": "4h", "6h": "4h", "8h": "4h", "12h": "4h",
+        "1d": "24h", "1w": "24h",
+    }
+
     ENDPOINTS = {
         "pairs_markets": "/api/futures/pairs-markets",
         "price_history": "/api/futures/price/history",
@@ -325,16 +337,28 @@ class CoinGlassProductionAdapter:
             raise CoinGlassError("CoinGlass price changes must be a list")
         return tuple(row for row in rows if isinstance(row, dict))
 
-    def derivatives_snapshot(self, symbol: str) -> dict[str, float | None]:
+    def derivatives_snapshot(self, symbol: str, interval: str = "1h") -> dict[str, float | None]:
         symbol = self._crypto_symbol(symbol)
         volume = self.volume(symbol)
         order_book = self.order_book(symbol)
         cvd_history = self.cvd(symbol)
         cvd_keys = ("cum_vol_delta", "cvd", "value")
+        open_interest_rows = self.open_interest(symbol)
+        oi_window = self.OPEN_INTEREST_CHANGE_WINDOW.get(interval, "1h")
+        liquidation_history = self.liquidations(symbol)
+        long_liquidation = self._extract_number(liquidation_history, ("aggregated_long_liquidation_usd", "long_liquidation_usd"))
+        short_liquidation = self._extract_number(liquidation_history, ("aggregated_short_liquidation_usd", "short_liquidation_usd"))
         return {
-            "open_interest": self._extract_number(self.open_interest(symbol), ("open_interest_usd", "openInterest", "open_interest", "value")),
+            "open_interest": self._extract_number(open_interest_rows, ("open_interest_usd", "openInterest", "open_interest", "value")),
+            # Percentage change over the nearest CoinGlass-supported window to
+            # the requested interval (see OPEN_INTEREST_CHANGE_WINDOW) -- CoinGlass
+            # only exposes 5m/15m/30m/1h/4h/24h change fields, never an absolute
+            # level mislabeled as a change.
+            "open_interest_change_pct": self._extract_number(open_interest_rows, (f"open_interest_change_percent_{oi_window}",)),
             "funding_rate": self._extract_number(self.funding_rate(symbol), ("close", "fundingRate", "funding_rate", "value")),
-            "liquidation_volume": self._extract_number(self.liquidations(symbol), ("liquidation_usd", "liquidationUsd", "liquidation_volume", "value")),
+            "liquidation_volume": (long_liquidation or 0.0) + (short_liquidation or 0.0) if (long_liquidation is not None or short_liquidation is not None) else self._extract_number(liquidation_history, ("liquidation_usd", "liquidationUsd", "liquidation_volume", "value")),
+            "liquidation_long_usd": long_liquidation,
+            "liquidation_short_usd": short_liquidation,
             "derivatives_volume": self._sum_numbers(volume, ("aggregated_buy_volume_usd", "taker_buy_volume_usd"), ("aggregated_sell_volume_usd", "taker_sell_volume_usd")),
             "order_book_imbalance": self._order_book_imbalance(order_book),
             "cvd": self._extract_number(cvd_history, cvd_keys),
