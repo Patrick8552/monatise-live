@@ -23,7 +23,7 @@ def payload(*, classification="trend", direction="long", actionable=True, qualit
         "provenance": provenance,
         "evidence": {"current_price": 0.42, "candle_count": 200},
         "data_quality": {"passed": quality_passed, "failures": [] if quality_passed else ["insufficient candle history: 20/120"], "warnings": []},
-        "score": 8, "score_threshold": 7, "volatility_assessment": "continuation requires confirmation",
+        "score": 8, "grid_score": 3, "score_threshold": 7, "volatility_assessment": "continuation requires confirmation",
         "run_id": "run-wood-1", "execution_enabled": False,
     }
     if actionable and quality_passed:
@@ -66,6 +66,15 @@ def test_confirmed_trend_is_actionable_with_full_plan():
     assert "Entry zone: 0.4 — 0.41 (trigger required, not an automatic entry)" in message
     assert "Analysis only. No trade was executed." in message
     assert '"entry"' not in message and "Entry:" not in message.replace("Entry zone", "").replace("Entry trigger", "")
+
+
+def test_grid_decision_displays_grid_score_not_the_unrelated_trend_score():
+    result = MODULE.analyze("WOOD", payload=payload(classification="grid", direction="two_sided"))
+    assert result["actionable"] is True
+    assert result["classification"] == "grid"
+    message = MODULE.telegram(result)
+    assert "Score: 3/10" in message
+    assert "Score: 8/10" not in message
 
 
 def test_failed_quality_gate_is_no_trade_and_never_shows_a_zone():

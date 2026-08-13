@@ -138,6 +138,7 @@ def analyze(asset: str, interval: str = "1h", payload: dict | None = None) -> di
         "targets": list(analysis.get("targets") or []) if actionable else [],
         "reward_risk": analysis.get("reward_risk") if actionable else None,
         "score": analysis.get("score"),
+        "grid_score": analysis.get("grid_score"),
         "score_threshold": analysis.get("score_threshold", 7),
         "provenance": provenance,
         "evidence": analysis.get("evidence") if isinstance(analysis.get("evidence"), dict) else {},
@@ -181,8 +182,9 @@ def telegram(result: dict) -> str:
         lines.append("Targets: " + " | ".join(f"{item:,.8g}" for item in result["targets"]))
         lines.append(f"Reward:risk: {result['reward_risk']:.2f}")
 
-    if result.get("score") is not None:
-        lines.append(f"Score: {result['score']}/10 | threshold: ±{result['score_threshold']}")
+    display_score = result.get("grid_score") if result["classification"] == "grid" else result.get("score")
+    if display_score is not None:
+        lines.append(f"Score: {display_score}/10 | threshold: ±{result['score_threshold']}")
 
     warnings = result["data_quality"]["warnings"][:3]
     if warnings:
