@@ -46,10 +46,10 @@ def finalize_dynamic_analysis(
     imbalance = derivatives.get("order_book_imbalance")
     if imbalance is not None and abs(float(imbalance)) > 1:
         failures.append("malformed order-book imbalance")
-    confirmation = analysis.get("entry_confirmation_status")
     classification = str(analysis.get("classification") or "no_trade")
-    if classification in {"grid", "trend"} and confirmation != "confirmed":
-        failures.append("entry confirmation is not complete; require retracement/reclaim or breakout-and-retest")
+    direction = str(analysis.get("direction") or "none")
+    if classification in {"grid", "trend"} and not _derivatives_confirm(direction, derivatives):
+        failures.append("CoinGlass order flow (net CVD) does not confirm this setup")
     plan = _planned_setup(analysis, candles) if not failures else None
     if not failures and classification in {"grid", "trend"} and plan is None:
         failures.append("no structurally valid entry zone could be planned")
@@ -61,7 +61,7 @@ def finalize_dynamic_analysis(
         })
     else:
         analysis.update(plan or {})
-        analysis["entry_trigger"] = "confirmed retracement/reclaim or breakout-and-retest inside the planned zone"
+        analysis["entry_trigger"] = "confirmed by net CoinGlass order flow (CVD); price must still reach the planned zone"
         analysis["entry"] = None
     analysis["expires_at"] = analysis.get("expires_at") or _expiry(analysis.get("interval"))
     analysis.update({
@@ -74,7 +74,7 @@ def finalize_dynamic_analysis(
             "derivatives": {key: {"status": "available" if value is not None else "unavailable", "value": value} for key, value in derivatives.items()},
         },
         "data_quality": {"passed": not failures, "failures": failures, "warnings": sorted(set(warnings))},
-        "volatility_assessment": "continuation requires a confirmed retest; otherwise treat the pickup as exhaustion/pump risk",
+        "volatility_assessment": "continuation requires order flow to keep confirming; otherwise treat the pickup as exhaustion/pump risk",
         "source_timestamps": {
             "analysis_generated_at": datetime.now(timezone.utc).isoformat(),
             "supported_coins_observed_at": asset.supported_coins_observed_at,
@@ -85,6 +85,27 @@ def finalize_dynamic_analysis(
         "execution_enabled": False,
     })
     return analysis
+
+
+def _derivatives_confirm(direction: str, derivatives: dict[str, Any]) -> bool:
+    """CoinGlass-only entry confirmation: does net order flow (CVD) back this setup?
+
+    Replaces price-action pattern confirmation for dynamic (non-core) assets --
+    a long/short setup needs net buying/selling pressure over the fetched
+    window; a grid setup needs the absence of a one-sided flow that would
+    break the range, judged against total traded volume in that window.
+    """
+    cvd_delta = derivatives.get("cvd_delta")
+    if cvd_delta is None:
+        return False
+    if direction == "long":
+        return cvd_delta > 0
+    if direction == "short":
+        return cvd_delta < 0
+    if direction == "two_sided":
+        volume = derivatives.get("derivatives_volume")
+        return bool(volume) and volume > 0 and abs(cvd_delta) <= 0.5 * volume
+    return False
 
 
 def _positive(value: Any) -> float | None:

@@ -82,14 +82,14 @@ def _quality_result(*, candle_count=140, status=DataStatus.READY, stale=False, d
 
 def test_missing_optional_derivatives_are_labeled_unavailable():
     result, asset = _quality_result()
-    output = finalize_dynamic_analysis({"classification": "no_trade", "entry_confirmation_status": "pending"}, result, asset)
+    output = finalize_dynamic_analysis({"classification": "no_trade"}, result, asset)
     assert output["evidence"]["derivatives"]["funding_rate"]["status"] == "unavailable"
     assert any("funding_rate" in item for item in output["data_quality"]["warnings"])
 
 
 def test_confirmed_trend_has_planned_zone_risk_reward_and_expiry_not_market_entry():
-    result, asset = _quality_result()
-    output = finalize_dynamic_analysis({"classification": "trend", "direction": "long", "interval": "1h", "entry_confirmation_status": "confirmed"}, result, asset)
+    result, asset = _quality_result(derivatives={"cvd_delta": 500.0, "derivatives_volume": 1_000_000.0})
+    output = finalize_dynamic_analysis({"classification": "trend", "direction": "long", "interval": "1h"}, result, asset)
     assert output["data_quality"]["passed"] is True
     assert output["entry"] is None
     assert output["entry_zone"]["low"] < output["entry_zone"]["high"]
@@ -97,10 +97,33 @@ def test_confirmed_trend_has_planned_zone_risk_reward_and_expiry_not_market_entr
     assert output["reward_risk"] > 0 and output["expires_at"]
 
 
+def test_trend_without_confirming_net_order_flow_fails_closed_to_no_trade():
+    result, asset = _quality_result(derivatives={"cvd_delta": -500.0, "derivatives_volume": 1_000_000.0})
+    output = finalize_dynamic_analysis({"classification": "trend", "direction": "long", "interval": "1h"}, result, asset)
+    assert output["classification"] == "no_trade"
+    assert output["data_quality"]["passed"] is False
+    assert any("order flow" in item for item in output["data_quality"]["failures"])
+
+
+def test_grid_confirms_only_when_flow_is_not_one_sided():
+    balanced, asset = _quality_result(derivatives={"cvd_delta": 100.0, "derivatives_volume": 1_000_000.0})
+    output = finalize_dynamic_analysis({"classification": "grid", "direction": "two_sided", "interval": "1h", "grid_plan": {
+        "center": 1.0, "buy_levels": [0.95, 0.9], "sell_levels": [1.05, 1.1], "spacing": 0.05,
+    }}, balanced, asset)
+    assert output["data_quality"]["passed"] is True
+
+    skewed, asset = _quality_result(derivatives={"cvd_delta": 900_000.0, "derivatives_volume": 1_000_000.0})
+    output = finalize_dynamic_analysis({"classification": "grid", "direction": "two_sided", "interval": "1h", "grid_plan": {
+        "center": 1.0, "buy_levels": [0.95, 0.9], "sell_levels": [1.05, 1.1], "spacing": 0.05,
+    }}, skewed, asset)
+    assert output["classification"] == "no_trade"
+    assert output["data_quality"]["passed"] is False
+
+
 @pytest.mark.parametrize(("count", "status"), [(20, DataStatus.READY), (140, DataStatus.DEGRADED)])
 def test_stale_or_insufficient_candles_fail_closed_to_no_trade(count, status):
-    result, asset = _quality_result(candle_count=count, status=status)
-    output = finalize_dynamic_analysis({"classification": "trend", "direction": "long", "entry": 1, "target": 2, "entry_confirmation_status": "confirmed"}, result, asset)
+    result, asset = _quality_result(candle_count=count, status=status, derivatives={"cvd_delta": 500.0, "derivatives_volume": 1_000_000.0})
+    output = finalize_dynamic_analysis({"classification": "trend", "direction": "long", "entry": 1, "target": 2}, result, asset)
     assert output["classification"] == "no_trade"
     assert output["data_quality"]["passed"] is False
     assert output["execution_enabled"] is False

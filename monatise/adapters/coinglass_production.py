@@ -329,13 +329,19 @@ class CoinGlassProductionAdapter:
         symbol = self._crypto_symbol(symbol)
         volume = self.volume(symbol)
         order_book = self.order_book(symbol)
+        cvd_history = self.cvd(symbol)
+        cvd_keys = ("cum_vol_delta", "cvd", "value")
         return {
             "open_interest": self._extract_number(self.open_interest(symbol), ("open_interest_usd", "openInterest", "open_interest", "value")),
             "funding_rate": self._extract_number(self.funding_rate(symbol), ("close", "fundingRate", "funding_rate", "value")),
             "liquidation_volume": self._extract_number(self.liquidations(symbol), ("liquidation_usd", "liquidationUsd", "liquidation_volume", "value")),
             "derivatives_volume": self._sum_numbers(volume, ("aggregated_buy_volume_usd", "taker_buy_volume_usd"), ("aggregated_sell_volume_usd", "taker_sell_volume_usd")),
             "order_book_imbalance": self._order_book_imbalance(order_book),
-            "cvd": self._extract_number(self.cvd(symbol), ("cum_vol_delta", "cvd", "value")),
+            "cvd": self._extract_number(cvd_history, cvd_keys),
+            # Net order-flow direction over the fetched window (last minus first
+            # observed cumulative volume delta) -- distinct from the single
+            # latest "cvd" point above, which carries no directional history.
+            "cvd_delta": self._extract_delta(cvd_history, cvd_keys),
         }
 
     @staticmethod
@@ -496,6 +502,17 @@ class CoinGlassProductionAdapter:
                 if found is not None:
                     return found
         return None
+
+    @classmethod
+    def _extract_delta(cls, value: Any, keys: tuple[str, ...]) -> float | None:
+        """Net change across a fetched history window (last row minus first row)."""
+        if not isinstance(value, list) or len(value) < 2:
+            return None
+        first = cls._extract_number(value[0], keys)
+        last = cls._extract_number(value[-1], keys)
+        if first is None or last is None:
+            return None
+        return last - first
 
     @classmethod
     def _sum_numbers(cls, value: Any, left_keys: tuple[str, ...], right_keys: tuple[str, ...]) -> float | None:
