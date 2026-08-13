@@ -7,6 +7,7 @@ Normalize the requested symbol (strip `/analyze`, quote-currency suffixes like `
 
 - If it is BTC, ETH, or SOL: run `python3 {baseDir}/scripts/analyze_crypto.py ASSET --format telegram`.
 - For any other crypto ticker: run `python3 {baseDir}/scripts/analyze_crypto_dynamic.py ASSET --format telegram`. This script independently re-verifies the asset against live CoinGlass instruments and fails closed to NO_TRADE if it isn't a real, liquid, tradeable market — do not second-guess or override its result.
+- Both scripts accept an optional `--interval` (default `1h`; any CoinGlass-supported interval works, e.g. `--interval 15m`, `--interval 4h`) when the user asks for a specific timeframe.
 - If the requested symbol is forex, a commodity, an index, or otherwise not a crypto ticker, reject the request without calling either script.
 
 Return the script's completed result verbatim. Do not call order, configuration-write, or deployment tools.
