@@ -1,0 +1,77 @@
+#!/usr/bin/env python3
+"""Authenticated, read-only bridge from local OpenClaw to Monatise's verified
+dynamic CoinGlass analysis endpoint (any crypto ticker beyond BTC/ETH/SOL).
+
+Mirrors monatise-readonly-status's deployment pattern (token read from the
+local OpenClaw secrets file, not an env var) but does not restrict the
+symbol client-side -- resolve_futures_asset on the server does the real
+verification and fails closed with a clear status/reason on anything
+invalid, so gating it again here would only narrow what's actually usable.
+
+Always prints one JSON object to stdout, success or failure, so the calling
+skill script can uniformly parse it. On failure the object is
+{"http_status": <int or null>, "reason": "..."} and the exit code is 1.
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+
+
+BASE_URL = "https://monatise-live.onrender.com"
+TOKEN_FILE = Path.home() / ".openclaw/workspace/.secrets/monatise-openclaw-token"
+FORBIDDEN = {"EUR", "GBP", "JPY", "AUD", "CAD", "CHF", "GOLD", "XAU", "OIL", "CL", "SPX", "NDX", "USD"}
+
+
+def fail(http_status: int | None, reason: str) -> int:
+    print(json.dumps({"http_status": http_status, "reason": reason}, separators=(",", ":")))
+    return 1
+
+
+def main() -> int:
+    symbol = (sys.argv[1] if len(sys.argv) > 1 else "").strip().upper()
+    interval = (sys.argv[2] if len(sys.argv) > 2 else "1h").strip()
+    if not symbol or not symbol.isalnum() or symbol in FORBIDDEN:
+        return fail(400, "invalid or unsupported symbol")
+    if not TOKEN_FILE.is_file():
+        return fail(None, "Monatise production authorization is not configured locally")
+    token = TOKEN_FILE.read_text(encoding="utf-8").splitlines()[0].strip()
+    if not token:
+        return fail(None, "Monatise production authorization is empty")
+
+    request = Request(
+        BASE_URL + f"/api/openclaw/status?symbol={symbol}&interval={interval}",
+        headers={"authorization": f"Bearer {token}"},
+        method="GET",
+    )
+    try:
+        with urlopen(request, timeout=120) as response:  # noqa: S310
+            payload = json.load(response)
+    except HTTPError as exc:
+        try:
+            body = json.load(exc)
+        except (ValueError, TypeError):
+            body = {}
+        return fail(exc.code, str(body.get("reason") or body.get("status") or "request rejected"))
+    except (URLError, TimeoutError, ValueError) as exc:
+        return fail(None, f"{type(exc).__name__}: analysis endpoint unreachable")
+
+    analysis = payload.get("analysis")
+    if payload.get("ok") is not True or not isinstance(analysis, dict):
+        return fail(None, "Monatise production returned an invalid analysis response")
+
+    analysis.update({
+        "interval": payload.get("interval", interval),
+        "run_id": analysis.get("run_id") or f"dynamic:{symbol}:{interval}",
+        "telegram_notification": bool(payload.get("capabilities", {}).get("telegramNotification")),
+    })
+    print(json.dumps(analysis, separators=(",", ":")))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

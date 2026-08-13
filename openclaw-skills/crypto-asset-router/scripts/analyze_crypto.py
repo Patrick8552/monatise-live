@@ -45,7 +45,7 @@ def valid_grid_plan(grid: object) -> bool:
 
 def normalize(raw: str) -> str:
     value = raw.strip().upper().removeprefix("/ANALYZE ").removeprefix("/")
-    for suffix in ("-USDT", "USDT", "-PERP", "/USD", "USD"):
+    for suffix in ("-USDT", "/USDT", "USDT", "-PERP", "/USD", "USD"):
         if value.endswith(suffix):
             value = value[:-len(suffix)]
             break
