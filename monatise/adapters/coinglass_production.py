@@ -255,20 +255,20 @@ class CoinGlassProductionAdapter:
             result.append(candle)
         return result
 
-    def funding_rate(self, symbol: str) -> Any:
-        return self._fetch("funding_rate", symbol)
+    def funding_rate(self, symbol: str, interval: str = "1h") -> Any:
+        return self._fetch("funding_rate", symbol, interval=interval)
 
-    def liquidations(self, symbol: str) -> Any:
-        return self._fetch("liquidations", symbol)
+    def liquidations(self, symbol: str, interval: str = "1h") -> Any:
+        return self._fetch("liquidations", symbol, interval=interval)
 
-    def volume(self, symbol: str) -> Any:
-        return self._fetch("volume", symbol)
+    def volume(self, symbol: str, interval: str = "1h") -> Any:
+        return self._fetch("volume", symbol, interval=interval)
 
-    def order_book(self, symbol: str) -> Any:
-        return self._fetch("order_book", symbol)
+    def order_book(self, symbol: str, interval: str = "1h") -> Any:
+        return self._fetch("order_book", symbol, interval=interval)
 
-    def cvd(self, symbol: str) -> Any:
-        return self._fetch("cvd", symbol)
+    def cvd(self, symbol: str, interval: str = "1h") -> Any:
+        return self._fetch("cvd", symbol, interval=interval)
 
     def dashboard_query(self, path: str, params: dict[str, str]) -> dict[str, Any]:
         """Execute one allowlisted, read-only dashboard query with server credentials."""
@@ -339,13 +339,16 @@ class CoinGlassProductionAdapter:
 
     def derivatives_snapshot(self, symbol: str, interval: str = "1h") -> dict[str, float | None]:
         symbol = self._crypto_symbol(symbol)
-        volume = self.volume(symbol)
-        order_book = self.order_book(symbol)
-        cvd_history = self.cvd(symbol)
+        # Every dataset below is fetched at the requested analysis interval,
+        # not a fixed 1h -- otherwise a 15m/4h/1d analysis would silently
+        # judge order flow against 1h-old context regardless of what was asked.
+        volume = self.volume(symbol, interval)
+        order_book = self.order_book(symbol, interval)
+        cvd_history = self.cvd(symbol, interval)
         cvd_keys = ("cum_vol_delta", "cvd", "value")
         open_interest_rows = self.open_interest(symbol)
         oi_window = self.OPEN_INTEREST_CHANGE_WINDOW.get(interval, "1h")
-        liquidation_history = self.liquidations(symbol)
+        liquidation_history = self.liquidations(symbol, interval)
         long_liquidation = self._extract_number(liquidation_history, ("aggregated_long_liquidation_usd", "long_liquidation_usd"))
         short_liquidation = self._extract_number(liquidation_history, ("aggregated_short_liquidation_usd", "short_liquidation_usd"))
         return {
@@ -353,9 +356,10 @@ class CoinGlassProductionAdapter:
             # Percentage change over the nearest CoinGlass-supported window to
             # the requested interval (see OPEN_INTEREST_CHANGE_WINDOW) -- CoinGlass
             # only exposes 5m/15m/30m/1h/4h/24h change fields, never an absolute
-            # level mislabeled as a change.
+            # level mislabeled as a change. open_interest itself has no interval
+            # parameter (it's a live cross-exchange snapshot, not a history).
             "open_interest_change_pct": self._extract_number(open_interest_rows, (f"open_interest_change_percent_{oi_window}",)),
-            "funding_rate": self._extract_number(self.funding_rate(symbol), ("close", "fundingRate", "funding_rate", "value")),
+            "funding_rate": self._extract_number(self.funding_rate(symbol, interval), ("close", "fundingRate", "funding_rate", "value")),
             "liquidation_volume": (long_liquidation or 0.0) + (short_liquidation or 0.0) if (long_liquidation is not None or short_liquidation is not None) else self._extract_number(liquidation_history, ("liquidation_usd", "liquidationUsd", "liquidation_volume", "value")),
             "liquidation_long_usd": long_liquidation,
             "liquidation_short_usd": short_liquidation,
@@ -406,9 +410,9 @@ class CoinGlassProductionAdapter:
         with self._lock:
             return CoinGlassHealth(self._last_success is not None and self._critical_failures == 0, self._last_success, self._critical_failures, len(self._cache))
 
-    def _fetch(self, dataset: str, symbol: str, *, params: dict[str, str] | None = None) -> Any:
+    def _fetch(self, dataset: str, symbol: str, *, params: dict[str, str] | None = None, interval: str = "1h") -> Any:
         coin = self._crypto_symbol(symbol)
-        request_params = dict(params or self._dataset_params(dataset, coin))
+        request_params = dict(params or self._dataset_params(dataset, coin, interval))
         key = f"{dataset}:{coin}:{tuple(sorted(request_params.items()))}"
         now = time.monotonic()
         with self._lock:
@@ -444,7 +448,7 @@ class CoinGlassProductionAdapter:
                 self._critical_failures += 1
         raise CoinGlassError(f"CoinGlass {dataset} request failed") from last_error
 
-    def _dataset_params(self, dataset: str, coin: str) -> dict[str, str]:
+    def _dataset_params(self, dataset: str, coin: str, interval: str = "1h") -> dict[str, str]:
         resolved = self._resolved(coin)
         pair = resolved.instrument if resolved else self.PAIRS.get(coin, f"{coin}USDT")
         exchange = resolved.exchange if resolved else "Binance"
@@ -453,20 +457,20 @@ class CoinGlassProductionAdapter:
         if dataset == "open_interest":
             return {"symbol": coin}
         if dataset == "funding_rate":
-            return {"symbol": coin, "interval": "1h", "limit": "2"}
+            return {"symbol": coin, "interval": interval, "limit": "2"}
         if dataset == "liquidations":
             return {
                 "exchange_list": exchange,
                 "symbol": coin,
-                "interval": "1h",
+                "interval": interval,
                 "limit": "2",
             }
         if dataset in {"volume", "cvd"}:
-            return {"exchange_list": exchange, "symbol": coin, "interval": "1h", "limit": "2"}
+            return {"exchange_list": exchange, "symbol": coin, "interval": interval, "limit": "2"}
         if dataset == "order_book":
-            return {"exchange_list": exchange, "symbol": coin, "interval": "1h", "limit": "2", "range": "1"}
+            return {"exchange_list": exchange, "symbol": coin, "interval": interval, "limit": "2", "range": "1"}
         if dataset == "price_history":
-            return {"exchange": exchange, "symbol": pair, "interval": "1h", "limit": "2"}
+            return {"exchange": exchange, "symbol": pair, "interval": interval, "limit": "2"}
         raise CoinGlassError("unsupported CoinGlass dataset")
 
     def _http_get(self, path: str, params: dict[str, str], timeout: float) -> dict[str, Any]:

@@ -69,6 +69,37 @@ def test_coinglass_uses_official_dataset_parameters_and_normalizes_native_fields
     assert calls[adapter.ENDPOINTS["order_book"]]["symbol"] == "BTC"
 
 
+def test_derivatives_snapshot_forwards_the_requested_interval_to_every_dataset():
+    """funding_rate, liquidations, volume, cvd, and order_book must all be
+    fetched at the analysis interval, not silently pinned to 1h -- only
+    candles used to bypass this via an explicit params override."""
+    calls = {}
+    responses = {
+        "open-interest": [{"open_interest_usd": "100"}],
+        "funding-rate": [{"close": "0.01"}],
+        "liquidation": [{"aggregated_long_liquidation_usd": "10", "aggregated_short_liquidation_usd": "5"}],
+        "taker-buy-sell": [{"aggregated_buy_volume_usd": "180", "aggregated_sell_volume_usd": "120"}],
+        "orderbook": [{"aggregated_bids_usd": "60", "aggregated_asks_usd": "40"}],
+        "aggregated-cvd": [{"cum_vol_delta": "12"}],
+    }
+
+    def transport(path, params, timeout):
+        calls[path] = params
+        return {"code": 0, "data": next(value for key, value in responses.items() if key in path)}
+
+    adapter = CoinGlassProductionAdapter(lambda: "secret", transport=transport, requests_per_second=100000)
+    adapter.derivatives_snapshot("BTC", "15m")
+
+    assert calls[adapter.ENDPOINTS["funding_rate"]]["interval"] == "15m"
+    assert calls[adapter.ENDPOINTS["liquidations"]]["interval"] == "15m"
+    assert calls[adapter.ENDPOINTS["volume"]]["interval"] == "15m"
+    assert calls[adapter.ENDPOINTS["cvd"]]["interval"] == "15m"
+    assert calls[adapter.ENDPOINTS["order_book"]]["interval"] == "15m"
+    # open_interest has no interval parameter at all -- it's a live
+    # cross-exchange snapshot, not a history endpoint.
+    assert "interval" not in calls[adapter.ENDPOINTS["open_interest"]]
+
+
 def test_coinglass_cvd_delta_is_last_minus_first_row_of_the_fetched_window():
     responses = {
         "open-interest": [{"open_interest_usd": "100"}],
