@@ -79,6 +79,27 @@ def _valid_entry_zone(zone: object) -> bool:
     )
 
 
+def _valid_grid_plan(grid: object) -> bool:
+    if not isinstance(grid, dict):
+        return False
+    center, buys, sells = grid.get("center"), grid.get("buy_levels"), grid.get("sell_levels")
+    lower, upper = grid.get("lower_invalidation"), grid.get("upper_invalidation")
+    if not (
+        _is_positive_number(center)
+        and isinstance(buys, list) and isinstance(sells, list)
+        and len(buys) >= 2 and len(sells) >= 2
+        and all(_is_positive_number(v) for v in [*buys, *sells, lower, upper])
+    ):
+        return False
+    return (
+        len(set(buys)) == len(buys) and len(set(sells)) == len(sells)
+        and all(buys[i] > buys[i + 1] for i in range(len(buys) - 1))
+        and all(sells[i] < sells[i + 1] for i in range(len(sells) - 1))
+        and max(buys) < center < min(sells)
+        and lower < min(buys) and upper > max(sells)
+    )
+
+
 def analyze(asset: str, interval: str = "1h", payload: dict | None = None) -> dict:
     analysis = payload if payload is not None else fetch(asset, interval)
 
@@ -118,6 +139,8 @@ def analyze(asset: str, interval: str = "1h", payload: dict | None = None) -> di
             missing.append("reward_risk")
         if not str(analysis.get("expires_at") or "").strip():
             missing.append("expires_at")
+        if classification == "grid" and not _valid_grid_plan(analysis.get("grid_plan")):
+            missing.append("grid_plan")
         if missing:
             actionable = False
             invalid_reasons.append("actionable setup is missing " + ", ".join(missing))
@@ -137,6 +160,7 @@ def analyze(asset: str, interval: str = "1h", payload: dict | None = None) -> di
         "invalidation": analysis.get("invalidation") if actionable else None,
         "targets": list(analysis.get("targets") or []) if actionable else [],
         "reward_risk": analysis.get("reward_risk") if actionable else None,
+        "grid_plan": analysis.get("grid_plan") if actionable and classification == "grid" else None,
         "score": analysis.get("score"),
         "grid_score": analysis.get("grid_score"),
         "score_threshold": analysis.get("score_threshold", 7),
@@ -173,6 +197,18 @@ def telegram(result: dict) -> str:
         failures = result["data_quality"]["failures"][:3]
         if failures:
             lines += ["Why:", *[f"• {item}" for item in failures]]
+    elif result["classification"] == "grid":
+        grid = result["grid_plan"]
+        lines.append("Decision: GRID (TWO_SIDED)")
+        lines += [
+            f"Center: {grid['center']:,.8g}",
+            "Buy levels: " + " | ".join(f"{value:,.8g}" for value in grid["buy_levels"]),
+            "Sell levels: " + " | ".join(f"{value:,.8g}" for value in grid["sell_levels"]),
+            f"Boundaries: {grid['lower_boundary']:,.8g} — {grid['upper_boundary']:,.8g}",
+            f"Invalidation: below {grid['lower_invalidation']:,.8g} or above {grid['upper_invalidation']:,.8g}",
+            f"Spacing: {grid['spacing']:,.8g} | {grid['levels_per_side']} levels per side",
+            f"Trigger: {result['entry_trigger']}",
+        ]
     else:
         lines.append(f"Decision: {result['classification'].upper()} ({result['direction'].upper()})")
         zone = result["entry_zone"]

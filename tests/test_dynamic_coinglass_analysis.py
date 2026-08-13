@@ -105,19 +105,37 @@ def test_trend_without_confirming_net_order_flow_fails_closed_to_no_trade():
     assert any("order flow" in item for item in output["data_quality"]["failures"])
 
 
+def _grid_plan():
+    return {
+        "center": 1.0, "buy_levels": [0.95, 0.9], "sell_levels": [1.05, 1.1],
+        "lower_boundary": 0.9, "upper_boundary": 1.1,
+        "lower_invalidation": 0.85, "upper_invalidation": 1.15,
+        "spacing": 0.05, "levels_per_side": 2,
+    }
+
+
 def test_grid_confirms_only_when_flow_is_not_one_sided():
     balanced, asset = _quality_result(derivatives={"cvd_delta": 100.0, "derivatives_volume": 1_000_000.0})
-    output = finalize_dynamic_analysis({"classification": "grid", "direction": "two_sided", "interval": "1h", "grid_plan": {
-        "center": 1.0, "buy_levels": [0.95, 0.9], "sell_levels": [1.05, 1.1], "spacing": 0.05,
-    }}, balanced, asset)
+    output = finalize_dynamic_analysis({"classification": "grid", "direction": "two_sided", "interval": "1h", "grid_plan": _grid_plan()}, balanced, asset)
     assert output["data_quality"]["passed"] is True
+    assert output["grid_plan"]["buy_levels"] == [0.95, 0.9]
+    assert output["grid_plan"]["sell_levels"] == [1.05, 1.1]
 
     skewed, asset = _quality_result(derivatives={"cvd_delta": 900_000.0, "derivatives_volume": 1_000_000.0})
-    output = finalize_dynamic_analysis({"classification": "grid", "direction": "two_sided", "interval": "1h", "grid_plan": {
-        "center": 1.0, "buy_levels": [0.95, 0.9], "sell_levels": [1.05, 1.1], "spacing": 0.05,
-    }}, skewed, asset)
+    output = finalize_dynamic_analysis({"classification": "grid", "direction": "two_sided", "interval": "1h", "grid_plan": _grid_plan()}, skewed, asset)
     assert output["classification"] == "no_trade"
     assert output["data_quality"]["passed"] is False
+    assert output["grid_plan"] is None
+
+
+def test_malformed_grid_plan_fails_closed():
+    result, asset = _quality_result(derivatives={"cvd_delta": 100.0, "derivatives_volume": 1_000_000.0})
+    broken = _grid_plan()
+    broken["buy_levels"] = [0.95]  # fewer than two levels: structurally invalid
+    output = finalize_dynamic_analysis({"classification": "grid", "direction": "two_sided", "interval": "1h", "grid_plan": broken}, result, asset)
+    assert output["classification"] == "no_trade"
+    assert output["data_quality"]["passed"] is False
+    assert output["grid_plan"] is None
 
 
 @pytest.mark.parametrize(("count", "status"), [(20, DataStatus.READY), (140, DataStatus.DEGRADED)])

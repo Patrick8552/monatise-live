@@ -32,8 +32,15 @@ def payload(*, classification="trend", direction="long", actionable=True, qualit
             "invalidation": 0.38, "targets": [0.46], "reward_risk": 2.0,
             "expires_at": "2026-08-13T04:00:00+00:00",
         })
+        if classification == "grid":
+            result["grid_plan"] = {
+                "center": 0.42, "buy_levels": [0.41, 0.40, 0.39], "sell_levels": [0.43, 0.44, 0.45],
+                "lower_boundary": 0.39, "upper_boundary": 0.45,
+                "lower_invalidation": 0.38, "upper_invalidation": 0.46,
+                "spacing": 0.01, "levels_per_side": 3,
+            }
     else:
-        result.update({"entry_zone": None, "entry_trigger": None, "invalidation": None, "targets": [], "reward_risk": None, "expires_at": None})
+        result.update({"entry_zone": None, "entry_trigger": None, "invalidation": None, "targets": [], "reward_risk": None, "expires_at": None, "grid_plan": None})
     return result
 
 
@@ -75,6 +82,32 @@ def test_grid_decision_displays_grid_score_not_the_unrelated_trend_score():
     message = MODULE.telegram(result)
     assert "Score: 3/10" in message
     assert "Score: 8/10" not in message
+
+
+def test_grid_decision_shows_the_full_multi_level_grid_plan():
+    result = MODULE.analyze("WOOD", payload=payload(classification="grid", direction="two_sided"))
+    assert result["actionable"] is True
+    assert result["grid_plan"]["buy_levels"] == [0.41, 0.40, 0.39]
+    assert result["grid_plan"]["sell_levels"] == [0.43, 0.44, 0.45]
+    message = MODULE.telegram(result)
+    assert "Decision: GRID (TWO_SIDED)" in message
+    assert "Center: 0.42" in message
+    assert "Buy levels: 0.41 | 0.4 | 0.39" in message
+    assert "Sell levels: 0.43 | 0.44 | 0.45" in message
+    assert "Boundaries: 0.39 — 0.45" in message
+    assert "Invalidation: below 0.38 or above 0.46" in message
+    assert "Spacing: 0.01 | 3 levels per side" in message
+    # a grid has no single directional entry/target -- only the multi-level plan
+    assert "Entry zone:" not in message and "Targets:" not in message
+
+
+def test_grid_without_a_valid_grid_plan_fails_closed_to_no_trade():
+    data = payload(classification="grid", direction="two_sided")
+    data["grid_plan"] = None
+    result = MODULE.analyze("WOOD", payload=data)
+    assert result["actionable"] is False
+    assert result["classification"] == "no_trade"
+    assert any("grid_plan" in reason for reason in result["data_quality"]["failures"])
 
 
 def test_failed_quality_gate_is_no_trade_and_never_shows_a_zone():

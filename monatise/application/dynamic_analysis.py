@@ -57,9 +57,10 @@ def finalize_dynamic_analysis(
         analysis.update({
             "classification": "no_trade", "direction": "none", "entry": None,
             "entry_zone": None, "entry_trigger": None, "invalidation": None,
-            "target": None, "targets": [], "reward_risk": None,
+            "target": None, "targets": [], "reward_risk": None, "grid_plan": None,
         })
     else:
+        analysis["grid_plan"] = None
         analysis.update(plan or {})
         analysis["entry_trigger"] = "confirmed by net CoinGlass order flow (CVD); price must still reach the planned zone"
         analysis["entry"] = None
@@ -116,10 +117,36 @@ def _positive(value: Any) -> float | None:
     return number if isfinite(number) and number > 0 else None
 
 
+def _valid_grid_plan(grid: dict[str, Any]) -> bool:
+    center = grid.get("center")
+    buys = grid.get("buy_levels")
+    sells = grid.get("sell_levels")
+    lower = grid.get("lower_invalidation")
+    upper = grid.get("upper_invalidation")
+    if not (
+        _positive(center) is not None
+        and isinstance(buys, list) and isinstance(sells, list)
+        and len(buys) >= 2 and len(sells) >= 2
+        and all(_positive(v) is not None for v in [*buys, *sells, lower, upper])
+    ):
+        return False
+    buys_f, sells_f = [float(v) for v in buys], [float(v) for v in sells]
+    return (
+        len(set(buys_f)) == len(buys_f) and len(set(sells_f)) == len(sells_f)
+        and all(buys_f[i] > buys_f[i + 1] for i in range(len(buys_f) - 1))
+        and all(sells_f[i] < sells_f[i + 1] for i in range(len(sells_f) - 1))
+        and max(buys_f) < float(center) < min(sells_f)
+        and float(lower) < min(buys_f) and float(upper) > max(sells_f)
+    )
+
+
 def _planned_setup(analysis: dict[str, Any], candles: tuple[Any, ...]) -> dict[str, Any] | None:
     grid = analysis.get("grid_plan") or {}
     levels = list(grid.get("buy_levels") or []) + list(grid.get("sell_levels") or [])
+    grid_plan: dict[str, Any] | None = None
     if levels:
+        if not _valid_grid_plan(grid):
+            return None
         spacing = _positive(grid.get("spacing"))
         if spacing is None:
             return None
@@ -128,6 +155,7 @@ def _planned_setup(analysis: dict[str, Any], candles: tuple[Any, ...]) -> dict[s
         zone = {"low": round(level - spacing * 0.15, 8), "high": round(level + spacing * 0.15, 8)}
         targets = [round(center, 8)]
         invalidation = round(min(float(item) for item in levels) - spacing, 8)
+        grid_plan = grid
     else:
         recent = candles[-20:]
         if len(recent) < 10:
@@ -151,7 +179,10 @@ def _planned_setup(analysis: dict[str, Any], candles: tuple[Any, ...]) -> dict[s
     reward = abs(targets[0] - midpoint)
     if risk <= 0 or reward <= 0:
         return None
-    return {"entry_zone": zone, "invalidation": invalidation, "target": targets[0], "targets": targets, "reward_risk": round(reward / risk, 2)}
+    plan = {"entry_zone": zone, "invalidation": invalidation, "target": targets[0], "targets": targets, "reward_risk": round(reward / risk, 2)}
+    if grid_plan is not None:
+        plan["grid_plan"] = grid_plan
+    return plan
 
 
 def _expiry(interval: Any) -> str:
