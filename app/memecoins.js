@@ -108,7 +108,7 @@ function renderCreatorCard(creator) {
 async function loadCreators() {
   els.creatorRefreshButton.disabled = true;
   els.creatorRefreshButton.textContent = "Scanning…";
-  els.creatorGrid.innerHTML = `<div class="loading-card"><span></span><strong>Resolving creators</strong><small>Walking recent Pump.fun launches back to their deploy transaction…</small></div>`;
+  els.creatorGrid.innerHTML = `<div class="loading-card"><span></span><strong>Resolving creators</strong><small>Reading each token's on-chain pump.fun deploy record…</small></div>`;
   try {
     const payload = await fetchJson("/api/memecoins/creators?limit=15");
     const creators = payload.creators || [];

@@ -2316,16 +2316,18 @@ canvas {
   gap: 6px;
 }
 
+.legend-item {
+  align-items: center;
+  display: inline-flex;
+  gap: 6px;
+}
+
 .legend-swatch {
   border-radius: 3px;
   display: inline-block;
+  flex: none;
   height: 10px;
-  margin-left: 12px;
   width: 10px;
-}
-
-.legend-swatch:first-child {
-  margin-left: 0;
 }
 
 .legend-swatch.long {
@@ -5467,6 +5469,19 @@ button.primary:active,
   .command-strip { grid-template-columns: 1fr; }
   .trade-grid { grid-template-columns: 1fr; }
   .market-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .market-strip button {
+    grid-template-columns: 1fr;
+    justify-items: start;
+  }
+  .market-strip button strong,
+  .market-strip button span {
+    overflow-wrap: normal;
+    text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    width: 100%;
+  }
 }
 
 @media (max-width: 560px) {

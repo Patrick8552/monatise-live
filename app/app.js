@@ -4239,7 +4239,7 @@ function renderLiquidityMap() {
     return;
   }
   if (liquidityMap.error) {
-    els.liquidityMap.innerHTML = `<div class="context-head"><strong>Liquidity Map</strong><span>${liquidityMap.error}</span></div>`;
+    els.liquidityMap.innerHTML = `<div class="context-head"><strong>Liquidity Map</strong><span>${escapeHtml(liquidityMap.error)}</span></div>`;
     return;
   }
   const magnet = Number(liquidityMap.magnetBias);
@@ -4256,8 +4256,8 @@ function renderLiquidityMap() {
     <p class="liquidity-map-caption">Modeled from open interest across 5x-100x leverage tiers. Not CoinGlass's measured heatmap.</p>
     <canvas id="liquidityMapCanvas" class="liquidity-map-canvas" width="640" height="280" aria-label="3D liquidation cluster map"></canvas>
     <div class="liquidity-map-legend">
-      <span class="legend-swatch long"></span>Long liquidations (below mark)
-      <span class="legend-swatch short"></span>Short liquidations (above mark)
+      <span class="legend-item"><span class="legend-swatch long"></span>Long liquidations (below mark)</span>
+      <span class="legend-item"><span class="legend-swatch short"></span>Short liquidations (above mark)</span>
     </div>
   `;
   const canvas = document.querySelector("#liquidityMapCanvas");

@@ -1,4 +1,4 @@
-const CACHE_NAME = "monatise-shell-20260814-creator-track-record-v1";
+const CACHE_NAME = "monatise-shell-20260814-bugfix-v1";
 const SHELL_ASSETS = [
   "./",
   "./cg.html",
@@ -6,15 +6,15 @@ const SHELL_ASSETS = [
   "./game.html",
   "./memecoins.html",
   "./coinglass-dashboard.html?v=20260814-ui-depth-v1",
-  "./styles.css?v=20260814-liquidity-map-v1",
-  "./app.js?v=20260814-liquidity-map-v1",
+  "./styles.css?v=20260814-bugfix-v1",
+  "./app.js?v=20260814-bugfix-v1",
   "./spotify.js?v=20260629-request-access-fix",
   "./game.js?v=20260629-crypto-trainer",
   "./assets/payout-clients.svg",
   "./coinglass-dashboard.css?v=20260814-ui-depth-v1",
   "./coinglass-dashboard.js?v=20260811-dashboard-reliability-v3",
   "./memecoins.css?v=20260715-memecoins",
-  "./memecoins.js?v=20260814-creator-track-record-v1",
+  "./memecoins.js?v=20260814-bugfix-v1",
   "./manifest.webmanifest?v=20260727-brand-v2",
   "./favicon.ico?v=20260727-brand-v4",
   "./og.png?v=20260727-brand-v4",
