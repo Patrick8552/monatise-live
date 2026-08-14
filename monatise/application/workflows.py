@@ -263,11 +263,23 @@ class TelegramNotifier:
         if price is not None:
             lines.append(f"Current price: {_price(price)}")
 
+        is_grid = str(analysis.get("classification") or "").lower() == "grid"
         if not quality.get("passed", True):
             lines.append("Status: NO_TRADE — quality gate failed")
             failures = tuple(quality.get("failures") or ())[:3]
             if failures:
                 lines.append("Why: " + "; ".join(str(item) for item in failures))
+        elif is_grid and analysis.get("grid_plan"):
+            grid = analysis["grid_plan"]
+            lines += [
+                f"Center: {_price(grid.get('center'))}",
+                "Buy levels: " + " | ".join(_price(item) for item in grid.get("buy_levels") or ()),
+                "Sell levels: " + " | ".join(_price(item) for item in grid.get("sell_levels") or ()),
+                f"Boundaries: {_price(grid.get('lower_boundary'))} — {_price(grid.get('upper_boundary'))}",
+                f"Invalidation: below {_price(grid.get('lower_invalidation'))} or above {_price(grid.get('upper_invalidation'))}",
+                f"Spacing: {_price(grid.get('spacing'))} | {grid.get('levels_per_side')} levels per side",
+                f"Trigger: {analysis.get('entry_trigger', 'confirmation required')}",
+            ]
         else:
             zone = analysis.get("entry_zone")
             if zone:
@@ -281,9 +293,13 @@ class TelegramNotifier:
             if analysis.get("reward_risk") is not None:
                 lines.append(f"Reward:risk: {analysis['reward_risk']:.2f}")
 
-        score = analysis.get("score")
+        # A grid decision is qualified by its own grid_signal_score, not the
+        # unrelated directional signed score -- showing the wrong one makes an
+        # actionable grid look like it's sitting below its own threshold.
+        score = analysis.get("grid_score") if is_grid else analysis.get("score")
         if score is not None:
-            lines.append(f"Score: {score:+d}/10 | trade threshold: ±{analysis.get('score_threshold', 7)}")
+            score_text = f"{score}/10" if is_grid else f"{score:+d}/10"
+            lines.append(f"Score: {score_text} | trade threshold: ±{analysis.get('score_threshold', 7)}")
 
         warnings = tuple(quality.get("warnings") or ())[:3]
         if warnings:
