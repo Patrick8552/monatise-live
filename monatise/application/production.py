@@ -483,13 +483,20 @@ class ProductionASGI(OrchestrationASGI):
             return 502, {"status": "unavailable", "reason": str(exc), "error": str(exc)}
         tokens = discovery.get("tokens") or []
 
+        # The free public Solana RPC rate-limits aggressively; resolving all
+        # of a scan window's creators at once (each needing 1-4 sequential
+        # RPC round trips) reliably triggers 429s and every lookup silently
+        # comes back empty. Cap how many run at once instead.
+        semaphore = asyncio.Semaphore(4)
+
         async def resolve(token: dict[str, Any]) -> tuple[str, str | None]:
             address = str(token.get("address") or "")
-            try:
-                creator = await asyncio.to_thread(resolve_creator, address, rpc_url)
-            except Exception as exc:  # noqa: BLE001
-                LOGGER.warning("creator resolution failed: %s (%s: %s)", address, type(exc).__name__, exc)
-                creator = None
+            async with semaphore:
+                try:
+                    creator = await asyncio.to_thread(resolve_creator, address, rpc_url)
+                except Exception as exc:  # noqa: BLE001
+                    LOGGER.warning("creator resolution failed: %s (%s: %s)", address, type(exc).__name__, exc)
+                    creator = None
             return address, creator
 
         resolved = await asyncio.gather(*(resolve(token) for token in tokens))

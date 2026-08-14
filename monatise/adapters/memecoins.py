@@ -194,7 +194,7 @@ def normalize_pair(pair: dict, *, profile: dict | None = None, mint: dict | None
     }
 
 
-def resolve_creator(mint_address: str, rpc_url: str, *, max_pages: int = 3) -> str | None:
+def resolve_creator(mint_address: str, rpc_url: str, *, max_pages: int = 4) -> str | None:
     """Best-effort creator lookup for a mint.
 
     Pump.fun's own frontend API requires an auth token we don't have, and
@@ -203,12 +203,15 @@ def resolve_creator(mint_address: str, rpc_url: str, *, max_pages: int = 3) -> s
     once the token graduates). This walks the mint's transaction history
     back to its earliest known signature and returns that transaction's fee
     payer -- the standard heuristic for "who created this token" when no
-    indexer is available. Tokens surfaced by discover_pumpfun are freshly
-    launched, so genesis is normally reached within a page or two; if it
-    isn't within max_pages, this gives up rather than guess.
+    indexer is available. If genesis isn't reached within max_pages (a
+    high-activity token can have far more history than that), this returns
+    None rather than guessing: whatever page we stopped at is some early
+    trader, not necessarily the deployer, and a wrong guess is worse than
+    an honest "unknown".
     """
     before: str | None = None
     earliest_batch: list[dict] = []
+    reached_genesis = False
     for _ in range(max_pages):
         params: dict[str, Any] = {"limit": 1000}
         if before:
@@ -225,12 +228,14 @@ def resolve_creator(mint_address: str, rpc_url: str, *, max_pages: int = 3) -> s
             return None
         batch = (response or {}).get("result")
         if not isinstance(batch, list) or not batch:
+            reached_genesis = bool(earliest_batch)
             break
         earliest_batch = batch
         if len(batch) < 1000:
+            reached_genesis = True
             break
         before = batch[-1].get("signature")
-    if not earliest_batch:
+    if not earliest_batch or not reached_genesis:
         return None
     earliest_signature = earliest_batch[-1].get("signature")
     if not earliest_signature:

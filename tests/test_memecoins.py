@@ -99,6 +99,23 @@ def test_resolve_creator_paginates_until_a_short_page_is_seen(monkeypatch) -> No
     assert creator == "creator-wallet"
 
 
+def test_resolve_creator_refuses_to_guess_when_genesis_is_never_reached(monkeypatch) -> None:  # noqa: ANN001
+    # Every page comes back full (1000 signatures), so max_pages is
+    # exhausted without ever seeing proof we reached the token's genesis.
+    call_count = 0
+
+    def fake_request(url: str, *, payload: dict, **_kwargs):  # noqa: ANN202
+        nonlocal call_count
+        call_count += 1
+        assert payload["method"] == "getSignaturesForAddress"
+        return {"result": [{"signature": f"sig-{call_count}-{i}"} for i in range(1000)]}
+
+    monkeypatch.setattr(memecoins, "_json_request", fake_request)
+    creator = memecoins.resolve_creator(PUMP_MINT, "https://rpc.example", max_pages=4)
+    assert creator is None
+    assert call_count == 4
+
+
 def test_resolve_creator_gives_up_cleanly_without_signatures(monkeypatch) -> None:  # noqa: ANN001
     monkeypatch.setattr(memecoins, "_json_request", lambda url, **_kwargs: {"result": []})
     assert memecoins.resolve_creator(PUMP_MINT, "https://rpc.example") is None
