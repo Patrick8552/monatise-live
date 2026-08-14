@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from monatise.application.persistence import DurableAuditRepository, DurableEventStore, DurableRecord, DurableStateManager, DurableTaskScheduler, PostgresDocumentStore
+from monatise.application.persistence import AmbiguousDurableAuditChainError, DurableAuditRepository, DurableEventStore, DurableRecord, DurableStateManager, DurableTaskScheduler, PostgresDocumentStore
 from monatise.infrastructure.audit_database import AuditAction, AuditActor, AuditRecordType
 from monatise.infrastructure.audit_database import AuditQuery
 from monatise.infrastructure.event_bus import DeliveryMode, DomainEvent, EventEnvelope, EventPriority
@@ -202,6 +202,92 @@ def test_durable_audit_repository_restores_unique_longest_fork_without_deleting_
         snapshot = await restored.snapshot()
         assert [record.record_id for record in snapshot.records[1:]] == [right_second.record_id, right_third.record_id]
         assert len(combined.streams["audit"]) == 4
+
+    asyncio.run(scenario())
+
+
+def _tied_audit_stream():
+    """Two branches that both sign the same next sequence off a shared
+    ancestor -- a genuine tie at the true maximum, unlike the "longest fork"
+    fixture above where only one branch ever reaches the maximum."""
+    base = MemoryDocumentStore()
+
+    async def build():
+        await DurableAuditRepository(base).append(
+            record_type=AuditRecordType.SYSTEM, action=AuditAction.CREATED,
+            actor=AuditActor("base", "application"), source="test", payload={"branch": "base"},
+        )
+        left = MemoryDocumentStore()
+        right = MemoryDocumentStore()
+        left.streams["audit"] = list(base.streams["audit"])
+        right.streams["audit"] = list(base.streams["audit"])
+        await DurableAuditRepository(left).append(
+            record_type=AuditRecordType.SYSTEM, action=AuditAction.CREATED,
+            actor=AuditActor("left", "application"), source="test", payload={"branch": "left"},
+        )
+        await DurableAuditRepository(right).append(
+            record_type=AuditRecordType.SYSTEM, action=AuditAction.CREATED,
+            actor=AuditActor("right", "application"), source="test", payload={"branch": "right"},
+        )
+        tied = list(base.streams["audit"]) + [left.streams["audit"][-1], right.streams["audit"][-1]]
+        return tied, left, right
+
+    return asyncio.run(build())
+
+
+def test_durable_audit_repository_rejects_a_genuine_tie_after_exhausting_retries(monkeypatch):
+    tied, _left, _right = _tied_audit_stream()
+
+    async def scenario():
+        backend = MemoryDocumentStore()
+        backend.streams["audit"] = tied
+        sleeps = []
+        real_sleep = asyncio.sleep
+        monkeypatch.setattr(asyncio, "sleep", lambda seconds: sleeps.append(seconds) or real_sleep(0))
+
+        with pytest.raises(AmbiguousDurableAuditChainError, match="ambiguous"):
+            await DurableAuditRepository(backend).verify_integrity()
+
+        # Retried up to the configured attempt count, not just once, and
+        # actually paused between attempts rather than busy-looping.
+        assert len(sleeps) == DurableAuditRepository._LOAD_RETRY_ATTEMPTS - 1
+        assert all(delay == DurableAuditRepository._LOAD_RETRY_DELAY_SECONDS for delay in sleeps)
+
+    asyncio.run(scenario())
+
+
+def test_durable_audit_repository_recovers_once_a_transient_tie_is_extended(monkeypatch):
+    tied, _left, right = _tied_audit_stream()
+
+    async def scenario():
+        class EventuallyResolvingStore(MemoryDocumentStore):
+            def __init__(self):
+                super().__init__()
+                self.streams["audit"] = list(tied)
+                self.reads = 0
+
+            async def read_stream(self, stream):
+                self.reads += 1
+                if self.reads >= 3:
+                    # The surviving process (the "right" branch) kept
+                    # appending after the deploy overlap ended, extending
+                    # its chain past the tie point -- exactly how a real
+                    # rolling-deploy race resolves itself.
+                    right_repository = DurableAuditRepository(right)
+                    await right_repository.append(
+                        record_type=AuditRecordType.SYSTEM, action=AuditAction.CREATED,
+                        actor=AuditActor("right", "application"), source="test", payload={"branch": "right-continued"},
+                    )
+                    self.streams["audit"] = list(right.streams["audit"])
+                return await super().read_stream(stream)
+
+        backend = EventuallyResolvingStore()
+        real_sleep = asyncio.sleep
+        monkeypatch.setattr(asyncio, "sleep", lambda seconds: real_sleep(0))
+
+        # Does not raise -- the retry loop waits out the transient tie.
+        assert await DurableAuditRepository(backend).verify_integrity() == ()
+        assert backend.reads == 3
 
     asyncio.run(scenario())
 

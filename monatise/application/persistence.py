@@ -234,8 +234,20 @@ return version
             return
 
 
+class AmbiguousDurableAuditChainError(RuntimeError):
+    """Two equally-valid endpoint chains were found while restoring the
+    audit stream. Expected transiently during a zero-downtime rolling
+    deploy, where the outgoing and incoming process briefly append to the
+    same stream and may sign the same next sequence -- the losing branch's
+    writer typically stops within seconds. Distinct from a genuinely
+    incomplete or invalid chain, which will not resolve by waiting."""
+
+
 class DurableAuditRepository:
     """AuditRepository-compatible append-through durable adapter."""
+
+    _LOAD_RETRY_ATTEMPTS = 6
+    _LOAD_RETRY_DELAY_SECONDS = 3.0
 
     def __init__(self, store: DocumentStore) -> None:
         self._store = store
@@ -283,8 +295,16 @@ class DurableAuditRepository:
         async with self._load_lock:
             if self._loaded:
                 return
-            values = await self._store.read_stream("audit")
-            ordered_values = self._canonical_chain(values)
+            ordered_values: tuple[dict[str, Any], ...] = ()
+            for attempt in range(1, self._LOAD_RETRY_ATTEMPTS + 1):
+                values = await self._store.read_stream("audit")
+                try:
+                    ordered_values = self._canonical_chain(values)
+                    break
+                except AmbiguousDurableAuditChainError:
+                    if attempt == self._LOAD_RETRY_ATTEMPTS:
+                        raise
+                    await asyncio.sleep(self._LOAD_RETRY_DELAY_SECONDS)
             for value in ordered_values:
                 actor = value["actor"]
                 record = await self._repository.append(
@@ -340,8 +360,9 @@ class DurableAuditRepository:
                 chains.append(tuple(reversed(reverse_chain)))
 
         if len(chains) != 1:
-            detail = "incomplete" if not chains else "ambiguous"
-            raise RuntimeError(f"durable audit sequence is {detail} during restoration")
+            if chains:
+                raise AmbiguousDurableAuditChainError("durable audit sequence is ambiguous during restoration")
+            raise RuntimeError("durable audit sequence is incomplete during restoration")
         return chains[0]
 
     def __getattr__(self, name: str) -> Any:
