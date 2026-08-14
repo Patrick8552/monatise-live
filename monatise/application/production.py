@@ -22,6 +22,7 @@ from monatise.analysis.context import context_assets, grid_instruction, indicato
 from monatise.analysis.fibonacci import analyze_fibonacci
 from monatise.analysis.fvg import analyze_fvg
 from monatise.analysis.liquidity_clusters import estimate_liquidation_clusters
+from monatise.adapters.memecoins import discover_pumpfun, inspect_memecoin
 
 from monatise.adapters.coinglass_production import CoinGlassProductionAdapter
 from monatise.application.deployment import OrchestrationASGI, OrchestrationRuntime
@@ -162,11 +163,13 @@ class ProductionASGI(OrchestrationASGI):
             "/api/context/radar",
             "/api/coinglass/context",
             "/api/analysis/liquidity-clusters",
+            "/api/memecoins/discover",
+            "/api/memecoins/token",
         }:
             if scope.get("method", "GET").upper() != "GET":
                 await self._respond(send, 405, {"status": "method_not_allowed"})
                 return
-            if self._market_rate_limited(scope):
+            if self._market_rate_limited(scope, maximum=30 if path.startswith("/api/memecoins/") else 120):
                 await self._respond(send, 429, {"status": "rate_limited"})
                 return
             handlers = {
@@ -175,6 +178,8 @@ class ProductionASGI(OrchestrationASGI):
                 "/api/context/radar": self._context_radar,
                 "/api/coinglass/context": self._coinglass_context,
                 "/api/analysis/liquidity-clusters": self._liquidity_clusters,
+                "/api/memecoins/discover": self._memecoins_discover,
+                "/api/memecoins/token": self._memecoins_token,
             }
             code, payload = await handlers[path](scope)
             await self._respond(send, code, payload)
@@ -435,6 +440,32 @@ class ProductionASGI(OrchestrationASGI):
             "clusters": [asdict(cluster) for cluster in cluster_map.clusters],
             "execution_enabled": False,
         }
+
+    async def _memecoins_discover(self, scope: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        query = parse_qs(scope.get("query_string", b"").decode())
+        try:
+            limit = max(4, min(24, int(query.get("limit", ["12"])[0])))
+        except ValueError:
+            return 400, {"status": "invalid_request", "reason": "limit must be an integer"}
+        try:
+            payload = await asyncio.to_thread(discover_pumpfun, limit)
+        except (RuntimeError, ValueError) as exc:
+            LOGGER.warning("memecoin discovery unavailable: %s (%s: %s)", limit, type(exc).__name__, exc.__cause__ or exc)
+            return 502, {"status": "unavailable", "reason": str(exc), "error": str(exc)}
+        return 200, payload
+
+    async def _memecoins_token(self, scope: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        query = parse_qs(scope.get("query_string", b"").decode())
+        address = str(query.get("address", [""])[0]).strip()
+        rpc_url = self.runtime.environment.get("MONATISE_SOLANA_RPC_URL", "").strip() or "https://api.mainnet-beta.solana.com"
+        try:
+            payload = await asyncio.to_thread(inspect_memecoin, address, rpc_url)
+        except ValueError as exc:
+            return 400, {"status": "invalid_request", "reason": str(exc), "error": str(exc)}
+        except RuntimeError as exc:
+            LOGGER.warning("memecoin inspection unavailable: %s (%s: %s)", address, type(exc).__name__, exc.__cause__ or exc)
+            return 502, {"status": "unavailable", "reason": str(exc), "error": str(exc)}
+        return 200, payload
 
     async def _market_candles(self, scope: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         query = parse_qs(scope.get("query_string", b"").decode())

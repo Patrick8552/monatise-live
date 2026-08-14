@@ -213,6 +213,55 @@ def test_liquidity_clusters_endpoint_fails_closed_without_coinglass():
     assert response[0]["status"] == 503
 
 
+def test_memecoins_discover_endpoint_is_wired_into_production(monkeypatch):
+    monkeypatch.setattr(
+        production_module,
+        "discover_pumpfun",
+        lambda limit: {"tokens": [{"address": "abc"}], "count": 1, "source": "DEX Screener", "methodology": "screened", "updatedAt": 1},
+    )
+    app = ProductionASGI(Runtime())
+    response = get(app, "/api/memecoins/discover", query="limit=12")
+    assert response[0]["status"] == 200
+    payload = json.loads(response[1]["body"])
+    assert payload["tokens"] == [{"address": "abc"}]
+    assert payload["count"] == 1
+
+
+def test_memecoins_discover_fails_with_upstream_error_surfaced(monkeypatch):
+    def boom(limit):
+        raise RuntimeError("dex screener unavailable")
+
+    monkeypatch.setattr(production_module, "discover_pumpfun", boom)
+    app = ProductionASGI(Runtime())
+    response = get(app, "/api/memecoins/discover", query="limit=12")
+    assert response[0]["status"] == 502
+    payload = json.loads(response[1]["body"])
+    assert payload["error"] == "dex screener unavailable"
+
+
+def test_memecoins_token_endpoint_is_wired_into_production(monkeypatch):
+    monkeypatch.setattr(
+        production_module,
+        "inspect_memecoin",
+        lambda address, rpc_url: {"address": address, "source": "DEX Screener market data + Solana RPC mint inspection"},
+    )
+    app = ProductionASGI(Runtime())
+    response = get(app, "/api/memecoins/token", query="address=SomeMintAddress111111111111111111111111")
+    assert response[0]["status"] == 200
+    payload = json.loads(response[1]["body"])
+    assert payload["address"] == "SomeMintAddress111111111111111111111111"
+
+
+def test_memecoins_token_rejects_invalid_address(monkeypatch):
+    def invalid(address, rpc_url):
+        raise ValueError("enter a valid Solana token mint address")
+
+    monkeypatch.setattr(production_module, "inspect_memecoin", invalid)
+    app = ProductionASGI(Runtime())
+    response = get(app, "/api/memecoins/token", query="address=not-valid")
+    assert response[0]["status"] == 400
+
+
 def test_web_dashboard_exposes_stock_assets_and_sanitized_quiver_context(monkeypatch):
     context = {
         "symbol": "NVDA",
