@@ -465,7 +465,11 @@ class ProductionASGI(OrchestrationASGI):
         except ValueError as exc:
             return 400, {"status": "invalid_request", "reason": str(exc)}
         except Exception as exc:
-            LOGGER.warning("CoinGlass dashboard dataset unavailable", extra={"path": upstream_path, "error_type": type(exc).__name__})
+            # dashboard_query's final raise carries a generic message but chains
+            # the real per-attempt failure (often CoinGlass's own rejection
+            # reason) as __cause__ -- log that, not just the exception type,
+            # or every dashboard failure looks identical in the logs.
+            LOGGER.warning("CoinGlass dashboard dataset unavailable", extra={"path": upstream_path, "error_type": type(exc).__name__, "error_detail": str(exc.__cause__ or exc)})
             return 503, {"status": "unavailable", "source": "coinglass", "dataset": upstream_path, "error_type": type(exc).__name__}
         return 200, payload
 

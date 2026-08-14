@@ -2232,7 +2232,7 @@ function updateCoinGlassSourceStatus(message = "") {
     : `${asset.pair} · CoinGlass futures price history`;
   els.coinGlassRouteRef.textContent = usesServerMarketCandles(asset)
     ? `/api/market/candles · symbol ${asset.coin} · ${usesCryptoMultiFrame(asset) ? `analysis ${analysisFrames.primary} + ${analysisFrames.confirmation}` : `view ${viewInterval}`}`
-    : `/api/futures/price/history · exchange ${exchange} · analysis ${ANALYSIS_INTERVAL} · view ${viewInterval}`;
+    : `/api/futures/price/history · exchange ${exchange} · interval ${viewInterval}`;
   els.openIntegrationsButton.textContent = serverReady ? "CoinGlass Connected" : localKey ? "Update Your CoinGlass Key" : "Add Your CoinGlass Key";
 }
 
@@ -2325,7 +2325,7 @@ async function getPriceForAsset(asset, limit = "96") {
     return fetchServerMarketCandles(asset, els.intervalSelect.value || DEFAULT_VIEW_INTERVAL, limit);
   }
   const exchange = els.exchangeSelect.value;
-  const interval = ANALYSIS_INTERVAL;
+  const interval = els.intervalSelect.value || ANALYSIS_INTERVAL;
   requireCoinGlass(`${asset.coin} price history`);
   const params = new URLSearchParams({
     exchange,
@@ -2354,11 +2354,10 @@ async function getPriceForAsset(asset, limit = "96") {
 async function getPrice() {
   const asset = selectedAsset();
   const exchange = els.exchangeSelect.value;
-  const interval = ANALYSIS_INTERVAL;
   const rows = await getPriceForAsset(asset);
   els.priceSource.textContent = usesServerMarketCandles(asset)
     ? `${rows.source || "Monatise market feed"} · ${asset.tv} · ${usesCryptoMultiFrame(asset) ? `${rows.multiTimeframe?.primary || cryptoAnalysisFrames().primary} structure + ${rows.multiTimeframe?.confirmation || cryptoAnalysisFrames().confirmation} confirmation candles` : `${rows.interval || els.intervalSelect.value || DEFAULT_VIEW_INTERVAL} TradingView-aligned candles`}`
-    : `CoinGlass futures price history · ${asset.pair} · ${exchange} · analysis ${interval} · view ${els.intervalSelect.value || DEFAULT_VIEW_INTERVAL}`;
+    : `CoinGlass futures price history · ${asset.pair} · ${exchange} · interval ${els.intervalSelect.value || DEFAULT_VIEW_INTERVAL}`;
   return rows;
 }
 
@@ -3094,7 +3093,7 @@ function renderResearch(research) {
   els.vwapMetric.className = research.vwapScore > 0 ? "positive" : research.vwapScore < 0 ? "negative" : "";
   els.researchSource.textContent = usesServerMarketCandles(asset)
     ? `Hyperliquid/Monatise indicator study · ${asset.coin} · ${els.intervalSelect.value || DEFAULT_VIEW_INTERVAL}`
-    : `CoinGlass history study · ${asset.coin} · ${ANALYSIS_INTERVAL} analysis candles`;
+    : `CoinGlass history study · ${asset.coin} · ${els.intervalSelect.value || DEFAULT_VIEW_INTERVAL} analysis candles`;
   els.researchPattern.textContent = research.pattern;
   els.historySignal.textContent = research.signal;
   els.historyStats.textContent = research.stats;
