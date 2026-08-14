@@ -91,6 +91,27 @@
           <p id="radarMethodology" class="methodology"></p>
         </section>
 
+        <section class="radar-section" aria-labelledby="creatorTitle">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Creator track record</p>
+              <h2 id="creatorTitle">Most active launchers right now</h2>
+              <p>Ranked by launches seen in the current discovery window only, not an all-time history. A repeat launcher is not inherently good or bad — serial token creation is also a common rug-pull pattern. Review each launch individually before doing anything with real funds.</p>
+            </div>
+            <button id="refreshCreatorsButton" class="ghost-button" type="button">Refresh creators</button>
+          </div>
+          <div id="creatorSummary" class="radar-summary">
+            <article><span>Window scanned</span><strong id="creatorWindowCount">--</strong></article>
+            <article><span>Creators resolved</span><strong id="creatorResolvedCount">--</strong></article>
+            <article><span>Source</span><strong>Solana RPC</strong></article>
+            <article><span>Execution</span><strong>Paper only</strong></article>
+          </div>
+          <div id="creatorGrid" class="token-grid" aria-live="polite">
+            <div class="loading-card"><span></span><strong>Resolving creators</strong><small>Walking recent Pump.fun launches back to their deploy transaction…</small></div>
+          </div>
+          <p id="creatorMethodology" class="methodology"></p>
+        </section>
+
         <section class="public-value">
           <div>
             <p class="eyebrow">Built for public usefulness</p>
@@ -111,6 +132,6 @@
         <a href="https://pump.fun/docs/bonding-curve" target="_blank" rel="noreferrer">Pump.fun lifecycle docs ↗</a>
       </footer>
     </div>
-    <script src="./memecoins.js?v=20260715-memecoins"></script>
+    <script src="./memecoins.js?v=20260814-creator-track-record-v1"></script>
   </body>
 </html>

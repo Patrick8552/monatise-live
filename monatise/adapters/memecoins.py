@@ -4,6 +4,7 @@ import base64
 import json
 import re
 import time
+from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -190,6 +191,112 @@ def normalize_pair(pair: dict, *, profile: dict | None = None, mint: dict | None
         "transactions": pair.get("txns") or {},
         "url": pair.get("url"),
         "volume": pair.get("volume") or {},
+    }
+
+
+def resolve_creator(mint_address: str, rpc_url: str, *, max_pages: int = 3) -> str | None:
+    """Best-effort creator lookup for a mint.
+
+    Pump.fun's own frontend API requires an auth token we don't have, and
+    SPL mint accounts don't carry a "creator" field (mint authority is the
+    pump.fun program's PDA, not the human deployer, and is usually revoked
+    once the token graduates). This walks the mint's transaction history
+    back to its earliest known signature and returns that transaction's fee
+    payer -- the standard heuristic for "who created this token" when no
+    indexer is available. Tokens surfaced by discover_pumpfun are freshly
+    launched, so genesis is normally reached within a page or two; if it
+    isn't within max_pages, this gives up rather than guess.
+    """
+    before: str | None = None
+    earliest_batch: list[dict] = []
+    for _ in range(max_pages):
+        params: dict[str, Any] = {"limit": 1000}
+        if before:
+            params["before"] = before
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getSignaturesForAddress",
+            "params": [mint_address, params],
+        }
+        try:
+            response = _json_request(rpc_url, payload=payload)
+        except RuntimeError:
+            return None
+        batch = (response or {}).get("result")
+        if not isinstance(batch, list) or not batch:
+            break
+        earliest_batch = batch
+        if len(batch) < 1000:
+            break
+        before = batch[-1].get("signature")
+    if not earliest_batch:
+        return None
+    earliest_signature = earliest_batch[-1].get("signature")
+    if not earliest_signature:
+        return None
+    tx_payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "getTransaction",
+        "params": [earliest_signature, {"encoding": "json", "maxSupportedTransactionVersion": 0}],
+    }
+    try:
+        tx_response = _json_request(rpc_url, payload=tx_payload)
+    except RuntimeError:
+        return None
+    result = (tx_response or {}).get("result") or {}
+    account_keys = (((result.get("transaction") or {}).get("message") or {}) or {}).get("accountKeys") or []
+    if not account_keys:
+        return None
+    creator = str(account_keys[0] or "").strip()
+    return creator or None
+
+
+def creator_leaderboard(tokens: list[dict], creators_by_address: dict[str, str | None], *, limit: int = 15) -> dict:
+    """Groups already-screened tokens by their resolved creator and ranks
+    creators by how many launches were observed in this window. This is
+    NOT an all-time history -- it only reflects tokens discover_pumpfun
+    surfaced just now, so a creator with one visible launch may well have
+    others outside this window.
+    """
+    groups: dict[str, list[dict]] = {}
+    for token in tokens:
+        creator = creators_by_address.get(token.get("address"))
+        if not creator:
+            continue
+        groups.setdefault(creator, []).append(token)
+
+    creators = []
+    for address, group_tokens in groups.items():
+        scores = [_number(token.get("risk", {}).get("score")) for token in group_tokens]
+        liquidity = [_number(token.get("liquidityUsd")) for token in group_tokens]
+        high_risk = sum(1 for token in group_tokens if str(token.get("risk", {}).get("label")) == "High risk")
+        creators.append({
+            "address": address,
+            "launchesObserved": len(group_tokens),
+            "averageRiskScore": round(sum(scores) / len(scores), 1) if scores else None,
+            "averageLiquidityUsd": round(sum(liquidity) / len(liquidity), 2) if liquidity else None,
+            "highRiskCount": high_risk,
+            "repeatLauncher": len(group_tokens) > 1,
+            "tokens": [
+                {"address": token.get("address"), "symbol": token.get("symbol"), "riskScore": token.get("risk", {}).get("score"), "riskLabel": token.get("risk", {}).get("label")}
+                for token in group_tokens
+            ],
+        })
+    creators.sort(key=lambda creator: creator["launchesObserved"], reverse=True)
+    return {
+        "creators": creators[:limit],
+        "windowTokensScanned": len(tokens),
+        "windowTokensWithResolvedCreator": sum(len(group) for group in groups.values()),
+        "methodology": (
+            "Creators ranked by number of pump.fun launches observed in the current "
+            "discovery window only, not an all-time history. A repeat launcher is not "
+            "inherently good or bad -- serial token creation is also a common pattern "
+            "in rug-pull operations. Review each launch individually."
+        ),
+        "source": "DEX Screener latest token profiles + Solana RPC creator resolution",
+        "updatedAt": int(time.time()),
     }
 
 

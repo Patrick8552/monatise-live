@@ -262,6 +262,36 @@ def test_memecoins_token_rejects_invalid_address(monkeypatch):
     assert response[0]["status"] == 400
 
 
+def test_memecoins_creators_endpoint_ranks_repeat_launchers(monkeypatch):
+    tokens = [
+        {"address": "mintA", "symbol": "MEME1", "liquidityUsd": 5_000, "risk": {"score": 20, "label": "High risk"}},
+        {"address": "mintB", "symbol": "MEME2", "liquidityUsd": 6_000, "risk": {"score": 25, "label": "High risk"}},
+        {"address": "mintC", "symbol": "MEME3", "liquidityUsd": 300_000, "risk": {"score": 80, "label": "Screened"}},
+    ]
+    monkeypatch.setattr(production_module, "discover_pumpfun", lambda limit: {"tokens": tokens})
+    creators = {"mintA": "serial-creator", "mintB": "serial-creator", "mintC": "one-off-creator"}
+    monkeypatch.setattr(production_module, "resolve_creator", lambda address, rpc_url: creators.get(address))
+
+    app = ProductionASGI(Runtime())
+    response = get(app, "/api/memecoins/creators", query="limit=15")
+    assert response[0]["status"] == 200
+    payload = json.loads(response[1]["body"])
+    assert payload["creators"][0]["address"] == "serial-creator"
+    assert payload["creators"][0]["launchesObserved"] == 2
+    assert payload["creators"][0]["repeatLauncher"] is True
+    assert "not an all-time history" in payload["methodology"]
+
+
+def test_memecoins_creators_endpoint_fails_closed_when_discovery_unavailable(monkeypatch):
+    def boom(limit):
+        raise RuntimeError("dex screener unavailable")
+
+    monkeypatch.setattr(production_module, "discover_pumpfun", boom)
+    app = ProductionASGI(Runtime())
+    response = get(app, "/api/memecoins/creators", query="limit=15")
+    assert response[0]["status"] == 502
+
+
 def test_web_dashboard_exposes_stock_assets_and_sanitized_quiver_context(monkeypatch):
     context = {
         "symbol": "NVDA",

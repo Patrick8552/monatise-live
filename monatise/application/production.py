@@ -22,7 +22,7 @@ from monatise.analysis.context import context_assets, grid_instruction, indicato
 from monatise.analysis.fibonacci import analyze_fibonacci
 from monatise.analysis.fvg import analyze_fvg
 from monatise.analysis.liquidity_clusters import estimate_liquidation_clusters
-from monatise.adapters.memecoins import discover_pumpfun, inspect_memecoin
+from monatise.adapters.memecoins import creator_leaderboard, discover_pumpfun, inspect_memecoin, resolve_creator
 
 from monatise.adapters.coinglass_production import CoinGlassProductionAdapter
 from monatise.application.deployment import OrchestrationASGI, OrchestrationRuntime
@@ -165,6 +165,7 @@ class ProductionASGI(OrchestrationASGI):
             "/api/analysis/liquidity-clusters",
             "/api/memecoins/discover",
             "/api/memecoins/token",
+            "/api/memecoins/creators",
         }:
             if scope.get("method", "GET").upper() != "GET":
                 await self._respond(send, 405, {"status": "method_not_allowed"})
@@ -180,6 +181,7 @@ class ProductionASGI(OrchestrationASGI):
                 "/api/analysis/liquidity-clusters": self._liquidity_clusters,
                 "/api/memecoins/discover": self._memecoins_discover,
                 "/api/memecoins/token": self._memecoins_token,
+                "/api/memecoins/creators": self._memecoins_creators,
             }
             code, payload = await handlers[path](scope)
             await self._respond(send, code, payload)
@@ -466,6 +468,34 @@ class ProductionASGI(OrchestrationASGI):
             LOGGER.warning("memecoin inspection unavailable: %s (%s: %s)", address, type(exc).__name__, exc.__cause__ or exc)
             return 502, {"status": "unavailable", "reason": str(exc), "error": str(exc)}
         return 200, payload
+
+    async def _memecoins_creators(self, scope: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        query = parse_qs(scope.get("query_string", b"").decode())
+        try:
+            limit = max(10, min(20, int(query.get("limit", ["15"])[0])))
+        except ValueError:
+            return 400, {"status": "invalid_request", "reason": "limit must be an integer"}
+        rpc_url = self.runtime.environment.get("MONATISE_SOLANA_RPC_URL", "").strip() or "https://api.mainnet-beta.solana.com"
+        try:
+            discovery = await asyncio.to_thread(discover_pumpfun, 30)
+        except (RuntimeError, ValueError) as exc:
+            LOGGER.warning("memecoin creator scan unavailable: (%s: %s)", type(exc).__name__, exc.__cause__ or exc)
+            return 502, {"status": "unavailable", "reason": str(exc), "error": str(exc)}
+        tokens = discovery.get("tokens") or []
+
+        async def resolve(token: dict[str, Any]) -> tuple[str, str | None]:
+            address = str(token.get("address") or "")
+            try:
+                creator = await asyncio.to_thread(resolve_creator, address, rpc_url)
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.warning("creator resolution failed: %s (%s: %s)", address, type(exc).__name__, exc)
+                creator = None
+            return address, creator
+
+        resolved = await asyncio.gather(*(resolve(token) for token in tokens))
+        creators_by_address = dict(resolved)
+        leaderboard = creator_leaderboard(tokens, creators_by_address, limit=limit)
+        return 200, leaderboard
 
     async def _market_candles(self, scope: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         query = parse_qs(scope.get("query_string", b"").decode())

@@ -8,6 +8,11 @@ const els = {
   tokenAddress: document.querySelector("#tokenAddressInput"),
   tokenDetail: document.querySelector("#tokenDetail"),
   tokenGrid: document.querySelector("#tokenGrid"),
+  creatorGrid: document.querySelector("#creatorGrid"),
+  creatorMethodology: document.querySelector("#creatorMethodology"),
+  creatorRefreshButton: document.querySelector("#refreshCreatorsButton"),
+  creatorResolvedCount: document.querySelector("#creatorResolvedCount"),
+  creatorWindowCount: document.querySelector("#creatorWindowCount"),
 };
 
 const WATCHLIST_KEY = "monatise-memecoin-watchlist";
@@ -78,6 +83,47 @@ function renderTokenCard(token) {
         <button type="button" data-action="watch" aria-label="${watched ? "Remove from" : "Add to"} watchlist">${watched ? "Saved" : "+ Watch"}</button>
       </div>
     </article>`;
+}
+
+function renderCreatorCard(creator) {
+  const flagged = creator.repeatLauncher && creator.highRiskCount >= 2;
+  const chips = (creator.tokens || [])
+    .map((token) => `<span class="risk-pill ${riskClass(token.riskLabel)}">${escapeHtml(token.symbol || "?")} ${escapeHtml(token.riskScore ?? "--")}</span>`)
+    .join("");
+  return `
+    <article class="token-card">
+      <div class="token-card-head">
+        <div class="token-identity"><span class="token-avatar">${escapeHtml(String(creator.address || "?").slice(0, 1))}</span><div><strong>${escapeHtml(shortAddress(creator.address))}</strong><small>${creator.launchesObserved} launch${creator.launchesObserved === 1 ? "" : "es"} in this window</small></div></div>
+        ${flagged ? '<span class="risk-pill high-risk">Possible serial-rug pattern</span>' : ""}
+      </div>
+      <div class="token-stats">
+        <div><span>Avg. screening score</span><strong>${creator.averageRiskScore ?? "--"}</strong></div>
+        <div><span>Avg. liquidity</span><strong>${money(creator.averageLiquidityUsd, true)}</strong></div>
+        <div><span>High-risk launches</span><strong>${creator.highRiskCount}</strong></div>
+      </div>
+      <div class="token-actions" style="flex-wrap: wrap; gap: 6px;">${chips}</div>
+    </article>`;
+}
+
+async function loadCreators() {
+  els.creatorRefreshButton.disabled = true;
+  els.creatorRefreshButton.textContent = "Scanning…";
+  els.creatorGrid.innerHTML = `<div class="loading-card"><span></span><strong>Resolving creators</strong><small>Walking recent Pump.fun launches back to their deploy transaction…</small></div>`;
+  try {
+    const payload = await fetchJson("/api/memecoins/creators?limit=15");
+    const creators = payload.creators || [];
+    els.creatorWindowCount.textContent = String(payload.windowTokensScanned ?? "--");
+    els.creatorResolvedCount.textContent = String(payload.windowTokensWithResolvedCreator ?? "--");
+    els.creatorMethodology.textContent = payload.methodology || "";
+    els.creatorGrid.innerHTML = creators.length
+      ? creators.map(renderCreatorCard).join("")
+      : `<div class="loading-card"><strong>No repeat creators resolved in this window</strong><small>Try refreshing again shortly, or inspect a mint directly above.</small></div>`;
+  } catch (error) {
+    els.creatorGrid.innerHTML = `<div class="loading-card"><strong>Creator scan temporarily unavailable</strong><small>${escapeHtml(error.message)}</small></div>`;
+  } finally {
+    els.creatorRefreshButton.disabled = false;
+    els.creatorRefreshButton.textContent = "Refresh creators";
+  }
 }
 
 function paperPlan(token) {
@@ -178,6 +224,7 @@ els.lookupForm.addEventListener("submit", (event) => {
 });
 
 els.refreshButton.addEventListener("click", loadRadar);
+els.creatorRefreshButton.addEventListener("click", loadCreators);
 
 els.tokenGrid.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-action]");
@@ -210,3 +257,4 @@ document.addEventListener("error", (event) => {
 }, true);
 
 loadRadar();
+loadCreators();

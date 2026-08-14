@@ -66,3 +66,78 @@ def test_discovery_deduplicates_pairs_and_uses_deepest_liquidity(monkeypatch) ->
     assert payload["count"] == 1
     assert payload["tokens"][0]["liquidityUsd"] == 600_000
     assert "paid boosts" in payload["methodology"]
+
+
+def test_resolve_creator_returns_fee_payer_of_earliest_transaction(monkeypatch) -> None:  # noqa: ANN001
+    calls: list[dict] = []
+
+    def fake_request(url: str, *, payload: dict, **_kwargs):  # noqa: ANN202
+        calls.append(payload)
+        if payload["method"] == "getSignaturesForAddress":
+            return {"result": [{"signature": "sig-newest"}, {"signature": "sig-genesis"}]}
+        assert payload["method"] == "getTransaction"
+        assert payload["params"][0] == "sig-genesis"
+        return {"result": {"transaction": {"message": {"accountKeys": ["creator-wallet", "other-account"]}}}}
+
+    monkeypatch.setattr(memecoins, "_json_request", fake_request)
+    creator = memecoins.resolve_creator(PUMP_MINT, "https://rpc.example")
+    assert creator == "creator-wallet"
+
+
+def test_resolve_creator_paginates_until_a_short_page_is_seen(monkeypatch) -> None:  # noqa: ANN001
+    pages = [
+        {"result": [{"signature": f"sig-{i}"} for i in range(1000)]},
+        {"result": [{"signature": "sig-genesis"}]},
+        {"result": {"transaction": {"message": {"accountKeys": ["creator-wallet"]}}}},
+    ]
+
+    def fake_request(url: str, *, payload: dict, **_kwargs):  # noqa: ANN202
+        return pages.pop(0)
+
+    monkeypatch.setattr(memecoins, "_json_request", fake_request)
+    creator = memecoins.resolve_creator(PUMP_MINT, "https://rpc.example")
+    assert creator == "creator-wallet"
+
+
+def test_resolve_creator_gives_up_cleanly_without_signatures(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setattr(memecoins, "_json_request", lambda url, **_kwargs: {"result": []})
+    assert memecoins.resolve_creator(PUMP_MINT, "https://rpc.example") is None
+
+
+def test_resolve_creator_fails_closed_on_rpc_error(monkeypatch) -> None:  # noqa: ANN001
+    def boom(url: str, **_kwargs):  # noqa: ANN202
+        raise RuntimeError("rpc unavailable")
+
+    monkeypatch.setattr(memecoins, "_json_request", boom)
+    assert memecoins.resolve_creator(PUMP_MINT, "https://rpc.example") is None
+
+
+def test_creator_leaderboard_ranks_by_launches_observed_in_window() -> None:
+    def token(address: str, score: int, label: str, liquidity: float) -> dict:
+        return {"address": address, "symbol": "MEME", "liquidityUsd": liquidity, "risk": {"score": score, "label": label}}
+
+    tokens = [
+        token("mintA", 20, "High risk", 5_000),
+        token("mintB", 25, "High risk", 6_000),
+        token("mintC", 80, "Screened", 300_000),
+    ]
+    creators_by_address = {"mintA": "serial-creator", "mintB": "serial-creator", "mintC": "one-off-creator"}
+
+    leaderboard = memecoins.creator_leaderboard(tokens, creators_by_address, limit=15)
+
+    assert leaderboard["windowTokensScanned"] == 3
+    assert leaderboard["windowTokensWithResolvedCreator"] == 3
+    top = leaderboard["creators"][0]
+    assert top["address"] == "serial-creator"
+    assert top["launchesObserved"] == 2
+    assert top["repeatLauncher"] is True
+    assert top["highRiskCount"] == 2
+    assert leaderboard["creators"][1]["address"] == "one-off-creator"
+    assert leaderboard["creators"][1]["repeatLauncher"] is False
+
+
+def test_creator_leaderboard_skips_tokens_with_no_resolved_creator() -> None:
+    tokens = [{"address": "mintA", "symbol": "MEME", "liquidityUsd": 1_000, "risk": {"score": 10, "label": "High risk"}}]
+    leaderboard = memecoins.creator_leaderboard(tokens, {"mintA": None}, limit=15)
+    assert leaderboard["creators"] == []
+    assert leaderboard["windowTokensWithResolvedCreator"] == 0
