@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from monatise.application.deployment import COINGLASS_PROVIDER_KEY, MigrationRunner, OrchestrationASGI, OrchestrationRuntime, PaperSafetyConfiguration, RedisCoordinationStore, RedisSchedulerLeadership, TelegramNotificationTransport, register_coinglass_provider, scheduled_analysis_configuration
+from monatise.application.deployment import COINGLASS_PROVIDER_KEY, SCHEDULED_ANALYSIS_DEFAULT_SYMBOLS, MigrationRunner, OrchestrationASGI, OrchestrationRuntime, PaperSafetyConfiguration, RedisCoordinationStore, RedisSchedulerLeadership, TelegramNotificationTransport, register_coinglass_provider, scheduled_analysis_configuration
 from monatise.application.registry import CANONICAL_ENGINE_ORDER
 from monatise.application.registry import PRODUCTION_ENGINE_ORDER
 from monatise.application.production_analysis import build_production_analysis_run
@@ -113,6 +113,11 @@ def test_scheduled_analysis_configuration_is_explicit_bounded_and_crypto_only():
         "MONATISE_SCHEDULED_ANALYSIS_SYMBOLS": "BTC, ETH, BTC",
         "MONATISE_SCHEDULED_ANALYSIS_TIMEFRAMES": "5m,15m,5m",
     }) == (("BTC", "ETH"), ("5m", "15m"))
+    # Without an explicit override, scheduled analysis now defaults to 15m,
+    # not the old 1h.
+    assert scheduled_analysis_configuration({
+        "MONATISE_SCHEDULED_ANALYSIS_ENABLED": "true",
+    }) == (SCHEDULED_ANALYSIS_DEFAULT_SYMBOLS, ("15m",))
     with pytest.raises(ValueError, match="unsupported scheduled analysis symbols"):
         scheduled_analysis_configuration({
             "MONATISE_SCHEDULED_ANALYSIS_ENABLED": "true",

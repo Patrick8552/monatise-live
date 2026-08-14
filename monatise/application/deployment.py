@@ -66,7 +66,7 @@ def scheduled_analysis_configuration(environment: Mapping[str, str]) -> tuple[tu
         raise ValueError("scheduled analysis requires at least one symbol")
     if unsupported:
         raise ValueError("unsupported scheduled analysis symbols: " + ", ".join(unsupported))
-    raw_intervals = environment.get("MONATISE_SCHEDULED_ANALYSIS_TIMEFRAMES", "1h")
+    raw_intervals = environment.get("MONATISE_SCHEDULED_ANALYSIS_TIMEFRAMES", "15m")
     intervals = tuple(dict.fromkeys(part.strip() for part in raw_intervals.split(",") if part.strip()))
     unsupported_intervals = tuple(interval for interval in intervals if interval not in SCHEDULED_ANALYSIS_INTERVAL_SECONDS)
     if not intervals:
@@ -543,7 +543,7 @@ class OrchestrationRuntime:
         interval_seconds = max(60, int(self.environment.get("MONATISE_COIN_DISCOVERY_INTERVAL_SECONDS", "300")))
         analysis_enabled = _true(self.environment.get("MONATISE_COIN_DISCOVERY_ANALYSIS_ENABLED", "true"))
         analysis_cap = max(0, int(self.environment.get("MONATISE_COIN_DISCOVERY_ANALYSIS_CAP", "5")))
-        analysis_interval = self.environment.get("MONATISE_COIN_DISCOVERY_ANALYSIS_INTERVAL", "1h")
+        analysis_interval = self.environment.get("MONATISE_COIN_DISCOVERY_ANALYSIS_INTERVAL", "15m")
         analysis_cooldown_seconds = max(300, int(self.environment.get("MONATISE_COIN_DISCOVERY_ANALYSIS_COOLDOWN_SECONDS", "21600")))
 
         async def monitor() -> dict[str, Any]:
