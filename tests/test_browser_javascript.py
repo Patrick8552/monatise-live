@@ -8,14 +8,33 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 APP_JS = ROOT / "app" / "app.js"
 INDEX_HTML = ROOT / "app" / "index.html"
+COINGLASS_DASHBOARD_JS = ROOT / "app" / "coinglass-dashboard.js"
 
 
 def test_dashboard_javascript_has_valid_syntax() -> None:
     node = shutil.which("node")
     if node is None:
         return
-    result = subprocess.run([node, "--check", str(APP_JS)], capture_output=True, text=True, check=False)
-    assert result.returncode == 0, result.stderr
+    for script in (APP_JS, COINGLASS_DASHBOARD_JS):
+        result = subprocess.run([node, "--check", str(script)], capture_output=True, text=True, check=False)
+        assert result.returncode == 0, result.stderr
+
+
+def test_coinglass_dashboard_price_history_respects_the_interval_dropdown() -> None:
+    source = COINGLASS_DASHBOARD_JS.read_text(encoding="utf-8")
+    # Previously hardcoded to ANALYSIS_INTERVAL ("30m") for every asset
+    # except BTC/ETH/SOL, silently ignoring the INTERVAL dropdown.
+    assert 'const interval = els.intervalSelect.value || ANALYSIS_INTERVAL;' in source
+    assert 'const interval = ANALYSIS_INTERVAL;\n  requireCoinGlass' not in source
+
+
+def test_coinglass_dashboard_price_history_falls_back_across_exchanges() -> None:
+    source = COINGLASS_DASHBOARD_JS.read_text(encoding="utf-8")
+    assert 'const CRYPTO_FALLBACK_EXCHANGES = ["Binance", "OKX", "Bybit"];' in source
+    assert "rows.resolvedExchange = exchange;" in source
+    # The fallback must stay visible to the user, never silently swap the
+    # exchange label without saying so.
+    assert "does not list this pair" in source
 
 
 def test_coinglass_dashboard_handles_current_sentiment_shape_and_liquidity_fallback() -> None:

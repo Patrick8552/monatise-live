@@ -21,6 +21,10 @@ const CONFIRMATION_INTERVAL_BY_STRUCTURE = {
 };
 const DEFAULT_VIEW_INTERVAL = "1h";
 const FETCH_TIMEOUT_MS = 20_000;
+// Broad-coverage crypto futures venues to fall back through when a pair
+// isn't listed on the selected exchange. Deliberately excludes CME, which
+// only lists regulated BTC/ETH futures and would never carry altcoins.
+const CRYPTO_FALLBACK_EXCHANGES = ["Binance", "OKX", "Bybit"];
 
 function cryptoAnalysisFrames() {
   const primary = els?.intervalSelect?.value || DEFAULT_VIEW_INTERVAL;
@@ -2324,40 +2328,53 @@ async function getPriceForAsset(asset, limit = "96") {
     }
     return fetchServerMarketCandles(asset, els.intervalSelect.value || DEFAULT_VIEW_INTERVAL, limit);
   }
-  const exchange = els.exchangeSelect.value;
   const interval = els.intervalSelect.value || ANALYSIS_INTERVAL;
   requireCoinGlass(`${asset.coin} price history`);
-  const params = new URLSearchParams({
-    exchange,
-    symbol: asset.pair,
-    interval,
-    limit
-  });
-  const payload = await timedFetch(
-    `${asset.coin} price`,
-    "CoinGlass",
-    `${CG_BASE}/api/futures/price/history?${params}`,
-    { headers: cgHeaders() }
-  );
-  const rows = (Array.isArray(payload.data) ? payload.data : []).map((row) => ({
-    time: Number(row.time),
-    open: Number(row.open ?? row.close),
-    close: Number(row.close),
-    high: Number(row.high),
-    low: Number(row.low),
-    volume: Number(row.volume_usd)
-  })).filter((row) => Number.isFinite(row.close) && Number.isFinite(row.high) && Number.isFinite(row.low));
-  if (!rows.length) throw new Error(`CoinGlass returned no ${asset.coin} price rows`);
-  return rows;
+  const preferred = els.exchangeSelect.value;
+  // Not every pair is listed on every venue (e.g. many memecoins aren't on
+  // CME, which only carries regulated BTC/ETH futures). Try the user's
+  // selected exchange first, then fall back through the broad-coverage
+  // crypto venues rather than failing outright -- but always label which
+  // exchange the data actually came from, never silently substitute.
+  const attempts = [preferred, ...CRYPTO_FALLBACK_EXCHANGES.filter((name) => name !== preferred)];
+  let lastError = null;
+  for (const exchange of attempts) {
+    const params = new URLSearchParams({ exchange, symbol: asset.pair, interval, limit });
+    try {
+      const payload = await timedFetch(
+        `${asset.coin} price`,
+        "CoinGlass",
+        `${CG_BASE}/api/futures/price/history?${params}`,
+        { headers: cgHeaders() }
+      );
+      const rows = (Array.isArray(payload.data) ? payload.data : []).map((row) => ({
+        time: Number(row.time),
+        open: Number(row.open ?? row.close),
+        close: Number(row.close),
+        high: Number(row.high),
+        low: Number(row.low),
+        volume: Number(row.volume_usd)
+      })).filter((row) => Number.isFinite(row.close) && Number.isFinite(row.high) && Number.isFinite(row.low));
+      if (!rows.length) throw new Error(`CoinGlass returned no ${asset.coin} price rows`);
+      rows.resolvedExchange = exchange;
+      return rows;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw new Error(`${asset.coin} has no CoinGlass futures price history on ${attempts.join(", ")} (${lastError?.message || "unknown error"})`);
 }
 
 async function getPrice() {
   const asset = selectedAsset();
-  const exchange = els.exchangeSelect.value;
+  const preferred = els.exchangeSelect.value;
   const rows = await getPriceForAsset(asset);
+  const exchangeLabel = rows.resolvedExchange && rows.resolvedExchange !== preferred
+    ? `${rows.resolvedExchange} (${preferred} does not list this pair)`
+    : preferred;
   els.priceSource.textContent = usesServerMarketCandles(asset)
     ? `${rows.source || "Monatise market feed"} · ${asset.tv} · ${usesCryptoMultiFrame(asset) ? `${rows.multiTimeframe?.primary || cryptoAnalysisFrames().primary} structure + ${rows.multiTimeframe?.confirmation || cryptoAnalysisFrames().confirmation} confirmation candles` : `${rows.interval || els.intervalSelect.value || DEFAULT_VIEW_INTERVAL} TradingView-aligned candles`}`
-    : `CoinGlass futures price history · ${asset.pair} · ${exchange} · interval ${els.intervalSelect.value || DEFAULT_VIEW_INTERVAL}`;
+    : `CoinGlass futures price history · ${asset.pair} · ${exchangeLabel} · interval ${els.intervalSelect.value || DEFAULT_VIEW_INTERVAL}`;
   return rows;
 }
 
