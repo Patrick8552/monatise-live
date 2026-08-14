@@ -16,12 +16,9 @@ from typing import Any
 from urllib.parse import parse_qs
 
 from monatise.adapters.quiver import QuiverAdapter, normalize_quiver_symbol
-from monatise.adapters.alpaca import AlpacaMarketDataAdapter
-from monatise.adapters.finnhub import FinnhubAdapter, FinnhubAdapterError
 from monatise.analysis.context import context_assets, grid_instruction, indicator_snapshot
 from monatise.analysis.fibonacci import analyze_fibonacci
 from monatise.analysis.fvg import analyze_fvg
-from monatise.application.stock_analysis import build_stock_analysis
 
 from monatise.adapters.coinglass_production import CoinGlassProductionAdapter
 from monatise.application.deployment import OrchestrationASGI, OrchestrationRuntime
@@ -638,26 +635,7 @@ class ProductionASGI(OrchestrationASGI):
         task = self._openclaw_inflight.get(cache_key)
         joined_existing = task is not None
         if task is None:
-            symbol = cache_key[0]
-
-            async def collect() -> dict[str, Any]:
-                alpaca = AlpacaMarketDataAdapter.from_env()
-                quiver_task = asyncio.to_thread(QuiverAdapter.from_env().context, normalize_quiver_symbol(symbol))
-                bars_task = asyncio.to_thread(alpaca.stock_bars, symbol)
-                snapshot_task = asyncio.to_thread(alpaca.stock_snapshot, symbol)
-
-                def finnhub_context() -> dict[str, Any]:
-                    try:
-                        return FinnhubAdapter.from_env().context(symbol)
-                    except FinnhubAdapterError:
-                        return {"source": "Finnhub", "unavailable": True}
-
-                context, bars, snapshot, finnhub = await asyncio.gather(
-                    quiver_task, bars_task, snapshot_task, asyncio.to_thread(finnhub_context)
-                )
-                return build_stock_analysis(context, bars=bars, snapshot=snapshot, finnhub=finnhub)
-
-            task = asyncio.create_task(collect())
+            task = asyncio.create_task(self.runtime.analyse_stock(cache_key[0]))
             self._openclaw_inflight[cache_key] = task
         try:
             analysis = await asyncio.shield(task)

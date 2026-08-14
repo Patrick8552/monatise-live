@@ -104,6 +104,11 @@ class TelegramNotifier:
             raise ValueError("notification message is required")
         return await self._transport.send_message(self._chat_id, f"Monatise DYNAMIC ANALYSIS\n{message}")
 
+    async def stock_analysis_notification(self, message: str) -> Any:
+        if not message.strip():
+            raise ValueError("notification message is required")
+        return await self._transport.send_message(self._chat_id, f"Monatise STOCK ANALYSIS\n{message}")
+
     async def _alert(self, category: str, message: str) -> Any:
         if not message.strip():
             raise ValueError("notification message is required")
@@ -313,6 +318,45 @@ class TelegramNotifier:
             lines.append(f"Expires: {analysis['expires_at']}")
 
         lines.append(f"Run: {analysis.get('run_id', 'n/a')}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def format_stock_analysis(analysis: dict[str, Any]) -> str:
+        """Format the Quiver-backed stock analysis dict from analyse_stock.
+
+        Mirrors analyze_stock.py's on-demand OpenClaw skill formatter (same
+        field names, same layout) so the autonomous scan and on-demand
+        queries read the same way.
+        """
+        asset = analysis.get("asset", "UNKNOWN")
+        decision = str(analysis.get("decision") or "NO_TRADE")
+        lines = [
+            f"Monatise stock scan: {asset} ({decision.replace('_', ' ')})",
+            f"Quiver score: {int(analysis.get('score') or 0):+d}/10 | threshold: ±{int(analysis.get('score_threshold') or 3)}",
+        ]
+        reasons = list(analysis.get("reasons") or [])[:4]
+        cautions = list(analysis.get("cautions") or [])[:3]
+        if reasons:
+            lines += ["Evidence:", *[f"• {item}" for item in reasons]]
+        if cautions:
+            lines += ["Cautions:", *[f"• {item}" for item in cautions]]
+        if analysis.get("setup_status") == "confirmed":
+            lines += [
+                f"Entry: ${float(analysis['entry']):,.2f}",
+                f"Stop: ${float(analysis['stop_loss']):,.2f}",
+                f"Target: ${float(analysis['target']):,.2f}",
+                f"Reward/risk: {float(analysis['reward_risk']):.2f}",
+                f"Levels: {analysis.get('level_source', 'Alpaca market data')}",
+            ]
+        elif decision in {"BUY_WATCH", "SELL_WATCH"}:
+            lines.append("Price confirmation pending; no entry or stop is active.")
+        additional = analysis.get("additional_context") or {}
+        if additional.get("quote"):
+            lines.append(f"Finnhub validation: ${float(additional['quote']):,.2f} | {int(additional.get('news_count') or 0)} recent news items")
+        lines += [
+            "Quiver alternative-data watch signal only.",
+            "No trade was executed; confirm price structure, entry, invalidation, and risk before acting.",
+        ]
         return "\n".join(lines)
 
     @property

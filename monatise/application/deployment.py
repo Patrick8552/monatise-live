@@ -28,6 +28,10 @@ from monatise.application.time_display import format_nigeria_time
 from monatise.application.hierarchy import HierarchyConfiguration, HierarchyLayerEvaluator, HierarchyRepository, Provenance, ShadowHierarchyCoordinator, ShadowHierarchyService
 from monatise.adapters.coinglass_production import CoinGlassProductionAdapter
 from monatise.adapters.backpack import BackpackAdapter, BackpackCredentials
+from monatise.adapters.alpaca import AlpacaMarketDataAdapter
+from monatise.adapters.quiver import QuiverAdapter, normalize_quiver_symbol
+from monatise.adapters.finnhub import FinnhubAdapter, FinnhubAdapterError
+from monatise.application.stock_analysis import build_stock_analysis
 from monatise.adapters.x_macro import XMacroAdapter, XMacroPost
 from monatise.live.config import RuntimeConfig
 from monatise.infrastructure.audit_database import AuditAction, AuditActor, AuditRecordType
@@ -40,6 +44,7 @@ FALSE_VALUES = {"0", "false", "no", "off", "disabled", ""}
 COINGLASS_PROVIDER_KEY = "coinglass.market_provider"
 SCHEDULED_ANALYSIS_JOB_PREFIX = "scheduled-analysis"
 SCHEDULED_ANALYSIS_DEFAULT_SYMBOLS = ("BTC", "ETH", "SOL")
+STOCK_SCAN_SYMBOLS = ("AAPL", "TSLA", "NVDA", "QQQ", "SPY")
 SCHEDULED_ANALYSIS_INTERVAL_SECONDS = {
     "1m": 60, "3m": 180, "5m": 300, "15m": 900, "30m": 1_800,
     "1h": 3_600, "4h": 14_400, "6h": 21_600, "8h": 28_800,
@@ -620,6 +625,89 @@ class OrchestrationRuntime:
         }
         return (job_id,)
 
+    async def _register_stock_scan_monitor(self) -> tuple[str, ...]:
+        if not _true(self.environment.get("MONATISE_STOCK_SCAN_ENABLED", "true")):
+            self.dependencies["stock_scan"] = {"status": "ok", "enabled": False}
+            return ()
+        if self.application is None or self.telegram is None or self.redis is None:
+            self.dependencies["stock_scan"] = {"status": "error", "enabled": True}
+            raise RuntimeError("Stock scan monitoring dependencies are unavailable")
+        namespace = self.environment.get("MONATISE_REDIS_NAMESPACE", "monatise:production-analysis")
+        interval_seconds = max(60, int(self.environment.get("MONATISE_STOCK_SCAN_INTERVAL_SECONDS", "1800")))
+        cooldown_seconds = max(300, int(self.environment.get("MONATISE_STOCK_SCAN_COOLDOWN_SECONDS", "21600")))
+
+        async def monitor() -> dict[str, Any]:
+            started_at = datetime.now(timezone.utc)
+            self.dependencies["stock_scan"].update({"last_started_at": started_at.isoformat(), "last_error": None})
+            try:
+                analyzed = await self._analyze_stocks(STOCK_SCAN_SYMBOLS, cooldown_seconds, namespace)
+                result = {"symbols": len(STOCK_SCAN_SYMBOLS), "analyzed": analyzed}
+                self.dependencies["stock_scan"].update({
+                    "last_success_at": datetime.now(timezone.utc).isoformat(), "last_result": result, "last_error": None,
+                })
+                return result
+            except Exception as exc:
+                self.dependencies["stock_scan"].update({
+                    "last_failure_at": datetime.now(timezone.utc).isoformat(), "last_error": type(exc).__name__,
+                })
+                raise
+
+        job_id = "quiver-stock-scan-telegram"
+        await self.application.infrastructure.scheduler.register(JobDefinition(
+            job_id=job_id,
+            name="Quiver stock scan Telegram notifier",
+            task=monitor,
+            schedule_type=ScheduleType.INTERVAL,
+            interval=timedelta(seconds=interval_seconds),
+            timeout_seconds=min(max(interval_seconds - 1, 30), 180),
+            retry_policy=RetryPolicy(maximum_attempts=2, delay_seconds=5, maximum_delay_seconds=15),
+            tags=("quiver", "stocks", "telegram", "read-only"),
+            metadata={"notification_only": True, "execution_enabled": False},
+        ))
+        self.dependencies["stock_scan"] = {
+            "status": "ok", "enabled": True, "job": job_id,
+            "poll_interval_seconds": interval_seconds, "cooldown_seconds": cooldown_seconds,
+        }
+        return (job_id,)
+
+    async def _analyze_stocks(self, symbols: tuple[str, ...], cooldown_seconds: int, namespace: str) -> int:
+        """Cooldown-gated per symbol so each of the fixed Quiver stocks is
+        re-analyzed and re-notified a few times a day, matching the crypto
+        coin-discovery cadence -- notifies unconditionally on the outcome,
+        NO_TRADE included, same as _analyze_volatile_movers."""
+        claimed: list[str] = []
+        for symbol in symbols:
+            cooldown_key = f"{namespace}:stock-alert:analysis:{symbol}"
+            if await self.redis.set(cooldown_key, "reserved", nx=True, ex=cooldown_seconds):
+                claimed.append(symbol)
+        if not claimed:
+            return 0
+
+        outcomes = await asyncio.gather(
+            *(self.analyse_stock(symbol) for symbol in claimed),
+            return_exceptions=True,
+        )
+        analyzed = 0
+        for symbol, outcome in zip(claimed, outcomes):
+            if isinstance(outcome, Exception):
+                LOGGER.warning(
+                    "Stock scan analysis failed",
+                    extra={"symbol": symbol, "error_type": type(outcome).__name__},
+                )
+                await self.redis.delete(f"{namespace}:stock-alert:analysis:{symbol}")
+                continue
+            try:
+                message = TelegramNotifier.format_stock_analysis(outcome)
+                await self.telegram.stock_analysis_notification(message)
+            except Exception as exc:
+                LOGGER.warning(
+                    "Stock analysis delivery failed",
+                    extra={"symbol": symbol, "error_type": type(exc).__name__},
+                )
+                continue
+            analyzed += 1
+        return analyzed
+
     async def _analyze_volatile_movers(
         self,
         selected_movers: list[tuple[str, float]],
@@ -789,6 +877,7 @@ class OrchestrationRuntime:
             await self._register_hierarchy_shadow(store)
             await self._register_x_macro_monitor()
             await self._register_coin_discovery_monitor()
+            await self._register_stock_scan_monitor()
             self.leadership = RedisSchedulerLeadership(
                 self.redis, namespace=self.environment.get("MONATISE_REDIS_NAMESPACE", "monatise:production-analysis")
             )
@@ -981,6 +1070,27 @@ class OrchestrationRuntime:
             build_production_analysis_run(asset.base_asset, interval=interval, source=source, verified_dynamic=True)
         )
         return finalize_dynamic_analysis(sanitized_result(result), result, asset)
+
+    async def analyse_stock(self, symbol: str) -> dict[str, Any]:
+        """Fetch and build one Quiver-backed stock analysis without notifications
+        or execution -- shared by the on-demand OpenClaw endpoint and the
+        autonomous stock scan job, so there is one source of this logic."""
+        alpaca = AlpacaMarketDataAdapter.from_env()
+        normalized = normalize_quiver_symbol(symbol)
+        quiver_task = asyncio.to_thread(QuiverAdapter.from_env().context, normalized)
+        bars_task = asyncio.to_thread(alpaca.stock_bars, symbol)
+        snapshot_task = asyncio.to_thread(alpaca.stock_snapshot, symbol)
+
+        def finnhub_context() -> dict[str, Any]:
+            try:
+                return FinnhubAdapter.from_env().context(symbol)
+            except FinnhubAdapterError:
+                return {"source": "Finnhub", "unavailable": True}
+
+        context, bars, snapshot, finnhub = await asyncio.gather(
+            quiver_task, bars_task, snapshot_task, asyncio.to_thread(finnhub_context)
+        )
+        return build_stock_analysis(context, bars=bars, snapshot=snapshot, finnhub=finnhub)
 
     async def _telegram_notification_candidate(self, result: Any, interval: str) -> dict[str, Any] | None:
         outputs = result.context.outputs

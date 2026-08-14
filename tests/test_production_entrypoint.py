@@ -42,6 +42,9 @@ class Runtime:
     async def analyse(self, symbol, **kwargs):
         self.calls.append((symbol, kwargs))
         return {"symbol": symbol, "execution_enabled": False, "audit_reference": "run", "state_reference": "run"}
+    async def analyse_stock(self, symbol, **kwargs):
+        self.calls.append((symbol, kwargs))
+        return {"asset": symbol, "decision": "NO_TRADE", "score": 0, "score_threshold": 2, "execution": {"enabled": False, "orders_placed": 0}}
 
 
 def request(app, path, payload, *, token=None):
@@ -360,13 +363,14 @@ def test_openclaw_status_reuses_recent_analysis_by_symbol_and_interval():
     assert runtime.calls == [("BTC", {"interval": "1h", "source": "monatise.openclaw"})]
 
 
-def test_openclaw_status_returns_quiver_stock_watch_without_execution(monkeypatch):
-    adapter = SimpleNamespace(context=lambda symbol: {"symbol": symbol, "available": True, "source": "Quiver Quantitative", "summary": {"score": 4, "drivers": ["insider buying"]}})
-    monkeypatch.setattr(production_module.QuiverAdapter, "from_env", classmethod(lambda cls: adapter))
-    alpaca = SimpleNamespace(stock_bars=lambda symbol: [], stock_snapshot=lambda symbol: {})
-    monkeypatch.setattr(production_module.AlpacaMarketDataAdapter, "from_env", classmethod(lambda cls: alpaca))
+def test_openclaw_status_returns_quiver_stock_watch_without_execution():
+    runtime = Runtime()
+    async def analyse_stock(symbol, **kwargs):
+        runtime.calls.append((symbol, kwargs))
+        return {"asset": symbol, "decision": "BUY_WATCH", "score": 4, "score_threshold": 2, "execution": {"enabled": False, "orders_placed": 0}}
+    runtime.analyse_stock = analyse_stock
 
-    code, payload = openclaw_status(ProductionASGI(Runtime()), query="symbol=NVDA&interval=1h")
+    code, payload = openclaw_status(ProductionASGI(runtime), query="symbol=NVDA&interval=1h")
 
     assert code == 200
     assert payload["analysis"]["decision"] == "BUY_WATCH"
