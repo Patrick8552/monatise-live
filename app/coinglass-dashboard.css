@@ -1,13 +1,13 @@
 :root {
   color-scheme: dark;
-  --bg: #0d1117;
-  --band: #121923;
-  --panel: #161f2b;
-  --panel-soft: #1a2532;
-  --line: #2c3a4b;
+  --bg: #08101b;
+  --band: #101b29;
+  --panel: #101b29;
+  --panel-soft: #16223399;
+  --line: #223247;
   --text: #eef4fb;
-  --muted: #90a3b8;
-  --cyan: #52d6ff;
+  --muted: #91a0b5;
+  --cyan: #5d5fef;
   --green: #5ae68f;
   --red: #ff6b7f;
   --amber: #ffbf47;
@@ -70,7 +70,13 @@ button:hover {
 .panel {
   border: 1px solid var(--line);
   background: rgba(18, 25, 35, 0.86);
-  box-shadow: var(--shadow);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 1px 2px rgba(0, 0, 0, 0.2), var(--shadow);
+  transition: transform 0.16s ease, box-shadow 0.16s ease;
+}
+
+.panel:hover {
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 10px 26px rgba(0, 0, 0, 0.3), var(--shadow);
+  transform: translateY(-2px);
 }
 
 .topbar {
@@ -1575,7 +1581,19 @@ canvas {
 .feedback-dialog select,
 .feedback-dialog textarea { width: 100%; border: 1px solid var(--border); border-radius: 10px; background: #0b141b; color: var(--text); padding: 11px 12px; font: inherit; }
 .feedback-dialog textarea { min-height: 118px; resize: vertical; }
-.feedback-submit { width: 100%; background: var(--cyan); color: #071117; font-weight: 850; }
+.feedback-submit {
+  width: 100%;
+  background: var(--cyan);
+  color: #071117;
+  font-weight: 850;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.25) inset, 0 8px 20px color-mix(in srgb, var(--cyan) 30%, transparent);
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+.feedback-submit:hover {
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.3) inset, 0 12px 26px color-mix(in srgb, var(--cyan) 36%, transparent);
+  transform: translateY(-1px);
+}
 .feedback-submit:disabled { opacity: .55; }
 .feedback-status { min-height: 1.2em; margin: 0; color: var(--mint); font-size: .82rem; }
 .feedback-privacy { margin: -5px 0 0; color: var(--muted); font-size: .7rem; text-align: center; }
