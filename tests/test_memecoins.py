@@ -6,6 +6,10 @@ import monatise.adapters.memecoins as memecoins
 
 
 PUMP_MINT = "11111111111111111111111111111111pump"
+# A real, base58-valid 32-byte mint address -- PUMP_MINT above is only a
+# string fixture for suffix/regex tests, not a decodable pubkey, which the
+# on-chain PDA derivation in resolve_creator needs.
+VALID_PUMP_MINT = "8mtTLauYuiCmmao3tuaLNMJ7B9TN5t1VU4YeVdrWpump"
 
 
 def sample_pair(*, liquidity: float = 400_000, volume: float = 200_000, created_at: int | None = None) -> dict:
@@ -68,57 +72,73 @@ def test_discovery_deduplicates_pairs_and_uses_deepest_liquidity(monkeypatch) ->
     assert "paid boosts" in payload["methodology"]
 
 
-def test_resolve_creator_returns_fee_payer_of_earliest_transaction(monkeypatch) -> None:  # noqa: ANN001
+CREATOR_PUBKEY = "tXBoC4cg7DEQXBtKhrXqmQUmj8ddqV6GYmbs58acePK"
+
+
+def fake_bonding_curve_account(creator: str = CREATOR_PUBKEY, *, complete: bool = True, corrupt_discriminator: bool = False) -> str:
+    import base64
+
+    from solders.pubkey import Pubkey
+
+    discriminator = bytes([1, 2, 3, 4, 5, 6, 7, 8]) if corrupt_discriminator else memecoins.BONDING_CURVE_DISCRIMINATOR
+    raw = (
+        discriminator
+        + (0).to_bytes(8, "little") * 5  # virtual/real reserves + total supply, values don't matter for this
+        + bytes([1 if complete else 0])
+        + bytes(Pubkey.from_string(creator))
+        + bytes([0, 0])  # is_mayhem_mode, is_cashback_coin
+        + bytes(Pubkey.from_string(creator))  # quote_mint, value doesn't matter here
+    )
+    return base64.b64encode(raw).decode()
+
+
+def test_resolve_creator_reads_the_bonding_curve_account(monkeypatch) -> None:  # noqa: ANN001
     calls: list[dict] = []
 
     def fake_request(url: str, *, payload: dict, **_kwargs):  # noqa: ANN202
         calls.append(payload)
-        if payload["method"] == "getSignaturesForAddress":
-            return {"result": [{"signature": "sig-newest"}, {"signature": "sig-genesis"}]}
-        assert payload["method"] == "getTransaction"
-        assert payload["params"][0] == "sig-genesis"
-        return {"result": {"transaction": {"message": {"accountKeys": ["creator-wallet", "other-account"]}}}}
+        assert payload["method"] == "getAccountInfo"
+        return {"result": {"value": {"data": [fake_bonding_curve_account(), "base64"]}}}
 
     monkeypatch.setattr(memecoins, "_json_request", fake_request)
-    creator = memecoins.resolve_creator(PUMP_MINT, "https://rpc.example")
-    assert creator == "creator-wallet"
+    creator = memecoins.resolve_creator(VALID_PUMP_MINT, "https://rpc.example")
+    assert creator == CREATOR_PUBKEY
+    assert len(calls) == 1
 
 
-def test_resolve_creator_paginates_until_a_short_page_is_seen(monkeypatch) -> None:  # noqa: ANN001
-    pages = [
-        {"result": [{"signature": f"sig-{i}"} for i in range(1000)]},
-        {"result": [{"signature": "sig-genesis"}]},
-        {"result": {"transaction": {"message": {"accountKeys": ["creator-wallet"]}}}},
-    ]
+def test_resolve_creator_derives_the_correct_bonding_curve_pda(monkeypatch) -> None:  # noqa: ANN001
+    from solders.pubkey import Pubkey
+
+    seen_addresses: list[str] = []
 
     def fake_request(url: str, *, payload: dict, **_kwargs):  # noqa: ANN202
-        return pages.pop(0)
+        seen_addresses.append(payload["params"][0])
+        return {"result": {"value": {"data": [fake_bonding_curve_account(), "base64"]}}}
 
     monkeypatch.setattr(memecoins, "_json_request", fake_request)
-    creator = memecoins.resolve_creator(PUMP_MINT, "https://rpc.example")
-    assert creator == "creator-wallet"
+    memecoins.resolve_creator(VALID_PUMP_MINT, "https://rpc.example")
+    expected_pda, _bump = Pubkey.find_program_address(
+        [memecoins.BONDING_CURVE_SEED, bytes(Pubkey.from_string(VALID_PUMP_MINT))], memecoins.PUMP_FUN_PROGRAM_ID
+    )
+    assert seen_addresses == [str(expected_pda)]
 
 
-def test_resolve_creator_refuses_to_guess_when_genesis_is_never_reached(monkeypatch) -> None:  # noqa: ANN001
-    # Every page comes back full (1000 signatures), so max_pages is
-    # exhausted without ever seeing proof we reached the token's genesis.
-    call_count = 0
-
-    def fake_request(url: str, *, payload: dict, **_kwargs):  # noqa: ANN202
-        nonlocal call_count
-        call_count += 1
-        assert payload["method"] == "getSignaturesForAddress"
-        return {"result": [{"signature": f"sig-{call_count}-{i}"} for i in range(1000)]}
-
-    monkeypatch.setattr(memecoins, "_json_request", fake_request)
-    creator = memecoins.resolve_creator(PUMP_MINT, "https://rpc.example", max_pages=4)
-    assert creator is None
-    assert call_count == 4
+def test_resolve_creator_rejects_an_account_with_the_wrong_discriminator(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setattr(
+        memecoins,
+        "_json_request",
+        lambda url, **_kwargs: {"result": {"value": {"data": [fake_bonding_curve_account(corrupt_discriminator=True), "base64"]}}},
+    )
+    assert memecoins.resolve_creator(VALID_PUMP_MINT, "https://rpc.example") is None
 
 
-def test_resolve_creator_gives_up_cleanly_without_signatures(monkeypatch) -> None:  # noqa: ANN001
-    monkeypatch.setattr(memecoins, "_json_request", lambda url, **_kwargs: {"result": []})
-    assert memecoins.resolve_creator(PUMP_MINT, "https://rpc.example") is None
+def test_resolve_creator_handles_a_missing_account(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setattr(memecoins, "_json_request", lambda url, **_kwargs: {"result": {"value": None}})
+    assert memecoins.resolve_creator(VALID_PUMP_MINT, "https://rpc.example") is None
+
+
+def test_resolve_creator_rejects_an_invalid_mint_address() -> None:
+    assert memecoins.resolve_creator("not-a-real-address", "https://rpc.example") is None
 
 
 def test_resolve_creator_fails_closed_on_rpc_error(monkeypatch) -> None:  # noqa: ANN001
@@ -126,7 +146,7 @@ def test_resolve_creator_fails_closed_on_rpc_error(monkeypatch) -> None:  # noqa
         raise RuntimeError("rpc unavailable")
 
     monkeypatch.setattr(memecoins, "_json_request", boom)
-    assert memecoins.resolve_creator(PUMP_MINT, "https://rpc.example") is None
+    assert memecoins.resolve_creator(VALID_PUMP_MINT, "https://rpc.example") is None
 
 
 def test_creator_leaderboard_ranks_by_launches_observed_in_window() -> None:

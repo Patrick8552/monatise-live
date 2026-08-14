@@ -282,15 +282,13 @@ def test_memecoins_creators_endpoint_ranks_repeat_launchers(monkeypatch):
     assert "not an all-time history" in payload["methodology"]
 
 
-def test_memecoins_creators_endpoint_only_attempts_resolution_on_the_youngest_pairs(monkeypatch):
-    # 20 tokens: only the 15 with the most recent pairCreatedAt should ever
-    # reach resolve_creator -- an old, busy token should never be attempted.
+def test_memecoins_creators_endpoint_attempts_resolution_on_every_discovered_token(monkeypatch):
+    # Since resolve_creator is now a single cheap getAccountInfo call (the
+    # on-chain bonding-curve account), every discovered token is attempted
+    # rather than a filtered "youngest" subset.
     tokens = [
-        {"address": f"mint-old-{i}", "symbol": "OLD", "liquidityUsd": 1_000, "risk": {"score": 50, "label": "Speculative"}, "pairCreatedAt": i}
-        for i in range(5)
-    ] + [
-        {"address": f"mint-new-{i}", "symbol": "NEW", "liquidityUsd": 1_000, "risk": {"score": 50, "label": "Speculative"}, "pairCreatedAt": 100_000 + i}
-        for i in range(15)
+        {"address": f"mint-{i}", "symbol": "MEME", "liquidityUsd": 1_000, "risk": {"score": 50, "label": "Speculative"}, "pairCreatedAt": i}
+        for i in range(20)
     ]
     monkeypatch.setattr(production_module, "discover_pumpfun", lambda limit: {"tokens": tokens})
     attempted: list[str] = []
@@ -303,10 +301,7 @@ def test_memecoins_creators_endpoint_only_attempts_resolution_on_the_youngest_pa
     app = ProductionASGI(Runtime())
     response = get(app, "/api/memecoins/creators", query="limit=15")
     assert response[0]["status"] == 200
-    assert len(attempted) == 15
-    assert all(address.startswith("mint-new-") for address in attempted)
-    payload = json.loads(response[1]["body"])
-    assert "most recently created pairs" in payload["methodology"]
+    assert len(attempted) == 20
 
 
 def test_memecoins_creators_endpoint_fails_closed_when_discovery_unavailable(monkeypatch):

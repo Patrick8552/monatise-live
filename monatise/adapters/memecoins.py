@@ -9,9 +9,27 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
+from solders.pubkey import Pubkey
+
 DEXSCREENER_BASE = "https://api.dexscreener.com"
 PUMP_FUN_COIN_BASE = "https://pump.fun/coin"
 SOLANA_ADDRESS = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
+
+# Pump.fun program address and its BondingCurve account layout, sourced from
+# the official IDL (github.com/pump-fun/pump-public-docs, idl/pump.json).
+# Verified live against a real mint: PDA derivation + discriminator check +
+# creator-field offset all matched. One getAccountInfo call per mint, no
+# transaction history walking -- pump.fun tokens routinely rack up
+# thousands of transactions within seconds of launch via sniper bots, so
+# walking signature history back to genesis is not viable at any practical
+# page budget.
+PUMP_FUN_PROGRAM_ID = Pubkey.from_string("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P")
+BONDING_CURVE_SEED = b"bonding-curve"
+BONDING_CURVE_DISCRIMINATOR = bytes([23, 183, 248, 55, 96, 216, 172, 96])
+# discriminator(8) + virtual_token_reserves(8) + virtual_quote_reserves(8) +
+# real_token_reserves(8) + real_quote_reserves(8) + token_total_supply(8) +
+# complete(1) = 49, then creator: pubkey (32 bytes).
+BONDING_CURVE_CREATOR_OFFSET = 49
 
 
 def _json_request(url: str, *, payload: dict | None = None, timeout: int = 12):
@@ -194,68 +212,49 @@ def normalize_pair(pair: dict, *, profile: dict | None = None, mint: dict | None
     }
 
 
-def resolve_creator(mint_address: str, rpc_url: str, *, max_pages: int = 4) -> str | None:
-    """Best-effort creator lookup for a mint.
+def resolve_creator(mint_address: str, rpc_url: str) -> str | None:
+    """Creator lookup for a pump.fun mint via its on-chain bonding-curve
+    account (one getAccountInfo call, no transaction history walking).
 
-    Pump.fun's own frontend API requires an auth token we don't have, and
-    SPL mint accounts don't carry a "creator" field (mint authority is the
-    pump.fun program's PDA, not the human deployer, and is usually revoked
-    once the token graduates). This walks the mint's transaction history
-    back to its earliest known signature and returns that transaction's fee
-    payer -- the standard heuristic for "who created this token" when no
-    indexer is available. If genesis isn't reached within max_pages (a
-    high-activity token can have far more history than that), this returns
-    None rather than guessing: whatever page we stopped at is some early
-    trader, not necessarily the deployer, and a wrong guess is worse than
-    an honest "unknown".
+    Earlier versions of this walked the mint's transaction history back to
+    its earliest signature and used the fee payer as a heuristic -- live
+    testing showed that's not viable: pump.fun tokens routinely accumulate
+    1000+ transactions within seconds of launch via sniper bots, so genesis
+    is unreachable within any RPC page budget that respects the free public
+    RPC's rate limits. Reading the bonding-curve account directly is a
+    single, cheap, exact lookup instead, since pump.fun's own program
+    already stores the creator's pubkey on-chain.
     """
-    before: str | None = None
-    earliest_batch: list[dict] = []
-    reached_genesis = False
-    for _ in range(max_pages):
-        params: dict[str, Any] = {"limit": 1000}
-        if before:
-            params["before"] = before
-        payload = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "getSignaturesForAddress",
-            "params": [mint_address, params],
-        }
-        try:
-            response = _json_request(rpc_url, payload=payload)
-        except RuntimeError:
-            return None
-        batch = (response or {}).get("result")
-        if not isinstance(batch, list) or not batch:
-            reached_genesis = bool(earliest_batch)
-            break
-        earliest_batch = batch
-        if len(batch) < 1000:
-            reached_genesis = True
-            break
-        before = batch[-1].get("signature")
-    if not earliest_batch or not reached_genesis:
+    try:
+        mint = Pubkey.from_string(mint_address)
+    except ValueError:
         return None
-    earliest_signature = earliest_batch[-1].get("signature")
-    if not earliest_signature:
-        return None
-    tx_payload = {
+    bonding_curve, _bump = Pubkey.find_program_address([BONDING_CURVE_SEED, bytes(mint)], PUMP_FUN_PROGRAM_ID)
+    payload = {
         "jsonrpc": "2.0",
         "id": 1,
-        "method": "getTransaction",
-        "params": [earliest_signature, {"encoding": "json", "maxSupportedTransactionVersion": 0}],
+        "method": "getAccountInfo",
+        "params": [str(bonding_curve), {"encoding": "base64", "commitment": "confirmed"}],
     }
     try:
-        tx_response = _json_request(rpc_url, payload=tx_payload)
+        response = _json_request(rpc_url, payload=payload)
     except RuntimeError:
         return None
-    result = (tx_response or {}).get("result") or {}
-    account_keys = (((result.get("transaction") or {}).get("message") or {}) or {}).get("accountKeys") or []
-    if not account_keys:
+    value = ((response or {}).get("result") or {}).get("value")
+    if not isinstance(value, dict):
         return None
-    creator = str(account_keys[0] or "").strip()
-    return creator or None
+    encoded = (value.get("data") or [""])[0]
+    try:
+        raw = base64.b64decode(encoded)
+    except (ValueError, TypeError):
+        return None
+    end = BONDING_CURVE_CREATOR_OFFSET + 32
+    if len(raw) < end or raw[:8] != BONDING_CURVE_DISCRIMINATOR:
+        return None
+    try:
+        return str(Pubkey(raw[BONDING_CURVE_CREATOR_OFFSET:end]))
+    except ValueError:
+        return None
 
 
 def creator_leaderboard(tokens: list[dict], creators_by_address: dict[str, str | None], *, limit: int = 15) -> dict:
@@ -296,11 +295,11 @@ def creator_leaderboard(tokens: list[dict], creators_by_address: dict[str, str |
         "windowTokensWithResolvedCreator": sum(len(group) for group in groups.values()),
         "methodology": (
             "Creators ranked by number of pump.fun launches observed in the current "
-            "discovery window only, not an all-time history. Creator lookup is only "
-            "attempted on the most recently created pairs in the window, and only "
-            "succeeds when the token's full transaction history can be walked back to "
-            "its deploy transaction -- busier tokens may not resolve. A repeat launcher "
-            "is not inherently good or bad -- serial token creation is also a common "
+            "discovery window only, not an all-time history -- a creator with one "
+            "visible launch here may have others outside this window. Creator identity "
+            "is read directly from each token's on-chain pump.fun bonding-curve "
+            "account. A repeat launcher is not inherently good or bad -- serial "
+            "token creation is also a common "
             "pattern in rug-pull operations. Review each launch individually."
         ),
         "source": "DEX Screener latest token profiles + Solana RPC creator resolution",
