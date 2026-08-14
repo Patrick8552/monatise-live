@@ -264,9 +264,9 @@ def test_memecoins_token_rejects_invalid_address(monkeypatch):
 
 def test_memecoins_creators_endpoint_ranks_repeat_launchers(monkeypatch):
     tokens = [
-        {"address": "mintA", "symbol": "MEME1", "liquidityUsd": 5_000, "risk": {"score": 20, "label": "High risk"}},
-        {"address": "mintB", "symbol": "MEME2", "liquidityUsd": 6_000, "risk": {"score": 25, "label": "High risk"}},
-        {"address": "mintC", "symbol": "MEME3", "liquidityUsd": 300_000, "risk": {"score": 80, "label": "Screened"}},
+        {"address": "mintA", "symbol": "MEME1", "liquidityUsd": 5_000, "risk": {"score": 20, "label": "High risk"}, "pairCreatedAt": 3_000},
+        {"address": "mintB", "symbol": "MEME2", "liquidityUsd": 6_000, "risk": {"score": 25, "label": "High risk"}, "pairCreatedAt": 2_000},
+        {"address": "mintC", "symbol": "MEME3", "liquidityUsd": 300_000, "risk": {"score": 80, "label": "Screened"}, "pairCreatedAt": 1_000},
     ]
     monkeypatch.setattr(production_module, "discover_pumpfun", lambda limit: {"tokens": tokens})
     creators = {"mintA": "serial-creator", "mintB": "serial-creator", "mintC": "one-off-creator"}
@@ -280,6 +280,33 @@ def test_memecoins_creators_endpoint_ranks_repeat_launchers(monkeypatch):
     assert payload["creators"][0]["launchesObserved"] == 2
     assert payload["creators"][0]["repeatLauncher"] is True
     assert "not an all-time history" in payload["methodology"]
+
+
+def test_memecoins_creators_endpoint_only_attempts_resolution_on_the_youngest_pairs(monkeypatch):
+    # 20 tokens: only the 15 with the most recent pairCreatedAt should ever
+    # reach resolve_creator -- an old, busy token should never be attempted.
+    tokens = [
+        {"address": f"mint-old-{i}", "symbol": "OLD", "liquidityUsd": 1_000, "risk": {"score": 50, "label": "Speculative"}, "pairCreatedAt": i}
+        for i in range(5)
+    ] + [
+        {"address": f"mint-new-{i}", "symbol": "NEW", "liquidityUsd": 1_000, "risk": {"score": 50, "label": "Speculative"}, "pairCreatedAt": 100_000 + i}
+        for i in range(15)
+    ]
+    monkeypatch.setattr(production_module, "discover_pumpfun", lambda limit: {"tokens": tokens})
+    attempted: list[str] = []
+
+    def fake_resolve_creator(address, rpc_url):
+        attempted.append(address)
+        return f"creator-of-{address}"
+
+    monkeypatch.setattr(production_module, "resolve_creator", fake_resolve_creator)
+    app = ProductionASGI(Runtime())
+    response = get(app, "/api/memecoins/creators", query="limit=15")
+    assert response[0]["status"] == 200
+    assert len(attempted) == 15
+    assert all(address.startswith("mint-new-") for address in attempted)
+    payload = json.loads(response[1]["body"])
+    assert "most recently created pairs" in payload["methodology"]
 
 
 def test_memecoins_creators_endpoint_fails_closed_when_discovery_unavailable(monkeypatch):

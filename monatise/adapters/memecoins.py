@@ -296,9 +296,12 @@ def creator_leaderboard(tokens: list[dict], creators_by_address: dict[str, str |
         "windowTokensWithResolvedCreator": sum(len(group) for group in groups.values()),
         "methodology": (
             "Creators ranked by number of pump.fun launches observed in the current "
-            "discovery window only, not an all-time history. A repeat launcher is not "
-            "inherently good or bad -- serial token creation is also a common pattern "
-            "in rug-pull operations. Review each launch individually."
+            "discovery window only, not an all-time history. Creator lookup is only "
+            "attempted on the most recently created pairs in the window, and only "
+            "succeeds when the token's full transaction history can be walked back to "
+            "its deploy transaction -- busier tokens may not resolve. A repeat launcher "
+            "is not inherently good or bad -- serial token creation is also a common "
+            "pattern in rug-pull operations. Review each launch individually."
         ),
         "source": "DEX Screener latest token profiles + Solana RPC creator resolution",
         "updatedAt": int(time.time()),

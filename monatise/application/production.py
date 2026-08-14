@@ -483,6 +483,19 @@ class ProductionASGI(OrchestrationASGI):
             return 502, {"status": "unavailable", "reason": str(exc), "error": str(exc)}
         tokens = discovery.get("tokens") or []
 
+        # DexScreener's "latest profiles" feed is ordered by recent profile
+        # activity (a social link or image added), not recent launch --
+        # live-verified: several tokens from this feed already had 1000+
+        # transactions before we ever looked at them, which resolve_creator
+        # can't walk back through within a bounded page budget. Only attempt
+        # resolution on the tokens that actually look freshly launched, so
+        # the RPC budget goes where it can succeed.
+        resolvable = sorted(
+            (token for token in tokens if isinstance(token.get("pairCreatedAt"), (int, float))),
+            key=lambda token: token["pairCreatedAt"],
+            reverse=True,
+        )[:15]
+
         # The free public Solana RPC rate-limits aggressively; resolving all
         # of a scan window's creators at once (each needing 1-4 sequential
         # RPC round trips) reliably triggers 429s and every lookup silently
@@ -499,7 +512,7 @@ class ProductionASGI(OrchestrationASGI):
                     creator = None
             return address, creator
 
-        resolved = await asyncio.gather(*(resolve(token) for token in tokens))
+        resolved = await asyncio.gather(*(resolve(token) for token in resolvable))
         creators_by_address = dict(resolved)
         leaderboard = creator_leaderboard(tokens, creators_by_address, limit=limit)
         return 200, leaderboard
