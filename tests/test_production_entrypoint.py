@@ -183,6 +183,36 @@ def test_frontend_read_routes_are_implemented_by_production_app():
     assert json.loads(tradingview[1]["body"])["alerts"] == []
 
 
+def test_liquidity_clusters_endpoint_returns_a_modeled_heatmap():
+    runtime = Runtime()
+    runtime.coinglass.derivatives_snapshot = lambda symbol, interval: {
+        "open_interest": 25_000_000.0,
+        "funding_rate": 0.0002,
+    }
+    app = ProductionASGI(runtime)
+
+    response = get(app, "/api/analysis/liquidity-clusters", query="symbol=BTC&interval=1h")
+    assert response[0]["status"] == 200
+    payload = json.loads(response[1]["body"])
+    assert payload["symbol"] == "BTC"
+    assert payload["source"] == "modeled"
+    assert "Professional-tier" in payload["methodology"]
+    assert isinstance(payload["magnetBias"], float)
+    assert len(payload["clusters"]) == 10
+    assert all(cluster["side"] in {"long", "short"} for cluster in payload["clusters"])
+    assert payload["nearestLongCluster"]["price"] < payload["price"]
+    assert payload["nearestShortCluster"]["price"] > payload["price"]
+    assert payload["execution_enabled"] is False
+
+
+def test_liquidity_clusters_endpoint_fails_closed_without_coinglass():
+    runtime = Runtime()
+    runtime.coinglass = None
+    app = ProductionASGI(runtime)
+    response = get(app, "/api/analysis/liquidity-clusters", query="symbol=BTC&interval=1h")
+    assert response[0]["status"] == 503
+
+
 def test_web_dashboard_exposes_stock_assets_and_sanitized_quiver_context(monkeypatch):
     context = {
         "symbol": "NVDA",

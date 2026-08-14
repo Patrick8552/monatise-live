@@ -2276,7 +2276,8 @@ canvas {
 }
 
 .context-radar,
-.quiver-context {
+.quiver-context,
+.liquidity-map {
   background:
     linear-gradient(160deg, rgba(0, 184, 217, 0.1), rgba(255, 255, 255, 0.045)),
     rgba(4, 9, 11, 0.16);
@@ -2286,6 +2287,53 @@ canvas {
   gap: 10px;
   margin-bottom: 12px;
   padding: 10px;
+}
+
+.liquidity-map-caption {
+  color: rgba(249, 255, 251, 0.6);
+  font-size: 0.68rem;
+  line-height: 1.4;
+  margin: 0;
+}
+
+.liquidity-map-canvas {
+  background: rgba(4, 9, 11, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3) inset;
+  height: auto;
+  max-width: 100%;
+  width: 100%;
+}
+
+.liquidity-map-legend {
+  align-items: center;
+  color: rgba(249, 255, 251, 0.68);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 0.68rem;
+  font-weight: 750;
+  gap: 6px;
+}
+
+.legend-swatch {
+  border-radius: 3px;
+  display: inline-block;
+  height: 10px;
+  margin-left: 12px;
+  width: 10px;
+}
+
+.legend-swatch:first-child {
+  margin-left: 0;
+}
+
+.legend-swatch.long {
+  background: rgba(255, 107, 127, 0.88);
+}
+
+.legend-swatch.short {
+  background: rgba(90, 230, 143, 0.88);
 }
 
 .quiver-context {

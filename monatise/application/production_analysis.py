@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from monatise.analysis.liquidity_clusters import estimate_liquidation_clusters
 from monatise.application.models import AnalysisRun, PipelineExecutionMetadata
 from monatise.application.registry import PRODUCTION_ENGINE_ORDER
 from monatise.engines.decision.models import DecisionRequest
@@ -170,7 +171,13 @@ def build_production_analysis_run(symbol: str, *, interval: str = "1h", correlat
         return context.outputs[name]
 
     def flow(context: Any) -> OrderFlowRequest:
-        derivatives = output(context, "market_data").derivatives
+        market = output(context, "market_data")
+        derivatives = market.derivatives
+        cluster_map = estimate_liquidation_clusters(
+            price=getattr(market, "price", None),
+            open_interest_usd=derivatives.get("open_interest"),
+            funding_rate=derivatives.get("funding_rate"),
+        )
         return OrderFlowRequest(
             normalized,
             FlowInput(
@@ -180,6 +187,7 @@ def build_production_analysis_run(symbol: str, *, interval: str = "1h", correlat
                 liquidation_long_usd=derivatives.get("liquidation_long_usd"),
                 bid_ask_imbalance=derivatives.get("order_book_imbalance"),
                 funding_rate=derivatives.get("funding_rate"),
+                liquidity_magnet_bias=cluster_map.magnet_bias if cluster_map is not None else None,
             ),
             output(context, "regime"),
             output(context, "market_structure"),

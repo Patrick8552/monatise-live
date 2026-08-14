@@ -15,10 +15,13 @@ from time import monotonic, time
 from typing import Any
 from urllib.parse import parse_qs
 
+from dataclasses import asdict
+
 from monatise.adapters.quiver import QuiverAdapter, normalize_quiver_symbol
 from monatise.analysis.context import context_assets, grid_instruction, indicator_snapshot
 from monatise.analysis.fibonacci import analyze_fibonacci
 from monatise.analysis.fvg import analyze_fvg
+from monatise.analysis.liquidity_clusters import estimate_liquidation_clusters
 
 from monatise.adapters.coinglass_production import CoinGlassProductionAdapter
 from monatise.application.deployment import OrchestrationASGI, OrchestrationRuntime
@@ -158,6 +161,7 @@ class ProductionASGI(OrchestrationASGI):
             "/api/analysis/fibonacci",
             "/api/context/radar",
             "/api/coinglass/context",
+            "/api/analysis/liquidity-clusters",
         }:
             if scope.get("method", "GET").upper() != "GET":
                 await self._respond(send, 405, {"status": "method_not_allowed"})
@@ -170,6 +174,7 @@ class ProductionASGI(OrchestrationASGI):
                 "/api/analysis/fibonacci": self._fibonacci_analysis,
                 "/api/context/radar": self._context_radar,
                 "/api/coinglass/context": self._coinglass_context,
+                "/api/analysis/liquidity-clusters": self._liquidity_clusters,
             }
             code, payload = await handlers[path](scope)
             await self._respond(send, code, payload)
@@ -389,6 +394,45 @@ class ProductionASGI(OrchestrationASGI):
             "available": not unavailable,
             "unavailable": unavailable,
             **rows,
+            "execution_enabled": False,
+        }
+
+    async def _liquidity_clusters(self, scope: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        query = parse_qs(scope.get("query_string", b"").decode())
+        symbol = str(query.get("symbol", ["BTC"])[0]).strip().upper()
+        interval = str(query.get("interval", ["1h"])[0]).strip() or "1h"
+        if symbol not in self.MARKET_SYMBOLS or interval not in self.MARKET_INTERVALS:
+            return 400, {"status": "invalid_request", "reason": "unsupported symbol or interval"}
+        provider = self.runtime.coinglass
+        if provider is None:
+            return 503, {"status": "unavailable", "source": "coinglass"}
+        try:
+            price = await asyncio.to_thread(provider.latest_current_price, symbol)
+            derivatives = await asyncio.to_thread(provider.derivatives_snapshot, symbol, interval)
+        except Exception as exc:
+            LOGGER.warning("liquidity cluster inputs unavailable: %s (%s: %s)", symbol, type(exc).__name__, exc.__cause__ or exc)
+            return 503, {"status": "unavailable", "source": "coinglass"}
+        cluster_map = estimate_liquidation_clusters(
+            price=float(price) if price is not None else None,
+            open_interest_usd=derivatives.get("open_interest"),
+            funding_rate=derivatives.get("funding_rate"),
+        )
+        if cluster_map is None:
+            return 503, {"status": "unavailable", "reason": "insufficient inputs for liquidity cluster estimate"}
+        return 200, {
+            "symbol": symbol,
+            "interval": interval,
+            "price": price,
+            "source": "modeled",
+            "methodology": (
+                "Estimated by spreading open interest across standard leverage tiers "
+                "(5x-100x). This is a heuristic model, not CoinGlass's measured "
+                "liquidation heatmap, which requires a Professional-tier API plan."
+            ),
+            "magnetBias": cluster_map.magnet_bias,
+            "nearestLongCluster": asdict(cluster_map.nearest_long_cluster) if cluster_map.nearest_long_cluster else None,
+            "nearestShortCluster": asdict(cluster_map.nearest_short_cluster) if cluster_map.nearest_short_cluster else None,
+            "clusters": [asdict(cluster) for cluster in cluster_map.clusters],
             "execution_enabled": False,
         }
 

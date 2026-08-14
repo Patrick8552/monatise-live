@@ -56,6 +56,13 @@ class OrderFlowIntelligenceEngine:
         participation = self._participation(values)
         bias_score = self._bias_score(values)
         bias = self._bias(bias_score)
+
+        magnet = values.get("liquidity_magnet_bias")
+        if magnet is not None and abs(magnet) >= 0.30:
+            side = "short" if magnet > 0 else "long"
+            reasons.append(
+                f"estimated {side} liquidation cluster is the nearer, larger liquidity magnet"
+            )
         health, health_reasons = self._health(values, request)
         reasons.extend(health_reasons)
 
@@ -207,6 +214,7 @@ class OrderFlowIntelligenceEngine:
         add(values.get("large_trade_net_usd"), 1_000_000)
         add(values.get("bid_ask_imbalance"), 1.0)
         add(values.get("price_change_pct"), 2.0)
+        add(values.get("liquidity_magnet_bias"), 1.0)
 
         oi = values.get("open_interest_change_pct")
         price = values.get("price_change_pct")

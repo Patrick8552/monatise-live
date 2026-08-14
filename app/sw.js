@@ -1,4 +1,4 @@
-const CACHE_NAME = "monatise-shell-20260814-ui-depth-v1";
+const CACHE_NAME = "monatise-shell-20260814-liquidity-map-v1";
 const SHELL_ASSETS = [
   "./",
   "./cg.html",
@@ -6,8 +6,8 @@ const SHELL_ASSETS = [
   "./game.html",
   "./memecoins.html",
   "./coinglass-dashboard.html?v=20260814-ui-depth-v1",
-  "./styles.css?v=20260814-ui-depth-v1",
-  "./app.js?v=20260811-dashboard-reliability-v3",
+  "./styles.css?v=20260814-liquidity-map-v1",
+  "./app.js?v=20260814-liquidity-map-v1",
   "./spotify.js?v=20260629-request-access-fix",
   "./game.js?v=20260629-crypto-trainer",
   "./assets/payout-clients.svg",

@@ -57,6 +57,7 @@ class FlowInput:
     bid_ask_imbalance: float | None = None
     order_book_depth_change_pct: float | None = None
     funding_rate: float | None = None
+    liquidity_magnet_bias: float | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 

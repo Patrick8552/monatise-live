@@ -41,6 +41,7 @@ const els = {
   cioPosture: document.querySelector("#cioPosture"),
   credentialStatus: document.querySelector("#credentialStatus"),
   contextRadar: document.querySelector("#contextRadar"),
+  liquidityMap: document.querySelector("#liquidityMap"),
   chatForm: document.querySelector("#chatForm"),
   chatInput: document.querySelector("#chatInput"),
   chatMessages: document.querySelector("#chatMessages"),
@@ -202,6 +203,10 @@ let contextRadar = null;
 let contextLoading = false;
 let contextLastLoadedAt = 0;
 let contextLastSymbol = "";
+let liquidityMap = null;
+let liquidityMapLoading = false;
+let liquidityMapLastLoadedAt = 0;
+let liquidityMapLastSymbol = "";
 let coinGlassContext = null;
 let coinGlassLoading = false;
 let coinGlassLastLoadedAt = 0;
@@ -3476,6 +3481,7 @@ function applySelectedAsset(symbol, options = {}) {
     loadLiveCandles({ force: true, limit: 120, symbol: nextSymbol }).catch(() => {});
     loadFibonacciAnalysis({ force: true });
     loadContextRadar({ force: true });
+    loadLiquidityMap({ force: true });
     loadCoinGlassContext({ force: true });
     loadQuiverContext({ force: true });
   }
@@ -3964,6 +3970,7 @@ async function loadMarkets() {
     syncSelectedAsset();
     loadFibonacciAnalysis();
     loadContextRadar();
+    loadLiquidityMap();
     if (!backendOnline) {
       const active = markets.find((asset) => asset.symbol === selectedAsset);
       if (active) {
@@ -4185,6 +4192,173 @@ function renderContextRadar() {
     <div class="context-assets">${assets}</div>
     <ul class="context-reasons">${reasons}</ul>
   `;
+}
+
+async function loadLiquidityMap(options = {}) {
+  if (!hasLivePlan()) return;
+  if (liquidityMapLoading && !options.force) return;
+  const now = Date.now();
+  const interval = tradingRules.chartInterval;
+  if (!options.force && liquidityMapLastSymbol === `${selectedAsset}:${interval}` && now - liquidityMapLastLoadedAt < 60_000) return;
+  const requestSymbol = selectedAsset;
+  const requestInterval = interval;
+  let shouldRender = true;
+  liquidityMapLoading = true;
+  try {
+    const response = await apiFetch(
+      `/api/analysis/liquidity-clusters?symbol=${encodeURIComponent(requestSymbol)}&interval=${encodeURIComponent(requestInterval)}`,
+      { cache: "no-store" }
+    );
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.reason || "liquidity map unavailable");
+    if (requestSymbol !== selectedAsset || requestInterval !== tradingRules.chartInterval) {
+      shouldRender = false;
+      return;
+    }
+    liquidityMap = payload;
+    liquidityMapLastLoadedAt = now;
+    liquidityMapLastSymbol = `${requestSymbol}:${requestInterval}`;
+  } catch (error) {
+    if (requestSymbol !== selectedAsset || requestInterval !== tradingRules.chartInterval) {
+      shouldRender = false;
+      return;
+    }
+    liquidityMap = { error: error.message || "liquidity map unavailable", symbol: requestSymbol };
+    liquidityMapLastLoadedAt = now;
+    liquidityMapLastSymbol = `${requestSymbol}:${requestInterval}`;
+  } finally {
+    liquidityMapLoading = false;
+    if (shouldRender) renderLiquidityMap();
+  }
+}
+
+function renderLiquidityMap() {
+  if (!els.liquidityMap) return;
+  if (!liquidityMap) {
+    els.liquidityMap.innerHTML = `<div class="context-head"><strong>Liquidity Map</strong><span>Waiting for open interest</span></div>`;
+    return;
+  }
+  if (liquidityMap.error) {
+    els.liquidityMap.innerHTML = `<div class="context-head"><strong>Liquidity Map</strong><span>${liquidityMap.error}</span></div>`;
+    return;
+  }
+  const magnet = Number(liquidityMap.magnetBias);
+  const magnetLabel = !Number.isFinite(magnet) || Math.abs(magnet) < 0.1
+    ? "Balanced"
+    : magnet > 0
+      ? "Pulled toward shorts above"
+      : "Pulled toward longs below";
+  els.liquidityMap.innerHTML = `
+    <div class="context-head">
+      <strong>Liquidity Map</strong>
+      <span>${liquidityMap.interval} · ${assetLabel(liquidityMap.symbol)} · ${magnetLabel}</span>
+    </div>
+    <p class="liquidity-map-caption">Modeled from open interest across 5x-100x leverage tiers. Not CoinGlass's measured heatmap.</p>
+    <canvas id="liquidityMapCanvas" class="liquidity-map-canvas" width="640" height="280" aria-label="3D liquidation cluster map"></canvas>
+    <div class="liquidity-map-legend">
+      <span class="legend-swatch long"></span>Long liquidations (below mark)
+      <span class="legend-swatch short"></span>Short liquidations (above mark)
+    </div>
+  `;
+  const canvas = document.querySelector("#liquidityMapCanvas");
+  if (canvas) drawLiquidityMap3D(canvas, liquidityMap);
+}
+
+function drawLiquidityMap3D(canvas, payload) {
+  const ctx = canvas.getContext("2d");
+  const width = canvas.width;
+  const height = canvas.height;
+  ctx.clearRect(0, 0, width, height);
+
+  const clusters = Array.isArray(payload.clusters) ? payload.clusters : [];
+  const price = Number(payload.price);
+  if (!clusters.length || !Number.isFinite(price) || price <= 0) {
+    ctx.fillStyle = "rgba(145, 160, 181, 0.7)";
+    ctx.font = "12px Inter, sans-serif";
+    ctx.fillText("Not enough data to model liquidity clusters yet.", 16, height / 2);
+    return;
+  }
+
+  const originX = width / 2;
+  const groundY = height - 44;
+  const maxOffsetPct = Math.max(...clusters.map((c) => Math.abs(c.price - price) / price)) || 0.2;
+  const maxMagnitude = Math.max(...clusters.map((c) => c.magnitude_usd)) || 1;
+  const laneWidth = (width * 0.42) / maxOffsetPct;
+  const maxBarHeight = groundY - 30;
+  const depth = 16;
+  const tilt = 0.42;
+
+  // Ground plane grid, for a sense of perspective.
+  ctx.strokeStyle = "rgba(145, 160, 181, 0.16)";
+  ctx.lineWidth = 1;
+  for (let i = -4; i <= 4; i += 1) {
+    const x = originX + i * (width / 9);
+    ctx.beginPath();
+    ctx.moveTo(x, groundY);
+    ctx.lineTo(x + depth, groundY - depth * tilt);
+    ctx.stroke();
+  }
+  ctx.beginPath();
+  ctx.moveTo(20, groundY);
+  ctx.lineTo(width - 20, groundY);
+  ctx.stroke();
+
+  const sorted = [...clusters].sort((a, b) => Math.abs(b.price - price) - Math.abs(a.price - price));
+  for (const cluster of sorted) {
+    const offsetPct = (cluster.price - price) / price;
+    const x = originX + offsetPct * laneWidth;
+    const barWidth = 20;
+    const barHeight = Math.max(4, (cluster.magnitude_usd / maxMagnitude) * maxBarHeight);
+    const isLong = cluster.side === "long";
+    const front = isLong ? "rgba(255, 107, 127, 0.88)" : "rgba(90, 230, 143, 0.88)";
+    const top = isLong ? "rgba(255, 148, 163, 0.95)" : "rgba(140, 245, 180, 0.95)";
+    const side = isLong ? "rgba(196, 60, 82, 0.9)" : "rgba(45, 176, 104, 0.9)";
+
+    const baseX = x - barWidth / 2;
+    const baseY = groundY;
+    const topY = baseY - barHeight;
+
+    ctx.fillStyle = front;
+    ctx.fillRect(baseX, topY, barWidth, barHeight);
+
+    ctx.fillStyle = side;
+    ctx.beginPath();
+    ctx.moveTo(baseX + barWidth, topY);
+    ctx.lineTo(baseX + barWidth + depth, topY - depth * tilt);
+    ctx.lineTo(baseX + barWidth + depth, baseY - depth * tilt);
+    ctx.lineTo(baseX + barWidth, baseY);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.fillStyle = top;
+    ctx.beginPath();
+    ctx.moveTo(baseX, topY);
+    ctx.lineTo(baseX + depth, topY - depth * tilt);
+    ctx.lineTo(baseX + barWidth + depth, topY - depth * tilt);
+    ctx.lineTo(baseX + barWidth, topY);
+    ctx.closePath();
+    ctx.fill();
+
+    if (cluster.leverage >= 25) {
+      ctx.fillStyle = "rgba(238, 244, 251, 0.82)";
+      ctx.font = "9px Inter, sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText(`${cluster.leverage}x`, baseX + barWidth / 2, topY - depth * tilt - 4);
+    }
+  }
+
+  ctx.strokeStyle = "rgba(255, 191, 71, 0.85)";
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([4, 3]);
+  ctx.beginPath();
+  ctx.moveTo(originX, 16);
+  ctx.lineTo(originX, groundY);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = "rgba(255, 191, 71, 0.95)";
+  ctx.font = "10px Inter, sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText(`mark ${price < 10 ? price.toFixed(4) : price.toFixed(2)}`, originX, 12);
 }
 
 function latestObject(rows = []) {
@@ -5467,6 +5641,7 @@ async function saveTradingRules() {
     renderTradingViewChart();
     loadFibonacciAnalysis({ force: true });
     loadContextRadar({ force: true });
+    loadLiquidityMap({ force: true });
     loadCoinGlassContext({ force: true });
     addAuditEvent("rules preview", "Sign in to save signal rules", `${nextRules.chartInterval} · ${nextRules.sessionGuardMinutes}m guard`);
     return;
