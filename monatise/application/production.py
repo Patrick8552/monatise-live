@@ -467,9 +467,11 @@ class ProductionASGI(OrchestrationASGI):
         except Exception as exc:
             # dashboard_query's final raise carries a generic message but chains
             # the real per-attempt failure (often CoinGlass's own rejection
-            # reason) as __cause__ -- log that, not just the exception type,
-            # or every dashboard failure looks identical in the logs.
-            LOGGER.warning("CoinGlass dashboard dataset unavailable", extra={"path": upstream_path, "error_type": type(exc).__name__, "error_detail": str(exc.__cause__ or exc)})
+            # reason) as __cause__. There is no formatter configured anywhere
+            # in this app that prints logging "extra" fields, so put the
+            # detail directly in the message -- otherwise every dashboard
+            # failure prints identically and the real reason is unrecoverable.
+            LOGGER.warning("CoinGlass dashboard dataset unavailable: %s (%s: %s)", upstream_path, type(exc).__name__, exc.__cause__ or exc)
             return 503, {"status": "unavailable", "source": "coinglass", "dataset": upstream_path, "error_type": type(exc).__name__}
         return 200, payload
 
