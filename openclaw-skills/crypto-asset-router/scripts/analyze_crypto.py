@@ -22,6 +22,10 @@ def valid_grid_plan(grid: object) -> bool:
     sells = grid.get("sell_levels")
     lower = grid.get("lower_invalidation")
     upper = grid.get("upper_invalidation")
+    lower_boundary = grid.get("lower_boundary")
+    upper_boundary = grid.get("upper_boundary")
+    spacing = grid.get("spacing")
+    levels_per_side = grid.get("levels_per_side")
 
     def valid_number(value: object) -> bool:
         return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value > 0
@@ -32,7 +36,10 @@ def valid_grid_plan(grid: object) -> bool:
         and isinstance(sells, list)
         and len(buys) >= 2
         and len(sells) >= 2
-        and all(valid_number(value) for value in [*buys, *sells, lower, upper])
+        and all(valid_number(value) for value in [*buys, *sells, lower, upper, lower_boundary, upper_boundary, spacing])
+        and isinstance(levels_per_side, int)
+        and not isinstance(levels_per_side, bool)
+        and levels_per_side == len(buys) == len(sells)
         and len(set(buys)) == len(buys)
         and len(set(sells)) == len(sells)
         and all(buys[index] > buys[index + 1] for index in range(len(buys) - 1))
@@ -40,6 +47,12 @@ def valid_grid_plan(grid: object) -> bool:
         and max(buys) < center < min(sells)
         and lower < min(buys)
         and upper > max(sells)
+        # lower_boundary/upper_boundary must be the actual outermost levels
+        # (the formatter reads these keys unconditionally, so a
+        # structurally-valid grid missing/mismatching them must fail
+        # closed rather than crash the formatter).
+        and lower_boundary == min(buys)
+        and upper_boundary == max(sells)
     )
 
 

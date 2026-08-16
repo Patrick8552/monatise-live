@@ -32,7 +32,7 @@ def telegram(result: dict) -> str:
         "MONATISE STOCK ANALYSIS",
         f"Asset: {result.get('asset')}",
         f"Decision: {decision.replace('_', ' ')}",
-        f"Quiver score: {int(result.get('score') or 0):+d}/10 | threshold: ±{int(result.get('score_threshold') or 3)}",
+        f"Quiver score: {int(result.get('score') or 0):+d}/10 | threshold: ±{int(result.get('score_threshold') or 2)}",
     ]
     reasons = list(result.get("reasons") or [])[:4]
     cautions = list(result.get("cautions") or [])[:3]

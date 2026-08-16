@@ -110,6 +110,21 @@ def test_grid_without_a_valid_grid_plan_fails_closed_to_no_trade():
     assert any("grid_plan" in reason for reason in result["data_quality"]["failures"])
 
 
+def test_grid_plan_missing_boundary_fields_fails_closed_instead_of_crashing():
+    # telegram() reads grid['lower_boundary']/['upper_boundary'] (and
+    # spacing/levels_per_side) unconditionally -- the validator must reject
+    # a grid_plan missing them rather than let a KeyError reach telegram().
+    data = payload(classification="grid", direction="two_sided")
+    del data["grid_plan"]["lower_boundary"]
+
+    result = MODULE.analyze("WOOD", payload=data)
+
+    assert result["actionable"] is False
+    assert result["classification"] == "no_trade"
+    assert any("grid_plan" in reason for reason in result["data_quality"]["failures"])
+    MODULE.telegram(result)  # must not raise
+
+
 def test_failed_quality_gate_is_no_trade_and_never_shows_a_zone():
     result = MODULE.analyze("WOOD", payload=payload(quality_passed=False))
     assert result["actionable"] is False

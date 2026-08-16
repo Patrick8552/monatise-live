@@ -1403,8 +1403,13 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
         if not origin_host:
             return False
         allowed_hosts = {
+            # X-Forwarded-Host is deliberately excluded: this server has no
+            # way to verify it was set by a trusted proxy rather than the
+            # client itself, so trusting it would let any direct HTTP
+            # client (not just a browser subject to CORS) satisfy this
+            # check by simply setting Origin and X-Forwarded-Host to the
+            # same attacker-chosen value.
             self.headers.get("Host", ""),
-            self.headers.get("X-Forwarded-Host", ""),
             urlparse(os.getenv("MONATISE_PUBLIC_URL", "")).netloc,
         }
         return origin_host in {host for host in allowed_hosts if host}

@@ -46,8 +46,14 @@ self.addEventListener("fetch", (event) => {
   event.respondWith(
     fetch(request)
       .then((response) => {
-        const copy = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+        // Only cache successful responses -- otherwise a transient 404/500
+        // (e.g. during a deploy race) gets cached and is then preferred
+        // over the offline fallback on a later failed fetch. waitUntil
+        // keeps the worker alive until the write actually completes.
+        if (response.ok) {
+          const copy = response.clone();
+          event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.put(request, copy)));
+        }
         return response;
       })
       .catch(() => caches.match(request).then((cached) => cached || caches.match("./index.html")))

@@ -74,6 +74,20 @@ def test_grid_score_seven_is_grid_trade_analysis():
     assert "Entry:" not in message
 
 
+def test_grid_plan_missing_boundary_fields_fails_closed_instead_of_crashing():
+    # The formatter reads grid['lower_boundary']/['upper_boundary'] (and
+    # spacing/levels_per_side) unconditionally -- the validator must reject
+    # a grid_plan missing them rather than let a KeyError reach telegram().
+    broken = payload(classification="grid", direction="two_sided", score=0, grid_score=7)
+    del broken["grid_plan"]["lower_boundary"]
+
+    result = MODULE.analyze("BTC", payload=broken, current_time=WEEKDAY)
+
+    assert result["decision"] == "NO_TRADE"
+    assert result["reason_code"] == "INVALID_GRID_LEVELS"
+    MODULE.telegram(result)  # must not raise
+
+
 def test_grid_without_multiple_levels_fails_closed():
     data = payload(classification="grid", direction="two_sided", score=0, grid_score=8)
     data["grid_plan"] = None

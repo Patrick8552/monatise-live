@@ -46,6 +46,22 @@ def test_risk_assessment_penalizes_authorities_and_thin_market() -> None:
     assert any("Freeze authority" in caution for caution in risky["cautions"])
 
 
+def test_risk_assessment_distinguishes_unavailable_age_from_a_brand_new_pool() -> None:
+    # A pool created moments ago and a pool with no creation timestamp at
+    # all must not both collapse to the same falsy 0 -- the frontend can't
+    # tell "just launched" (the highest-risk case) from "data unavailable"
+    # if both read as ageHours: 0.
+    pair = sample_pair()
+    del pair["pairCreatedAt"]
+    unavailable = memecoins.risk_assessment(pair)
+    assert unavailable["ageHours"] is None
+    assert any("age is unavailable" in caution for caution in unavailable["cautions"])
+
+    brand_new = memecoins.risk_assessment(sample_pair(created_at=int(memecoins.time.time() * 1000)))
+    assert brand_new["ageHours"] is not None
+    assert brand_new["ageHours"] < 1.0
+
+
 def test_normalize_pair_marks_pumpfun_and_exposes_public_links() -> None:
     token = memecoins.normalize_pair(
         sample_pair(),
