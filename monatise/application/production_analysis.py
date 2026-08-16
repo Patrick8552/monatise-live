@@ -26,6 +26,19 @@ from monatise.engines.supply_demand.models import ZoneRequest
 
 SUPPORTED_PRODUCTION_SYMBOLS = frozenset({"BTC", "ETH", "SOL"})
 MINIMUM_MOVING_GRID_SPACING = {"BTC": 500.0}
+# Grid spacing strategy in effect for live production traffic. "fixed_v1" is
+# the original static-floor behavior (MINIMUM_MOVING_GRID_SPACING); do not
+# flip this to "adaptive_atr_v2" until the two have been backtested
+# side-by-side -- callers that want to evaluate the new strategy without
+# touching production behavior can pass spacing_strategy explicitly to
+# build_moving_grid_plan().
+ACTIVE_GRID_SPACING_STRATEGY = "fixed_v1"
+# adaptive_atr_v2: spacing = clamp(max(natural_spacing, ATR_MULTIPLIER *
+# ATR(14) on 1H candles), price * lower_bound_pct, price * upper_bound_pct).
+# Values are a starting point pending backtesting, not validated doctrine.
+ADAPTIVE_ATR_WINDOW = 14
+ADAPTIVE_ATR_MULTIPLIER = 0.75
+ADAPTIVE_SPACING_BOUNDS_PCT = {"BTC": (0.0008, 0.0040)}
 SUPPORTED_PRODUCTION_INTERVALS = frozenset({"1m", "3m", "5m", "15m", "30m", "1h", "4h", "6h", "8h", "12h", "1d", "1w"})
 INTERVAL_SECONDS = {
     "1m": 60, "3m": 180, "5m": 300, "15m": 900, "30m": 1_800,
@@ -95,7 +108,59 @@ def build_grid_plan(center: float | None, *, levels_per_side: int = 3, half_widt
     }
 
 
-def build_moving_grid_plan(market: Any, *, levels_per_side: int = 3, lookback_candles: int = 20) -> dict[str, Any] | None:
+def _resample_to_hourly_ohlc(market: Any) -> list[tuple[float, float, float]] | None:
+    """Aggregate market.candles into complete 1H (high, low, close) buckets.
+
+    Uses market.candles directly (not the lookback_candles-truncated window)
+    since ATR(14) on 1H needs up to 15 hourly candles of history. Returns
+    None when the source interval can't be resampled cleanly into 1H (finer
+    than 1H and evenly divides it), leaving the shortfall to the caller.
+    """
+    interval = str(getattr(market, "interval", "") or "")
+    interval_seconds = INTERVAL_SECONDS.get(interval)
+    candles = tuple(getattr(market, "candles", ()) or ())
+    if not interval_seconds or interval_seconds > 3600 or 3600 % interval_seconds != 0 or not candles:
+        return None
+    per_hour = 3600 // interval_seconds
+    if per_hour == 1:
+        return [(float(c.high), float(c.low), float(c.close)) for c in candles]
+    # Align from the end so the most recent bucket is always complete,
+    # dropping any incomplete leading remainder instead of the trailing one.
+    usable = candles[len(candles) % per_hour:]
+    buckets = []
+    for start in range(0, len(usable), per_hour):
+        group = usable[start:start + per_hour]
+        if len(group) < per_hour:
+            continue
+        buckets.append((
+            max(float(c.high) for c in group),
+            min(float(c.low) for c in group),
+            float(group[-1].close),
+        ))
+    return buckets
+
+
+def _hourly_atr(market: Any, window: int = ADAPTIVE_ATR_WINDOW) -> float | None:
+    """ATR(window) computed on 1H candles resampled from market.candles."""
+    hourly = _resample_to_hourly_ohlc(market)
+    if hourly is None or len(hourly) < window + 1:
+        return None
+    segment = hourly[-(window + 1):]
+    ranges = [
+        max(high - low, abs(high - segment[index - 1][2]), abs(low - segment[index - 1][2]))
+        for index, (high, low, _close) in enumerate(segment)
+        if index > 0
+    ]
+    return sum(ranges) / len(ranges) if ranges else None
+
+
+def build_moving_grid_plan(
+    market: Any,
+    *,
+    levels_per_side: int = 3,
+    lookback_candles: int = 20,
+    spacing_strategy: str | None = None,
+) -> dict[str, Any] | None:
     """Build a rolling range grid that moves only as its candle window moves.
 
     Unlike latest-price centering, the rolling high/low midpoint lets price
@@ -106,7 +171,10 @@ def build_moving_grid_plan(market: Any, *, levels_per_side: int = 3, lookback_ca
     the same as "no grid data available."
     """
     symbol = str(getattr(market, "symbol", "")).strip().upper()
+    strategy = spacing_strategy or ACTIVE_GRID_SPACING_STRATEGY
     minimum_spacing = MINIMUM_MOVING_GRID_SPACING.get(symbol, 0.0)
+    live_price = getattr(market, "price", None)
+    has_live_price = isinstance(live_price, (int, float)) and not isinstance(live_price, bool) and live_price > 0
     candles = tuple(getattr(market, "candles", ()) or ())[-lookback_candles:]
     if len(candles) < 5:
         fallback = build_grid_plan(getattr(market, "price", None), levels_per_side=levels_per_side)
@@ -121,14 +189,32 @@ def build_moving_grid_plan(market: Any, *, levels_per_side: int = 3, lookback_ca
         return build_grid_plan(getattr(market, "price", None), levels_per_side=levels_per_side)
     center = (lower + upper) / 2
     natural_spacing = (upper - lower) / (levels_per_side * 2)
-    spacing = max(natural_spacing, minimum_spacing)
+
+    atr_1h: float | None = None
+    spacing_basis = "rolling_range"
+    if strategy == "adaptive_atr_v2" and symbol in ADAPTIVE_SPACING_BOUNDS_PCT:
+        atr_1h = _hourly_atr(market)
+        if atr_1h is not None:
+            lower_bound_pct, upper_bound_pct = ADAPTIVE_SPACING_BOUNDS_PCT[symbol]
+            bound_price = live_price if has_live_price else center
+            candidate = max(natural_spacing, ADAPTIVE_ATR_MULTIPLIER * atr_1h)
+            spacing = min(max(candidate, bound_price * lower_bound_pct), bound_price * upper_bound_pct)
+            spacing_basis = "adaptive_atr_v2"
+        else:
+            # No clean 1H resample available (interval too coarse, or not
+            # enough history yet) -- fail over to the fixed-floor strategy
+            # rather than build an unguarded, ATR-less grid.
+            spacing = max(natural_spacing, minimum_spacing)
+            spacing_basis = "adaptive_atr_v2_fallback_fixed"
+    else:
+        spacing = max(natural_spacing, minimum_spacing)
+        spacing_basis = "rolling_range_minimum_spacing" if spacing > natural_spacing else "rolling_range"
+
     buy_levels = [center - spacing * index for index in range(1, levels_per_side + 1)]
     sell_levels = [center + spacing * index for index in range(1, levels_per_side + 1)]
     lower_boundary, upper_boundary = buy_levels[-1], sell_levels[-1]
-    floor_applied = spacing > natural_spacing
 
-    live_price = getattr(market, "price", None)
-    if isinstance(live_price, (int, float)) and not isinstance(live_price, bool) and live_price > 0:
+    if has_live_price:
         # The rolling range can lag a fast move: its midpoint stays behind
         # live price, so a structurally fine grid can still hand back levels
         # price has already blown through on one side. Fail closed rather
@@ -145,8 +231,10 @@ def build_moving_grid_plan(market: Any, *, levels_per_side: int = 3, lookback_ca
         "lower_invalidation": round(lower_boundary - spacing, 8),
         "upper_invalidation": round(upper_boundary + spacing, 8),
         "spacing": round(spacing, 8),
+        "spacing_strategy": strategy,
+        "atr_1h": round(atr_1h, 8) if atr_1h is not None else None,
         "levels_per_side": levels_per_side,
-        "basis": "rolling_range_minimum_spacing" if floor_applied else "rolling_range",
+        "basis": spacing_basis,
         "lookback_candles": len(candles),
         "minimum_spacing": minimum_spacing,
     }
