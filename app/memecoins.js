@@ -76,7 +76,7 @@ function renderTokenCard(token) {
       <div class="token-stats">
         <div><span>Liquidity</span><strong>${money(token.liquidityUsd, true)}</strong></div>
         <div><span>Volume</span><strong>${money(token.volume?.h24, true)}</strong></div>
-        <div><span>Age</span><strong>${risk.ageHours ? `${Math.round(risk.ageHours)}h` : "--"}</strong></div>
+        <div><span>Age</span><strong>${risk.ageHours != null ? `${Math.round(risk.ageHours)}h` : "--"}</strong></div>
       </div>
       <div class="token-actions">
         <button class="primary" type="button" data-action="inspect">Inspect</button>

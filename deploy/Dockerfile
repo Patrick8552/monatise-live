@@ -4,6 +4,10 @@ WORKDIR /app
 COPY . .
 RUN pip install --no-cache-dir -r requirements-live.txt
 
+RUN useradd --create-home --shell /usr/sbin/nologin monatise \
+    && chown -R monatise:monatise /app
+USER monatise
+
 ENV MONATISE_PORT=4174
 ENV MONATISE_HOST=0.0.0.0
 EXPOSE 4174

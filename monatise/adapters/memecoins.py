@@ -119,7 +119,7 @@ def risk_assessment(pair: dict, mint: dict | None = None) -> dict:
     h24 = txns.get("h24") or {}
     trades = int(_number(h24.get("buys")) + _number(h24.get("sells")))
     created_ms = _number(pair.get("pairCreatedAt"))
-    age_hours = max(0.0, (time.time() * 1000 - created_ms) / 3_600_000) if created_ms else 0.0
+    age_hours = max(0.0, (time.time() * 1000 - created_ms) / 3_600_000) if created_ms else None
     score = 100
     cautions: list[str] = []
 
@@ -169,7 +169,7 @@ def risk_assessment(pair: dict, mint: dict | None = None) -> dict:
     score = max(0, min(100, score))
     label = "Screened" if score >= 70 else "Speculative" if score >= 45 else "High risk"
     return {
-        "ageHours": round(age_hours, 1),
+        "ageHours": round(age_hours, 1) if age_hours is not None else None,
         "cautions": cautions or ["No basic screening warnings were triggered; this is not a safety guarantee."],
         "label": label,
         "score": score,

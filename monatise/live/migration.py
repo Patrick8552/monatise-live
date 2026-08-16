@@ -16,6 +16,7 @@ TABLES = (
     "credentials",
     "user_settings",
     "login_hints",
+    "feedback",
     "signal_records",
 )
 
