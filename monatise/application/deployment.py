@@ -19,7 +19,8 @@ from uuid import uuid4
 from urllib.request import Request, urlopen
 
 from monatise.application.composition import create_application, create_durable_infrastructure
-from monatise.application.production_analysis import build_directional_plan, build_production_analysis_run, build_setup_validity, sanitized_result, strongest_confirmation_signal
+from monatise.application.orchestrator import _json_safe
+from monatise.application.production_analysis import ACTIVE_GRID_SPACING_STRATEGY, build_directional_plan, build_production_analysis_run, build_setup_validity, sanitized_result, strongest_confirmation_signal
 from monatise.application.dynamic_analysis import finalize_dynamic_analysis
 from monatise.application.persistence import PostgresDocumentStore
 from monatise.application.workflows import TelegramNotifier
@@ -44,6 +45,9 @@ FALSE_VALUES = {"0", "false", "no", "off", "disabled", ""}
 COINGLASS_PROVIDER_KEY = "coinglass.market_provider"
 SCHEDULED_ANALYSIS_JOB_PREFIX = "scheduled-analysis"
 SCHEDULED_ANALYSIS_DEFAULT_SYMBOLS = ("BTC", "ETH", "SOL")
+# Bump whenever the snapshot payload shape changes, so a later replay can
+# tell which schema a given historical row was written under.
+DECISION_SNAPSHOT_SCHEMA_VERSION = 1
 STOCK_SCAN_SYMBOLS = ("AAPL", "TSLA", "NVDA", "QQQ", "SPY")
 SCHEDULED_ANALYSIS_INTERVAL_SECONDS = {
     "1m": 60, "3m": 180, "5m": 300, "15m": 900, "30m": 1_800,
@@ -368,6 +372,7 @@ class OrchestrationRuntime:
     application: Any | None = None
     leadership: RedisSchedulerLeadership | None = None
     redis_coordination: RedisCoordinationStore | None = None
+    decision_snapshot_store: PostgresDocumentStore | None = None
     migrations: MigrationRunner | None = None
     coinglass: CoinGlassProductionAdapter | None = None
     backpack: BackpackAdapter | None = None
@@ -841,6 +846,7 @@ class OrchestrationRuntime:
             }
             startup_phase = "application_composition"
             store = PostgresDocumentStore(self.postgres)
+            self.decision_snapshot_store = store
             infrastructure = create_durable_infrastructure(store)
             self.coinglass = register_coinglass_provider(
                 infrastructure.container,
@@ -1014,6 +1020,13 @@ class OrchestrationRuntime:
         if self.application is None:
             raise RuntimeError("orchestration runtime is unavailable")
         result = await self.application.orchestrator.run(build_production_analysis_run(symbol, interval=interval, correlation_id=correlation_id, source=source))
+        if self.decision_snapshot_store is not None:
+            try:
+                await self._record_decision_snapshot(result, interval=interval, source=source)
+            except Exception as exc:
+                # Snapshot recording is pure telemetry for a future backtest --
+                # it must never take down the actual analysis/notification path.
+                LOGGER.warning("decision snapshot recording failed", extra={"error_type": type(exc).__name__, "run_id": result.run_id})
         should_notify = notify and self.telegram is not None
         notification_state = None
         if should_notify and notification_policy == "qualified_changes":
@@ -1060,6 +1073,35 @@ class OrchestrationRuntime:
                 )
                 LOGGER.warning("Telegram notification delivery failed", extra={"error_type": type(exc).__name__, "run_id": result.run_id})
         return sanitized_result(result)
+
+    async def _record_decision_snapshot(self, result: Any, *, interval: str, source: str) -> None:
+        """Persist everything the decision engine saw and decided this cycle.
+
+        Point-in-time historical store for a future full-pipeline walk-forward
+        replay: CoinGlass's derivatives endpoints (funding/OI/CVD/liquidations/
+        order book) only expose a recent window ending now, not an "as of
+        timestamp T in the past" query -- so today's live inputs are the only
+        chance to capture what order_flow and the rest of the pipeline actually
+        saw at this moment. Every stage's output is included, not just the
+        final decision, since a future replay needs the intermediate evidence
+        too, not just the conclusion.
+        """
+        outputs = {name: _json_safe(value) for name, value in result.context.outputs.items()}
+        snapshot = {
+            "schema_version": DECISION_SNAPSHOT_SCHEMA_VERSION,
+            "run_id": result.run_id,
+            "correlation_id": result.correlation_id,
+            "symbol": result.symbol,
+            "interval": interval,
+            "source": source,
+            "observed_at": datetime.now(timezone.utc).isoformat(),
+            "grid_spacing_strategy": ACTIVE_GRID_SPACING_STRATEGY,
+            "code_version": self.environment.get("RENDER_GIT_COMMIT", ""),
+            "status": result.status.value,
+            "blocked_by": result.blocked_by,
+            "outputs": outputs,
+        }
+        await self.decision_snapshot_store.append(f"decision-snapshot:{result.symbol}:{interval}", snapshot)
 
     async def analyse_dynamic_coinglass(self, symbol: str, *, interval: str = "1h", source: str = "monatise.openclaw.dynamic") -> dict[str, Any]:
         """Resolve and analyze one CoinGlass futures asset without notifications or execution."""

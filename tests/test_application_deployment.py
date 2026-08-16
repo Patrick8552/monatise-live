@@ -860,3 +860,77 @@ def test_migrations_use_advisory_lock_and_record_version(tmp_path):
 def test_render_blueprint_targets_production_only():
     production = (Path(__file__).parents[1] / "render.yaml").read_text(encoding="utf-8")
     assert "name: monatise-live" in production
+
+
+class _FakeSnapshotStore:
+    def __init__(self, *, raises=False):
+        self.calls: list[tuple[str, dict]] = []
+        self._raises = raises
+
+    async def append(self, stream, value):
+        if self._raises:
+            raise RuntimeError("store unavailable")
+        self.calls.append((stream, value))
+
+
+def _full_grid_result(run):
+    # _grid_result() alone is missing fields sanitized_result() needs for a
+    # complete analyse() call -- mirrors the pattern already used by
+    # test_failed_telegram_delivery_is_recorded_without_automatic_duplicate_retry.
+    result = _grid_result("confirmed")
+    result.run_id = "run-snapshot-test"
+    result.correlation_id = run.correlation_id
+    result.statistics = SimpleNamespace(completed_stages=3)
+    result.blocked_by = None
+    return result
+
+
+def test_analyse_records_a_decision_snapshot_with_every_stage_output():
+    class Orchestrator:
+        async def run(self, run):
+            return _full_grid_result(run)
+
+    runtime = OrchestrationRuntime(environment={"RENDER_GIT_COMMIT": "abc123"})
+    runtime.application = SimpleNamespace(orchestrator=Orchestrator(), infrastructure=SimpleNamespace(audit=SimpleNamespace(append=lambda **_: None)))
+    store = _FakeSnapshotStore()
+    runtime.decision_snapshot_store = store
+
+    asyncio.run(runtime.analyse("BTC", interval="15m", notify=False))
+
+    assert len(store.calls) == 1
+    stream, snapshot = store.calls[0]
+    assert stream == "decision-snapshot:BTC:15m"
+    assert snapshot["symbol"] == "BTC"
+    assert snapshot["interval"] == "15m"
+    assert snapshot["code_version"] == "abc123"
+    assert snapshot["schema_version"] >= 1
+    assert set(snapshot["outputs"]) == {"decision", "market_data", "price_action"}
+
+
+def test_analyse_does_not_record_a_snapshot_when_no_store_is_configured():
+    class Orchestrator:
+        async def run(self, run):
+            return _full_grid_result(run)
+
+    runtime = OrchestrationRuntime(environment={})
+    runtime.application = SimpleNamespace(orchestrator=Orchestrator(), infrastructure=SimpleNamespace(audit=SimpleNamespace(append=lambda **_: None)))
+    assert runtime.decision_snapshot_store is None
+
+    # Must not raise even though no store is configured.
+    asyncio.run(runtime.analyse("BTC", interval="15m", notify=False))
+
+
+def test_snapshot_recording_failure_never_breaks_analysis(caplog):
+    class Orchestrator:
+        async def run(self, run):
+            return _full_grid_result(run)
+
+    runtime = OrchestrationRuntime(environment={})
+    runtime.application = SimpleNamespace(orchestrator=Orchestrator(), infrastructure=SimpleNamespace(audit=SimpleNamespace(append=lambda **_: None)))
+    runtime.decision_snapshot_store = _FakeSnapshotStore(raises=True)
+
+    with caplog.at_level(logging.WARNING, logger="monatise.orchestration"):
+        result = asyncio.run(runtime.analyse("BTC", interval="15m", notify=False))
+
+    assert result["symbol"] == "BTC"
+    assert any("decision snapshot recording failed" in record.message for record in caplog.records)
