@@ -140,6 +140,9 @@ class GovernanceLossControlEngine:
                     "execution policy is blocked",
                     "portfolio health is fragile",
                     "portfolio health is blocked",
+                    "daily loss",
+                    "consecutive losses",
+                    "losses in the last 24 hours",
                 )
             )
             if not non_overridable:

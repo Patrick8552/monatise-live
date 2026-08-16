@@ -32,7 +32,9 @@ class RegimeEngine:
 
         candles = list(market.candles)
         required = max(
-            request.slow_window,
+            # baseline_returns below needs slow_window elements out of the
+            # len(candles)-1 -sized returns series, so slow_window+1 candles.
+            request.slow_window + 1,
             request.atr_window + 1,
             request.compression_window + 1,
         )

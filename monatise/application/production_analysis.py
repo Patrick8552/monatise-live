@@ -100,7 +100,10 @@ def build_moving_grid_plan(market: Any, *, levels_per_side: int = 3, lookback_ca
 
     Unlike latest-price centering, the rolling high/low midpoint lets price
     approach an actual grid level and therefore supplies meaningful location
-    context to the pre-decision price-action stage.
+    context to the pre-decision price-action stage. Returns None instead of
+    a grid the live price has already moved past its innermost band on one
+    side -- that's a breakout, not a range, and callers already treat None
+    the same as "no grid data available."
     """
     symbol = str(getattr(market, "symbol", "")).strip().upper()
     minimum_spacing = MINIMUM_MOVING_GRID_SPACING.get(symbol, 0.0)
@@ -123,6 +126,16 @@ def build_moving_grid_plan(market: Any, *, levels_per_side: int = 3, lookback_ca
     sell_levels = [center + spacing * index for index in range(1, levels_per_side + 1)]
     lower_boundary, upper_boundary = buy_levels[-1], sell_levels[-1]
     floor_applied = spacing > natural_spacing
+
+    live_price = getattr(market, "price", None)
+    if isinstance(live_price, (int, float)) and not isinstance(live_price, bool) and live_price > 0:
+        # The rolling range can lag a fast move: its midpoint stays behind
+        # live price, so a structurally fine grid can still hand back levels
+        # price has already blown through on one side. Fail closed rather
+        # than present a range that's already been exited.
+        if not (buy_levels[0] < live_price < sell_levels[0]):
+            return None
+
     return {
         "center": round(center, 8),
         "buy_levels": [round(value, 8) for value in buy_levels],

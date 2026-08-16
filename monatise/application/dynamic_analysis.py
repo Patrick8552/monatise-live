@@ -44,7 +44,7 @@ def finalize_dynamic_analysis(
         elif not isinstance(value, (int, float)) or not isfinite(float(value)):
             failures.append(f"malformed derivatives dataset: {key}")
     imbalance = derivatives.get("order_book_imbalance")
-    if imbalance is not None and abs(float(imbalance)) > 1:
+    if isinstance(imbalance, (int, float)) and not isinstance(imbalance, bool) and abs(float(imbalance)) > 1:
         failures.append("malformed order-book imbalance")
     classification = str(analysis.get("classification") or "no_trade")
     direction = str(analysis.get("direction") or "none")

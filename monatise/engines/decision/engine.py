@@ -313,7 +313,12 @@ class DecisionEngine:
         if event is None:
             return
 
-        score = 0.85 if event.status is SweepStatus.CONFIRMED else 0.45
+        score = {
+            SweepStatus.CONFIRMED: 0.85,
+            SweepStatus.POSSIBLE: 0.45,
+            SweepStatus.NONE: 0.0,
+            SweepStatus.INVALID: 0.0,
+        }[event.status]
 
         direction = (
             DecisionDirection.LONG

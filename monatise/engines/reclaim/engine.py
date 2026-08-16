@@ -79,7 +79,7 @@ class ReclaimEngine:
                 self._status_priority(event.status),
                 int(event.zone_confluence),
                 int(event.held_level),
-                event.reclaim_index or -1,
+                event.reclaim_index if event.reclaim_index is not None else -1,
             ),
             reverse=True,
         )

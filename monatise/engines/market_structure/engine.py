@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 from monatise.core.models import Candle
 from monatise.engines.market_data.models import DataStatus
 from monatise.engines.market_structure.models import (
@@ -225,7 +227,7 @@ class MarketStructureEngine:
             end = index
             while (
                 end + 1 < len(candles)
-                and getattr(candles[end + 1], field) == value
+                and math.isclose(getattr(candles[end + 1], field), value, rel_tol=1e-9)
             ):
                 end += 1
 

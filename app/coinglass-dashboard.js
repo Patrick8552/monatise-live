@@ -1073,10 +1073,13 @@ function lockedSignalResolution(signal, price, now = Date.now()) {
 }
 
 function currentSignalMark(price) {
-  const displayed = parseDisplayedNumber(els.assetPrice?.textContent);
-  if (Number.isFinite(displayed) && displayed > 0) return displayed;
+  // Prefer the precise live price the caller has in hand; formatUsd() rounds
+  // prices >= $1000 to whole dollars for display, so re-parsing the DOM text
+  // first can report a target/invalidation as hit before it actually is.
   const mark = Number(price);
   if (Number.isFinite(mark) && mark > 0) return mark;
+  const displayed = parseDisplayedNumber(els.assetPrice?.textContent);
+  if (Number.isFinite(displayed) && displayed > 0) return displayed;
   const last = Number(state.lastPrice);
   return Number.isFinite(last) && last > 0 ? last : Number.NaN;
 }

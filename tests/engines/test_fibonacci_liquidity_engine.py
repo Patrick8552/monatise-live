@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 from monatise.core.models import Candle
@@ -151,6 +152,25 @@ def test_rejects_low_structure_confidence() -> None:
 
     assert result.has_valid_anchor is False
     assert result.direction is FibonacciDirection.UNKNOWN
+
+
+def test_rejects_insufficient_candles_instead_of_using_a_noisy_atr() -> None:
+    # _atr(candles, 14) needs 15 candles for a full window; fewer than that
+    # must fail closed rather than silently compute ATR from a shorter,
+    # statistically meaningless sample.
+    market = make_market()
+    market = replace(market, candles=market.candles[:5])
+
+    result = FibonacciLiquidityEngine().assess(
+        FibonacciRequest(
+            market=market,
+            structure=bullish_structure(),
+        )
+    )
+
+    assert result.has_valid_anchor is False
+    assert result.direction is FibonacciDirection.UNKNOWN
+    assert any("insufficient candles" in reason for reason in result.reasons)
 
 
 def test_engine_remains_non_executable() -> None:

@@ -98,3 +98,17 @@ def test_insufficient_candles_returns_unknown() -> None:
     )
     assert result.state is RegimeState.UNKNOWN
     assert result.score == 0.0
+
+
+def test_exactly_slow_window_candles_still_insufficient_for_baseline() -> None:
+    # baseline_returns is drawn from a returns series of length
+    # len(candles)-1, so slow_window (default 50) candles yields only
+    # slow_window-1 returns -- one short of what slow_window is supposed to
+    # guarantee. Requires slow_window+1 candles.
+    closes = [100 + index * 1.5 for index in range(50)]
+    result = RegimeEngine().assess(RegimeRequest(market=make_snapshot(closes)))
+    assert result.state is RegimeState.UNKNOWN
+
+    closes = [100 + index * 1.5 for index in range(51)]
+    result = RegimeEngine().assess(RegimeRequest(market=make_snapshot(closes)))
+    assert result.state is not RegimeState.UNKNOWN
