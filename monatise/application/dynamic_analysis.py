@@ -50,7 +50,7 @@ def finalize_dynamic_analysis(
     direction = str(analysis.get("direction") or "none")
     if classification in {"grid", "trend"} and not _derivatives_confirm(direction, derivatives):
         failures.append("CoinGlass order flow (net CVD) does not confirm this setup")
-    plan = _planned_setup(analysis, candles) if not failures else None
+    plan = _planned_setup(analysis, candles, price) if not failures else None
     if not failures and classification in {"grid", "trend"} and plan is None:
         failures.append("no structurally valid entry zone could be planned")
     if failures:
@@ -117,7 +117,7 @@ def _positive(value: Any) -> float | None:
     return number if isfinite(number) and number > 0 else None
 
 
-def _valid_grid_plan(grid: dict[str, Any]) -> bool:
+def _valid_grid_plan(grid: dict[str, Any], price: float | None = None) -> bool:
     center = grid.get("center")
     buys = grid.get("buy_levels")
     sells = grid.get("sell_levels")
@@ -131,21 +131,31 @@ def _valid_grid_plan(grid: dict[str, Any]) -> bool:
     ):
         return False
     buys_f, sells_f = [float(v) for v in buys], [float(v) for v in sells]
-    return (
+    if not (
         len(set(buys_f)) == len(buys_f) and len(set(sells_f)) == len(sells_f)
         and all(buys_f[i] > buys_f[i + 1] for i in range(len(buys_f) - 1))
         and all(sells_f[i] < sells_f[i + 1] for i in range(len(sells_f) - 1))
         and max(buys_f) < float(center) < min(sells_f)
         and float(lower) < min(buys_f) and float(upper) > max(sells_f)
-    )
+    ):
+        return False
+    if price is not None:
+        # Price must still sit inside the innermost band. A grid built from a
+        # rolling range can lag a fast move and hand back levels the price has
+        # already blown through on one side -- that's a breakout, not a range,
+        # and has no meaningful room left before invalidation on that side.
+        nearest_buy, nearest_sell = max(buys_f), min(sells_f)
+        if not (nearest_buy < price < nearest_sell):
+            return False
+    return True
 
 
-def _planned_setup(analysis: dict[str, Any], candles: tuple[Any, ...]) -> dict[str, Any] | None:
+def _planned_setup(analysis: dict[str, Any], candles: tuple[Any, ...], price: float | None = None) -> dict[str, Any] | None:
     grid = analysis.get("grid_plan") or {}
     levels = list(grid.get("buy_levels") or []) + list(grid.get("sell_levels") or [])
     grid_plan: dict[str, Any] | None = None
     if levels:
-        if not _valid_grid_plan(grid):
+        if not _valid_grid_plan(grid, price):
             return None
         spacing = _positive(grid.get("spacing"))
         if spacing is None:
