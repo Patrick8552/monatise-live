@@ -541,18 +541,22 @@ class ProductionASGI(OrchestrationASGI):
             LOGGER.warning("market candles unavailable", extra={"symbol": symbol, "interval": interval, "error_type": type(exc).__name__})
             return 503, {"status": "unavailable", "dataset": "candles", "source": "market_data", "error_type": type(exc).__name__}
         rows = []
-        for candle in candles:
-            raw_timestamp = str(candle.timestamp).strip()
-            if raw_timestamp.isdigit():
-                epoch = int(raw_timestamp)
-                if epoch > 10_000_000_000:
-                    epoch /= 1000
-                timestamp = datetime.fromtimestamp(epoch, tz=timezone.utc)
-            else:
-                timestamp = datetime.fromisoformat(raw_timestamp.replace("Z", "+00:00"))
-            if timestamp.tzinfo is None:
-                timestamp = timestamp.replace(tzinfo=timezone.utc)
-            rows.append({"time": int(timestamp.timestamp() * 1000), "open": candle.open, "high": candle.high, "low": candle.low, "close": candle.close, "volume": candle.volume})
+        try:
+            for candle in candles:
+                raw_timestamp = str(candle.timestamp).strip()
+                if raw_timestamp.isdigit():
+                    epoch = int(raw_timestamp)
+                    if epoch > 10_000_000_000:
+                        epoch /= 1000
+                    timestamp = datetime.fromtimestamp(epoch, tz=timezone.utc)
+                else:
+                    timestamp = datetime.fromisoformat(raw_timestamp.replace("Z", "+00:00"))
+                if timestamp.tzinfo is None:
+                    timestamp = timestamp.replace(tzinfo=timezone.utc)
+                rows.append({"time": int(timestamp.timestamp() * 1000), "open": candle.open, "high": candle.high, "low": candle.low, "close": candle.close, "volume": candle.volume})
+        except (ValueError, OverflowError, OSError) as exc:
+            LOGGER.warning("market candles unavailable", extra={"symbol": symbol, "interval": interval, "error_type": type(exc).__name__})
+            return 503, {"status": "unavailable", "dataset": "candles", "source": "market_data", "error_type": type(exc).__name__}
         return 200, {
             "status": "ready",
             "quality_status": snapshot.quality.status.value,
@@ -821,7 +825,9 @@ class ProductionASGI(OrchestrationASGI):
         expected = hmac.new(token.encode(), timestamp.encode() + b"." + body, hashlib.sha256).hexdigest() if token else ""
         if not token or not fresh or not hmac.compare_digest(signature, expected):
             return 401, {"status": "unauthorized"}
-        if self.runtime.redis_coordination and not await self.runtime.redis_coordination.claim_nonce(signature):
+        if self.runtime.redis_coordination is None:
+            return 503, {"status": "unavailable", "reason": "replay protection is not configured"}
+        if not await self.runtime.redis_coordination.claim_nonce(signature):
             return 409, {"status": "duplicate_request"}
         try:
             request = json.loads(body or b"{}")

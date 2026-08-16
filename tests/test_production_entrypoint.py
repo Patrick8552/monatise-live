@@ -129,6 +129,32 @@ def test_market_dashboard_uses_server_backed_read_only_data_routes():
     assert candle_payload["candles"][0]["time"] == 1785672000000
     assert candle_payload["execution_enabled"] is False
 
+
+def test_malformed_candle_timestamp_returns_503_not_a_crash():
+    # A provider row missing every timestamp key (start/timestamp/time/t)
+    # normalizes to the literal string "None", which is neither a digit
+    # string nor valid ISO-8601 -- this must fail closed, not raise past the
+    # handler.
+    runtime = Runtime()
+    runtime.coinglass = SimpleNamespace(
+        candles=lambda symbol, limit, interval: [Candle("None", 100, 110, 90, 105, 1000)],
+        latest_current_price=lambda symbol: 65_000,
+        dashboard_query=lambda path, query: {"code": "0", "data": []},
+    )
+    app = ProductionASGI(runtime)
+    candles = get(app, "/api/market/candles", query="symbol=BTC&interval=30m&limit=96")
+    assert candles[0]["status"] == 503
+    assert json.loads(candles[1]["body"])["status"] == "unavailable"
+
+
+def test_analysis_route_rejects_requests_when_replay_protection_unavailable():
+    runtime = Runtime()
+    runtime.redis_coordination = None
+    app = ProductionASGI(runtime)
+    status, payload = request(app, "/api/analysis", {"symbol": "BTC"})
+    assert status == 503
+    assert payload["status"] == "unavailable"
+
     operator = get(app, "/api/operator")
     assert json.loads(operator[1]["body"])["integrations"]["coinglass"]["configured"] is True
 

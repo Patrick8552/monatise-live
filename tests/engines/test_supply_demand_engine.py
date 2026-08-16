@@ -1,4 +1,7 @@
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+
+import pytest
 
 from monatise.core.models import Candle
 from monatise.engines.market_data.models import (
@@ -162,3 +165,15 @@ def test_zone_output_does_not_create_trade_signal() -> None:
     assert not hasattr(result, "stop_loss")
     assert not hasattr(result, "target")
     assert not hasattr(result, "order")
+
+
+def test_rejects_candle_counts_too_short_for_a_full_atr_window() -> None:
+    # With default impulse_window=3/base_max_candles=4, the old formula
+    # (13) passed candle counts too short for _atr(candles, 14), which
+    # needs 15 candles for a full window.
+    snapshot = replace(make_snapshot(), candles=make_candles()[:13])
+    with pytest.raises(ValueError, match="insufficient candles"):
+        SupplyDemandEngine().assess(ZoneRequest(market=snapshot))
+
+    snapshot = replace(make_snapshot(), candles=make_candles()[:15])
+    SupplyDemandEngine().assess(ZoneRequest(market=snapshot))

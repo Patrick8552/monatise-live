@@ -13,8 +13,19 @@ from monatise.engines.fibonacci_liquidity.models import (
     FibonacciAssessment,
     FibonacciDirection,
 )
-from monatise.engines.liquidity.models import LiquidityAssessment
-from monatise.engines.liquidity_sweep.models import SweepAssessment
+from monatise.engines.liquidity.models import (
+    LiquidityAssessment,
+    LiquidityLevel,
+    LiquidityLevelType,
+    LiquiditySide,
+    LiquidityStrength,
+)
+from monatise.engines.liquidity_sweep.models import (
+    SweepAssessment,
+    SweepDirection,
+    SweepEvent,
+    SweepStatus,
+)
 from monatise.engines.macro.models import (
     MacroAssessment,
     MacroBias,
@@ -460,3 +471,43 @@ def test_decision_engine_remains_non_executable() -> None:
     assert not hasattr(result, "order")
     assert not hasattr(result, "broker")
     assert result.metadata["execution_enabled"] is False
+
+
+def test_invalid_sweep_contributes_no_score_only_neutral_weight() -> None:
+    # A SweepStatus.INVALID event is one the sweep engine itself decided is
+    # NOT a real sweep. It must not be scored the same as a real (if
+    # unconfirmed) POSSIBLE sweep -- only diluting a direction's average via
+    # its weight, never pushing it via a nonzero score.
+    level = LiquidityLevel(
+        price=100.0,
+        side=LiquiditySide.SELL_SIDE,
+        level_type=LiquidityLevelType.SWING_LOW,
+        strength=LiquidityStrength.MEDIUM,
+        touches=1,
+        distance_pct=0.01,
+        first_index=0,
+        last_index=0,
+    )
+    invalid_event = SweepEvent(
+        level=level,
+        direction=SweepDirection.SELL_SIDE_TAKEN,
+        status=SweepStatus.INVALID,
+        candle_index=5,
+        breach_price=99.5,
+        close_price=100.2,
+        breach_pct=0.005,
+        wick_ratio=0.2,
+        close_back_inside=True,
+        reasons=("weak breach ratio",),
+    )
+
+    evidence: list = []
+    request = DecisionRequest(**{
+        **base_request().__dict__,
+        "sweep": SweepAssessment(symbol="BTCUSDT", events=(invalid_event,), strongest_event=invalid_event, reasons=()),
+    })
+    DecisionEngine._sweep_evidence(request, evidence)
+
+    assert len(evidence) == 1
+    assert evidence[0].score == 0.0
+    assert evidence[0].weight == 0.85

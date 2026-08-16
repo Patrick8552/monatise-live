@@ -154,3 +154,19 @@ def test_insufficient_structure_returns_unknown() -> None:
     assert result.bias is StructureBias.UNKNOWN
     assert result.state is StructureState.UNKNOWN
     assert result.confidence == 0.0
+
+
+def test_plateau_swings_tolerates_float_noise_in_equal_highs() -> None:
+    # Two highs that are conceptually equal but differ by float-parsing
+    # noise (e.g. 100.0 vs 100.00000000001) must still be recognized as an
+    # equal-high plateau, not silently missed by strict == comparison.
+    def candle(high: float) -> Candle:
+        return Candle("2026-08-01T00:00:00+00:00", high - 1, high, high - 2, high - 0.5, 10)
+
+    candles = [candle(95.0), candle(100.0), candle(100.0 + 1e-10), candle(95.0), candle(90.0), candle(90.0)]
+
+    result = MarketStructureEngine._plateau_swings(candles, "high", 1)
+
+    # The plateau spans indices 1-2; the recorded value is the run's first
+    # (index 1) high, with the run's last index (2).
+    assert result == [(2, 100.0)]

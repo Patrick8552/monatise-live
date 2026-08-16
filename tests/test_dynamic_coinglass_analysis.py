@@ -87,6 +87,17 @@ def test_missing_optional_derivatives_are_labeled_unavailable():
     assert any("funding_rate" in item for item in output["data_quality"]["warnings"])
 
 
+def test_non_numeric_order_book_imbalance_fails_closed_instead_of_crashing():
+    # order_book_imbalance is re-parsed with float() a second time outside
+    # the guarded isinstance/isfinite check a few lines above; a non-numeric
+    # value must not raise past this function.
+    result, asset = _quality_result(derivatives={"order_book_imbalance": "N/A"})
+    output = finalize_dynamic_analysis({"classification": "no_trade"}, result, asset)
+    assert output["classification"] == "no_trade"
+    assert output["data_quality"]["passed"] is False
+    assert any("order_book_imbalance" in item for item in output["data_quality"]["failures"])
+
+
 def test_confirmed_trend_has_planned_zone_risk_reward_and_expiry_not_market_entry():
     result, asset = _quality_result(derivatives={"cvd_delta": 500.0, "derivatives_volume": 1_000_000.0})
     output = finalize_dynamic_analysis({"classification": "trend", "direction": "long", "interval": "1h"}, result, asset)

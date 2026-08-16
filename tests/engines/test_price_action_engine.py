@@ -282,7 +282,11 @@ def test_strongest_confirmation_signal_does_not_select_younger_weaker_pattern():
 
 
 def test_moving_grid_uses_rolling_range_instead_of_latest_price():
-    candles = [Candle(str(i), 100, 110, 90, 105, 10) for i in range(20)]
+    # Close (102) sits inside the innermost band around center (100) but
+    # off-center, so this proves the grid is built from the rolling range
+    # rather than snapped to live price -- without also tripping the
+    # price-containment check (price must stay within the innermost band).
+    candles = [Candle(str(i), 100, 110, 90, 102, 10) for i in range(20)]
     snapshot = replace(market(candles), symbol="ETH")
     grid = build_moving_grid_plan(snapshot)
     assert grid["basis"] == "rolling_range"
@@ -290,6 +294,16 @@ def test_moving_grid_uses_rolling_range_instead_of_latest_price():
     assert grid["center"] != snapshot.price
     assert grid["lower_boundary"] == 90
     assert grid["upper_boundary"] == 110
+
+
+def test_moving_grid_fails_closed_when_price_already_breached_inner_band():
+    # Rolling range 90-110 centers the grid at 100 with an innermost band of
+    # roughly 96.67-103.33, but live price (105) has already moved past the
+    # near sell level -- this must fail closed instead of describing a range
+    # price has already exited.
+    candles = [Candle(str(i), 100, 110, 90, 105, 10) for i in range(20)]
+    snapshot = replace(market(candles), symbol="ETH")
+    assert build_moving_grid_plan(snapshot) is None
 
 
 def test_btc_moving_grid_enforces_500_dollar_minimum_spacing():

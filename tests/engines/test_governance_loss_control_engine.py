@@ -212,6 +212,29 @@ def test_kill_switch_cannot_be_manually_overridden() -> None:
     assert result.metadata["manual_override_applied"] is False
 
 
+def test_daily_loss_limit_cannot_be_manually_overridden() -> None:
+    # The daily-loss breaker is the system-wide daily loss control -- it must
+    # be as non-overridable as the structurally similar total-drawdown gate,
+    # not silently clearable via allow_manual_override.
+    result = GovernanceLossControlEngine().assess(
+        GovernanceRequest(
+            snapshot=snapshot(daily_realized_pnl=-500, daily_unrealized_pnl=0),
+            risk=risk(),
+            allocation=allocation(),
+            execution_policy=execution(),
+            portfolio=None,
+            observed_at=NOW,
+            maximum_daily_loss_pct=0.04,
+            allow_manual_override=True,
+            manual_override_id="review-123",
+        )
+    )
+
+    assert result.decision is GovernanceDecision.BLOCK
+    assert GovernanceAction.FREEZE_NEW_SETUPS in result.actions
+    assert result.metadata["manual_override_applied"] is False
+
+
 def test_expired_cooldown_does_not_remain_blocked_forever() -> None:
     result = GovernanceLossControlEngine().assess(
         GovernanceRequest(

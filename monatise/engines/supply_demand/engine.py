@@ -36,10 +36,12 @@ class SupplyDemandEngine:
             raise ValueError("market snapshot price is required")
 
         candles = list(market.candles)
-        minimum_history = (
+        minimum_history = max(
             request.impulse_window * 2
             + request.base_max_candles
-            + 3
+            + 3,
+            # _atr(candles, 14) below needs 15 candles for a full ATR window.
+            15,
         )
         if len(candles) < minimum_history:
             raise ValueError(

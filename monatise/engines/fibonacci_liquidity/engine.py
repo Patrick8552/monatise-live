@@ -76,6 +76,12 @@ class FibonacciLiquidityEngine:
         if market.quality.status is DataStatus.DEGRADED:
             reasons.append("Fibonacci analysis uses degraded market data")
 
+        if len(market.candles) < 15:
+            return self._empty(
+                market.symbol,
+                f"insufficient candles: required 15, received {len(market.candles)}",
+            )
+
         atr = self._atr(list(market.candles), 14)
         if atr <= 0:
             return self._empty(market.symbol, "ATR unavailable for anchor validation")

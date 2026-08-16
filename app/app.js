@@ -4863,6 +4863,9 @@ function animateMarketMap() {
 }
 
 function money(value) {
+  // value || 0 would otherwise treat a genuine NaN (e.g. from an unparsable
+  // user input) as falsy and silently render it as a real "$0.00".
+  if (typeof value === "number" && Number.isNaN(value)) return "$--";
   return new Intl.NumberFormat("en-US", {
     currency: "USD",
     maximumFractionDigits: 2,

@@ -11,7 +11,7 @@ from typing import Any, Awaitable, Callable, Protocol
 
 from monatise.application.models import AnalysisRun, PipelineResult
 from monatise.application.orchestrator import PipelineOrchestrator
-from monatise.application.production_analysis import build_directional_plan, build_grid_plan, build_moving_grid_plan, build_setup_validity, strongest_confirmation_signal
+from monatise.application.production_analysis import build_directional_plan, build_moving_grid_plan, build_setup_validity, strongest_confirmation_signal
 from monatise.application.registry import CANONICAL_ENGINE_ORDER, PRODUCTION_ENGINE_ORDER
 from monatise.application.time_display import format_nigeria_time
 from monatise.infrastructure.state_manager import StateKey
@@ -202,7 +202,7 @@ class TelegramNotifier:
                 f"Remaining validity: {remaining_label} | {validity['remaining_candles']} candle(s)",
             ))
         if classification == "GRID":
-            grid = build_moving_grid_plan(market) or build_grid_plan(entry or getattr(market, "price", None))
+            grid = build_moving_grid_plan(market)
             if grid is None:
                 lines.append("Grid levels: unavailable")
             else:
