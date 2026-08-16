@@ -69,12 +69,12 @@ def test_unavailable_ticker_is_rejected_before_market_resolution():
         adapter(["BTC"], []).resolve_futures_asset("WOOD")
 
 
-def _quality_result(*, candle_count=140, status=DataStatus.READY, stale=False, derivatives=None):
+def _quality_result(*, candle_count=140, status=DataStatus.READY, stale=False, derivatives=None, price=1.0):
     now = datetime.now(timezone.utc)
     candles = tuple(Candle((now - timedelta(hours=candle_count-index)).isoformat(), 1, 1.1, .9, 1, 10000) for index in range(candle_count))
     latest_at = now - timedelta(hours=5) if stale else now
     quality = DataQuality(status, "coinglass", now, latest_at, (now-latest_at).total_seconds(), ())
-    market = MarketSnapshot("WOOD", "1h", 1.0, candles, quality, derivatives or {"funding_rate": None, "open_interest": 12})
+    market = MarketSnapshot("WOOD", "1h", price, candles, quality, derivatives or {"funding_rate": None, "open_interest": 12})
     result = SimpleNamespace(context=SimpleNamespace(outputs={"market_data": market}))
     asset = SimpleNamespace(to_dict=lambda: {"base_asset": "WOOD"}, supported_coins_observed_at=now.isoformat(), market_observed_at=now.isoformat())
     return result, asset
@@ -126,6 +126,25 @@ def test_grid_confirms_only_when_flow_is_not_one_sided():
     assert output["classification"] == "no_trade"
     assert output["data_quality"]["passed"] is False
     assert output["grid_plan"] is None
+
+
+def test_grid_plan_already_breached_by_price_fails_closed():
+    # Rolling-range grids can lag a fast move: the range's midpoint sits well
+    # behind live price, so the grid still looks structurally valid even
+    # though price has already blown through the near sell level. That must
+    # not be presented as an open, tradeable two-sided grid.
+    result, asset = _quality_result(price=1.06, derivatives={"cvd_delta": 100.0, "derivatives_volume": 1_000_000.0})
+    output = finalize_dynamic_analysis({"classification": "grid", "direction": "two_sided", "interval": "1h", "grid_plan": _grid_plan()}, result, asset)
+    assert output["classification"] == "no_trade"
+    assert output["data_quality"]["passed"] is False
+    assert output["grid_plan"] is None
+
+
+def test_grid_plan_still_inside_inner_band_passes():
+    result, asset = _quality_result(price=1.02, derivatives={"cvd_delta": 100.0, "derivatives_volume": 1_000_000.0})
+    output = finalize_dynamic_analysis({"classification": "grid", "direction": "two_sided", "interval": "1h", "grid_plan": _grid_plan()}, result, asset)
+    assert output["classification"] == "grid"
+    assert output["data_quality"]["passed"] is True
 
 
 def test_malformed_grid_plan_fails_closed():
