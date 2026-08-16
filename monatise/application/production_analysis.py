@@ -240,6 +240,20 @@ def build_moving_grid_plan(
     }
 
 
+def nearest_grid_level(grid: dict[str, Any], price: float) -> tuple[float, PriceActionDirection]:
+    """The grid level (and its implied direction) closest to price.
+
+    Shared by the live price-action stage and the grid-spacing backtester so
+    both select an entry the same way -- a change to the tie-break or level
+    selection here applies to both instead of silently drifting apart.
+    """
+    candidates = (
+        *((level, PriceActionDirection.BULLISH) for level in grid["buy_levels"]),
+        *((level, PriceActionDirection.BEARISH) for level in grid["sell_levels"]),
+    )
+    return min(candidates, key=lambda item: abs(price - item[0]))
+
+
 def build_directional_plan(price: float | None, direction: str | None) -> dict[str, float] | None:
     """Project analysis levels without approval, sizing, or risk-engine semantics."""
     if not isinstance(price, (int, float)) or isinstance(price, bool) or price <= 0:
@@ -299,11 +313,7 @@ def build_production_analysis_run(symbol: str, *, interval: str = "1h", correlat
         grid = build_moving_grid_plan(market)
         if grid is None or market.price is None:
             return PriceActionRequest(market)
-        candidates = (
-            *((level, PriceActionDirection.BULLISH) for level in grid["buy_levels"]),
-            *((level, PriceActionDirection.BEARISH) for level in grid["sell_levels"]),
-        )
-        level, expected_direction = min(candidates, key=lambda item: abs(float(market.price) - item[0]))
+        level, expected_direction = nearest_grid_level(grid, float(market.price))
         zone_half_width = grid["spacing"] * 0.15
         return PriceActionRequest(
             market,

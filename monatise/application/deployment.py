@@ -19,10 +19,9 @@ from uuid import uuid4
 from urllib.request import Request, urlopen
 
 from monatise.application.composition import create_application, create_durable_infrastructure
-from monatise.application.orchestrator import _json_safe
-from monatise.application.production_analysis import ACTIVE_GRID_SPACING_STRATEGY, build_directional_plan, build_production_analysis_run, build_setup_validity, sanitized_result, strongest_confirmation_signal
+from monatise.application.production_analysis import ACTIVE_GRID_SPACING_STRATEGY, build_directional_plan, build_moving_grid_plan, build_production_analysis_run, build_setup_validity, sanitized_result, strongest_confirmation_signal
 from monatise.application.dynamic_analysis import finalize_dynamic_analysis
-from monatise.application.persistence import PostgresDocumentStore
+from monatise.application.persistence import PostgresDocumentStore, _json_value
 from monatise.application.workflows import TelegramNotifier
 from monatise.application.registry import PRODUCTION_ENGINE_ORDER
 from monatise.application.time_display import format_nigeria_time
@@ -48,6 +47,8 @@ SCHEDULED_ANALYSIS_DEFAULT_SYMBOLS = ("BTC", "ETH", "SOL")
 # Bump whenever the snapshot payload shape changes, so a later replay can
 # tell which schema a given historical row was written under.
 DECISION_SNAPSHOT_SCHEMA_VERSION = 1
+DECISION_SNAPSHOT_WRITE_TIMEOUT_SECONDS = 5.0
+DECISION_SNAPSHOT_RETENTION_DAYS = 30
 STOCK_SCAN_SYMBOLS = ("AAPL", "TSLA", "NVDA", "QQQ", "SPY")
 SCHEDULED_ANALYSIS_INTERVAL_SECONDS = {
     "1m": 60, "3m": 180, "5m": 300, "15m": 900, "30m": 1_800,
@@ -62,6 +63,29 @@ def _false(value: str | None) -> bool:
 
 def _true(value: str | None) -> bool:
     return value is not None and value.strip().casefold() in {"1", "true", "yes", "on", "enabled"}
+
+
+def _compact_candle_reference(candles: Any) -> dict[str, Any]:
+    """Window bounds + latest bar, not the full array.
+
+    The candle history is reproducible later from a historical candle query
+    (unlike derivatives, which CoinGlass only exposes as "recent window
+    ending now") -- so a decision snapshot only needs enough to know which
+    window to re-fetch, plus the newest bar for a quick look without one.
+    """
+    candles = tuple(candles)
+    if not candles:
+        return {"count": 0}
+    latest = candles[-1]
+    return {
+        "count": len(candles),
+        "first_timestamp": candles[0].timestamp,
+        "last_timestamp": latest.timestamp,
+        "latest": {
+            "timestamp": latest.timestamp, "open": latest.open, "high": latest.high,
+            "low": latest.low, "close": latest.close, "volume": latest.volume,
+        },
+    }
 
 
 def scheduled_analysis_configuration(environment: Mapping[str, str]) -> tuple[tuple[str, ...], tuple[str, ...]] | None:
@@ -372,7 +396,6 @@ class OrchestrationRuntime:
     application: Any | None = None
     leadership: RedisSchedulerLeadership | None = None
     redis_coordination: RedisCoordinationStore | None = None
-    decision_snapshot_store: PostgresDocumentStore | None = None
     migrations: MigrationRunner | None = None
     coinglass: CoinGlassProductionAdapter | None = None
     backpack: BackpackAdapter | None = None
@@ -846,7 +869,6 @@ class OrchestrationRuntime:
             }
             startup_phase = "application_composition"
             store = PostgresDocumentStore(self.postgres)
-            self.decision_snapshot_store = store
             infrastructure = create_durable_infrastructure(store)
             self.coinglass = register_coinglass_provider(
                 infrastructure.container,
@@ -884,6 +906,7 @@ class OrchestrationRuntime:
             await self._register_x_macro_monitor()
             await self._register_coin_discovery_monitor()
             await self._register_stock_scan_monitor()
+            await self._register_decision_snapshot_retention()
             self.leadership = RedisSchedulerLeadership(
                 self.redis, namespace=self.environment.get("MONATISE_REDIS_NAMESPACE", "monatise:production-analysis")
             )
@@ -1020,13 +1043,6 @@ class OrchestrationRuntime:
         if self.application is None:
             raise RuntimeError("orchestration runtime is unavailable")
         result = await self.application.orchestrator.run(build_production_analysis_run(symbol, interval=interval, correlation_id=correlation_id, source=source))
-        if self.decision_snapshot_store is not None:
-            try:
-                await self._record_decision_snapshot(result, interval=interval, source=source)
-            except Exception as exc:
-                # Snapshot recording is pure telemetry for a future backtest --
-                # it must never take down the actual analysis/notification path.
-                LOGGER.warning("decision snapshot recording failed", extra={"error_type": type(exc).__name__, "run_id": result.run_id})
         should_notify = notify and self.telegram is not None
         notification_state = None
         if should_notify and notification_policy == "qualified_changes":
@@ -1072,6 +1088,17 @@ class OrchestrationRuntime:
                     symbol=result.symbol,
                 )
                 LOGGER.warning("Telegram notification delivery failed", extra={"error_type": type(exc).__name__, "run_id": result.run_id})
+        if self.postgres is not None:
+            try:
+                # After notification delivery, bounded by a timeout: this is
+                # pure telemetry for a future backtest and must never delay
+                # (not just never crash) time-sensitive signal delivery.
+                await asyncio.wait_for(
+                    self._record_decision_snapshot(result, interval=interval, source=source),
+                    timeout=DECISION_SNAPSHOT_WRITE_TIMEOUT_SECONDS,
+                )
+            except Exception as exc:
+                LOGGER.warning("decision snapshot recording failed", extra={"error_type": type(exc).__name__, "run_id": result.run_id})
         return sanitized_result(result)
 
     async def _record_decision_snapshot(self, result: Any, *, interval: str, source: str) -> None:
@@ -1084,9 +1111,38 @@ class OrchestrationRuntime:
         chance to capture what order_flow and the rest of the pipeline actually
         saw at this moment. Every stage's output is included, not just the
         final decision, since a future replay needs the intermediate evidence
-        too, not just the conclusion.
+        too, not just the conclusion. Written to its own table (see
+        deploy/migrations/002_decision_snapshots.sql), not the audit-critical
+        monatise_application_streams, so it can be pruned on a retention
+        schedule without touching that table's immutability guarantee.
         """
-        outputs = {name: _json_safe(value) for name, value in result.context.outputs.items()}
+        market_data_raw = result.context.outputs.get("market_data")
+        outputs: dict[str, Any] = {}
+        for name, value in result.context.outputs.items():
+            serialized = _json_value(value)
+            if name == "market_data" and isinstance(serialized, dict):
+                # Candles are the bulk of this payload and are the one input
+                # CoinGlass CAN answer historically later (unlike derivatives),
+                # so a compact reference is enough to re-fetch the exact
+                # window on replay instead of duplicating it every cycle.
+                serialized["candles"] = _compact_candle_reference(getattr(value, "candles", ()) or ())
+            outputs[name] = serialized
+
+        # Recomputed fresh (build_moving_grid_plan is a pure function of
+        # market_data) rather than read from a module constant, so this
+        # reflects what spacing strategy actually resolved for this run --
+        # including the case where it fails closed to None.
+        grid_plan = None
+        if market_data_raw is not None:
+            try:
+                grid_plan = build_moving_grid_plan(market_data_raw)
+            except Exception:
+                grid_plan = None
+        grid_spacing_strategy = grid_plan.get("spacing_strategy") if grid_plan else ACTIVE_GRID_SPACING_STRATEGY
+
+        decision_output = result.context.outputs.get("decision")
+        classification = getattr(getattr(decision_output, "classification", None), "value", None)
+
         snapshot = {
             "schema_version": DECISION_SNAPSHOT_SCHEMA_VERSION,
             "run_id": result.run_id,
@@ -1095,13 +1151,44 @@ class OrchestrationRuntime:
             "interval": interval,
             "source": source,
             "observed_at": datetime.now(timezone.utc).isoformat(),
-            "grid_spacing_strategy": ACTIVE_GRID_SPACING_STRATEGY,
-            "code_version": self.environment.get("RENDER_GIT_COMMIT", ""),
+            "grid_spacing_strategy": grid_spacing_strategy,
+            "grid_plan": grid_plan,
+            "code_version": self.environment.get("RENDER_GIT_COMMIT") or self.environment.get("MONATISE_GIT_COMMIT", ""),
             "status": result.status.value,
             "blocked_by": result.blocked_by,
             "outputs": outputs,
         }
-        await self.decision_snapshot_store.append(f"decision-snapshot:{result.symbol}:{interval}", snapshot)
+        await self.postgres.execute(
+            "INSERT INTO monatise_decision_snapshots (symbol, interval, classification, schema_version, payload) VALUES (%s,%s,%s,%s,%s::jsonb)",
+            (result.symbol, interval, classification, DECISION_SNAPSHOT_SCHEMA_VERSION, json.dumps(snapshot, separators=(",", ":"), sort_keys=True)),
+        )
+
+    async def _register_decision_snapshot_retention(self) -> str | None:
+        if self.application is None or self.postgres is None:
+            return None
+        job_id = "decision-snapshot-retention"
+
+        async def task() -> dict[str, Any]:
+            result = await self.postgres.execute(
+                "DELETE FROM monatise_decision_snapshots WHERE created_at < NOW() - make_interval(days => %s)",
+                (DECISION_SNAPSHOT_RETENTION_DAYS,),
+            )
+            deleted = getattr(result, "rowcount", None)
+            LOGGER.info("decision snapshot retention swept", extra={"deleted": deleted, "retention_days": DECISION_SNAPSHOT_RETENTION_DAYS})
+            return {"deleted": deleted}
+
+        await self.application.infrastructure.scheduler.register(JobDefinition(
+            job_id=job_id,
+            name="Decision snapshot retention",
+            task=task,
+            schedule_type=ScheduleType.INTERVAL,
+            interval=timedelta(hours=24),
+            timeout_seconds=120.0,
+            retry_policy=RetryPolicy(maximum_attempts=2, delay_seconds=30.0, maximum_delay_seconds=120.0),
+            tags=("maintenance", "retention", "decision-snapshots"),
+            metadata={"retention_days": DECISION_SNAPSHOT_RETENTION_DAYS},
+        ))
+        return job_id
 
     async def analyse_dynamic_coinglass(self, symbol: str, *, interval: str = "1h", source: str = "monatise.openclaw.dynamic") -> dict[str, Any]:
         """Resolve and analyze one CoinGlass futures asset without notifications or execution."""

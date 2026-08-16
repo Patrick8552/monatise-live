@@ -8,6 +8,13 @@ window, runs the real PriceActionEngine to decide confirmation, and -- once
 confirmed -- simulates the trade forward to its nearest-opposite-side-level
 target or its invalidation level using only real subsequent candles.
 
+Look-ahead discipline: confirmation is decided on the candle that touched
+the entry zone (its OHLC is real, closed information at that point in the
+walk), but the trade itself only enters at the NEXT candle's open -- you
+cannot fill an order during the same candle you only just confirmed it on.
+Target/invalidation are evaluated starting from that entry candle onward,
+never the confirmation candle itself.
+
 Deliberately in scope: level-touch rate, confirmation/conversion rate,
 expiry rate, false-entry (loss) rate, expectancy, drawdown -- all fully
 backtestable from price data alone, using the real production engines.
@@ -39,7 +46,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from monatise.application.production_analysis import SETUP_VALIDITY_CANDLES, build_moving_grid_plan
+from monatise.application.production_analysis import SETUP_VALIDITY_CANDLES, build_moving_grid_plan, nearest_grid_level
 from monatise.core.models import Candle
 from monatise.engines.market_data.models import DataQuality, DataStatus, MarketSnapshot
 from monatise.engines.price_action.engine import PriceActionEngine
@@ -50,7 +57,7 @@ OKX_RECENT_URL = "https://www.okx.com/api/v5/market/candles"
 OKX_HISTORY_URL = "https://www.okx.com/api/v5/market/history-candles"
 STRATEGIES = ("fixed_v1", "adaptive_atr_v2")
 WARMUP_CANDLES = 60  # 15h at 15m -- needed for a full 1H ATR(14) resample
-MAX_HOLD_CANDLES = 96  # 24h cap on an open simulated trade before "unresolved"
+MAX_HOLD_CANDLES = 96  # 24h cap on an open simulated trade before it's censored
 
 
 def _okx_request(url: str, params: dict[str, str]) -> dict:
@@ -110,17 +117,23 @@ class StrategyStats:
     grid_unavailable: int = 0
     level_touched: int = 0
     confirmed: int = 0
+    confirmed_at_window_end: int = 0  # confirmed with no next candle to enter on
     expired_no_touch: int = 0
     expired_touched_unconfirmed: int = 0
+    pending_at_window_end: int = 0  # setup still waiting when candle data ran out
     wins: int = 0
     losses: int = 0
-    unresolved: int = 0
+    ambiguous: int = 0  # target and invalidation both touched in one candle
+    unresolved: int = 0  # hit MAX_HOLD_CANDLES with more data available
+    open_at_window_end: int = 0  # still open when candle data ran out
     trade_pnl_usd: list[float] = field(default_factory=list)
     trade_r_multiple: list[float] = field(default_factory=list)
+    censored_unrealized_pnl_usd: list[float] = field(default_factory=list)
 
     def summary(self) -> dict:
         activated = self.confirmed
-        resolved = self.wins + self.losses
+        closed = self.wins + self.losses  # ambiguous excluded: outcome unknown, not a win/loss fact
+        censored = self.unresolved + self.open_at_window_end
         equity_curve, peak, max_drawdown = 0.0, 0.0, 0.0
         for pnl in self.trade_pnl_usd:
             equity_curve += pnl
@@ -134,25 +147,36 @@ class StrategyStats:
             "expiry_rate": round((self.expired_no_touch + self.expired_touched_unconfirmed) / self.decisions_generated, 4) if self.decisions_generated else None,
             "expired_no_touch": self.expired_no_touch,
             "expired_touched_unconfirmed": self.expired_touched_unconfirmed,
-            "activated_trades": activated,
+            "pending_at_window_end": self.pending_at_window_end,
+            "confirmed_trades": activated,
+            "confirmed_at_window_end": self.confirmed_at_window_end,
+            "closed_trades": closed,
             "wins": self.wins,
             "losses": self.losses,
+            "ambiguous_outcomes": self.ambiguous,
+            "open_or_censored_trades": censored,
             "unresolved_timeouts": self.unresolved,
-            "false_entry_rate": round(self.losses / resolved, 4) if resolved else None,
-            "win_rate": round(self.wins / resolved, 4) if resolved else None,
+            "open_at_window_end": self.open_at_window_end,
+            # Win rate among CLOSED (definitively resolved) trades only --
+            # open/censored/ambiguous trades must not inflate or deflate it.
+            "false_entry_rate": round(self.losses / closed, 4) if closed else None,
+            "win_rate_closed": round(self.wins / closed, 4) if closed else None,
             "expectancy_usd": round(sum(self.trade_pnl_usd) / len(self.trade_pnl_usd), 2) if self.trade_pnl_usd else None,
             "expectancy_r": round(sum(self.trade_r_multiple) / len(self.trade_r_multiple), 4) if self.trade_r_multiple else None,
-            "total_pnl_usd": round(sum(self.trade_pnl_usd), 2) if self.trade_pnl_usd else 0.0,
+            "total_realized_pnl_usd": round(sum(self.trade_pnl_usd), 2) if self.trade_pnl_usd else 0.0,
+            "total_unrealized_pnl_usd_censored": round(sum(self.censored_unrealized_pnl_usd), 2) if self.censored_unrealized_pnl_usd else 0.0,
             "max_drawdown_usd": round(max_drawdown, 2),
         }
 
 
-def _nearest_level_and_direction(grid: dict, price: float) -> tuple[float, PriceActionDirection]:
-    candidates = (
-        *((level, PriceActionDirection.BULLISH) for level in grid["buy_levels"]),
-        *((level, PriceActionDirection.BEARISH) for level in grid["sell_levels"]),
-    )
-    return min(candidates, key=lambda item: abs(price - item[0]))
+def _grid_target_and_invalidation(grid: dict, direction: PriceActionDirection) -> tuple[float, float]:
+    if direction is PriceActionDirection.BULLISH:
+        return grid["sell_levels"][0], grid["lower_invalidation"]
+    return grid["buy_levels"][0], grid["upper_invalidation"]
+
+
+def _mark_to_market(trade: ActiveTrade, mark_price: float) -> float:
+    return (mark_price - trade.entry_price) if trade.direction is PriceActionDirection.BULLISH else (trade.entry_price - mark_price)
 
 
 def run_backtest(candles: list[Candle], strategies: tuple[str, ...] = STRATEGIES) -> dict[str, StrategyStats]:
@@ -172,6 +196,10 @@ def run_backtest(candles: list[Candle], strategies: tuple[str, ...] = STRATEGIES
 
             trade = active[strategy]
             if trade is not None:
+                # Evaluation begins at the trade's own entry_index candle,
+                # which is exactly this iteration the first time a trade is
+                # active (entry_index == confirmation_index + 1, and this
+                # branch is first reached on the very next loop iteration).
                 if trade.direction is PriceActionDirection.BULLISH:
                     hit_target = candle.high >= trade.target_price
                     hit_invalid = candle.low <= trade.invalidation_price
@@ -179,7 +207,13 @@ def run_backtest(candles: list[Candle], strategies: tuple[str, ...] = STRATEGIES
                     hit_target = candle.low <= trade.target_price
                     hit_invalid = candle.high >= trade.invalidation_price
                 resolved = False
-                if hit_invalid:
+                if hit_target and hit_invalid:
+                    # Both levels touched intrabar with no way to know which
+                    # came first -- a real outcome, but not a knowable win or
+                    # loss, so it gets its own bucket instead of a biased guess.
+                    st.ambiguous += 1
+                    resolved = True
+                elif hit_invalid:
                     risk = abs(trade.entry_price - trade.invalidation_price)
                     st.losses += 1
                     st.trade_pnl_usd.append(-risk)
@@ -194,6 +228,7 @@ def run_backtest(candles: list[Candle], strategies: tuple[str, ...] = STRATEGIES
                     resolved = True
                 elif i >= trade.deadline_index:
                     st.unresolved += 1
+                    st.censored_unrealized_pnl_usd.append(_mark_to_market(trade, candle.close))
                     resolved = True
                 if resolved:
                     active[strategy] = None
@@ -215,17 +250,18 @@ def run_backtest(candles: list[Candle], strategies: tuple[str, ...] = STRATEGIES
                     if assessment.has_confirmation:
                         st.level_touched += 1
                         st.confirmed += 1
-                        grid = setup.grid
-                        if setup.direction is PriceActionDirection.BULLISH:
-                            target = grid["sell_levels"][0]
-                            invalidation = grid["lower_invalidation"]
-                        else:
-                            target = grid["buy_levels"][0]
-                            invalidation = grid["upper_invalidation"]
+                        entry_index = i + 1
+                        if entry_index >= len(candles):
+                            # Confirmed on the last available candle -- there
+                            # is no next candle to actually fill an entry on.
+                            st.confirmed_at_window_end += 1
+                            pending[strategy] = None
+                            continue
+                        target, invalidation = _grid_target_and_invalidation(setup.grid, setup.direction)
                         active[strategy] = ActiveTrade(
-                            entry_index=i, entry_price=setup.level, target_price=target,
-                            invalidation_price=invalidation, direction=setup.direction,
-                            deadline_index=i + MAX_HOLD_CANDLES,
+                            entry_index=entry_index, entry_price=candles[entry_index].open,
+                            target_price=target, invalidation_price=invalidation,
+                            direction=setup.direction, deadline_index=entry_index + MAX_HOLD_CANDLES,
                         )
                         pending[strategy] = None
                         continue
@@ -243,13 +279,27 @@ def run_backtest(candles: list[Candle], strategies: tuple[str, ...] = STRATEGIES
                 st.grid_unavailable += 1
                 continue
             st.decisions_generated += 1
-            level, direction = _nearest_level_and_direction(grid, candle.close)
+            level, direction = nearest_grid_level(grid, candle.close)
             zone_half_width = grid["spacing"] * 0.15
             pending[strategy] = PendingSetup(
                 grid=grid, level=level, direction=direction,
                 zone_low=level - zone_half_width, zone_high=level + zone_half_width,
                 expiry_index=i + SETUP_VALIDITY_CANDLES,
             )
+
+    # Reconcile whatever's still open/pending when the data runs out -- never
+    # silently drop it, since that would understate expiries/censored trades
+    # and make confirmed_trades not reconcile with closed+ambiguous+censored.
+    last_close = candles[-1].close if candles else None
+    for strategy in strategies:
+        st = stats[strategy]
+        trade = active[strategy]
+        if trade is not None and last_close is not None:
+            st.open_at_window_end += 1
+            st.censored_unrealized_pnl_usd.append(_mark_to_market(trade, last_close))
+        setup = pending[strategy]
+        if setup is not None:
+            st.pending_at_window_end += 1
 
     return stats
 
