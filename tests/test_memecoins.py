@@ -106,6 +106,21 @@ def test_resolve_creator_reads_the_bonding_curve_account(monkeypatch) -> None:  
     assert len(calls) == 1
 
 
+def test_resolve_creator_treats_an_all_zero_creator_field_as_unresolved(monkeypatch) -> None:  # noqa: ANN001
+    # Bonding-curve accounts predating pump.fun's addition of a creator
+    # field to this layout read as 32 zero bytes there, which decodes to
+    # the System Program address ("111...1") rather than a real wallet --
+    # verified live against a graduated token. Must resolve to None, not a
+    # bogus "creator".
+    zero_creator = "11111111111111111111111111111111"
+    monkeypatch.setattr(
+        memecoins,
+        "_json_request",
+        lambda url, **_kwargs: {"result": {"value": {"data": [fake_bonding_curve_account(zero_creator), "base64"]}}},
+    )
+    assert memecoins.resolve_creator(VALID_PUMP_MINT, "https://rpc.example") is None
+
+
 def test_resolve_creator_derives_the_correct_bonding_curve_pda(monkeypatch) -> None:  # noqa: ANN001
     from solders.pubkey import Pubkey
 

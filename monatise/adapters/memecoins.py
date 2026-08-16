@@ -250,8 +250,15 @@ def resolve_creator(mint_address: str, rpc_url: str) -> str | None:
     end = BONDING_CURVE_CREATOR_OFFSET + 32
     if len(raw) < end or raw[:8] != BONDING_CURVE_DISCRIMINATOR:
         return None
+    creator_bytes = raw[BONDING_CURVE_CREATOR_OFFSET:end]
+    if creator_bytes == bytes(32):
+        # Older bonding-curve accounts predate pump.fun adding a creator
+        # field to this layout; that byte range reads as 32 zero bytes,
+        # which decodes to the System Program address rather than a real
+        # creator wallet. Treat it the same as "unresolved".
+        return None
     try:
-        return str(Pubkey(raw[BONDING_CURVE_CREATOR_OFFSET:end]))
+        return str(Pubkey(creator_bytes))
     except ValueError:
         return None
 
