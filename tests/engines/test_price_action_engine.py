@@ -318,6 +318,99 @@ def test_btc_moving_grid_enforces_500_dollar_minimum_spacing():
     assert grid["basis"] == "rolling_range_minimum_spacing"
 
 
+def test_active_grid_spacing_strategy_defaults_to_the_validated_fixed_floor():
+    # Guards against silently flipping production behavior: the adaptive
+    # strategy must be opted into explicitly until it's been backtested
+    # against this one and proven out.
+    from monatise.application.production_analysis import ACTIVE_GRID_SPACING_STRATEGY
+    assert ACTIVE_GRID_SPACING_STRATEGY == "fixed_v1"
+
+
+def _hourly_group(level, *, wick=5.0, count=4):
+    return [Candle("t", level, level + wick, level - wick, level, 10) for _ in range(count)]
+
+
+def test_adaptive_atr_v2_uses_075x_hourly_atr_when_it_exceeds_natural_spacing():
+    # 9 alternating +/-400 hourly jumps (h=0..9) build a real ATR(14) signal;
+    # the most recent 5 hours (inside the 20-candle lookback window) are
+    # flat at 63200, keeping price centered and the natural range tight --
+    # exactly the "quiet now, choppier earlier" shape seen in live BTC data.
+    candles = []
+    for hour in range(10):
+        candles += _hourly_group(63_000 + (400 if hour % 2 else 0))
+    for _ in range(5):
+        candles += _hourly_group(63_200, wick=10)
+    snapshot = market(candles)
+
+    grid = build_moving_grid_plan(snapshot, spacing_strategy="adaptive_atr_v2")
+
+    assert grid is not None
+    assert grid["spacing_strategy"] == "adaptive_atr_v2"
+    assert grid["basis"] == "adaptive_atr_v2"
+    assert grid["atr_1h"] == pytest.approx(281.07142857, abs=1e-4)
+    assert grid["spacing"] == pytest.approx(0.75 * grid["atr_1h"], abs=1e-4)
+    assert grid["center"] == 63_200
+
+
+def test_adaptive_atr_v2_clamps_to_the_upper_percentage_bound():
+    candles = []
+    for hour in range(10):
+        candles += _hourly_group(63_000 + (4_000 if hour % 2 else 0))
+    for _ in range(5):
+        candles += _hourly_group(63_200, wick=10)
+    snapshot = market(candles)
+
+    grid = build_moving_grid_plan(snapshot, spacing_strategy="adaptive_atr_v2")
+
+    assert grid is not None
+    # 0.75 * ATR here is far above the 0.40% upper bound, so the bound wins.
+    assert grid["spacing"] == pytest.approx(63_200 * 0.0040, abs=1e-6)
+    assert 0.75 * grid["atr_1h"] > grid["spacing"]
+
+
+def test_adaptive_atr_v2_clamps_to_the_lower_percentage_bound():
+    # A flat market throughout: both natural spacing and ATR are tiny, so
+    # the percentage floor -- not either signal -- sets the spacing.
+    candles = []
+    for _ in range(15):
+        candles += _hourly_group(63_000, wick=2)
+    snapshot = market(candles)
+
+    grid = build_moving_grid_plan(snapshot, spacing_strategy="adaptive_atr_v2")
+
+    assert grid is not None
+    assert grid["spacing"] == pytest.approx(63_000 * 0.0008, abs=1e-6)
+
+
+def test_adaptive_atr_v2_falls_back_to_fixed_floor_without_enough_hourly_history():
+    # Only 10 hours of candles (40 at 15m) -- ATR(14) needs 15. Must fail
+    # over to the validated fixed-floor behavior, not an ATR-less grid.
+    candles = []
+    for _ in range(10):
+        candles += _hourly_group(63_000, wick=5)
+    snapshot = market(candles)
+
+    grid = build_moving_grid_plan(snapshot, spacing_strategy="adaptive_atr_v2")
+
+    assert grid is not None
+    assert grid["atr_1h"] is None
+    assert grid["basis"] == "adaptive_atr_v2_fallback_fixed"
+    assert grid["spacing"] == 500.0
+
+
+def test_adaptive_atr_v2_is_a_no_op_for_symbols_without_configured_bounds():
+    # ETH has no entry in ADAPTIVE_SPACING_BOUNDS_PCT -- requesting the
+    # adaptive strategy for it must produce the same spacing as fixed_v1.
+    candles = [Candle(str(i), 3_000, 3_010, 2_990, 3_000, 10) for i in range(20)]
+    snapshot = replace(market(candles), symbol="ETH")
+
+    adaptive = build_moving_grid_plan(snapshot, spacing_strategy="adaptive_atr_v2")
+    default = build_moving_grid_plan(snapshot)
+
+    assert adaptive["spacing"] == default["spacing"] == pytest.approx(3.33333333, abs=1e-6)
+    assert adaptive["basis"] == default["basis"] == "rolling_range"
+
+
 def test_production_price_action_receives_nearest_moving_grid_side_and_zone():
     candles = [Candle(str(i), 64_600, 64_971, 64_473, 64_722, 10) for i in range(20)]
     snapshot = market(candles)
