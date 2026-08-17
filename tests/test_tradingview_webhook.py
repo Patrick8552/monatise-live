@@ -48,6 +48,19 @@ def test_tradingview_alert_clamps_confidence() -> None:
     assert alert["confidence"] == 100
 
 
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        ({}, "symbol is required"),
+        ({"symbol": "BTCUSDT"}, "action is required"),
+        ({"symbol": "BTCUSDT", "action": "launch"}, "Unsupported TradingView alert action"),
+    ],
+)
+def test_tradingview_alert_rejects_missing_or_unknown_required_fields(payload: dict, message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        normalize_tradingview_alert(payload)
+
+
 def test_tradingview_alert_rejects_gold_and_normalizes_silver() -> None:
     with pytest.raises(ValueError, match="Gold/XAU setups are not supported"):
         normalize_tradingview_alert({"symbol": "OANDA:XAUUSD", "action": "long"})

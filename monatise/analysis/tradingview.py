@@ -238,19 +238,26 @@ def normalize_tradingview_alert(payload: dict | str) -> dict:
             payload["symbol"] = parts[0]
         if "action" not in payload and len(parts) > 1:
             payload["action"] = parts[1]
-    raw_symbol = str(payload.get("symbol") or payload.get("ticker") or payload.get("pair") or "")
+    raw_symbol = str(payload.get("symbol") or payload.get("ticker") or payload.get("pair") or "").strip()
+    if not raw_symbol:
+        raise ValueError("TradingView alert symbol is required")
     if is_removed_gold_symbol(raw_symbol):
         raise ValueError("Gold/XAU setups are not supported")
     if is_removed_forex_symbol(raw_symbol):
         raise ValueError("Forex setups are not supported")
     symbol = normalize_alert_symbol(raw_symbol)
-    action = normalize_alert_action(str(payload.get("action") or payload.get("signal") or payload.get("bias") or "WAIT"))
+    raw_action = str(payload.get("action") or payload.get("signal") or payload.get("bias") or "").strip().upper()
+    if not raw_action:
+        raise ValueError("TradingView alert action is required")
+    if raw_action not in TRADINGVIEW_ACTIONS:
+        raise ValueError(f"Unsupported TradingView alert action: {raw_action}")
+    action = normalize_alert_action(raw_action)
     try:
         confidence = max(0.0, min(100.0, float(payload.get("confidence", 0))))
     except (TypeError, ValueError):
         confidence = 0.0
     return {
-        "symbol": symbol or "UNKNOWN",
+        "symbol": symbol,
         "action": action,
         "confidence": confidence,
         "timeframe": str(payload.get("timeframe") or payload.get("interval") or "").strip()[:24],

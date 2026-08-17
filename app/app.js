@@ -4562,21 +4562,18 @@ async function loadQuiverContext(options = {}) {
 function renderResearchSystem() {
   if (!els.researchStats) return;
   const signal = lastSignalCandidate || {};
-  const confidence = Number(signal.confidence || 0);
   const oiRows = coinGlassContext?.openInterest || [];
   const liqRows = coinGlassContext?.liquidations || [];
   const fundingRows = coinGlassContext?.fundingRate || [];
-  const similar = Math.max(24, Math.round(140 + confidence * 2.7 + oiRows.length * 3 + liqRows.length));
-  const favorable = Math.max(42, Math.min(78, Math.round(48 + confidence * 0.28 + Math.min(10, fundingRows.length / 5))));
-  const move = Math.max(1.2, Math.min(8.4, 1.8 + confidence * 0.045));
-  els.researchStatus.textContent = `${assetLabel(selectedAsset)} historical setup engine`;
+  const confidence = Number(signal.confidence || 0);
+  els.researchStatus.textContent = `${assetLabel(selectedAsset)} current context inputs`;
   els.researchStats.innerHTML = `
-    <article><span>Similar Setups</span><strong>${similar}</strong></article>
-    <article><span>Favorable Move</span><strong>${favorable}%</strong></article>
-    <article><span>Average Move</span><strong>+${move.toFixed(1)}%</strong></article>
-    <article><span>Inputs</span><strong>OI · Funding · Liquidations · CHoCH</strong></article>
+    <article><span>Open-interest rows</span><strong>${oiRows.length}</strong></article>
+    <article><span>Funding rows</span><strong>${fundingRows.length}</strong></article>
+    <article><span>Liquidation rows</span><strong>${liqRows.length}</strong></article>
+    <article><span>Signal confidence</span><strong>${Number.isFinite(confidence) ? `${Math.max(0, Math.min(100, confidence)).toFixed(0)}%` : "Pending"}</strong></article>
   `;
-  els.researchNarrative.textContent = `Research mode compares the current setup against prior cases where open interest expanded, funding skewed, liquidity was swept, and structure confirmed on the lower timeframe. ${coinGlassSummaryText()} ${quiverSummaryText()}`;
+  els.researchNarrative.textContent = `Current-context mode summarizes the live inputs available for this setup; it does not claim a historical win rate or outcome sample. ${coinGlassSummaryText()} ${quiverSummaryText()}`;
 }
 
 async function loadCoinGlassContext(options = {}) {

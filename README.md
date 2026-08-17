@@ -193,7 +193,7 @@ MONATISE_TRADINGVIEW_WEBHOOK_TOKEN=use-a-long-random-secret
 Then set the TradingView webhook URL to:
 
 ```text
-https://monatise-live.onrender.com/api/tradingview/webhook?token=YOUR_SECRET
+https://monatise-live.onrender.com/api/tradingview/webhook
 ```
 
 Accepted TradingView alerts are classified as the primary signal feed for
@@ -207,6 +207,7 @@ Use a JSON alert message like:
 
 ```json
 {
+  "token": "YOUR_SECRET",
   "symbol": "{{ticker}}",
   "action": "BUY",
   "confidence": 78,
