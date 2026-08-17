@@ -3,18 +3,23 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+import monatise.application.deployment as deployment_module
 from monatise.application.deployment import COINGLASS_PROVIDER_KEY, SCHEDULED_ANALYSIS_DEFAULT_SYMBOLS, MigrationRunner, OrchestrationASGI, OrchestrationRuntime, PaperSafetyConfiguration, RedisCoordinationStore, RedisSchedulerLeadership, TelegramNotificationTransport, register_coinglass_provider, scheduled_analysis_configuration
 from monatise.application.registry import CANONICAL_ENGINE_ORDER
 from monatise.application.registry import PRODUCTION_ENGINE_ORDER
 from monatise.application.production_analysis import build_production_analysis_run
+from monatise.core.models import Candle
 from monatise.infrastructure.dependency_injection import Container
 from monatise.engines.decision.models import DecisionClassification
+from monatise.engines.market_data.models import DataQuality, DataStatus, MarketSnapshot
 
 
 def test_paper_safety_defaults_are_immutable_and_disabled():
@@ -860,3 +865,180 @@ def test_migrations_use_advisory_lock_and_record_version(tmp_path):
 def test_render_blueprint_targets_production_only():
     production = (Path(__file__).parents[1] / "render.yaml").read_text(encoding="utf-8")
     assert "name: monatise-live" in production
+
+
+class _FakePostgresConnection:
+    def __init__(self, *, raises=False):
+        self.calls: list[tuple[str, tuple]] = []
+        self._raises = raises
+
+    async def execute(self, query, params=None):
+        if self._raises:
+            raise RuntimeError("db unavailable")
+        self.calls.append((query, params))
+        return SimpleNamespace(rowcount=0)
+
+
+@dataclass
+class _FakeDecisionOutput:
+    classification: DecisionClassification = DecisionClassification.GRID
+
+
+@dataclass
+class _FakePriceActionOutput:
+    status: str = "pending"
+
+
+def _full_grid_result(run):
+    # _record_decision_snapshot() runs the real canonical serializer
+    # (_json_value), which raises on non-dataclass values like SimpleNamespace
+    # -- unlike _grid_result()'s fixture, these stage outputs need to be
+    # actual dataclasses (or a real MarketSnapshot) to exercise that path
+    # faithfully, matching what production's real engine outputs are.
+    now = datetime.now(timezone.utc)
+    market = MarketSnapshot(
+        symbol="BTC", interval="15m", price=65_000.0,
+        candles=(Candle("1700000000000", 64_900, 65_100, 64_800, 65_000, 10),),
+        quality=DataQuality(DataStatus.READY, "test", now, now, 0),
+    )
+    return SimpleNamespace(
+        run_id="run-snapshot-test",
+        correlation_id=run.correlation_id,
+        symbol="BTC",
+        status=SimpleNamespace(value="completed"),
+        blocked_by=None,
+        statistics=SimpleNamespace(completed_stages=3),
+        context=SimpleNamespace(outputs={
+            "decision": _FakeDecisionOutput(),
+            "market_data": market,
+            "price_action": _FakePriceActionOutput(),
+        }),
+    )
+
+
+def test_analyse_records_a_decision_snapshot_with_every_stage_output():
+    class Orchestrator:
+        async def run(self, run):
+            return _full_grid_result(run)
+
+    runtime = OrchestrationRuntime(environment={"RENDER_GIT_COMMIT": "abc123"})
+    runtime.application = SimpleNamespace(orchestrator=Orchestrator(), infrastructure=SimpleNamespace(audit=SimpleNamespace(append=lambda **_: None)))
+    runtime.postgres = _FakePostgresConnection()
+
+    asyncio.run(runtime.analyse("BTC", interval="15m", notify=False))
+
+    assert len(runtime.postgres.calls) == 1
+    query, params = runtime.postgres.calls[0]
+    assert "INSERT INTO monatise_decision_snapshots" in query
+    symbol, interval, classification, schema_version, payload_json = params
+    snapshot = json.loads(payload_json)
+    assert symbol == "BTC"
+    assert interval == "15m"
+    assert classification == "grid"
+    assert schema_version >= 1
+    assert snapshot["symbol"] == "BTC"
+    assert snapshot["interval"] == "15m"
+    assert snapshot["code_version"] == "abc123"
+    assert snapshot["schema_version"] >= 1
+    assert set(snapshot["outputs"]) == {"decision", "market_data", "price_action"}
+    # Candles are a compact reference (window bounds + latest bar), not the
+    # full duplicated array.
+    candle_reference = snapshot["outputs"]["market_data"]["candles"]
+    assert candle_reference["count"] == 1
+    assert candle_reference["latest"]["close"] == 65_000
+
+
+def test_analyse_does_not_record_a_snapshot_when_postgres_is_unavailable():
+    class Orchestrator:
+        async def run(self, run):
+            return _full_grid_result(run)
+
+    runtime = OrchestrationRuntime(environment={})
+    runtime.application = SimpleNamespace(orchestrator=Orchestrator(), infrastructure=SimpleNamespace(audit=SimpleNamespace(append=lambda **_: None)))
+    assert runtime.postgres is None
+
+    # Must not raise even though no database connection is configured.
+    asyncio.run(runtime.analyse("BTC", interval="15m", notify=False))
+
+
+def test_snapshot_recording_failure_never_breaks_analysis(caplog):
+    class Orchestrator:
+        async def run(self, run):
+            return _full_grid_result(run)
+
+    runtime = OrchestrationRuntime(environment={})
+    runtime.application = SimpleNamespace(orchestrator=Orchestrator(), infrastructure=SimpleNamespace(audit=SimpleNamespace(append=lambda **_: None)))
+    runtime.postgres = _FakePostgresConnection(raises=True)
+
+    with caplog.at_level(logging.WARNING, logger="monatise.orchestration"):
+        result = asyncio.run(runtime.analyse("BTC", interval="15m", notify=False))
+
+    assert result["symbol"] == "BTC"
+    assert any("decision snapshot recording failed" in record.message for record in caplog.records)
+
+
+def test_snapshot_write_is_bounded_by_a_timeout(monkeypatch):
+    class Orchestrator:
+        async def run(self, run):
+            return _full_grid_result(run)
+
+    class HangingConnection:
+        async def execute(self, query, params=None):
+            await asyncio.sleep(10)
+
+    monkeypatch.setattr(deployment_module, "DECISION_SNAPSHOT_WRITE_TIMEOUT_SECONDS", 0.05)
+    runtime = OrchestrationRuntime(environment={})
+    runtime.application = SimpleNamespace(orchestrator=Orchestrator(), infrastructure=SimpleNamespace(audit=SimpleNamespace(append=lambda **_: None)))
+    runtime.postgres = HangingConnection()
+
+    started = time.monotonic()
+    result = asyncio.run(asyncio.wait_for(runtime.analyse("BTC", interval="15m", notify=False), timeout=1.0))
+    elapsed = time.monotonic() - started
+
+    # Must resolve well inside the 1s outer bound (via the patched 0.05s
+    # snapshot timeout), not hang for the full 10s the connection would
+    # otherwise take.
+    assert elapsed < 1.0
+    assert result["symbol"] == "BTC"
+
+
+def test_decision_snapshot_retention_job_registers_and_deletes_old_rows():
+    class Scheduler:
+        def __init__(self): self.definitions = []
+        async def register(self, definition): self.definitions.append(definition)
+
+    runtime = OrchestrationRuntime(environment={})
+    runtime.application = SimpleNamespace(infrastructure=SimpleNamespace(scheduler=Scheduler()))
+    runtime.postgres = _FakePostgresConnection()
+
+    job_id = asyncio.run(runtime._register_decision_snapshot_retention())
+
+    assert job_id == "decision-snapshot-retention"
+    scheduler = runtime.application.infrastructure.scheduler
+    assert len(scheduler.definitions) == 1
+    definition = scheduler.definitions[0]
+    assert definition.interval.total_seconds() == 86_400
+    assert "retention" in definition.tags
+
+    asyncio.run(definition.task())
+
+    assert len(runtime.postgres.calls) == 1
+    query, params = runtime.postgres.calls[0]
+    assert "DELETE FROM monatise_decision_snapshots" in query
+    assert params == (deployment_module.DECISION_SNAPSHOT_RETENTION_DAYS,)
+
+
+def test_decision_snapshot_retention_is_not_registered_without_postgres():
+    class Scheduler:
+        def __init__(self): self.definitions = []
+        async def register(self, definition): self.definitions.append(definition)
+
+    runtime = OrchestrationRuntime(environment={})
+    scheduler = Scheduler()
+    runtime.application = SimpleNamespace(infrastructure=SimpleNamespace(scheduler=scheduler))
+    assert runtime.postgres is None
+
+    job_id = asyncio.run(runtime._register_decision_snapshot_retention())
+
+    assert job_id is None
+    assert scheduler.definitions == []
