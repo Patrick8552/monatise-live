@@ -639,7 +639,10 @@ class TradingService:
         mapped_side = OrderSide.BUY if side in {"B", "BUY"} else OrderSide.SELL
         price = float(raw_fill.get("px") or raw_fill.get("price") or order.price)
         quantity = float(raw_fill.get("sz") or raw_fill.get("quantity") or order.quantity)
-        fee = abs(float(raw_fill.get("fee") or 0))
+        # Hyperliquid reports maker rebates as a negative fee; harvester math
+        # subtracts this value from gross PnL, so a rebate must stay negative
+        # (adding to realized harvest) instead of being folded into a cost.
+        fee = float(raw_fill.get("fee") or 0)
         timestamp = str(raw_fill.get("time") or raw_fill.get("timestamp") or time.time())
         return Fill(
             order_id=order.order_id,

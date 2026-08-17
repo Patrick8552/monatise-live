@@ -1,4 +1,5 @@
 from monatise.adapters.hyperliquid import HyperliquidAdapter
+from monatise.core.models import Order, OrderSide
 from monatise.live.config import RuntimeConfig
 from monatise.live.service import TradingService
 
@@ -138,6 +139,20 @@ def test_live_start_remains_disabled_when_signal_window_is_always() -> None:
     service.stop()
     assert not snapshot["running"]
     assert not snapshot["sessionGuard"]["active"]
+
+
+def test_live_fill_preserves_negative_fee_for_maker_rebates() -> None:
+    # Hyperliquid reports maker rebates as a negative fee. The harvester
+    # subtracts `fee` from gross PnL, so folding a rebate into abs() would
+    # silently convert a payment to the trader into a cost.
+    service = TradingService(
+        RuntimeConfig(mode="live", network="mainnet", symbol="BTC", signal_session_window="always")
+    )
+    order = Order(symbol="BTC-USD", side=OrderSide.BUY, price=100, quantity=1, level_id="buy-1")
+
+    fill = service._live_fill_from_raw({"side": "B", "px": "100", "sz": "1", "fee": "-0.0123"}, order)
+
+    assert fill.fee == -0.0123
 
 
 def test_hyperliquid_order_values_are_rounded_for_wire_format() -> None:

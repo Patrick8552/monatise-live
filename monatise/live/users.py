@@ -24,6 +24,13 @@ LOGIN_CODE_SECONDS = 60 * 10
 COINGLASS_STARTUP_INTERVALS = {"1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "1w"}
 COINGLASS_STARTUP_INTERVAL_LABEL = "1m, 3m, 5m, 15m, 30m, 1h, 2h, 4h, 6h, 8h, 12h, 1d, or 1w"
 CRYPTO_SYMBOLS = {"BTC", "ETH", "SOL", "HYPE", "BNB", "XRP", "DOGE"}
+# Only used when no login-hint pepper secret is configured at all -- random
+# per process start, never a hardcoded value anyone could read from source.
+_RANDOM_LOGIN_HINT_PEPPER = secrets.token_hex(32)
+# Fixed salt used only to burn constant-time PBKDF2 work on an unknown
+# username, so authenticate()'s response timing doesn't leak whether the
+# username exists.
+_DUMMY_PASSWORD_SALT = secrets.token_hex(16)
 
 
 @dataclass(frozen=True)
@@ -102,7 +109,16 @@ def _fernet_key() -> bytes:
     configured = secret_value("MONATISE_ENCRYPTION_KEY", "")
     if configured:
         return configured.encode("utf-8")
-    seed = secret_value("MONATISE_CONTROL_TOKEN", "") or "monatise-development-key"
+    seed = secret_value("MONATISE_CONTROL_TOKEN", "")
+    if not seed:
+        # No silent fallback: this key protects real exchange credentials
+        # (save_credentials stores secret_key encrypted with it). A hardcoded
+        # fallback here would mean anyone reading this source could decrypt
+        # every stored key -- fail startup loudly instead.
+        raise RuntimeError(
+            "MONATISE_ENCRYPTION_KEY or MONATISE_CONTROL_TOKEN must be set before "
+            "UserStore can encrypt credentials -- refusing to use a hardcoded fallback key"
+        )
     digest = hashlib.sha256(seed.encode("utf-8")).digest()
     return base64.urlsafe_b64encode(digest)
 
@@ -146,6 +162,32 @@ class _PostgresConnection:
         return self.connection.execute(query.replace("?", "%s"), params)
 
 
+class _SQLiteConnection:
+    """Closes the connection on exit.
+
+    sqlite3.Connection's own __exit__ only commits/rolls back the
+    transaction (unlike psycopg's, which also closes) -- without this
+    wrapper every `with self._connect() as conn:` leaked the underlying
+    connection/file descriptor.
+    """
+
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        self.connection = connection
+
+    def __enter__(self) -> "_SQLiteConnection":
+        self.connection.__enter__()
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> bool:  # noqa: ANN001
+        try:
+            return bool(self.connection.__exit__(exc_type, exc_value, traceback))
+        finally:
+            self.connection.close()
+
+    def __getattr__(self, name: str):  # noqa: ANN204
+        return getattr(self.connection, name)
+
+
 class UserStore:
     def __init__(self, path: str | None = None) -> None:
         self.path = path or default_auth_db_path()
@@ -178,6 +220,9 @@ class UserStore:
                 (username,),
             ).fetchone()
         if row is None:
+            # Burn the same PBKDF2 cost a real lookup would, so response
+            # timing doesn't reveal whether the username exists.
+            _hash_password(password, _DUMMY_PASSWORD_SALT)
             return None
         _, expected = _hash_password(password, row["password_salt"])
         if not hmac.compare_digest(expected, row["password_hash"]):
@@ -682,7 +727,7 @@ class UserStore:
             return _PostgresConnection(psycopg.connect(self.path, row_factory=dict_row))
         conn = sqlite3.connect(self.path)
         conn.row_factory = sqlite3.Row
-        return conn
+        return _SQLiteConnection(conn)
 
     def _init_db(self) -> None:
         if self.postgres:
@@ -825,8 +870,31 @@ class UserStore:
               rating integer not null check(rating between 1 and 5), category text not null,
               message text not null, page text not null default '', created_at double precision not null)""",
         ]
+        # Mirrors _init_db's SQLite `migrations` dict: `create table if not
+        # exists` is a no-op on an already-existing table, so a Postgres
+        # deployment whose tables predate one of these columns would
+        # otherwise never receive it. ADD COLUMN IF NOT EXISTS is natively
+        # idempotent in Postgres, so this is safe to run on every startup.
+        column_migrations = [
+            "alter table user_settings add column if not exists client_name text not null default ''",
+            "alter table user_settings add column if not exists spotify_playlist_url text not null default ''",
+            "alter table user_settings add column if not exists spotify_playlist_embed_url text not null default ''",
+            "alter table user_settings add column if not exists chart_interval text not null default '1h'",
+            "alter table user_settings add column if not exists signal_session_window text not null default 'always'",
+            "alter table user_settings add column if not exists leverage double precision not null default 10",
+            "alter table user_settings add column if not exists order_quote_size double precision not null default 25",
+            "alter table user_settings add column if not exists max_order_notional double precision not null default 25",
+            "alter table user_settings add column if not exists max_total_notional double precision not null default 5000",
+            "alter table user_settings add column if not exists max_position_value double precision not null default 5000",
+            "alter table user_settings add column if not exists session_guard_minutes integer not null default 60",
+            "alter table user_settings add column if not exists stale_grid_cancel integer not null default 1",
+            "alter table user_settings add column if not exists london_commodity_only integer not null default 1",
+            "alter table user_settings add column if not exists max_daily_loss_pct double precision not null default 0.05",
+        ]
         with self._connect() as conn:
             for statement in statements:
+                conn.execute(statement)
+            for statement in column_migrations:
                 conn.execute(statement)
             conn.execute("update user_settings set signal_session_window = 'always' where signal_session_window = 'london_new_york'")
 
@@ -842,6 +910,14 @@ class UserStore:
         normalized = ip_address.strip()
         if not normalized:
             return ""
-        pepper = secret_value("MONATISE_LOGIN_HINT_PEPPER", "") or secret_value("MONATISE_ENCRYPTION_KEY", "")
-        pepper = pepper or "monatise-login-hint-development-pepper"
+        pepper = (
+            secret_value("MONATISE_LOGIN_HINT_PEPPER", "")
+            or secret_value("MONATISE_ENCRYPTION_KEY", "")
+            or secret_value("MONATISE_CONTROL_TOKEN", "")
+            # Random per-process, not a hardcoded string anyone can read from
+            # source: login hints are a supplementary feature (not worth
+            # blocking login over, unlike credential encryption), but a
+            # publicly-known pepper defeats the point of hashing at all.
+            or _RANDOM_LOGIN_HINT_PEPPER
+        )
         return hashlib.sha256(f"{pepper}:{normalized}".encode("utf-8")).hexdigest()
