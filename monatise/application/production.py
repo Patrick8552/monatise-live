@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import html
 import json
 import logging
 import mimetypes
@@ -22,10 +23,11 @@ from monatise.analysis.context import context_assets, grid_instruction, indicato
 from monatise.analysis.fibonacci import analyze_fibonacci
 from monatise.analysis.fvg import analyze_fvg
 from monatise.analysis.liquidity_clusters import estimate_liquidation_clusters
+from monatise.analysis.tradingview import TRADINGVIEW_FRESH_SECONDS, TRADINGVIEW_SNAPSHOT_LOCK_SECONDS, normalize_alert_symbol
 from monatise.adapters.memecoins import creator_leaderboard, discover_pumpfun, inspect_memecoin, resolve_creator
 
 from monatise.adapters.coinglass_production import CoinGlassProductionAdapter
-from monatise.application.deployment import OrchestrationASGI, OrchestrationRuntime
+from monatise.application.deployment import OrchestrationASGI, OrchestrationRuntime, TradingViewAlertDuplicate
 from monatise.engines.market_data import MarketDataEngine, MarketDataRequest
 from monatise.core.models import Candle
 
@@ -134,18 +136,25 @@ class ProductionASGI(OrchestrationASGI):
                 return
             await self._respond(send, 200, {"authenticated": False, "credentialsConfigured": False, "execution_enabled": False})
             return
+        if scope.get("type") == "http" and path == "/api/tradingview/webhook":
+            if scope.get("method", "GET").upper() != "POST":
+                await self._respond(send, 405, {"status": "method_not_allowed"})
+                return
+            if self._market_rate_limited(scope, maximum=120):
+                await self._respond(send, 429, {"status": "rate_limited"})
+                return
+            code, payload = await self._tradingview_webhook(scope, receive)
+            await self._respond(send, code, payload)
+            return
         if scope.get("type") == "http" and path == "/api/tradingview/signals":
             if scope.get("method", "GET").upper() != "GET":
                 await self._respond(send, 405, {"status": "method_not_allowed"})
                 return
-            await self._respond(send, 200, {
-                "configured": False,
-                "alerts": [],
-                "count": 0,
-                "source": "TradingView webhook alerts",
-                "role": "tradingview_primary_signal",
-                "execution_enabled": False,
-            })
+            if self._market_rate_limited(scope):
+                await self._respond(send, 429, {"status": "rate_limited"})
+                return
+            code, payload = await self._tradingview_signals(scope)
+            await self._respond(send, code, payload)
             return
         if scope.get("type") == "http" and path in {"/api/market/candles", "/api/operator"}:
             if scope.get("method", "GET").upper() != "GET":
@@ -839,6 +848,97 @@ class ProductionASGI(OrchestrationASGI):
         except Exception as exc:
             LOGGER.exception("production analysis failed", extra={"error_type": type(exc).__name__})
             return 503, {"status": "analysis_unavailable", "error_type": type(exc).__name__}
+
+    async def _tradingview_webhook(self, scope: dict[str, Any], receive: Any) -> tuple[int, dict[str, Any]]:
+        """Ingest one TradingView alert. Analysis input only: this never
+        places an order or changes execution state -- it only normalizes,
+        validates, and durably stores what TradingView sent."""
+        expected_token = self.runtime.environment.get("MONATISE_TRADINGVIEW_WEBHOOK_TOKEN", "").strip()
+        if not expected_token:
+            return 503, {"status": "unavailable", "reason": "tradingview webhook token is not configured"}
+        query = parse_qs(scope.get("query_string", b"").decode())
+        supplied_token = str(query.get("token", [""])[0])
+        if not secrets.compare_digest(supplied_token, expected_token):
+            return 401, {"status": "unauthorized"}
+        body = b""
+        while True:
+            message = await receive()
+            body += message.get("body", b"")
+            if len(body) > 8192:
+                return 413, {"status": "request_too_large"}
+            if not message.get("more_body", False):
+                break
+        try:
+            parsed: dict | str = json.loads(body.decode("utf-8")) if body else {}
+        except json.JSONDecodeError:
+            parsed = body.decode("utf-8", errors="replace")
+        # A replay (identical bytes resent -- a TradingView retry, or a
+        # captured-and-resent request) fingerprints identically and is
+        # rejected by the storage layer's UNIQUE constraint.
+        fingerprint = hashlib.sha256(body).hexdigest()
+        try:
+            alert = await self.runtime.record_tradingview_alert(parsed, fingerprint=fingerprint)
+        except TradingViewAlertDuplicate:
+            return 409, {"status": "duplicate_alert"}
+        except ValueError as exc:
+            return 422, {"status": "invalid_alert", "reason": str(exc)}
+        except RuntimeError as exc:
+            return 503, {"status": "unavailable", "reason": str(exc)}
+        except Exception as exc:
+            LOGGER.exception("tradingview alert storage failed", extra={"error_type": type(exc).__name__})
+            return 503, {"status": "unavailable", "error_type": type(exc).__name__}
+        return 200, {"status": "accepted", "symbol": alert["symbol"], "action": alert["action"], "execution_enabled": False}
+
+    async def _tradingview_signals(self, scope: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        query = parse_qs(scope.get("query_string", b"").decode())
+        raw_symbol = str(query.get("symbol", [""])[0]).strip()
+        symbol = normalize_alert_symbol(raw_symbol) if raw_symbol else None
+        try:
+            alerts = await self.runtime.recent_tradingview_alerts(symbol=symbol, limit=20)
+        except Exception as exc:
+            LOGGER.warning("tradingview signals fetch failed", extra={"error_type": type(exc).__name__})
+            return 503, {"status": "unavailable"}
+        safe_alerts = [_html_safe_tradingview_alert(alert) for alert in alerts]
+        return 200, {
+            "configured": bool(self.runtime.environment.get("MONATISE_TRADINGVIEW_WEBHOOK_TOKEN", "").strip()),
+            "alerts": safe_alerts,
+            "count": len(safe_alerts),
+            "source": "TradingView webhook alerts",
+            "role": "tradingview_primary_signal",
+            "snapshotPolicy": {
+                "lockSeconds": TRADINGVIEW_SNAPSHOT_LOCK_SECONDS,
+                "freshSeconds": TRADINGVIEW_FRESH_SECONDS,
+                "fastCheckSeconds": TRADINGVIEW_FRESH_SECONDS,
+            },
+            "execution_enabled": False,
+        }
+
+
+def _html_safe_tradingview_alert(alert: dict[str, Any]) -> dict[str, Any]:
+    """Escape every attacker-controlled free-text field before it leaves the
+    API -- defense in depth on top of the frontend's own escaping, so a
+    future frontend regression can't reopen a stored-XSS path here."""
+    safe = dict(alert)
+    for key in ("message", "price", "indicator", "timeframe", "symbol"):
+        if isinstance(safe.get(key), str):
+            safe[key] = html.escape(safe[key])
+    if isinstance(safe.get("setup"), dict):
+        setup = dict(safe["setup"])
+        for key in ("trigger", "thesis"):
+            if isinstance(setup.get(key), str):
+                setup[key] = html.escape(setup[key])
+        safe["setup"] = setup
+    if isinstance(safe.get("hedge"), dict):
+        hedge = dict(safe["hedge"])
+        if isinstance(hedge.get("note"), str):
+            hedge["note"] = html.escape(hedge["note"])
+        safe["hedge"] = hedge
+    if isinstance(safe.get("grid"), list):
+        safe["grid"] = [
+            {**level, "label": html.escape(level["label"])} if isinstance(level, dict) and isinstance(level.get("label"), str) else level
+            for level in safe["grid"]
+        ]
+    return safe
 
 
 app = ProductionASGI()
