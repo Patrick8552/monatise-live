@@ -374,7 +374,11 @@ def sanitized_result(result: Any) -> dict[str, Any]:
         "score": metadata.get("signed_signal_score"),
         "grid_score": metadata.get("grid_signal_score"),
         "score_threshold": metadata.get("minimum_signal_score", 7),
-        "entry": directional_plan["entry"] if directional_plan else price if classification == "grid" else None,
+        # A "grid" classification with no grid_plan means price has already
+        # broken outside the rolling-range bands (build_moving_grid_plan
+        # fails closed to None) -- report no entry rather than the raw
+        # price, which would otherwise look like a real actionable level.
+        "entry": directional_plan["entry"] if directional_plan else price if classification == "grid" and grid_plan is not None else None,
         "invalidation": directional_plan["invalidation"] if directional_plan else None,
         "target": directional_plan["target"] if directional_plan else None,
         "reward_risk": None,

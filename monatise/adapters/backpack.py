@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import os
 import time
 from dataclasses import dataclass
 from typing import Any
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -16,6 +18,8 @@ from monatise.core.ports import ExecutionPort, MarketDataPort
 from monatise.live.config import RuntimeConfig
 from monatise.live.secrets import secret_value
 
+
+LOGGER = logging.getLogger("monatise.adapters.backpack")
 
 BACKPACK_REST_BASE = "https://api.backpack.exchange"
 BACKPACK_WS_BASE = "wss://ws.backpack.exchange"
@@ -109,7 +113,7 @@ class BackpackAdapter(MarketDataPort, ExecutionPort):
         )
         if not isinstance(payload, list):
             raise RuntimeError("Backpack klines response was not a list")
-        candles = [_parse_kline(row) for row in payload][-limit:]
+        candles = _parse_klines(payload)[-limit:]
         for candle in candles:
             candle.validate()
         return candles
@@ -164,8 +168,15 @@ class BackpackAdapter(MarketDataPort, ExecutionPort):
     def _get_json(self, path: str, params: dict[str, str] | None = None) -> Any:
         query = f"?{urlencode(params)}" if params else ""
         request = Request(f"{self.base_url}{path}{query}", headers={"accept": "application/json"}, method="GET")
-        with urlopen(request, timeout=15) as response:  # noqa: S310
-            return json.loads(response.read().decode("utf-8"))
+        try:
+            with urlopen(request, timeout=15) as response:  # noqa: S310
+                body = response.read().decode("utf-8")
+        except (HTTPError, URLError, TimeoutError) as error:
+            raise RuntimeError(f"Backpack request failed for {path}") from error
+        try:
+            return json.loads(body)
+        except json.JSONDecodeError as error:
+            raise RuntimeError(f"Backpack returned a non-JSON response for {path}") from error
 
 
 def backpack_signing_payload(
@@ -181,6 +192,18 @@ def backpack_signing_payload(
     return "&".join(f"{key}={value}" for key, value in sorted_fields)
 
 
+def _parse_klines(rows: list[dict[str, Any]]) -> list[Candle]:
+    # One malformed row (a null OHLC field on a thin/gapped pair) must not
+    # crash the whole candle fetch -- skip and log it, keep the rest.
+    candles: list[Candle] = []
+    for row in rows:
+        try:
+            candles.append(_parse_kline(row))
+        except (TypeError, ValueError, KeyError) as error:
+            LOGGER.warning("skipping malformed Backpack kline row: %s", error, extra={"row": row})
+    return candles
+
+
 def _parse_kline(row: dict[str, Any]) -> Candle:
     timestamp = row.get("start") or row.get("timestamp") or row.get("time") or row.get("t")
     return Candle(
@@ -189,7 +212,7 @@ def _parse_kline(row: dict[str, Any]) -> Candle:
         high=float(row["high"]),
         low=float(row["low"]),
         close=float(row["close"]),
-        volume=float(row.get("volume", 0.0)),
+        volume=float(row.get("volume") or 0.0),
     )
 
 

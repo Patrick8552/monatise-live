@@ -306,6 +306,35 @@ def test_moving_grid_fails_closed_when_price_already_breached_inner_band():
     assert build_moving_grid_plan(snapshot) is None
 
 
+def test_sanitized_result_reports_no_entry_when_grid_classification_has_no_grid_plan():
+    # Same fail-closed scenario as test_moving_grid_fails_closed_when_price_
+    # already_breached_inner_band: build_moving_grid_plan returns None, but
+    # the decision engine's GRID classification is derived independently
+    # and can still say "grid". sanitized_result must not paper over the
+    # missing grid_plan by reporting the raw price as a real entry level.
+    candles = [Candle(str(i), 100, 110, 90, 105, 10) for i in range(20)]
+    snapshot = replace(market(candles), symbol="ETH")
+    result = SimpleNamespace(
+        run_id="run-1", correlation_id="correlation-1", symbol="ETH",
+        status=SimpleNamespace(value="completed"), blocked_by=None,
+        statistics=SimpleNamespace(completed_stages=14),
+        finished_at=None,
+        context=SimpleNamespace(
+            run=SimpleNamespace(requested_at=datetime.now(timezone.utc)),
+            outputs={
+                "market_data": snapshot,
+                "decision": SimpleNamespace(classification=SimpleNamespace(value="grid"), direction=SimpleNamespace(value="two_sided"), conviction=0.8, metadata={}, reasons=(), blockers=()),
+                "price_action": request(signal(PriceActionDirection.BULLISH, pattern="bullish_engulfing")),
+            },
+        ),
+    )
+
+    payload = sanitized_result(result)
+
+    assert payload["grid_plan"] is None
+    assert payload["entry"] is None
+
+
 def test_btc_moving_grid_enforces_500_dollar_minimum_spacing():
     candles = [Candle(str(i), 64_600, 64_971, 64_473, 64_722, 10) for i in range(20)]
     grid = build_moving_grid_plan(market(candles))

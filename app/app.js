@@ -2388,20 +2388,20 @@ function renderTradingViewSignal() {
     "TradingView alert received as the primary setup feed. Execution still stays behind Monatise risk gates.";
   els.tradingViewSignalPanel.innerHTML = `
     <div class="strategy-status ${statusClass}">
-      <strong>TV ${action}</strong>
-      <span>${stateLabel} · ${signal.indicator || "TradingView"} · ${signal.timeframe || "live alert"}</span>
+      <strong>TV ${escapeHtml(action)}</strong>
+      <span>${escapeHtml(stateLabel)} · ${escapeHtml(signal.indicator || "TradingView")} · ${escapeHtml(signal.timeframe || "live alert")}</span>
     </div>
     <div class="strategy-metrics compact-tv-metrics">
-      <span>Pair <strong>${signal.symbol || selectedAsset}</strong></span>
+      <span>Pair <strong>${escapeHtml(signal.symbol || selectedAsset)}</strong></span>
       <span>Confidence <strong>${Number(signal.confidence || 0).toFixed(0)}%</strong></span>
-      <span>Price <strong>${signal.price || "alert"}</strong></span>
-      <span>Received <strong>${receivedLabel}</strong></span>
-      <span>Route <strong>${route}</strong></span>
-      <span>Agreement <strong>${classification.agreement || "watch"}</strong></span>
-      <span>5m check <strong>${fastReassessLabel}</strong></span>
-      <span>Reassess <strong>${reassessLabel}</strong></span>
+      <span>Price <strong>${escapeHtml(signal.price || "alert")}</strong></span>
+      <span>Received <strong>${escapeHtml(receivedLabel)}</strong></span>
+      <span>Route <strong>${escapeHtml(route)}</strong></span>
+      <span>Agreement <strong>${escapeHtml(classification.agreement || "watch")}</strong></span>
+      <span>5m check <strong>${escapeHtml(fastReassessLabel)}</strong></span>
+      <span>Reassess <strong>${escapeHtml(reassessLabel)}</strong></span>
     </div>
-    <p>${detail}</p>
+    <p>${escapeHtml(detail)}</p>
   `;
 }
 

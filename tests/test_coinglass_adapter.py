@@ -55,6 +55,38 @@ def test_coinglass_candles_use_price_history_endpoint(monkeypatch) -> None:  # n
     assert captured["headers"]["Cg-api-key"] == "test-key"
 
 
+def test_coinglass_candles_skip_malformed_rows_instead_of_crashing(monkeypatch) -> None:  # noqa: ANN001
+    # A thin/gapped pair can hand back a row with a null OHLC field or a
+    # missing key -- that must not take down the whole candle fetch.
+    old_key = os.environ.get("COINGLASS_API_KEY")
+    os.environ["COINGLASS_API_KEY"] = "test-key"
+
+    def fake_urlopen(request, timeout=0):  # noqa: ANN001, ANN202
+        return FakeResponse(
+            """
+            {
+              "code": "0",
+              "data": [
+                {"time": 1, "open": "100", "high": "105", "low": "99", "close": "104", "volume_usd": null},
+                {"time": 2, "open": null, "high": "108", "low": "103", "close": "107", "volume_usd": "8"},
+                {"time": 3, "high": "108", "low": "103", "close": "107", "volume_usd": "8"},
+                {"time": 4, "open": "110", "high": "112", "low": "109", "close": "111", "volume_usd": "5"}
+              ]
+            }
+            """
+        )
+
+    monkeypatch.setattr(coinglass_module, "urlopen", fake_urlopen)
+    try:
+        candles = CoinGlassAdapter(RuntimeConfig()).candles("BTC", 4, "1h")
+    finally:
+        _restore_env("COINGLASS_API_KEY", old_key)
+
+    # Rows 2 and 3 (null open, missing open) are skipped; 1 and 4 survive.
+    assert [candle.close for candle in candles] == [104, 111]
+    assert candles[0].volume == 0.0
+
+
 def test_coinglass_rejects_forex_markets(monkeypatch) -> None:  # noqa: ANN001
     monkeypatch.setenv("COINGLASS_API_KEY", "test-key")
     adapter = CoinGlassAdapter(RuntimeConfig())
