@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import html
 import json
 import logging
 import mimetypes
@@ -255,6 +254,28 @@ class ProductionASGI(OrchestrationASGI):
         if len(self._market_rate_windows) > 2048:
             self._market_rate_windows = {key: value for key, value in self._market_rate_windows.items() if value[0] == window}
         return count > maximum
+
+    def _openclaw_cache_ttl(self) -> float:
+        raw_ttl = self.runtime.environment.get("MONATISE_OPENCLAW_CACHE_TTL_SECONDS", "300")
+        try:
+            return min(max(float(raw_ttl), 0.0), 900.0)
+        except ValueError:
+            return 300.0
+
+    def _openclaw_cached(self, cache_key: tuple[str, str]) -> dict[str, Any] | None:
+        cached = self._openclaw_cache.get(cache_key)
+        if cached is None:
+            return None
+        if monotonic() - cached[0] >= self._openclaw_cache_ttl():
+            self._openclaw_cache.pop(cache_key, None)
+            return None
+        return cached[1]
+
+    def _store_openclaw_cache(self, cache_key: tuple[str, str], analysis: dict[str, Any]) -> None:
+        self._openclaw_cache[cache_key] = (monotonic(), analysis)
+        if len(self._openclaw_cache) > 256:
+            oldest = min(self._openclaw_cache, key=lambda key: self._openclaw_cache[key][0])
+            self._openclaw_cache.pop(oldest, None)
 
     async def _operator_status(self) -> tuple[int, dict[str, Any]]:
         configured = self.runtime.coinglass is not None and bool(self.runtime.environment.get("COINGLASS_API_KEY", "").strip())
@@ -650,10 +671,9 @@ class ProductionASGI(OrchestrationASGI):
         }
 
     async def _cached_openclaw_dynamic_analysis(self, cache_key: tuple[str, str]) -> tuple[dict[str, Any], bool]:
-        cached = self._openclaw_cache.get(cache_key)
-        now = monotonic()
-        if cached is not None and now - cached[0] < 300:
-            return cached[1], True
+        cached = self._openclaw_cached(cache_key)
+        if cached is not None:
+            return cached, True
         task = self._openclaw_inflight.get(cache_key)
         joined_existing = task is not None
         if task is None:
@@ -664,7 +684,7 @@ class ProductionASGI(OrchestrationASGI):
         finally:
             if task.done() and self._openclaw_inflight.get(cache_key) is task:
                 self._openclaw_inflight.pop(cache_key, None)
-        self._openclaw_cache[cache_key] = (monotonic(), analysis)
+        self._store_openclaw_cache(cache_key, analysis)
         return analysis, joined_existing
 
     async def _public_analysis_status(self, scope: dict[str, Any]) -> tuple[int, dict[str, Any]]:
@@ -734,15 +754,9 @@ class ProductionASGI(OrchestrationASGI):
         return 200, payload
 
     async def _cached_openclaw_analysis(self, cache_key: tuple[str, str]) -> tuple[dict[str, Any], bool]:
-        raw_ttl = self.runtime.environment.get("MONATISE_OPENCLAW_CACHE_TTL_SECONDS", "300")
-        try:
-            ttl_seconds = min(max(float(raw_ttl), 0.0), 900.0)
-        except ValueError:
-            ttl_seconds = 300.0
-        cached = self._openclaw_cache.get(cache_key)
-        now = monotonic()
-        if cached is not None and now - cached[0] < ttl_seconds:
-            return cached[1], True
+        cached = self._openclaw_cached(cache_key)
+        if cached is not None:
+            return cached, True
 
         task = self._openclaw_inflight.get(cache_key)
         joined_existing = task is not None
@@ -754,14 +768,13 @@ class ProductionASGI(OrchestrationASGI):
         finally:
             if task.done() and self._openclaw_inflight.get(cache_key) is task:
                 self._openclaw_inflight.pop(cache_key, None)
-        self._openclaw_cache[cache_key] = (monotonic(), analysis)
+        self._store_openclaw_cache(cache_key, analysis)
         return analysis, joined_existing
 
     async def _cached_openclaw_stock_analysis(self, cache_key: tuple[str, str]) -> tuple[dict[str, Any], bool]:
-        cached = self._openclaw_cache.get(cache_key)
-        now = monotonic()
-        if cached is not None and now - cached[0] < 300:
-            return cached[1], True
+        cached = self._openclaw_cached(cache_key)
+        if cached is not None:
+            return cached, True
 
         task = self._openclaw_inflight.get(cache_key)
         joined_existing = task is not None
@@ -773,7 +786,7 @@ class ProductionASGI(OrchestrationASGI):
         finally:
             if task.done() and self._openclaw_inflight.get(cache_key) is task:
                 self._openclaw_inflight.pop(cache_key, None)
-        self._openclaw_cache[cache_key] = (monotonic(), analysis)
+        self._store_openclaw_cache(cache_key, analysis)
         return analysis, joined_existing
 
     async def _serve_frontend(self, scope: dict[str, Any], send: Any) -> bool:
@@ -856,10 +869,6 @@ class ProductionASGI(OrchestrationASGI):
         expected_token = self.runtime.environment.get("MONATISE_TRADINGVIEW_WEBHOOK_TOKEN", "").strip()
         if not expected_token:
             return 503, {"status": "unavailable", "reason": "tradingview webhook token is not configured"}
-        query = parse_qs(scope.get("query_string", b"").decode())
-        supplied_token = str(query.get("token", [""])[0])
-        if not secrets.compare_digest(supplied_token, expected_token):
-            return 401, {"status": "unauthorized"}
         body = b""
         while True:
             message = await receive()
@@ -872,10 +881,24 @@ class ProductionASGI(OrchestrationASGI):
             parsed: dict | str = json.loads(body.decode("utf-8")) if body else {}
         except json.JSONDecodeError:
             parsed = body.decode("utf-8", errors="replace")
+        supplied_token = ""
+        if isinstance(parsed, dict):
+            supplied_token = str(parsed.pop("token", parsed.pop("secret", "")))
+        elif isinstance(parsed, str):
+            parts = [part.strip() for part in parsed.replace("|", ",").split(",") if part.strip()]
+            supplied_token = next(
+                (part.split("=", 1)[1].strip() for part in parts if part.lower().startswith(("token=", "secret="))),
+                "",
+            )
+            parsed = ", ".join(part for part in parts if not part.lower().startswith(("token=", "secret=")))
+        if not secrets.compare_digest(supplied_token, expected_token):
+            return 401, {"status": "unauthorized"}
         # A replay (identical bytes resent -- a TradingView retry, or a
         # captured-and-resent request) fingerprints identically and is
         # rejected by the storage layer's UNIQUE constraint.
-        fingerprint = hashlib.sha256(body).hexdigest()
+        deduplication_window = int(time()) // TRADINGVIEW_FRESH_SECONDS
+        canonical = json.dumps(parsed, sort_keys=True, separators=(",", ":")) if isinstance(parsed, dict) else parsed
+        fingerprint = hashlib.sha256(f"{deduplication_window}:{canonical}".encode()).hexdigest()
         try:
             alert = await self.runtime.record_tradingview_alert(parsed, fingerprint=fingerprint)
         except TradingViewAlertDuplicate:
@@ -898,11 +921,10 @@ class ProductionASGI(OrchestrationASGI):
         except Exception as exc:
             LOGGER.warning("tradingview signals fetch failed", extra={"error_type": type(exc).__name__})
             return 503, {"status": "unavailable"}
-        safe_alerts = [_html_safe_tradingview_alert(alert) for alert in alerts]
         return 200, {
             "configured": bool(self.runtime.environment.get("MONATISE_TRADINGVIEW_WEBHOOK_TOKEN", "").strip()),
-            "alerts": safe_alerts,
-            "count": len(safe_alerts),
+            "alerts": alerts,
+            "count": len(alerts),
             "source": "TradingView webhook alerts",
             "role": "tradingview_primary_signal",
             "snapshotPolicy": {
@@ -912,33 +934,4 @@ class ProductionASGI(OrchestrationASGI):
             },
             "execution_enabled": False,
         }
-
-
-def _html_safe_tradingview_alert(alert: dict[str, Any]) -> dict[str, Any]:
-    """Escape every attacker-controlled free-text field before it leaves the
-    API -- defense in depth on top of the frontend's own escaping, so a
-    future frontend regression can't reopen a stored-XSS path here."""
-    safe = dict(alert)
-    for key in ("message", "price", "indicator", "timeframe", "symbol"):
-        if isinstance(safe.get(key), str):
-            safe[key] = html.escape(safe[key])
-    if isinstance(safe.get("setup"), dict):
-        setup = dict(safe["setup"])
-        for key in ("trigger", "thesis"):
-            if isinstance(setup.get(key), str):
-                setup[key] = html.escape(setup[key])
-        safe["setup"] = setup
-    if isinstance(safe.get("hedge"), dict):
-        hedge = dict(safe["hedge"])
-        if isinstance(hedge.get("note"), str):
-            hedge["note"] = html.escape(hedge["note"])
-        safe["hedge"] = hedge
-    if isinstance(safe.get("grid"), list):
-        safe["grid"] = [
-            {**level, "label": html.escape(level["label"])} if isinstance(level, dict) and isinstance(level.get("label"), str) else level
-            for level in safe["grid"]
-        ]
-    return safe
-
-
 app = ProductionASGI()

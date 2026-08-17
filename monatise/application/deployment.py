@@ -1222,14 +1222,20 @@ class OrchestrationRuntime:
         if getattr(cursor, "rowcount", 0) == 0:
             raise TradingViewAlertDuplicate(fingerprint)
         if self.application is not None:
-            await self.application.infrastructure.audit.append(
-                record_type=AuditRecordType.INTEGRATION,
-                action=AuditAction.CREATED,
-                actor=AuditActor("tradingview-webhook", "external_system"),
-                source="monatise.tradingview",
-                payload={"event": "tradingview_alert_received", "symbol": alert["symbol"], "action": alert["action"], "fingerprint": fingerprint},
-                symbol=alert["symbol"],
-            )
+            try:
+                await self.application.infrastructure.audit.append(
+                    record_type=AuditRecordType.INTEGRATION,
+                    action=AuditAction.CREATED,
+                    actor=AuditActor("tradingview-webhook", "external_system"),
+                    source="monatise.tradingview",
+                    payload={"event": "tradingview_alert_received", "symbol": alert["symbol"], "action": alert["action"], "fingerprint": fingerprint},
+                    symbol=alert["symbol"],
+                )
+            except Exception as exc:
+                # The alert is already durable at this point. Do not tell the
+                # sender delivery failed and provoke a retry that can only be
+                # rejected as a duplicate.
+                LOGGER.exception("tradingview receipt audit append failed", extra={"error_type": type(exc).__name__})
         return alert
 
     async def recent_tradingview_alerts(self, *, symbol: str | None = None, limit: int = 20) -> list[dict[str, Any]]:

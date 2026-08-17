@@ -97,7 +97,7 @@ services:
       - key: MONATISE_COIN_DISCOVERY_ANALYSIS_CAP
         value: 5
       - key: MONATISE_COIN_DISCOVERY_ANALYSIS_INTERVAL
-        value: 1h
+        value: 15m
       - key: MONATISE_COIN_DISCOVERY_ANALYSIS_COOLDOWN_SECONDS
         value: 21600
 

@@ -78,6 +78,14 @@ def request(app, path, payload, *, token=None):
 
 
 def post_tradingview_webhook(app, body: bytes, *, token="tv-secret", client=("127.0.0.1", 1234)):
+    try:
+        parsed = json.loads(body.decode())
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        body = f"token={token}, ".encode() + body
+    else:
+        if isinstance(parsed, dict):
+            parsed["token"] = token
+            body = json.dumps(parsed, separators=(",", ":")).encode()
     messages = []
     async def receive(): return {"type": "http.request", "body": body, "more_body": False}
     async def send(message): messages.append(message)
@@ -85,7 +93,7 @@ def post_tradingview_webhook(app, body: bytes, *, token="tv-secret", client=("12
         "type": "http",
         "method": "POST",
         "path": "/api/tradingview/webhook",
-        "query_string": f"token={token}".encode(),
+        "query_string": b"",
         "headers": [],
         "client": client,
     }
@@ -552,6 +560,25 @@ def test_openclaw_status_reuses_recent_analysis_by_symbol_and_interval():
     assert runtime.calls == [("BTC", {"interval": "1h", "source": "monatise.openclaw"})]
 
 
+def test_openclaw_cache_uses_configured_ttl_for_every_asset_class():
+    runtime = Runtime()
+    runtime.environment["MONATISE_OPENCLAW_CACHE_TTL_SECONDS"] = "60"
+    app = ProductionASGI(runtime)
+    key = ("PEPE", "15m")
+    app._openclaw_cache[key] = (production_module.monotonic() - 61, {"symbol": "PEPE"})
+
+    assert app._openclaw_cached(key) is None
+
+
+def test_openclaw_cache_is_bounded():
+    app = ProductionASGI(Runtime())
+    for index in range(257):
+        app._store_openclaw_cache((f"ASSET{index}", "15m"), {"index": index})
+
+    assert len(app._openclaw_cache) == 256
+    assert ("ASSET0", "15m") not in app._openclaw_cache
+
+
 def test_openclaw_status_returns_quiver_stock_watch_without_execution():
     runtime = Runtime()
     async def analyse_stock(symbol, **kwargs):
@@ -771,6 +798,17 @@ def test_tradingview_webhook_rejects_a_replayed_alert():
     assert len(runtime._tradingview_alerts) == 1
 
 
+def test_tradingview_webhook_accepts_same_payload_in_a_later_freshness_window(monkeypatch):
+    runtime = Runtime()
+    app = ProductionASGI(runtime)
+    body = b'{"symbol":"BTCUSDT","action":"buy","confidence":"60"}'
+    monkeypatch.setattr(production_module, "time", lambda: 1_000)
+    assert post_tradingview_webhook(app, body)[0] == 200
+    monkeypatch.setattr(production_module, "time", lambda: 1_000 + 301)
+    assert post_tradingview_webhook(app, body)[0] == 200
+    assert len(runtime._tradingview_alerts) == 2
+
+
 def test_tradingview_webhook_is_rate_limited_per_client():
     app = ProductionASGI(Runtime())
     body = b'{"symbol":"BTCUSDT","action":"wait"}'
@@ -792,7 +830,7 @@ def test_tradingview_signals_method_not_allowed_on_post():
     assert messages[0]["status"] == 405
 
 
-def test_tradingview_signals_output_is_html_escaped():
+def test_tradingview_signals_output_remains_raw_json_for_safe_client_rendering():
     runtime = Runtime()
     app = ProductionASGI(runtime)
     malicious = json.dumps({"symbol": "BTCUSDT", "action": "buy", "message": "<img src=x onerror=alert(1)>", "indicator": "<b>bias</b>"}).encode()
@@ -800,9 +838,8 @@ def test_tradingview_signals_output_is_html_escaped():
 
     signals_payload = json.loads(get(app, "/api/tradingview/signals")[1]["body"])
     alert = signals_payload["alerts"][0]
-    assert "<img" not in alert["message"]
-    assert "&lt;img" in alert["message"]
-    assert "<b>" not in alert["indicator"]
+    assert alert["message"] == "<img src=x onerror=alert(1)>"
+    assert alert["indicator"] == "<b>bias</b>"
 
 
 def test_tradingview_signals_filters_by_symbol():

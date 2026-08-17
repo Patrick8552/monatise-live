@@ -713,19 +713,27 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             self._error(429, "too many requests")
             return
         if parsed.path == "/api/tradingview/webhook":
-            query = parse_qs(parsed.query)
-            token = str(query.get("token", [""])[0])
             if not self.config.tradingview_webhook_token:
                 self._error(503, "TradingView webhook token is not configured")
-                return
-            if not secrets.compare_digest(token, self.config.tradingview_webhook_token):
-                self._error(401, "invalid TradingView webhook token")
                 return
             body = self._read_body()
             try:
                 payload: dict | str = json.loads(body.decode("utf-8")) if body else {}
             except json.JSONDecodeError:
                 payload = body.decode("utf-8", errors="replace")
+            token = ""
+            if isinstance(payload, dict):
+                token = str(payload.pop("token", payload.pop("secret", "")))
+            elif isinstance(payload, str):
+                parts = [part.strip() for part in payload.replace("|", ",").split(",") if part.strip()]
+                token = next(
+                    (part.split("=", 1)[1].strip() for part in parts if part.lower().startswith(("token=", "secret="))),
+                    "",
+                )
+                payload = ", ".join(part for part in parts if not part.lower().startswith(("token=", "secret=")))
+            if not secrets.compare_digest(token, self.config.tradingview_webhook_token):
+                self._error(401, "invalid TradingView webhook token")
+                return
             try:
                 alert = normalize_tradingview_alert(payload)
             except ValueError as error:
