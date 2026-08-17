@@ -299,11 +299,17 @@ class DurableAuditRepository:
             for attempt in range(1, self._LOAD_RETRY_ATTEMPTS + 1):
                 values = await self._store.read_stream("audit")
                 try:
-                    ordered_values = self._canonical_chain(values)
+                    # force_resolve only on the final attempt: give a
+                    # transient rolling-deploy fork every earlier attempt to
+                    # resolve itself as one side appends further (the
+                    # common case), and only fall back to a deterministic
+                    # tiebreak if it's still genuinely tied once retries are
+                    # exhausted -- e.g. because the losing writer already
+                    # exited and nothing will ever extend either branch
+                    # further, which would otherwise fail startup forever.
+                    ordered_values = self._canonical_chain(values, force_resolve=attempt == self._LOAD_RETRY_ATTEMPTS)
                     break
                 except AmbiguousDurableAuditChainError:
-                    if attempt == self._LOAD_RETRY_ATTEMPTS:
-                        raise
                     await asyncio.sleep(self._LOAD_RETRY_DELAY_SECONDS)
             for value in ordered_values:
                 actor = value["actor"]
@@ -323,12 +329,25 @@ class DurableAuditRepository:
             self._loaded = True
 
     @staticmethod
-    def _canonical_chain(values: tuple[dict[str, Any], ...]) -> tuple[dict[str, Any], ...]:
+    def _canonical_chain(values: tuple[dict[str, Any], ...], *, force_resolve: bool = False) -> tuple[dict[str, Any], ...]:
         """Restore the uniquely longest valid chain while retaining orphaned fork rows.
 
         Rolling deployments can briefly run two processes against the same append-only
         stream. Both may sign the same next sequence. Descendants identify the branch
         that remained active; the other rows stay untouched as forensic evidence.
+
+        force_resolve=True: an equally-long fork is still possible (the losing
+        writer's very last append happened to land at the same sequence the
+        winner is still at). Normally that's left to resolve itself as one
+        side gets a descendant on a later retry -- but if the losing writer
+        has already exited, neither branch will ever grow, and refusing to
+        pick one would fail startup indefinitely. When forced, every replica
+        restoring this same fork computes the same by-integrity-hash
+        ordering and picks the same lexicographically-smallest endpoint, so
+        independent instances converge on the same canonical branch without
+        needing to coordinate -- the losing branch's rows remain in the
+        stream, untouched, as forensic evidence, exactly as for a resolved
+        fork.
         """
         if not values:
             return ()
@@ -360,9 +379,11 @@ class DurableAuditRepository:
                 chains.append(tuple(reversed(reverse_chain)))
 
         if len(chains) != 1:
-            if chains:
+            if not chains:
+                raise RuntimeError("durable audit sequence is incomplete during restoration")
+            if not force_resolve:
                 raise AmbiguousDurableAuditChainError("durable audit sequence is ambiguous during restoration")
-            raise RuntimeError("durable audit sequence is incomplete during restoration")
+            chains.sort(key=lambda chain: chain[-1]["integrity_hash"])
         return chains[0]
 
     def __getattr__(self, name: str) -> Any:
