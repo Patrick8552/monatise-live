@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import secrets
+import signal
 import threading
 import time
 from dataclasses import replace
@@ -1489,11 +1490,30 @@ def main() -> int:
     port = int(os.getenv("MONATISE_PORT", os.getenv("PORT", "4174")))
     host = os.getenv("MONATISE_HOST", "127.0.0.1")
     server = ThreadingHTTPServer((host, port), Handler)
+
+    def _shut_down(signum, frame) -> None:  # noqa: ANN001
+        # serve_forever() and shutdown() must not run on the same thread --
+        # shutdown() blocks until the serve loop notices the request and
+        # exits, so calling it inline from a signal handler on the thread
+        # that *is* the serve loop would deadlock. Run it on a separate
+        # thread instead.
+        #
+        # This also matters because as PID 1 inside a container, the process
+        # gets no default signal disposition -- an unhandled SIGTERM is
+        # silently ignored rather than terminating the process, so `docker
+        # stop` would otherwise always have to fall back to SIGKILL after
+        # its grace period.
+        threading.Thread(target=server.shutdown, daemon=True).start()
+
+    signal.signal(signal.SIGTERM, _shut_down)
+    signal.signal(signal.SIGINT, _shut_down)
+
     print(f"Monatise backend running at http://{host}:{port}", flush=True)
     print(f"mode={config.mode} network={config.network} multi_user=true", flush=True)
     print(f"auth_db={'postgresql' if store.postgres else 'sqlite-migration-bridge'}", flush=True)
     print(f"signal_db={performance_store.backend}", flush=True)
     server.serve_forever()
+    server.server_close()
     return 0
 
 
