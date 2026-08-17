@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import base64
+from urllib.error import URLError
 
+import pytest
+
+import monatise.adapters.backpack as backpack_module
 from monatise.adapters.backpack import BackpackAdapter, BackpackCredentials, backpack_signing_payload
 from monatise.live.config import RuntimeConfig
 
@@ -44,6 +48,28 @@ def test_backpack_candles_parse_public_klines(monkeypatch) -> None:
     assert candles[0].volume == 12.5
 
 
+def test_backpack_candles_skip_malformed_rows_instead_of_crashing(monkeypatch) -> None:
+    # A row with a null OHLC field or a missing key must not take down the
+    # whole candle fetch.
+    adapter = BackpackAdapter(RuntimeConfig())
+
+    def fake_get_json(path, params=None):  # noqa: ANN001
+        return [
+            {"start": "1", "open": "100", "high": "105", "low": "99", "close": "104", "volume": None},
+            {"start": "2", "open": None, "high": "108", "low": "103", "close": "107", "volume": "8"},
+            {"start": "3", "high": "108", "low": "103", "close": "107", "volume": "8"},
+            {"start": "4", "open": "110", "high": "112", "low": "109", "close": "111", "volume": "5"},
+        ]
+
+    monkeypatch.setattr(adapter, "_get_json", fake_get_json)
+
+    candles = adapter.candles("BTC", 4, "5m")
+
+    # Rows 2 and 3 (null open, missing open) are skipped; 1 and 4 survive.
+    assert [candle.close for candle in candles] == [104, 111]
+    assert candles[0].volume == 0.0
+
+
 def test_backpack_mark_price_uses_dedicated_public_feed(monkeypatch) -> None:
     adapter = BackpackAdapter(RuntimeConfig())
 
@@ -58,6 +84,37 @@ def test_backpack_mark_price_uses_dedicated_public_feed(monkeypatch) -> None:
     monkeypatch.setattr(adapter, "_get_json", fake_get_json)
 
     assert adapter.latest_mark_price("BTC") == 64321.25
+
+
+def test_backpack_get_json_wraps_network_errors(monkeypatch) -> None:
+    adapter = BackpackAdapter(RuntimeConfig())
+
+    def fake_urlopen(request, timeout=0):  # noqa: ANN001, ANN202
+        raise URLError("connection refused")
+
+    monkeypatch.setattr(backpack_module, "urlopen", fake_urlopen)
+
+    with pytest.raises(RuntimeError, match="Backpack request failed"):
+        adapter._get_json("/api/v1/klines")
+
+
+def test_backpack_get_json_wraps_non_json_response(monkeypatch) -> None:
+    adapter = BackpackAdapter(RuntimeConfig())
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args) -> None:  # noqa: ANN002
+            return None
+
+        def read(self) -> bytes:
+            return b"<html>not json</html>"
+
+    monkeypatch.setattr(backpack_module, "urlopen", lambda request, timeout=0: FakeResponse())  # noqa: ANN001
+
+    with pytest.raises(RuntimeError, match="non-JSON response"):
+        adapter._get_json("/api/v1/klines")
 
 
 def test_backpack_signing_payload_is_stable() -> None:

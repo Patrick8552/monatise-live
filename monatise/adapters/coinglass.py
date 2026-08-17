@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -11,6 +12,8 @@ from monatise.core.models import Candle
 from monatise.live.config import RuntimeConfig
 from monatise.live.secrets import secret_value
 
+
+LOGGER = logging.getLogger("monatise.adapters.coinglass")
 
 COINGLASS_BASE_URL = "https://open-api-v4.coinglass.com"
 COINGLASS_SYMBOLS = {
@@ -54,7 +57,7 @@ class CoinGlassAdapter:
                 "limit": max(1, min(1000, int(limit))),
             },
         )
-        candles = [_parse_price_candle(raw) for raw in data]
+        candles = _parse_price_candles(data)
         candles = candles[-limit:]
         for candle in candles:
             candle.validate()
@@ -174,6 +177,18 @@ def _best_instrument_match(coin: str, rows: list[dict[str, Any]], preferred_pair
     return str(matches[0].get("instrument_id", ""))
 
 
+def _parse_price_candles(rows: list[dict[str, Any]]) -> list[Candle]:
+    # One malformed row (a null OHLC field on a thin/gapped pair) must not
+    # crash the whole candle fetch -- skip and log it, keep the rest.
+    candles: list[Candle] = []
+    for raw in rows:
+        try:
+            candles.append(_parse_price_candle(raw))
+        except (TypeError, ValueError, KeyError) as error:
+            LOGGER.warning("skipping malformed CoinGlass candle row: %s", error, extra={"row": raw})
+    return candles
+
+
 def _parse_price_candle(raw: dict[str, Any]) -> Candle:
     return Candle(
         timestamp=str(raw.get("time", "")),
@@ -181,7 +196,7 @@ def _parse_price_candle(raw: dict[str, Any]) -> Candle:
         high=float(raw["high"]),
         low=float(raw["low"]),
         close=float(raw["close"]),
-        volume=float(raw.get("volume_usd", 0.0)),
+        volume=float(raw.get("volume_usd") or 0.0),
     )
 
 

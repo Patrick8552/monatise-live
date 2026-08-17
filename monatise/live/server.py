@@ -969,7 +969,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             if not self.config.tradingview_webhook_token:
                 self._error(503, "TradingView webhook token is not configured")
                 return
-            if token != self.config.tradingview_webhook_token:
+            if not secrets.compare_digest(token, self.config.tradingview_webhook_token):
                 self._error(401, "invalid TradingView webhook token")
                 return
             body = self._read_body()
