@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from math import floor
 
 from monatise.core.models import Fill, Order, OrderSide, Portfolio
@@ -43,6 +43,7 @@ class LiquidityHarvester:
         config.validate()
         self.config = config
         self._matched_buys: dict[str, Fill] = {}
+        self._unmatched_sells: dict[str, Fill] = {}
 
     def plan_orders(self, portfolio: Portfolio, mark_price: float | None = None) -> list[Order]:
         mark = mark_price or self.config.center_price
@@ -80,18 +81,46 @@ class LiquidityHarvester:
     def record_fill(self, fill: Fill, portfolio: Portfolio) -> None:
         portfolio.apply_fill(fill)
         if fill.side is OrderSide.BUY:
-            self._matched_buys[fill.level_id] = fill
+            paired_level = fill.level_id.replace("buy", "sell", 1)
+            pending_sell = self._unmatched_sells.pop(paired_level, None)
+            if pending_sell is None:
+                self._matched_buys[fill.level_id] = fill
+                return
+            self._settle(buy_fill=fill, sell_fill=pending_sell, portfolio=portfolio, buy_level=fill.level_id, sell_level=paired_level)
             return
 
         paired_level = fill.level_id.replace("sell", "buy", 1)
         buy_fill = self._matched_buys.pop(paired_level, None)
         if buy_fill is None:
+            self._unmatched_sells[fill.level_id] = fill
             return
+        self._settle(buy_fill=buy_fill, sell_fill=fill, portfolio=portfolio, buy_level=paired_level, sell_level=fill.level_id)
 
-        matched_qty = min(buy_fill.quantity, fill.quantity)
-        gross = (fill.price - buy_fill.price) * matched_qty
-        paired_fees = buy_fill.fee + fill.fee
-        portfolio.realized_harvest += gross - paired_fees
+    def _settle(self, *, buy_fill: Fill, sell_fill: Fill, portfolio: Portfolio, buy_level: str, sell_level: str) -> None:
+        """Credit harvest for the matched quantity, keeping whichever side
+        has quantity left over instead of discarding it.
+
+        Grid buy/sell quantities are computed as order_quote_size / price,
+        so a buy and its paired sell (different prices) almost never carry
+        exactly equal quantity -- popping either fill record unconditionally
+        after a partial match silently orphaned the leftover from PnL
+        tracking, understating (or in the worst case, zeroing) realized
+        harvest for a real, profitable trade.
+        """
+        matched_qty = min(buy_fill.quantity, sell_fill.quantity)
+        buy_fee_matched = buy_fill.fee * (matched_qty / buy_fill.quantity) if buy_fill.quantity else buy_fill.fee
+        sell_fee_matched = sell_fill.fee * (matched_qty / sell_fill.quantity) if sell_fill.quantity else sell_fill.fee
+        gross = (sell_fill.price - buy_fill.price) * matched_qty
+        portfolio.realized_harvest += gross - (buy_fee_matched + sell_fee_matched)
+
+        if buy_fill.quantity > matched_qty:
+            self._matched_buys[buy_level] = replace(
+                buy_fill, quantity=buy_fill.quantity - matched_qty, fee=buy_fill.fee - buy_fee_matched,
+            )
+        if sell_fill.quantity > matched_qty:
+            self._unmatched_sells[sell_level] = replace(
+                sell_fill, quantity=sell_fill.quantity - matched_qty, fee=sell_fill.fee - sell_fee_matched,
+            )
 
     def _grid_config(self, mark_price: float) -> GridConfig:
         return GridConfig(

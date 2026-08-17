@@ -415,6 +415,116 @@ def test_user_store_rejects_order_size_above_total_open_grid() -> None:
         _restore_key(old_key)
 
 
+def test_user_store_refuses_to_start_without_an_encryption_key() -> None:
+    old_key = os.environ.pop("MONATISE_ENCRYPTION_KEY", None)
+    old_token = os.environ.pop("MONATISE_CONTROL_TOKEN", None)
+    try:
+        with tempfile.NamedTemporaryFile() as db:
+            with pytest.raises(RuntimeError, match="MONATISE_ENCRYPTION_KEY"):
+                UserStore(db.name)
+    finally:
+        if old_key is not None:
+            os.environ["MONATISE_ENCRYPTION_KEY"] = old_key
+        if old_token is not None:
+            os.environ["MONATISE_CONTROL_TOKEN"] = old_token
+
+
+def test_login_hint_pepper_is_not_the_old_hardcoded_default() -> None:
+    import hashlib
+
+    old_pepper = os.environ.pop("MONATISE_LOGIN_HINT_PEPPER", None)
+    old_key = os.environ.pop("MONATISE_ENCRYPTION_KEY", None)
+    old_token = os.environ.pop("MONATISE_CONTROL_TOKEN", None)
+    try:
+        hashed = UserStore._hash_ip("203.0.113.5")
+        old_default = hashlib.sha256(b"monatise-login-hint-development-pepper:203.0.113.5").hexdigest()
+        assert hashed != old_default
+        # Deterministic within a process (same random fallback reused).
+        assert hashed == UserStore._hash_ip("203.0.113.5")
+    finally:
+        if old_pepper is not None:
+            os.environ["MONATISE_LOGIN_HINT_PEPPER"] = old_pepper
+        if old_key is not None:
+            os.environ["MONATISE_ENCRYPTION_KEY"] = old_key
+        if old_token is not None:
+            os.environ["MONATISE_CONTROL_TOKEN"] = old_token
+
+
+def test_sqlite_connections_are_closed_after_use() -> None:
+    import sqlite3
+
+    old_key = _with_key()
+    try:
+        with tempfile.NamedTemporaryFile() as db:
+            store = UserStore(db.name)
+            with store._connect() as conn:
+                conn.execute("select 1")
+            with pytest.raises(sqlite3.ProgrammingError):
+                conn.execute("select 1")
+    finally:
+        _restore_key(old_key)
+
+
+def test_authenticate_burns_hash_work_for_an_unknown_username(monkeypatch) -> None:
+    import monatise.live.users as users_module
+
+    old_key = _with_key()
+    try:
+        with tempfile.NamedTemporaryFile() as db:
+            store = UserStore(db.name)
+            calls = []
+            real_hash = users_module._hash_password
+
+            def spy(password, salt=None):
+                calls.append(salt)
+                return real_hash(password, salt)
+
+            monkeypatch.setattr(users_module, "_hash_password", spy)
+            assert store.authenticate("no-such-user", "whatever123") is None
+            assert calls == [users_module._DUMMY_PASSWORD_SALT]
+    finally:
+        _restore_key(old_key)
+
+
+@pytest.mark.skipif(not os.getenv("MONATISE_TEST_DATABASE_URL"), reason="MONATISE_TEST_DATABASE_URL is not configured")
+def test_postgres_backend_self_heals_a_missing_column_on_an_existing_table() -> None:
+    import psycopg
+
+    old_key = _with_key()
+    url = os.environ["MONATISE_TEST_DATABASE_URL"]
+    try:
+        with psycopg.connect(url, autocommit=True) as conn:
+            conn.execute(
+                "drop table if exists feedback, login_hints, user_settings, credentials, "
+                "login_codes, password_resets, sessions, users cascade"
+            )
+            conn.execute(
+                """create table users(
+                  id bigserial primary key, username text not null unique, password_salt text not null,
+                  password_hash text not null, created_at double precision not null)"""
+            )
+            # A deliberately old-shaped user_settings table, predating
+            # columns the current schema expects (e.g. max_daily_loss_pct).
+            conn.execute(
+                """create table user_settings(
+                  user_id bigint primary key references users(id) on delete cascade,
+                  selected_symbol text not null, subscription_plan text not null,
+                  subscription_status text not null, updated_at double precision not null)"""
+            )
+        UserStore(url)  # __init__ -> _init_db -> _init_postgres
+        with psycopg.connect(url, autocommit=True) as conn:
+            columns = {
+                (row[0].decode() if isinstance(row[0], bytes) else row[0])
+                for row in conn.execute(
+                    "select column_name from information_schema.columns where table_name = 'user_settings'"
+                ).fetchall()
+            }
+        assert "max_daily_loss_pct" in columns
+        assert "session_guard_minutes" in columns
+    finally:
+        _restore_key(old_key)
+
+
 def test_user_store_rejects_excessive_drawdown_limit() -> None:
     old_key = _with_key()
     try:

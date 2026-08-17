@@ -33,8 +33,16 @@ class Grid:
         self.config = config
 
     def levels(self) -> list[GridLevel]:
+        """Nearest-to-market levels first on both sides.
+
+        plan_orders() reserves available capital by iterating this list in
+        order, so this ordering matters: funding the farthest (least likely
+        to fill) levels before the nearest ones can leave the levels most
+        likely to actually fill -- and harvest spread -- unfunded when
+        capital is limited.
+        """
         levels: list[GridLevel] = []
-        for index in range(self.config.levels_each_side, 0, -1):
+        for index in range(1, self.config.levels_each_side + 1):
             price = self.config.center_price * (1 - (self.config.spacing_pct * index))
             levels.append(GridLevel(f"buy-{index}", round(price, 8), OrderSide.BUY))
 
