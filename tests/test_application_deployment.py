@@ -381,6 +381,28 @@ def test_no_trade_does_not_cancel_previously_confirmed_grid():
     assert asyncio.run(runtime._telegram_notification_candidate(disqualified, "15m")) is None
 
 
+def test_expired_confirmed_grid_is_cancelled_after_no_trade_grace():
+    runtime = OrchestrationRuntime(environment={})
+    runtime._telegram_signal_states[("BTC", "15m")] = {
+        "fingerprint": "confirmed-grid-1",
+        "classification": "grid",
+        "confirmation_status": "confirmed",
+        "delivery_status": "delivered",
+        "expires_at": "2026-08-07T10:00:00+00:00",
+        "version": 7,
+    }
+    result = _grid_result("confirmed")
+    result.context.outputs["decision"].classification = DecisionClassification.NO_TRADE
+
+    cancellation = asyncio.run(runtime._telegram_notification_candidate(result, "15m"))
+
+    assert cancellation is not None
+    assert cancellation["confirmation_status"] == "cancelled"
+    assert cancellation["classification"] == "grid"
+    assert cancellation["expected_version"] == 7
+    assert cancellation["cancellation_reason"].startswith("grid setup expired at ")
+
+
 def test_expired_directional_setup_is_transitioned_before_new_analysis():
     runtime = OrchestrationRuntime(environment={})
     runtime._telegram_signal_states[("BTC", "15m")] = {

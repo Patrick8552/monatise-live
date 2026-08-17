@@ -1225,6 +1225,9 @@ class OrchestrationRuntime:
         outputs = result.context.outputs
         key = (result.symbol, interval)
         previous = await self._telegram_notification_state(key)
+        expired_grid = self._expired_grid_candidate(previous)
+        if expired_grid is not None:
+            return expired_grid
         expired_directional = self._expired_directional_candidate(previous)
         if expired_directional is not None:
             return expired_directional
@@ -1313,6 +1316,28 @@ class OrchestrationRuntime:
             "expected_version": int((previous or {}).get("version", 0) or 0),
         }
         return self._with_setup_validity(candidate, result, market, interval)
+
+    @staticmethod
+    def _expired_grid_candidate(previous: dict[str, Any] | None) -> dict[str, Any] | None:
+        if (
+            not previous
+            or previous.get("classification") != "grid"
+            or previous.get("confirmation_status") != "confirmed"
+            or previous.get("delivery_status") != "delivered"
+            or not previous.get("expires_at")
+        ):
+            return None
+        try:
+            expires_at = datetime.fromisoformat(str(previous["expires_at"]).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if expires_at.tzinfo is None or datetime.now(timezone.utc) < expires_at.astimezone(timezone.utc):
+            return None
+        return OrchestrationRuntime._grid_cancellation_candidate(
+            previous,
+            True,
+            f"grid setup expired at {format_nigeria_time(expires_at)}",
+        )
 
     @staticmethod
     def _expired_directional_candidate(previous: dict[str, Any] | None) -> dict[str, Any] | None:

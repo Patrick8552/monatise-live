@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from monatise.live.server import MonatiseHandler
+from monatise.live import server
 
 
 def handler(headers: dict[str, str]) -> SimpleNamespace:
@@ -38,3 +39,17 @@ def test_x_forwarded_host_cannot_be_used_to_self_validate_a_forged_origin() -> N
         "X-Forwarded-Host": "evil.example",
     })
     assert MonatiseHandler._valid_request_origin(request) is False
+
+
+def test_rate_limiter_prunes_stale_client_keys(monkeypatch) -> None:
+    request = MonatiseHandler.__new__(MonatiseHandler)
+    request.client_address = ("203.0.113.5", 12345)
+    request.headers = {}
+    MonatiseHandler.rate_limits = {"198.51.100.9:/api/login": [1.0]}
+    MonatiseHandler.rate_limits_last_pruned_at = 1.0
+    monkeypatch.setattr(server.time, "time", lambda: 120.0)
+
+    assert request._rate_limited("/api/login") is False
+
+    assert "198.51.100.9:/api/login" not in MonatiseHandler.rate_limits
+    assert MonatiseHandler.rate_limits["203.0.113.5:/api/login"] == [120.0]
