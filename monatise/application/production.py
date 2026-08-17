@@ -652,7 +652,7 @@ class ProductionASGI(OrchestrationASGI):
     async def _cached_openclaw_dynamic_analysis(self, cache_key: tuple[str, str]) -> tuple[dict[str, Any], bool]:
         cached = self._openclaw_cache.get(cache_key)
         now = monotonic()
-        if cached is not None and now - cached[0] < 300:
+        if cached is not None and now - cached[0] < self._openclaw_cache_ttl_seconds():
             return cached[1], True
         task = self._openclaw_inflight.get(cache_key)
         joined_existing = task is not None
@@ -664,7 +664,7 @@ class ProductionASGI(OrchestrationASGI):
         finally:
             if task.done() and self._openclaw_inflight.get(cache_key) is task:
                 self._openclaw_inflight.pop(cache_key, None)
-        self._openclaw_cache[cache_key] = (monotonic(), analysis)
+        self._store_openclaw_cache(cache_key, analysis)
         return analysis, joined_existing
 
     async def _public_analysis_status(self, scope: dict[str, Any]) -> tuple[int, dict[str, Any]]:
@@ -734,14 +734,9 @@ class ProductionASGI(OrchestrationASGI):
         return 200, payload
 
     async def _cached_openclaw_analysis(self, cache_key: tuple[str, str]) -> tuple[dict[str, Any], bool]:
-        raw_ttl = self.runtime.environment.get("MONATISE_OPENCLAW_CACHE_TTL_SECONDS", "300")
-        try:
-            ttl_seconds = min(max(float(raw_ttl), 0.0), 900.0)
-        except ValueError:
-            ttl_seconds = 300.0
         cached = self._openclaw_cache.get(cache_key)
         now = monotonic()
-        if cached is not None and now - cached[0] < ttl_seconds:
+        if cached is not None and now - cached[0] < self._openclaw_cache_ttl_seconds():
             return cached[1], True
 
         task = self._openclaw_inflight.get(cache_key)
@@ -754,13 +749,13 @@ class ProductionASGI(OrchestrationASGI):
         finally:
             if task.done() and self._openclaw_inflight.get(cache_key) is task:
                 self._openclaw_inflight.pop(cache_key, None)
-        self._openclaw_cache[cache_key] = (monotonic(), analysis)
+        self._store_openclaw_cache(cache_key, analysis)
         return analysis, joined_existing
 
     async def _cached_openclaw_stock_analysis(self, cache_key: tuple[str, str]) -> tuple[dict[str, Any], bool]:
         cached = self._openclaw_cache.get(cache_key)
         now = monotonic()
-        if cached is not None and now - cached[0] < 300:
+        if cached is not None and now - cached[0] < self._openclaw_cache_ttl_seconds():
             return cached[1], True
 
         task = self._openclaw_inflight.get(cache_key)
@@ -773,8 +768,31 @@ class ProductionASGI(OrchestrationASGI):
         finally:
             if task.done() and self._openclaw_inflight.get(cache_key) is task:
                 self._openclaw_inflight.pop(cache_key, None)
-        self._openclaw_cache[cache_key] = (monotonic(), analysis)
+        self._store_openclaw_cache(cache_key, analysis)
         return analysis, joined_existing
+
+    def _openclaw_cache_ttl_seconds(self) -> float:
+        raw_ttl = self.runtime.environment.get("MONATISE_OPENCLAW_CACHE_TTL_SECONDS", "300")
+        try:
+            return min(max(float(raw_ttl), 0.0), 900.0)
+        except ValueError:
+            return 300.0
+
+    def _store_openclaw_cache(self, cache_key: tuple[str, str], analysis: dict[str, Any]) -> None:
+        self._openclaw_cache[cache_key] = (monotonic(), analysis)
+        # BTC/ETH/SOL and the fixed stock watchlist are a handful of keys;
+        # arbitrary CoinGlass-supported altcoins are not -- an authenticated
+        # caller can request unlimited distinct symbols over a long-running
+        # instance's lifetime, so this cache needs an eviction bound rather
+        # than growing with every symbol ever asked for.
+        if len(self._openclaw_cache) > 256:
+            ttl = self._openclaw_cache_ttl_seconds()
+            now = monotonic()
+            fresh = {key: value for key, value in self._openclaw_cache.items() if now - value[0] < ttl}
+            if len(fresh) > 256:
+                newest_first = sorted(fresh.items(), key=lambda item: item[1][0], reverse=True)
+                fresh = dict(newest_first[:256])
+            self._openclaw_cache = fresh
 
     async def _serve_frontend(self, scope: dict[str, Any], send: Any) -> bool:
         method = scope.get("method", "GET").upper()

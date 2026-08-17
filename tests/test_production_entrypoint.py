@@ -47,6 +47,9 @@ class Runtime:
     async def analyse_stock(self, symbol, **kwargs):
         self.calls.append((symbol, kwargs))
         return {"asset": symbol, "decision": "NO_TRADE", "score": 0, "score_threshold": 2, "execution": {"enabled": False, "orders_placed": 0}}
+    async def analyse_dynamic_coinglass(self, symbol, **kwargs):
+        self.calls.append((symbol, kwargs))
+        return {"asset": symbol, "execution_enabled": False}
     async def record_tradingview_alert(self, raw_payload, *, fingerprint):
         from monatise.analysis.tradingview import normalize_tradingview_alert
         from monatise.application.deployment import TradingViewAlertDuplicate
@@ -596,6 +599,34 @@ def test_openclaw_status_is_rate_limited_after_authentication():
     assert app.runtime.calls == []
 
 
+def test_openclaw_altcoin_and_stock_caches_honor_the_configured_ttl_not_a_hardcoded_one():
+    # Altcoins and stocks used to hard-code a 300s cache regardless of
+    # MONATISE_OPENCLAW_CACHE_TTL_SECONDS -- only BTC/ETH/SOL respected it.
+    runtime = Runtime()
+    runtime.environment["MONATISE_OPENCLAW_CACHE_TTL_SECONDS"] = "0"
+    app = ProductionASGI(runtime)
+
+    altcoin_first = openclaw_status(app, query="symbol=SUI&interval=1h")
+    altcoin_second = openclaw_status(app, query="symbol=SUI&interval=1h")
+    assert altcoin_first[1]["cache_hit"] is False
+    assert altcoin_second[1]["cache_hit"] is False
+
+    stock_first = openclaw_status(app, query="symbol=NVDA&interval=1h")
+    stock_second = openclaw_status(app, query="symbol=NVDA&interval=1h")
+    assert stock_first[1]["cache_hit"] is False
+    assert stock_second[1]["cache_hit"] is False
+
+
+def test_openclaw_cache_is_bounded_and_evicts_when_it_grows_past_the_cap():
+    # Exercises _store_openclaw_cache directly -- going through the HTTP
+    # route would hit its own (much lower) per-client rate limit long before
+    # 300 distinct symbols could ever populate the cache.
+    app = ProductionASGI(Runtime())
+    for index in range(300):
+        app._store_openclaw_cache((f"COIN{index}", "1h"), {"asset": f"COIN{index}"})
+    assert len(app._openclaw_cache) <= 256
+
+
 def test_production_serves_frontend_homepage_and_assets(tmp_path):
     (tmp_path / "index.html").write_text("<!doctype html><title>Monatise</title>")
     (tmp_path / "app.js").write_text("window.MONATISE = true;")
@@ -706,6 +737,14 @@ def test_production_blueprint_is_analysis_only_and_isolated():
     assert all(value in text for value in required)
     forbidden = ["mainnet", "value: live", "BACKPACK_API_KEY"]
     assert all(value not in text for value in forbidden)
+    # MONATISE_STOCK_SCAN_ENABLED defaults to true in code when unset --
+    # explicit here or the autonomous stock scanner (background job cost,
+    # Telegram notifications) silently turns on for a crypto-only Blueprint.
+    assert "MONATISE_STOCK_SCAN_ENABLED" in text
+    assert "key: MONATISE_STOCK_SCAN_ENABLED\n        value: false" in text
+    # The runtime default for this interval is 15m; a stale "1h" here would
+    # silently resurface on any Blueprint recreate/promote.
+    assert "key: MONATISE_COIN_DISCOVERY_ANALYSIS_INTERVAL\n        value: 15m" in text
 
 
 def test_tradingview_webhook_rejects_missing_token():

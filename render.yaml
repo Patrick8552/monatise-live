@@ -97,9 +97,17 @@ services:
       - key: MONATISE_COIN_DISCOVERY_ANALYSIS_CAP
         value: 5
       - key: MONATISE_COIN_DISCOVERY_ANALYSIS_INTERVAL
-        value: 1h
+        value: 15m
       - key: MONATISE_COIN_DISCOVERY_ANALYSIS_COOLDOWN_SECONDS
         value: 21600
+      # This is a crypto-only production Blueprint (see MONATISE_ASSETS /
+      # MONATISE_SCHEDULED_ANALYSIS_SYMBOLS above, and governance_loss_control's
+      # "engine_scope": "crypto_only"). MONATISE_STOCK_SCAN_ENABLED defaults to
+      # true in code when unset -- explicit here so the autonomous stock
+      # scanner (background job cost, Telegram notifications, Quiver/Alpaca/
+      # Finnhub dependencies) doesn't turn on silently by omission.
+      - key: MONATISE_STOCK_SCAN_ENABLED
+        value: false
 
   - type: keyvalue
     name: monatise-live-redis

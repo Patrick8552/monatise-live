@@ -4561,22 +4561,24 @@ async function loadQuiverContext(options = {}) {
 
 function renderResearchSystem() {
   if (!els.researchStats) return;
-  const signal = lastSignalCandidate || {};
-  const confidence = Number(signal.confidence || 0);
-  const oiRows = coinGlassContext?.openInterest || [];
-  const liqRows = coinGlassContext?.liquidations || [];
-  const fundingRows = coinGlassContext?.fundingRate || [];
-  const similar = Math.max(24, Math.round(140 + confidence * 2.7 + oiRows.length * 3 + liqRows.length));
-  const favorable = Math.max(42, Math.min(78, Math.round(48 + confidence * 0.28 + Math.min(10, fundingRows.length / 5))));
-  const move = Math.max(1.2, Math.min(8.4, 1.8 + confidence * 0.045));
-  els.researchStatus.textContent = `${assetLabel(selectedAsset)} historical setup engine`;
+  // "Similar Setups" / "Favorable Move" / "Average Move" used to be
+  // computed from a fixed formula over confidence and unrelated row counts
+  // -- not from any actual historical case data -- while being labeled and
+  // narrated as if they were backtested statistics. That could materially
+  // mislead a trading decision, so this now shows only what's real: the
+  // live data actually feeding the analysis, honestly labeled as such, and
+  // says plainly that historical backtesting isn't available yet.
+  const oiRows = coinGlassContext?.openInterest?.length ?? 0;
+  const liqRows = coinGlassContext?.liquidations?.length ?? 0;
+  const fundingRows = coinGlassContext?.fundingRate?.length ?? 0;
+  els.researchStatus.textContent = `${assetLabel(selectedAsset)} live context (not a historical backtest)`;
   els.researchStats.innerHTML = `
-    <article><span>Similar Setups</span><strong>${similar}</strong></article>
-    <article><span>Favorable Move</span><strong>${favorable}%</strong></article>
-    <article><span>Average Move</span><strong>+${move.toFixed(1)}%</strong></article>
+    <article><span>Open Interest Rows</span><strong>${oiRows}</strong></article>
+    <article><span>Funding Rows</span><strong>${fundingRows}</strong></article>
+    <article><span>Liquidation Rows</span><strong>${liqRows}</strong></article>
     <article><span>Inputs</span><strong>OI · Funding · Liquidations · CHoCH</strong></article>
   `;
-  els.researchNarrative.textContent = `Research mode compares the current setup against prior cases where open interest expanded, funding skewed, liquidity was swept, and structure confirmed on the lower timeframe. ${coinGlassSummaryText()} ${quiverSummaryText()}`;
+  els.researchNarrative.textContent = `Historical setup backtesting is not yet available -- these are the live inputs feeding the current analysis, not a comparison against prior cases. ${coinGlassSummaryText()} ${quiverSummaryText()}`;
 }
 
 async function loadCoinGlassContext(options = {}) {
