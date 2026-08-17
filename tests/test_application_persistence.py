@@ -235,8 +235,16 @@ def _tied_audit_stream():
     return asyncio.run(build())
 
 
-def test_durable_audit_repository_rejects_a_genuine_tie_after_exhausting_retries(monkeypatch):
-    tied, _left, _right = _tied_audit_stream()
+def test_durable_audit_repository_deterministically_resolves_a_genuine_tie_after_exhausting_retries(monkeypatch):
+    # A genuine tie (the losing writer's last append landed at the same
+    # sequence the winner is still at, and the losing writer has since
+    # exited) can never resolve by waiting -- neither branch will ever grow.
+    # Startup must not fail forever in that case: after exhausting retries,
+    # pick one branch deterministically and keep the other as forensic
+    # evidence, exactly like an already-resolved fork.
+    tied, left, right = _tied_audit_stream()
+    expected_winner = left if left.streams["audit"][-1]["integrity_hash"] < right.streams["audit"][-1]["integrity_hash"] else right
+    expected_branch = expected_winner.streams["audit"][-1]["payload"]["branch"]
 
     async def scenario():
         backend = MemoryDocumentStore()
@@ -245,15 +253,40 @@ def test_durable_audit_repository_rejects_a_genuine_tie_after_exhausting_retries
         real_sleep = asyncio.sleep
         monkeypatch.setattr(asyncio, "sleep", lambda seconds: sleeps.append(seconds) or real_sleep(0))
 
-        with pytest.raises(AmbiguousDurableAuditChainError, match="ambiguous"):
-            await DurableAuditRepository(backend).verify_integrity()
+        assert await DurableAuditRepository(backend).verify_integrity() == ()
 
         # Retried up to the configured attempt count, not just once, and
-        # actually paused between attempts rather than busy-looping.
+        # actually paused between attempts rather than busy-looping --
+        # still gives a transient tie every chance to resolve on its own
+        # before falling back to the deterministic tiebreak.
         assert len(sleeps) == DurableAuditRepository._LOAD_RETRY_ATTEMPTS - 1
         assert all(delay == DurableAuditRepository._LOAD_RETRY_DELAY_SECONDS for delay in sleeps)
 
+        # Exactly one of the two tied leaves was kept, not both, and the
+        # stream itself is untouched -- the losing row stays as forensic
+        # evidence rather than being deleted.
+        snapshot = await DurableAuditRepository(backend).snapshot()
+        assert [record.payload.get("branch") for record in snapshot.records] == ["base", expected_branch]
+        assert len(backend.streams["audit"]) == 3
+
+        # A second, independent instance restoring the same tied stream
+        # converges on the same winner without any coordination.
+        again_snapshot = await DurableAuditRepository(backend).snapshot()
+        assert [record.payload.get("branch") for record in again_snapshot.records] == ["base", expected_branch]
+
     asyncio.run(scenario())
+
+
+def test_durable_audit_repository_still_raises_ambiguous_before_the_final_retry_attempt():
+    # force_resolve is only for the LAST attempt -- an earlier attempt must
+    # still raise (not silently resolve early), so a transient tie keeps
+    # getting a chance to extend naturally first.
+    tied, _left, _right = _tied_audit_stream()
+    with pytest.raises(AmbiguousDurableAuditChainError, match="ambiguous"):
+        DurableAuditRepository._canonical_chain(tuple(tied))
+    # But when forced (the final-attempt path), it resolves instead of raising.
+    resolved = DurableAuditRepository._canonical_chain(tuple(tied), force_resolve=True)
+    assert resolved[-1]["payload"]["branch"] in {"left", "right"}
 
 
 def test_durable_audit_repository_recovers_once_a_transient_tie_is_extended(monkeypatch):
