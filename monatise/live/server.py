@@ -588,6 +588,7 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
     config: RuntimeConfig
     app_dir: Path
     rate_limits: dict[str, list[float]] = {}
+    rate_limits_last_pruned_at: float = 0.0
     rate_lock = threading.Lock()
     tradingview_alerts: list[dict] = []
     tradingview_alert_store: Path | None = None
@@ -1437,6 +1438,14 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
         key = f"{client}:{path}"
         now = time.time()
         with self.rate_lock:
+            if now - type(self).rate_limits_last_pruned_at >= 60:
+                cutoff = now - 60
+                type(self).rate_limits = {
+                    stored_key: [stamp for stamp in stamps if stamp >= cutoff]
+                    for stored_key, stamps in type(self).rate_limits.items()
+                    if any(stamp >= cutoff for stamp in stamps)
+                }
+                type(self).rate_limits_last_pruned_at = now
             attempts = [stamp for stamp in self.rate_limits.get(key, []) if now - stamp < window]
             if len(attempts) >= limit:
                 self.rate_limits[key] = attempts

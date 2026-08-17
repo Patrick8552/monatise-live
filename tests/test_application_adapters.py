@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -407,7 +408,10 @@ def test_telegram_grid_replacement_combines_cancellation_and_directional_setup()
 
 def test_telegram_subminute_validity_is_not_rendered_as_zero_minutes():
     run = AnalysisRun("BTC", {})
-    now = run.requested_at
+    # Keep the assertion away from the exact 60-second boundary. The
+    # formatter reads the clock independently, so using requested_at could
+    # produce either "1 min" or "<1 min" depending on clock precision.
+    now = datetime.now(timezone.utc) - timedelta(seconds=1)
     signal = SimpleNamespace(pattern="bullish_engulfing", confidence=0.9, evidence_score=0.9, age_candles=3)
     outputs = {
         "decision": SimpleNamespace(
