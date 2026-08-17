@@ -30,6 +30,7 @@ class Runtime:
             "MONATISE_ENVIRONMENT": "production",
             "MONATISE_OPENCLAW_TOKEN": "control-secret",
             "COINGLASS_API_KEY": "server-secret",
+            "MONATISE_TRADINGVIEW_WEBHOOK_TOKEN": "tv-secret",
         }
         self.coinglass = SimpleNamespace(
             candles=lambda symbol, limit, interval: [Candle("2026-08-02T12:00:00+00:00", 100, 110, 90, 105, 1000)],
@@ -39,12 +40,27 @@ class Runtime:
         self.redis_coordination = Coordination()
         self.telegram = None
         self.calls = []
+        self._tradingview_alerts: dict[str, dict] = {}
     async def analyse(self, symbol, **kwargs):
         self.calls.append((symbol, kwargs))
         return {"symbol": symbol, "execution_enabled": False, "audit_reference": "run", "state_reference": "run"}
     async def analyse_stock(self, symbol, **kwargs):
         self.calls.append((symbol, kwargs))
         return {"asset": symbol, "decision": "NO_TRADE", "score": 0, "score_threshold": 2, "execution": {"enabled": False, "orders_placed": 0}}
+    async def record_tradingview_alert(self, raw_payload, *, fingerprint):
+        from monatise.analysis.tradingview import normalize_tradingview_alert
+        from monatise.application.deployment import TradingViewAlertDuplicate
+        if fingerprint in self._tradingview_alerts:
+            raise TradingViewAlertDuplicate(fingerprint)
+        alert = normalize_tradingview_alert(raw_payload)
+        self._tradingview_alerts[fingerprint] = alert
+        return alert
+    async def recent_tradingview_alerts(self, *, symbol=None, limit=20):
+        from monatise.analysis.tradingview import enrich_tradingview_alert
+        alerts = list(self._tradingview_alerts.values())
+        if symbol:
+            alerts = [alert for alert in alerts if alert["symbol"] == symbol]
+        return [enrich_tradingview_alert(alert) for alert in alerts[:limit]]
 
 
 def request(app, path, payload, *, token=None):
@@ -57,6 +73,22 @@ def request(app, path, payload, *, token=None):
     async def receive(): return {"type": "http.request", "body": body, "more_body": False}
     async def send(message): messages.append(message)
     scope = {"type": "http", "method": "POST", "path": path, "headers": [(b"x-monatise-timestamp", timestamp.encode()), (b"x-monatise-signature", signature.encode())]}
+    asyncio.run(app(scope, receive, send))
+    return messages[0]["status"], json.loads(messages[1]["body"])
+
+
+def post_tradingview_webhook(app, body: bytes, *, token="tv-secret", client=("127.0.0.1", 1234)):
+    messages = []
+    async def receive(): return {"type": "http.request", "body": body, "more_body": False}
+    async def send(message): messages.append(message)
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/api/tradingview/webhook",
+        "query_string": f"token={token}".encode(),
+        "headers": [],
+        "client": client,
+    }
     asyncio.run(app(scope, receive, send))
     return messages[0]["status"], json.loads(messages[1]["body"])
 
@@ -674,3 +706,121 @@ def test_production_blueprint_is_analysis_only_and_isolated():
     assert all(value in text for value in required)
     forbidden = ["mainnet", "value: live", "BACKPACK_API_KEY"]
     assert all(value not in text for value in forbidden)
+
+
+def test_tradingview_webhook_rejects_missing_token():
+    app = ProductionASGI(Runtime())
+    code, payload = post_tradingview_webhook(app, b'{"symbol":"BTCUSDT","action":"buy"}', token="")
+    assert code == 401 and payload["status"] == "unauthorized"
+
+
+def test_tradingview_webhook_rejects_wrong_token():
+    app = ProductionASGI(Runtime())
+    code, payload = post_tradingview_webhook(app, b'{"symbol":"BTCUSDT","action":"buy"}', token="wrong-secret")
+    assert code == 401 and payload["status"] == "unauthorized"
+
+
+def test_tradingview_webhook_fails_closed_when_token_not_configured():
+    runtime = Runtime()
+    del runtime.environment["MONATISE_TRADINGVIEW_WEBHOOK_TOKEN"]
+    app = ProductionASGI(runtime)
+    code, payload = post_tradingview_webhook(app, b'{"symbol":"BTCUSDT","action":"buy"}')
+    assert code == 503 and payload["status"] == "unavailable"
+
+
+def test_tradingview_webhook_accepts_a_valid_alert_and_it_becomes_readable():
+    runtime = Runtime()
+    app = ProductionASGI(runtime)
+    code, payload = post_tradingview_webhook(app, b'{"symbol":"BTCUSDT","action":"buy","confidence":"82"}')
+    assert code == 200
+    assert payload == {"status": "accepted", "symbol": "BTC", "action": "BUY", "execution_enabled": False}
+
+    signals = get(app, "/api/tradingview/signals", query="symbol=BTC")
+    signals_payload = json.loads(signals[1]["body"])
+    assert signals_payload["count"] == 1
+    assert signals_payload["alerts"][0]["symbol"] == "BTC"
+    assert signals_payload["configured"] is True
+    # Nothing about ingesting an alert triggers analysis or execution.
+    assert runtime.calls == []
+
+
+def test_tradingview_webhook_accepts_plain_text_alert_body():
+    app = ProductionASGI(Runtime())
+    code, payload = post_tradingview_webhook(app, b"symbol=ETHUSDT, action=sell, confidence=91")
+    assert code == 200
+    assert payload["symbol"] == "ETH" and payload["action"] == "SELL"
+
+
+def test_tradingview_webhook_rejects_a_malformed_alert_without_storing_it():
+    runtime = Runtime()
+    app = ProductionASGI(runtime)
+    code, payload = post_tradingview_webhook(app, b'{"symbol":"OANDA:XAUUSD","action":"buy"}')
+    assert code == 422 and payload["status"] == "invalid_alert"
+    assert "Gold" in payload["reason"]
+    assert runtime._tradingview_alerts == {}
+
+
+def test_tradingview_webhook_rejects_a_replayed_alert():
+    runtime = Runtime()
+    app = ProductionASGI(runtime)
+    body = b'{"symbol":"BTCUSDT","action":"buy","confidence":"60"}'
+    first = post_tradingview_webhook(app, body)
+    assert first[0] == 200
+    second = post_tradingview_webhook(app, body)
+    assert second[0] == 409 and second[1]["status"] == "duplicate_alert"
+    assert len(runtime._tradingview_alerts) == 1
+
+
+def test_tradingview_webhook_is_rate_limited_per_client():
+    app = ProductionASGI(Runtime())
+    body = b'{"symbol":"BTCUSDT","action":"wait"}'
+    codes = [post_tradingview_webhook(app, body, token="wrong")[0] for _ in range(121)]
+    assert codes[-1] == 429
+
+
+def test_tradingview_webhook_method_not_allowed_on_get():
+    code = get(ProductionASGI(Runtime()), "/api/tradingview/webhook")[0]["status"]
+    assert code == 405
+
+
+def test_tradingview_signals_method_not_allowed_on_post():
+    messages = []
+    async def receive(): return {"type": "http.request", "body": b"", "more_body": False}
+    async def send(message): messages.append(message)
+    scope = {"type": "http", "method": "POST", "path": "/api/tradingview/signals", "query_string": b"", "headers": [], "client": ("127.0.0.1", 1)}
+    asyncio.run(ProductionASGI(Runtime())(scope, receive, send))
+    assert messages[0]["status"] == 405
+
+
+def test_tradingview_signals_output_is_html_escaped():
+    runtime = Runtime()
+    app = ProductionASGI(runtime)
+    malicious = json.dumps({"symbol": "BTCUSDT", "action": "buy", "message": "<img src=x onerror=alert(1)>", "indicator": "<b>bias</b>"}).encode()
+    assert post_tradingview_webhook(app, malicious)[0] == 200
+
+    signals_payload = json.loads(get(app, "/api/tradingview/signals")[1]["body"])
+    alert = signals_payload["alerts"][0]
+    assert "<img" not in alert["message"]
+    assert "&lt;img" in alert["message"]
+    assert "<b>" not in alert["indicator"]
+
+
+def test_tradingview_signals_filters_by_symbol():
+    runtime = Runtime()
+    app = ProductionASGI(runtime)
+    post_tradingview_webhook(app, b'{"symbol":"BTCUSDT","action":"buy"}')
+    post_tradingview_webhook(app, b'{"symbol":"ETHUSDT","action":"sell"}')
+
+    btc_only = json.loads(get(app, "/api/tradingview/signals", query="symbol=BTC")[1]["body"])
+    assert btc_only["count"] == 1
+    assert btc_only["alerts"][0]["symbol"] == "BTC"
+
+    everything = json.loads(get(app, "/api/tradingview/signals")[1]["body"])
+    assert everything["count"] == 2
+
+
+def test_tradingview_webhook_request_too_large_is_rejected():
+    app = ProductionASGI(Runtime())
+    oversized = b'{"symbol":"BTCUSDT","message":"' + b"a" * 8200 + b'"}'
+    code, payload = post_tradingview_webhook(app, oversized)
+    assert code == 413 and payload["status"] == "request_too_large"

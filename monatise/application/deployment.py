@@ -32,6 +32,7 @@ from monatise.adapters.alpaca import AlpacaMarketDataAdapter
 from monatise.adapters.quiver import QuiverAdapter, normalize_quiver_symbol
 from monatise.adapters.finnhub import FinnhubAdapter, FinnhubAdapterError
 from monatise.application.stock_analysis import build_stock_analysis
+from monatise.analysis.tradingview import TRADINGVIEW_ALERT_LIMIT, TRADINGVIEW_FRESH_SECONDS, enrich_tradingview_alert, normalize_tradingview_alert
 from monatise.adapters.x_macro import XMacroAdapter, XMacroPost
 from monatise.live.config import RuntimeConfig
 from monatise.infrastructure.audit_database import AuditAction, AuditActor, AuditRecordType
@@ -49,6 +50,10 @@ SCHEDULED_ANALYSIS_DEFAULT_SYMBOLS = ("BTC", "ETH", "SOL")
 DECISION_SNAPSHOT_SCHEMA_VERSION = 1
 DECISION_SNAPSHOT_WRITE_TIMEOUT_SECONDS = 5.0
 DECISION_SNAPSHOT_RETENTION_DAYS = 30
+# Alerts are only ever read within TRADINGVIEW_FRESH_SECONDS (5 minutes) of
+# receipt, but kept longer than that so a short recent-history window
+# survives for debugging/review before the retention sweep prunes them.
+TRADINGVIEW_ALERT_RETENTION_DAYS = 3
 STOCK_SCAN_SYMBOLS = ("AAPL", "TSLA", "NVDA", "QQQ", "SPY")
 SCHEDULED_ANALYSIS_INTERVAL_SECONDS = {
     "1m": 60, "3m": 180, "5m": 300, "15m": 900, "30m": 1_800,
@@ -232,7 +237,8 @@ class MigrationRunner:
                     "SELECT checksum FROM monatise_schema_migrations WHERE version=%s", (version,)
                 )).fetchone()
                 if row:
-                    if row[0] != checksum:
+                    stored_checksum = row[0].decode() if isinstance(row[0], bytes) else row[0]
+                    if stored_checksum != checksum:
                         raise RuntimeError(f"migration checksum mismatch: {version}")
                     self.version = version
                     continue
@@ -383,6 +389,10 @@ return encoded
             encoded,
         )
         return json.loads(result) if result is not None else None
+
+
+class TradingViewAlertDuplicate(RuntimeError):
+    """Raised when a webhook delivery exactly matches an already-stored alert."""
 
 
 @dataclass
@@ -907,6 +917,7 @@ class OrchestrationRuntime:
             await self._register_coin_discovery_monitor()
             await self._register_stock_scan_monitor()
             await self._register_decision_snapshot_retention()
+            await self._register_tradingview_alert_retention()
             self.leadership = RedisSchedulerLeadership(
                 self.redis, namespace=self.environment.get("MONATISE_REDIS_NAMESPACE", "monatise:production-analysis")
             )
@@ -1187,6 +1198,86 @@ class OrchestrationRuntime:
             retry_policy=RetryPolicy(maximum_attempts=2, delay_seconds=30.0, maximum_delay_seconds=120.0),
             tags=("maintenance", "retention", "decision-snapshots"),
             metadata={"retention_days": DECISION_SNAPSHOT_RETENTION_DAYS},
+        ))
+        return job_id
+
+    async def record_tradingview_alert(self, raw_payload: dict | str, *, fingerprint: str) -> dict[str, Any]:
+        """Normalize, validate, and durably store one TradingView webhook alert.
+
+        Read-only, analysis-input storage -- this never places an order or
+        mutates execution state; nothing here can leave paper/analysis-only
+        mode. Raises ValueError for a malformed/unsupported alert (caller
+        maps that to 422) and TradingViewAlertDuplicate for an exact-repeat
+        delivery (caller maps that to 409) -- both fail closed rather than
+        storing bad or duplicate data.
+        """
+        if self.postgres is None:
+            raise RuntimeError("tradingview alert storage is not configured")
+        alert = normalize_tradingview_alert(raw_payload)
+        cursor = await self.postgres.execute(
+            "INSERT INTO monatise_tradingview_alerts (fingerprint, symbol, payload) VALUES (%s,%s,%s::jsonb) "
+            "ON CONFLICT (fingerprint) DO NOTHING",
+            (fingerprint, alert["symbol"], json.dumps(alert, separators=(",", ":"), sort_keys=True)),
+        )
+        if getattr(cursor, "rowcount", 0) == 0:
+            raise TradingViewAlertDuplicate(fingerprint)
+        if self.application is not None:
+            await self.application.infrastructure.audit.append(
+                record_type=AuditRecordType.INTEGRATION,
+                action=AuditAction.CREATED,
+                actor=AuditActor("tradingview-webhook", "external_system"),
+                source="monatise.tradingview",
+                payload={"event": "tradingview_alert_received", "symbol": alert["symbol"], "action": alert["action"], "fingerprint": fingerprint},
+                symbol=alert["symbol"],
+            )
+        return alert
+
+    async def recent_tradingview_alerts(self, *, symbol: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
+        """Read-only fetch of alerts still inside the TRADINGVIEW_FRESH_SECONDS
+        window -- an alert older than that has explicitly expired and is
+        excluded here rather than left for the caller to filter out."""
+        if self.postgres is None:
+            return []
+        query = "SELECT payload FROM monatise_tradingview_alerts WHERE received_at > NOW() - make_interval(secs => %s)"
+        params: list[Any] = [TRADINGVIEW_FRESH_SECONDS]
+        if symbol:
+            query += " AND symbol = %s"
+            params.append(symbol)
+        query += " ORDER BY received_at DESC LIMIT %s"
+        params.append(max(1, min(TRADINGVIEW_ALERT_LIMIT, limit)))
+        cursor = await self.postgres.execute(query, tuple(params))
+        rows = await cursor.fetchall()
+        alerts = []
+        for row in rows:
+            raw = row[0]
+            payload = raw if isinstance(raw, dict) else json.loads(raw)
+            alerts.append(enrich_tradingview_alert(payload))
+        return alerts
+
+    async def _register_tradingview_alert_retention(self) -> str | None:
+        if self.application is None or self.postgres is None:
+            return None
+        job_id = "tradingview-alert-retention"
+
+        async def task() -> dict[str, Any]:
+            result = await self.postgres.execute(
+                "DELETE FROM monatise_tradingview_alerts WHERE received_at < NOW() - make_interval(days => %s)",
+                (TRADINGVIEW_ALERT_RETENTION_DAYS,),
+            )
+            deleted = getattr(result, "rowcount", None)
+            LOGGER.info("tradingview alert retention swept", extra={"deleted": deleted, "retention_days": TRADINGVIEW_ALERT_RETENTION_DAYS})
+            return {"deleted": deleted}
+
+        await self.application.infrastructure.scheduler.register(JobDefinition(
+            job_id=job_id,
+            name="TradingView alert retention",
+            task=task,
+            schedule_type=ScheduleType.INTERVAL,
+            interval=timedelta(hours=24),
+            timeout_seconds=120.0,
+            retry_policy=RetryPolicy(maximum_attempts=2, delay_seconds=30.0, maximum_delay_seconds=120.0),
+            tags=("maintenance", "retention", "tradingview-alerts"),
+            metadata={"retention_days": TRADINGVIEW_ALERT_RETENTION_DAYS},
         ))
         return job_id
 

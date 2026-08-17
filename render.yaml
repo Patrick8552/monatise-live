@@ -74,6 +74,8 @@ services:
         sync: false
       - key: MONATISE_OPENCLAW_TOKEN
         sync: false
+      - key: MONATISE_TRADINGVIEW_WEBHOOK_TOKEN
+        sync: false
       - key: MONATISE_X_BEARER_TOKEN
         sync: false
       - key: MONATISE_X_MONITOR_ENABLED

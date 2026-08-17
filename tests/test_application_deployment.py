@@ -884,6 +884,52 @@ def test_migrations_use_advisory_lock_and_record_version(tmp_path):
     assert runner.version == "001_test"
 
 
+class _MigrationConnectionWithBytesChecksum(_MigrationConnection):
+    """Some psycopg configurations return TEXT columns as bytes rather than
+    str (seen locally without psycopg[binary] fully in effect) -- a already-
+    applied migration's stored checksum must still compare equal to the
+    freshly computed str checksum, not be treated as a mismatch."""
+
+    def __init__(self, stored_checksum: bytes) -> None:
+        super().__init__()
+        self._stored_checksum = stored_checksum
+
+    async def execute(self, query, params=None):
+        self.queries.append((query, params))
+        if query.strip().startswith("SELECT checksum"):
+            return _MigrationCursor((self._stored_checksum,))
+        return _MigrationCursor(None)
+
+
+def test_migrations_treat_a_bytes_checksum_as_matching_not_a_mismatch(tmp_path):
+    import hashlib
+
+    migration = tmp_path / "001_test.sql"
+    sql = "CREATE TABLE IF NOT EXISTS test_table(id INT);"
+    migration.write_text(sql, encoding="utf-8")
+    stored_checksum = hashlib.sha256(sql.encode()).hexdigest().encode()
+    connection = _MigrationConnectionWithBytesChecksum(stored_checksum)
+    runner = MigrationRunner(connection, tmp_path)
+
+    asyncio.run(runner.run())
+
+    assert runner.current is True
+    assert runner.version == "001_test"
+    # Already applied (checksum matched) -- the migration SQL itself must
+    # not be re-executed.
+    assert not any(query.strip().startswith(sql) for query, _ in connection.queries)
+
+
+def test_migrations_still_raise_on_a_genuine_bytes_checksum_mismatch(tmp_path):
+    migration = tmp_path / "001_test.sql"
+    migration.write_text("CREATE TABLE IF NOT EXISTS test_table(id INT);", encoding="utf-8")
+    connection = _MigrationConnectionWithBytesChecksum(b"not-the-real-checksum")
+    runner = MigrationRunner(connection, tmp_path)
+
+    with pytest.raises(RuntimeError, match="migration checksum mismatch"):
+        asyncio.run(runner.run())
+
+
 def test_render_blueprint_targets_production_only():
     production = (Path(__file__).parents[1] / "render.yaml").read_text(encoding="utf-8")
     assert "name: monatise-live" in production
