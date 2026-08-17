@@ -54,6 +54,107 @@ jobs:
       - name: Run tests
         run: uv run pytest
 
+  live-server-docker-smoke:
+    name: Live server Docker smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # monatise/live/server.py isn't run by the Render deployment, but it is
+    # still the packaged `monatise-live` CLI entrypoint, the command both
+    # Dockerfiles run, and a documented standalone/self-hosted runtime.
+    # Nothing else in CI builds and boots that image, so this is the only
+    # thing standing between a change here and a runtime that silently
+    # doesn't start, doesn't stay read-only, or doesn't shut down cleanly.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -f deploy/Dockerfile -t monatise-live-smoke:${{ github.sha }} .
+
+      - name: Run container in read-only paper mode
+        run: |
+          set -euo pipefail
+          fernet_key="$(python3 -c 'import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())')"
+          docker run -d --name monatise-live-smoke \
+            -p 4174:4174 \
+            -e MONATISE_MODE=paper \
+            -e MONATISE_NETWORK=testnet \
+            -e MONATISE_HOST=0.0.0.0 \
+            -e MONATISE_PORT=4174 \
+            -e MONATISE_ENCRYPTION_KEY="$fernet_key" \
+            -e MONATISE_ENABLE_GLOBAL_CREDENTIALS=false \
+            monatise-live-smoke:${{ github.sha }}
+
+      - name: Wait for health endpoint
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 40); do
+            if curl -sf http://127.0.0.1:4174/api/health >/dev/null; then
+              echo "container is healthy"
+              exit 0
+            fi
+            sleep 0.5
+          done
+          echo "container never became healthy" >&2
+          docker logs monatise-live-smoke >&2 || true
+          exit 1
+
+      - name: Verify execution stays disabled and no credentials leaked in
+        run: |
+          set -euo pipefail
+          curl -sf http://127.0.0.1:4174/api/health | tee /tmp/health.json
+          python3 -c "
+          import json
+          payload = json.load(open('/tmp/health.json'))
+          assert payload == {'ok': True}, payload
+          "
+
+          curl -sf http://127.0.0.1:4174/api/operator | tee /tmp/operator.json
+          python3 -c "
+          import json
+          payload = json.load(open('/tmp/operator.json'))
+          assert payload['mode'] == 'paper', payload
+          assert payload['executionMode'] == 'disabled', payload
+          assert payload['riskCaps']['allowLiveOrders'] is False, payload
+          assert payload['riskCaps']['liveConfirmation'] is False, payload
+          assert payload['integrations']['backpack']['executionEnabled'] is False, payload
+          # No exchange/data-provider credentials were passed into the
+          # container above -- confirm it honestly reports that rather than
+          # silently assuming a secret exists that it doesn't have.
+          assert payload['integrations']['coinglass']['configured'] is False, payload
+          assert payload['integrations']['quiver']['configured'] is False, payload
+          assert payload['integrations']['backpack']['configured'] is False, payload
+          assert payload['integrations']['tradingView']['configured'] is False, payload
+          "
+
+      - name: Shut down cleanly
+        run: |
+          set -euo pipefail
+          start="$(date +%s)"
+          docker stop -t 10 monatise-live-smoke
+          elapsed=$(( $(date +%s) - start ))
+          exit_code="$(docker inspect monatise-live-smoke --format '{{.State.ExitCode}}')"
+          echo "stopped in ${elapsed}s with exit code ${exit_code}"
+          # Exit 0 means the process caught SIGTERM and shut itself down;
+          # 137 (128+SIGKILL) means docker had to force-kill it after the
+          # stop grace period expired -- a leaked/hung server, not a clean
+          # shutdown.
+          if [ "$exit_code" != "0" ]; then
+            echo "container did not shut down cleanly (exit code $exit_code)" >&2
+            docker logs monatise-live-smoke >&2 || true
+            exit 1
+          fi
+          if curl -sf --max-time 2 http://127.0.0.1:4174/api/health >/dev/null 2>&1; then
+            echo "server port is still accepting connections after shutdown" >&2
+            exit 1
+          fi
+
+      - name: Clean up
+        if: always()
+        run: |
+          docker rm -f monatise-live-smoke 2>/dev/null || true
+          docker rmi monatise-live-smoke:${{ github.sha }} 2>/dev/null || true
+
   ui-quality:
     name: UI quality
     runs-on: ubuntu-latest
