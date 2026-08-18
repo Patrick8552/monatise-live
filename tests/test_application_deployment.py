@@ -127,6 +127,17 @@ def test_scheduled_analysis_configuration_is_explicit_bounded_and_crypto_only():
         "MONATISE_SCHEDULED_ANALYSIS_ENABLED": "true",
         "MONATISE_SCHEDULED_ANALYSIS_SYMBOLS": "BNB,XRP,ADA,AVAX,LINK,SUI",
     }) == (("BNB", "XRP", "ADA", "AVAX", "LINK", "SUI"), ("15m",))
+    assert scheduled_analysis_configuration({
+        "MONATISE_ENVIRONMENT": "production",
+        "MONATISE_SCHEDULED_ANALYSIS_ENABLED": "true",
+        "MONATISE_SCHEDULED_ANALYSIS_SYMBOLS": "BTC",
+    }) == (SCHEDULED_ANALYSIS_DEFAULT_SYMBOLS, ("15m",))
+    assert scheduled_analysis_configuration({
+        "MONATISE_ENVIRONMENT": "production",
+        "MONATISE_SCHEDULED_ANALYSIS_ENABLED": "true",
+        "MONATISE_SCHEDULED_ANALYSIS_SYMBOLS": "BTC",
+        "MONATISE_DIRECTIONAL_ANALYSIS_SYMBOLS": "BTC",
+    }) == (("BTC",), ("15m",))
     with pytest.raises(ValueError, match="unsupported scheduled analysis symbols"):
         scheduled_analysis_configuration({
             "MONATISE_SCHEDULED_ANALYSIS_ENABLED": "true",

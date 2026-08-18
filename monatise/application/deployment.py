@@ -46,6 +46,7 @@ COINGLASS_PROVIDER_KEY = "coinglass.market_provider"
 SCHEDULED_ANALYSIS_JOB_PREFIX = "scheduled-analysis"
 SCHEDULED_ANALYSIS_DEFAULT_SYMBOLS = ("BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX", "LINK", "SUI")
 SCHEDULED_ANALYSIS_SUPPORTED_SYMBOLS = frozenset(SCHEDULED_ANALYSIS_DEFAULT_SYMBOLS)
+DIRECTIONAL_ANALYSIS_SYMBOLS_KEY = "MONATISE_DIRECTIONAL_ANALYSIS_SYMBOLS"
 # Bump whenever the snapshot payload shape changes, so a later replay can
 # tell which schema a given historical row was written under.
 DECISION_SNAPSHOT_SCHEMA_VERSION = 1
@@ -98,7 +99,14 @@ def scheduled_analysis_configuration(environment: Mapping[str, str]) -> tuple[tu
     """Return the production analysis schedule without granting execution capability."""
     if not _true(environment.get("MONATISE_SCHEDULED_ANALYSIS_ENABLED")):
         return None
-    raw_symbols = environment.get("MONATISE_SCHEDULED_ANALYSIS_SYMBOLS", ",".join(SCHEDULED_ANALYSIS_DEFAULT_SYMBOLS))
+    raw_symbols = environment.get(DIRECTIONAL_ANALYSIS_SYMBOLS_KEY)
+    if raw_symbols is None:
+        legacy_symbols = environment.get("MONATISE_SCHEDULED_ANALYSIS_SYMBOLS")
+        legacy_btc_only = tuple(part.strip().upper() for part in (legacy_symbols or "").split(",") if part.strip()) == ("BTC",)
+        if environment.get("MONATISE_ENVIRONMENT", "").strip().casefold() == "production" and legacy_btc_only:
+            raw_symbols = ",".join(SCHEDULED_ANALYSIS_DEFAULT_SYMBOLS)
+        else:
+            raw_symbols = legacy_symbols or ",".join(SCHEDULED_ANALYSIS_DEFAULT_SYMBOLS)
     symbols = tuple(dict.fromkeys(part.strip().upper() for part in raw_symbols.split(",") if part.strip()))
     unsupported = tuple(symbol for symbol in symbols if symbol not in SCHEDULED_ANALYSIS_SUPPORTED_SYMBOLS)
     if not symbols:
@@ -475,8 +483,8 @@ class OrchestrationRuntime:
         self.hierarchy_service = ShadowHierarchyService(self.hierarchy, HierarchyLayerEvaluator(configuration=configuration), repository, publisher=publisher, current_price_provider=current_price_provider)
         scheduler = self.application.infrastructure.scheduler
         job_ids: list[str] = []
-        raw_symbols = self.environment.get("MONATISE_SCHEDULED_ANALYSIS_SYMBOLS", "BTC,ETH,SOL")
-        symbols = tuple(dict.fromkeys(item.strip().upper() for item in raw_symbols.split(",") if item.strip()))
+        scheduled = scheduled_analysis_configuration({**self.environment, "MONATISE_SCHEDULED_ANALYSIS_ENABLED": "true"})
+        symbols = scheduled[0] if scheduled is not None else SCHEDULED_ANALYSIS_DEFAULT_SYMBOLS
         for symbol in symbols:
             job_id = f"hierarchy-shadow-{symbol.casefold()}"
 

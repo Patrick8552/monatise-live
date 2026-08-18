@@ -39,7 +39,7 @@ services:
         value: monatise:production-analysis
       - key: MONATISE_SCHEDULED_ANALYSIS_ENABLED
         value: true
-      - key: MONATISE_SCHEDULED_ANALYSIS_SYMBOLS
+      - key: MONATISE_DIRECTIONAL_ANALYSIS_SYMBOLS
         value: BTC,ETH,SOL,BNB,XRP,DOGE,ADA,AVAX,LINK,SUI
       - key: MONATISE_SCHEDULED_ANALYSIS_INTERVAL_SECONDS
         value: 900
