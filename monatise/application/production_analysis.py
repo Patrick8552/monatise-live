@@ -352,7 +352,6 @@ def sanitized_result(result: Any) -> dict[str, Any]:
     metadata = getattr(decision, "metadata", {}) or {}
     price = getattr(market, "price", None)
     directional_plan = build_directional_plan(price, direction)
-    grid_plan = build_moving_grid_plan(market) if classification == "grid" else None
     confirmation_status = getattr(getattr(price_action, "status", None), "value", "pending")
     confirmation_signal = strongest_confirmation_signal(price_action)
     confirmation_age = int(getattr(confirmation_signal, "age_candles", 0) or 0)
@@ -360,8 +359,8 @@ def sanitized_result(result: Any) -> dict[str, Any]:
     generated_at = getattr(result, "finished_at", None) or getattr(run, "requested_at", None) or datetime.now(timezone.utc)
     validity = build_setup_validity(
         getattr(market, "interval", None),
-        generated_at, age_candles=confirmation_age if classification == "grid" else 0,
-    ) if classification != "grid" or confirmation_status == "confirmed" else None
+        generated_at, age_candles=0,
+    )
     return {
         "run_id": result.run_id,
         "correlation_id": result.correlation_id,
@@ -372,17 +371,11 @@ def sanitized_result(result: Any) -> dict[str, Any]:
         "direction": direction,
         "conviction": getattr(decision, "conviction", None),
         "score": metadata.get("signed_signal_score"),
-        "grid_score": metadata.get("grid_signal_score"),
         "score_threshold": metadata.get("minimum_signal_score", 7),
-        # A "grid" classification with no grid_plan means price has already
-        # broken outside the rolling-range bands (build_moving_grid_plan
-        # fails closed to None) -- report no entry rather than the raw
-        # price, which would otherwise look like a real actionable level.
-        "entry": directional_plan["entry"] if directional_plan else price if classification == "grid" and grid_plan is not None else None,
+        "entry": directional_plan["entry"] if directional_plan else None,
         "invalidation": directional_plan["invalidation"] if directional_plan else None,
         "target": directional_plan["target"] if directional_plan else None,
         "reward_risk": None,
-        "grid_plan": grid_plan,
         "entry_confirmation_status": confirmation_status,
         "entry_confirmation_required": bool(getattr(price_action, "entry_confirmation_required", True)),
         "price_action_confirmed": bool(getattr(price_action, "has_confirmation", False)),

@@ -331,7 +331,7 @@ def test_sanitized_result_reports_no_entry_when_grid_classification_has_no_grid_
 
     payload = sanitized_result(result)
 
-    assert payload["grid_plan"] is None
+    assert "grid_plan" not in payload
     assert payload["entry"] is None
 
 

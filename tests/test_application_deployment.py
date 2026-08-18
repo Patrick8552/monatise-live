@@ -299,6 +299,23 @@ def _grid_result(confirmation_status="pending", price=65_000):
     )
 
 
+def _directional_result(direction="long", signed_score=8, price=65_000):
+    return SimpleNamespace(
+        symbol="BTC",
+        status=SimpleNamespace(value="completed"),
+        context=SimpleNamespace(outputs={
+            "decision": SimpleNamespace(
+                classification=SimpleNamespace(value="trend"),
+                direction=SimpleNamespace(value=direction),
+                metadata={"signed_signal_score": signed_score, "minimum_signal_score": 7},
+            ),
+            "market_data": SimpleNamespace(symbol="BTC", price=price, candles=()),
+            "price_action": SimpleNamespace(status=SimpleNamespace(value="confirmed"), strongest_confirming_pattern="breakout"),
+            "risk_validation": SimpleNamespace(metadata={}),
+        }),
+    )
+
+
 @pytest.mark.parametrize("status", ("pending", "conflict", "expired", "invalidated"))
 def test_unconfirmed_grid_setups_are_not_claimed_for_scheduled_telegram(status):
     runtime = OrchestrationRuntime(environment={})
@@ -306,101 +323,9 @@ def test_unconfirmed_grid_setups_are_not_claimed_for_scheduled_telegram(status):
     assert asyncio.run(runtime._telegram_notification_candidate(_grid_result(status), "15m")) is None
 
 
-def test_confirmed_grid_setup_is_claimed_once_for_scheduled_telegram():
+def test_confirmed_grid_setup_is_never_claimed_for_scheduled_telegram():
     runtime = OrchestrationRuntime(environment={})
-    result = _grid_result("confirmed")
-
-    candidate = asyncio.run(runtime._telegram_notification_candidate(result, "15m"))
-    assert candidate is not None
-    assert candidate["expires_at"] is not None
-    assert candidate["validity_candles"] == 4
-    _record_delivered(runtime, "BTC", "15m", candidate)
-    assert asyncio.run(runtime._telegram_notification_candidate(result, "15m")) is None
-
-
-def test_grid_level_drift_does_not_repeat_same_confirmation():
-    runtime = OrchestrationRuntime(environment={})
-    candidate = asyncio.run(runtime._telegram_notification_candidate(_grid_result("confirmed", price=65_000), "15m"))
-    assert candidate is not None
-    _record_delivered(runtime, "BTC", "15m", candidate)
-
-    assert asyncio.run(runtime._telegram_notification_candidate(_grid_result("confirmed", price=65_500), "15m")) is None
-
-
-@pytest.mark.parametrize("status", ("conflict", "expired", "invalidated"))
-def test_terminal_grid_transition_cancels_once_after_confirmation(status):
-    runtime = OrchestrationRuntime(environment={})
-    confirmed = asyncio.run(runtime._telegram_notification_candidate(_grid_result("confirmed"), "15m"))
-    assert confirmed is not None
-    _record_delivered(runtime, "BTC", "15m", confirmed)
-
-    terminal = asyncio.run(runtime._telegram_notification_candidate(_grid_result(status), "15m"))
-    assert terminal is not None
-    assert terminal["confirmation_status"] == "cancelled"
-    assert terminal["cancellation_reason"] == f"price-action confirmation became {status}"
-    _record_delivered(runtime, "BTC", "15m", terminal)
-    assert asyncio.run(runtime._telegram_notification_candidate(_grid_result(status), "15m")) is None
-
-
-def test_one_point_grid_score_drop_does_not_cancel_confirmed_entry():
-    runtime = OrchestrationRuntime(environment={})
-    confirmed = asyncio.run(runtime._telegram_notification_candidate(_grid_result("confirmed"), "15m"))
-    assert confirmed is not None
-    _record_delivered(runtime, "BTC", "15m", confirmed)
-    disqualified = _grid_result("confirmed")
-    disqualified.context.outputs["decision"].metadata["grid_signal_score"] = 6
-
-    cancellation = asyncio.run(runtime._telegram_notification_candidate(disqualified, "15m"))
-
-    assert cancellation is None
-
-
-def test_two_point_grid_score_drop_cancels_previously_confirmed_entry():
-    runtime = OrchestrationRuntime(environment={})
-    confirmed = asyncio.run(runtime._telegram_notification_candidate(_grid_result("confirmed"), "15m"))
-    assert confirmed is not None
-    _record_delivered(runtime, "BTC", "15m", confirmed)
-    disqualified = _grid_result("confirmed")
-    disqualified.context.outputs["decision"].metadata["grid_signal_score"] = 5
-
-    cancellation = asyncio.run(runtime._telegram_notification_candidate(disqualified, "15m"))
-
-    assert cancellation is not None
-    assert cancellation["confirmation_status"] == "cancelled"
-    assert cancellation["cancellation_reason"] == "signal score 5/10 fell below the 7/10 threshold"
-
-
-def test_no_trade_does_not_cancel_previously_confirmed_grid():
-    runtime = OrchestrationRuntime(environment={})
-    confirmed = asyncio.run(runtime._telegram_notification_candidate(_grid_result("confirmed"), "15m"))
-    assert confirmed is not None
-    _record_delivered(runtime, "BTC", "15m", confirmed)
-    disqualified = _grid_result("confirmed")
-    disqualified.context.outputs["decision"].classification = DecisionClassification.NO_TRADE
-
-    assert asyncio.run(runtime._telegram_notification_candidate(disqualified, "15m")) is None
-
-
-def test_expired_confirmed_grid_is_cancelled_after_no_trade_grace():
-    runtime = OrchestrationRuntime(environment={})
-    runtime._telegram_signal_states[("BTC", "15m")] = {
-        "fingerprint": "confirmed-grid-1",
-        "classification": "grid",
-        "confirmation_status": "confirmed",
-        "delivery_status": "delivered",
-        "expires_at": "2026-08-07T10:00:00+00:00",
-        "version": 7,
-    }
-    result = _grid_result("confirmed")
-    result.context.outputs["decision"].classification = DecisionClassification.NO_TRADE
-
-    cancellation = asyncio.run(runtime._telegram_notification_candidate(result, "15m"))
-
-    assert cancellation is not None
-    assert cancellation["confirmation_status"] == "cancelled"
-    assert cancellation["classification"] == "grid"
-    assert cancellation["expected_version"] == 7
-    assert cancellation["cancellation_reason"].startswith("grid setup expired at ")
+    assert asyncio.run(runtime._telegram_notification_candidate(_grid_result("confirmed"), "15m")) is None
 
 
 def test_expired_directional_setup_is_transitioned_before_new_analysis():
@@ -432,7 +357,7 @@ def test_no_trade_does_not_notify_without_previous_confirmed_grid():
 def test_failed_telegram_delivery_is_recorded_without_automatic_duplicate_retry():
     class Orchestrator:
         async def run(self, run):
-            result = _grid_result("confirmed")
+            result = _directional_result()
             result.run_id = "run-failed-delivery"
             result.correlation_id = run.correlation_id
             result.statistics = SimpleNamespace(completed_stages=1)
@@ -452,28 +377,21 @@ def test_failed_telegram_delivery_is_recorded_without_automatic_duplicate_retry(
     runtime.telegram = Telegram()
 
     asyncio.run(runtime.analyse("BTC", interval="15m", notification_policy="qualified_changes"))
-    assert asyncio.run(runtime._telegram_notification_candidate(_grid_result("confirmed"), "15m")) is None
+    assert asyncio.run(runtime._telegram_notification_candidate(_directional_result(), "15m")) is None
     state = runtime._telegram_signal_states[("BTC", "15m")]
     assert state["delivery_status"] == "failed"
     assert state["error_type"] == "RuntimeError"
 
 
-def test_confirmed_grid_to_directional_setup_is_one_replacement_candidate():
+def test_legacy_grid_state_is_silently_replaced_by_directional_state():
     runtime = OrchestrationRuntime(environment={})
-    confirmed = asyncio.run(runtime._telegram_notification_candidate(_grid_result("confirmed"), "15m"))
-    _record_delivered(runtime, "BTC", "15m", confirmed)
-    directional = _grid_result("pending")
-    directional.context.outputs["decision"] = SimpleNamespace(
-        classification=SimpleNamespace(value="trend"),
-        direction=SimpleNamespace(value="long"),
-        metadata={"signed_signal_score": 8, "minimum_signal_score": 7},
-    )
+    runtime._telegram_signal_states[("BTC", "15m")] = {"classification": "grid", "version": 4}
 
-    replacement = asyncio.run(runtime._telegram_notification_candidate(directional, "15m"))
+    replacement = asyncio.run(runtime._telegram_notification_candidate(_directional_result(), "15m"))
 
     assert replacement is not None
-    assert replacement["replaces_confirmed_grid"] is True
     assert replacement["classification"] == "trend"
+    assert replacement["expected_version"] == 4
 
 
 def test_redis_notification_state_survives_runtime_restart():
@@ -492,13 +410,13 @@ def test_redis_notification_state_survives_runtime_restart():
     redis = Redis()
     first = OrchestrationRuntime(environment={})
     first.redis_coordination = RedisCoordinationStore(redis, namespace="test")
-    candidate = asyncio.run(first._telegram_notification_candidate(_grid_result("confirmed"), "15m"))
+    candidate = asyncio.run(first._telegram_notification_candidate(_directional_result(), "15m"))
     assert candidate is not None
     _record_delivered(first, "BTC", "15m", candidate)
 
     restarted = OrchestrationRuntime(environment={})
     restarted.redis_coordination = RedisCoordinationStore(redis, namespace="test")
-    assert asyncio.run(restarted._telegram_notification_candidate(_grid_result("confirmed"), "15m")) is None
+    assert asyncio.run(restarted._telegram_notification_candidate(_directional_result(), "15m")) is None
 
 
 def test_atomic_reservation_allows_only_one_overlapping_sender():
@@ -518,8 +436,8 @@ def test_atomic_reservation_allows_only_one_overlapping_sender():
     second = OrchestrationRuntime(environment={})
     first.redis_coordination = RedisCoordinationStore(redis, namespace="test")
     second.redis_coordination = RedisCoordinationStore(redis, namespace="test")
-    first_candidate = asyncio.run(first._telegram_notification_candidate(_grid_result("confirmed"), "15m"))
-    second_candidate = asyncio.run(second._telegram_notification_candidate(_grid_result("confirmed"), "15m"))
+    first_candidate = asyncio.run(first._telegram_notification_candidate(_directional_result(), "15m"))
+    second_candidate = asyncio.run(second._telegram_notification_candidate(_directional_result(), "15m"))
 
     assert asyncio.run(first._reserve_telegram_notification("BTC", "15m", first_candidate)) is True
     assert asyncio.run(second._reserve_telegram_notification("BTC", "15m", second_candidate)) is False
@@ -544,7 +462,7 @@ def test_redis_notification_state_rejects_stale_compare_and_set():
     key = ("BTC", "15m")
     redis.values["test:notification-state:btc:15m"] = json.dumps({
         "fingerprint": "new",
-        "classification": "grid",
+        "classification": "trend",
         "confirmation_status": "confirmed",
         "version": 20,
     })

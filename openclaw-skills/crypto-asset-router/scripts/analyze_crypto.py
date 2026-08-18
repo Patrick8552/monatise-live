@@ -81,7 +81,6 @@ def analyze(asset: str, interval: str = "1h", payload: dict | None = None, curre
     classification = str(analysis.get("classification") or "no_trade").lower()
     direction = str(analysis.get("direction") or "none").lower()
     score = int(analysis.get("score") or 0)
-    grid_score = int(analysis.get("grid_score") or 0)
     threshold = int(analysis.get("score_threshold") or 7)
     weekend = generated.weekday() >= 5
 
@@ -91,21 +90,17 @@ def analyze(asset: str, interval: str = "1h", payload: dict | None = None, curre
         decision, reason = "LONG", "SIGNED_SCORE_THRESHOLD_MET"
     elif classification == "trend" and direction == "short" and score <= -threshold:
         decision, reason = "SHORT", "SIGNED_SCORE_THRESHOLD_MET"
-    elif classification == "grid" and grid_score >= threshold:
-        decision, reason = "GRID", "GRID_SCORE_THRESHOLD_MET"
+    elif classification in {"grid", "two_sided"}:
+        decision, reason = "NO_TRADE", "DIRECTIONAL_ANALYSIS_REQUIRED"
     else:
         decision = "NO_TRADE"
         reason = "PRODUCTION_BLOCKED" if analysis.get("blockers") else "SCORE_BELOW_THRESHOLD"
 
-    actionable = decision in {"LONG", "SHORT", "GRID"}
+    actionable = decision in {"LONG", "SHORT"}
     entry = analysis.get("entry") if actionable else None
     invalidation = analysis.get("invalidation") if actionable else None
     target = analysis.get("target") if actionable else None
-    grid_plan = analysis.get("grid_plan") if decision == "GRID" else None
-    valid_grid = valid_grid_plan(grid_plan)
-    if decision == "GRID" and not valid_grid:
-        decision, reason, actionable = "NO_TRADE", "INVALID_GRID_LEVELS", False
-    elif actionable and decision != "GRID" and not all(isinstance(value, (int, float)) and value > 0 for value in (entry, invalidation, target)):
+    if actionable and not all(isinstance(value, (int, float)) and value > 0 for value in (entry, invalidation, target)):
         decision, reason, actionable = "NO_TRADE", "INVALID_RISK_LEVELS", False
 
     return {
@@ -113,14 +108,12 @@ def analyze(asset: str, interval: str = "1h", payload: dict | None = None, curre
         "decision": decision,
         "classification": classification,
         "score": score,
-        "grid_score": grid_score,
         "score_threshold": threshold,
         "conviction_score": round(float(analysis.get("conviction") or 0) * 100),
         "entry": entry if actionable else None,
         "stop_loss": invalidation if actionable else None,
         "target": target if actionable else None,
         "reward_risk": analysis.get("reward_risk") if actionable else None,
-        "grid_plan": grid_plan if actionable and decision == "GRID" else None,
         "risk_decision": analysis.get("risk_decision"),
         "risk_issues": list(analysis.get("risk_issues") or []),
         "status": analysis.get("status"),
@@ -135,8 +128,7 @@ def analyze(asset: str, interval: str = "1h", payload: dict | None = None, curre
 
 
 def telegram(analysis: dict) -> str:
-    score = analysis["grid_score"] if analysis["decision"] == "GRID" else analysis["score"]
-    score_text = f"{score:+d}/10" if analysis["decision"] != "GRID" else f"{score}/10"
+    score_text = f"{analysis['score']:+d}/10"
     lines = [
         "MONATISE CRYPTO ANALYSIS",
         f"Asset: {analysis['asset']}",
@@ -146,20 +138,6 @@ def telegram(analysis: dict) -> str:
     ]
     if analysis["decision"] == "NO_TRADE":
         lines += ["Reason:", analysis["reason_code"].replace("_", " ").title()]
-    elif analysis["decision"] == "GRID":
-        grid = analysis["grid_plan"]
-        blocked = analysis.get("status") == "blocked" or analysis.get("risk_decision") == "rejected"
-        lines[2] = f"Decision: GRID {'CANDIDATE — RISK BLOCKED' if blocked else 'READY'}"
-        lines += [
-            f"Center: ${grid['center']:,.2f}",
-            "Buy levels: " + " | ".join(f"${value:,.2f}" for value in grid["buy_levels"]),
-            "Sell levels: " + " | ".join(f"${value:,.2f}" for value in grid["sell_levels"]),
-            f"Boundaries: ${grid['lower_boundary']:,.2f} — ${grid['upper_boundary']:,.2f}",
-            f"Invalidation: below ${grid['lower_invalidation']:,.2f} or above ${grid['upper_invalidation']:,.2f}",
-            f"Spacing: ${grid['spacing']:,.2f} | {grid['levels_per_side']} levels per side",
-        ]
-        if analysis["risk_issues"]:
-            lines += ["Risk review:", *[f"• {issue.get('message', issue.get('code', 'unknown issue'))}" for issue in analysis["risk_issues"][:3]]]
     else:
         lines += [
             f"Entry: ${analysis['entry']:,.2f}",

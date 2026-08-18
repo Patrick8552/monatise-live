@@ -228,7 +228,7 @@
                 <div class="setup-grid-card">
                   <div class="setup-grid-head">
                     <div>
-                      <span>Setup Grid</span>
+                      <span>Directional Setup</span>
                       <strong id="signalEntry">--</strong>
                     </div>
                     <span id="setupGridStatus" class="setup-grid-status">WAIT · NO TRADE</span>
@@ -239,8 +239,8 @@
                     <small id="setupContextStrength">0% strength</small>
                   </div>
                   <div class="setup-level-section">
-                    <span id="setupEntryLabel">Entry grid</span>
-                    <div id="setupEntryLevels" class="setup-levels" aria-label="Entry grid levels"></div>
+                    <span id="setupEntryLabel">Entry</span>
+                    <div id="setupEntryLevels" class="setup-levels" aria-label="Entry level"></div>
                   </div>
                   <div class="setup-level-section setup-profit-section">
                     <span id="setupProfitLabel">Take profit</span>
@@ -259,7 +259,7 @@
                     </div>
                   </div>
                   <small id="setupGridValidity" class="setup-grid-validity">Waiting for a valid snapshot</small>
-                  <small id="signalEntryPlan" class="visually-hidden">Waiting for setup grid.</small>
+                  <small id="signalEntryPlan" class="visually-hidden">Waiting for a directional setup.</small>
                 </div>
                 <div>
                   <span>Invalidation</span>
@@ -329,12 +329,12 @@
               <div class="setup-primary">
                 <span id="setupAsset">BTC setup</span>
                 <strong id="setupDirection">NO TRADE</strong>
-                <p id="setupReason">CoinGlass market structure, funding, open interest, liquidation liquidity, VWAP, and price history will decide the grid.</p>
+                <p id="setupReason">CoinGlass market structure, funding, open interest, liquidation liquidity, VWAP, and price history will decide the directional setup.</p>
               </div>
               <div class="setup-card">
-                <span>Grid</span>
-                <strong id="gridDirection">Neutral grid</strong>
-                <small id="gridPlan">Wait for data alignment.</small>
+                <span>Direction</span>
+                <strong id="gridDirection">No directional setup</strong>
+                <small id="gridPlan">Wait for directional data alignment.</small>
               </div>
               <div class="setup-card">
                 <span>Take Profit</span>

@@ -125,12 +125,12 @@ def _grid_plan():
     }
 
 
-def test_grid_confirms_only_when_flow_is_not_one_sided():
+def test_grid_is_rejected_even_when_flow_is_not_one_sided():
     balanced, asset = _quality_result(derivatives={"cvd_delta": 100.0, "derivatives_volume": 1_000_000.0})
     output = finalize_dynamic_analysis({"classification": "grid", "direction": "two_sided", "interval": "1h", "grid_plan": _grid_plan()}, balanced, asset)
-    assert output["data_quality"]["passed"] is True
-    assert output["grid_plan"]["buy_levels"] == [0.95, 0.9]
-    assert output["grid_plan"]["sell_levels"] == [1.05, 1.1]
+    assert output["data_quality"]["passed"] is False
+    assert output["classification"] == "no_trade"
+    assert output["grid_plan"] is None
 
     skewed, asset = _quality_result(derivatives={"cvd_delta": 900_000.0, "derivatives_volume": 1_000_000.0})
     output = finalize_dynamic_analysis({"classification": "grid", "direction": "two_sided", "interval": "1h", "grid_plan": _grid_plan()}, skewed, asset)
@@ -151,11 +151,12 @@ def test_grid_plan_already_breached_by_price_fails_closed():
     assert output["grid_plan"] is None
 
 
-def test_grid_plan_still_inside_inner_band_passes():
+def test_grid_plan_still_inside_inner_band_is_rejected():
     result, asset = _quality_result(price=1.02, derivatives={"cvd_delta": 100.0, "derivatives_volume": 1_000_000.0})
     output = finalize_dynamic_analysis({"classification": "grid", "direction": "two_sided", "interval": "1h", "grid_plan": _grid_plan()}, result, asset)
-    assert output["classification"] == "grid"
-    assert output["data_quality"]["passed"] is True
+    assert output["classification"] == "no_trade"
+    assert output["grid_plan"] is None
+    assert output["data_quality"]["passed"] is False
 
 
 def test_malformed_grid_plan_fails_closed():

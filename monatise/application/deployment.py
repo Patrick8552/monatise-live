@@ -1322,6 +1322,10 @@ class OrchestrationRuntime:
         outputs = result.context.outputs
         key = (result.symbol, interval)
         previous = await self._telegram_notification_state(key)
+        if (previous or {}).get("classification") == "grid":
+            # Retire legacy grid state silently. Grid/two-sided analysis is no
+            # longer a valid notification or cancellation outcome.
+            previous = {"version": int((previous or {}).get("version", 0) or 0)}
         expired_grid = self._expired_grid_candidate(previous)
         if expired_grid is not None:
             return expired_grid
@@ -1339,12 +1343,13 @@ class OrchestrationRuntime:
         metadata = getattr(decision, "metadata", {}) or {}
         classification = getattr(getattr(decision, "classification", None), "value", "no_trade")
         direction = getattr(getattr(decision, "direction", None), "value", "none")
+        if classification == "grid" or direction == "two_sided":
+            return None
         threshold = int(metadata.get("minimum_signal_score", 7) or 7)
         signed_score = int(metadata.get("signed_signal_score", 0) or 0)
-        score = int(metadata.get("grid_signal_score", 0) or 0) if classification == "grid" else abs(signed_score)
+        score = abs(signed_score)
         direction_is_qualified = (
-            classification == "grid"
-            or (direction == "long" and signed_score >= threshold)
+            (direction == "long" and signed_score >= threshold)
             or (direction == "short" and signed_score <= -threshold)
         )
         # A confirmed grid must survive ordinary score noise. A single NO_TRADE

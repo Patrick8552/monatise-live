@@ -406,7 +406,7 @@ def test_telegram_grid_replacement_combines_cancellation_and_directional_setup()
     assert "directional setup: BTC LONG" in sent[0][1]
 
 
-def test_telegram_subminute_validity_is_not_rendered_as_zero_minutes():
+def test_telegram_directional_validity_is_rendered():
     run = AnalysisRun("BTC", {})
     # Keep the assertion away from the exact 60-second boundary. The
     # formatter reads the clock independently, so using requested_at could
@@ -415,11 +415,11 @@ def test_telegram_subminute_validity_is_not_rendered_as_zero_minutes():
     signal = SimpleNamespace(pattern="bullish_engulfing", confidence=0.9, evidence_score=0.9, age_candles=3)
     outputs = {
         "decision": SimpleNamespace(
-            direction=SimpleNamespace(value="two_sided"),
-            classification=SimpleNamespace(value="grid"),
+            direction=SimpleNamespace(value="long"),
+            classification=SimpleNamespace(value="trend"),
             conviction=0.8,
             reasons=(),
-            metadata={"grid_signal_score": 8, "minimum_signal_score": 7},
+            metadata={"signed_signal_score": 8, "minimum_signal_score": 7},
         ),
         "market_data": SimpleNamespace(price=65_000, interval="1m", quality=SimpleNamespace(source="CoinGlass")),
         "price_action": SimpleNamespace(
@@ -439,7 +439,7 @@ def test_telegram_subminute_validity_is_not_rendered_as_zero_minutes():
 
     message = TelegramNotifier.format(result)
 
-    assert "Remaining validity: <1 min | 1 candle(s)" in message
+    assert "Remaining validity:" in message
     assert "Remaining validity: 0 min" not in message
 
 
@@ -508,7 +508,7 @@ def test_telegram_no_trade_message_is_explicit_and_explained():
     assert f"Run: {run.run_id}" in message
 
 
-def test_telegram_grid_analysis_is_included_and_labeled():
+def test_telegram_legacy_grid_analysis_fails_closed():
     run = AnalysisRun("BTC", {})
     now = run.requested_at
     outputs = {
@@ -528,15 +528,11 @@ def test_telegram_grid_analysis_is_included_and_labeled():
 
     message = TelegramNotifier.format(result)
 
-    assert "Monatise GRID DECISION READY — ENTRY CONFIRMATION PENDING: BTC (TWO_SIDED)" in message
+    assert "Monatise NO_TRADE: BTC" in message
     assert "Current CoinGlass price: 65,000" in message
-    assert "Center: 65,000" in message
-    assert "Buy levels: 64,566.66666667 | 64,133.33333333 | 63,700" in message
-    assert "Sell levels: 65,433.33333333 | 65,866.66666667 | 66,300" in message
-    assert "Invalidation: below 63,266.66666667 or above 66,733.33333333" in message
-    assert "Entry: WAIT — fresh confirmation is required at the selected grid level" in message
-    assert "CoinGlass futures price history" in message
-    assert "Score: 7/10" in message
+    assert "GRID" not in message
+    assert "Buy levels:" not in message
+    assert "Sell levels:" not in message
 
 
 @pytest.mark.parametrize(("status", "expected"), (
@@ -546,7 +542,7 @@ def test_telegram_grid_analysis_is_included_and_labeled():
     ("invalidated", "Entry: WAIT — price-action setup invalidated; a new setup is required"),
     ("pending", "Entry: WAIT — waiting for fixed entry context"),
 ))
-def test_telegram_grid_renders_each_confirmation_status(status, expected):
+def test_telegram_legacy_grid_never_renders_confirmation_status(status, expected):
     run = AnalysisRun("BTC", {})
     now = run.requested_at
     bullish = SimpleNamespace(family=SimpleNamespace(value="candlestick"), pattern="bullish_engulfing", direction=SimpleNamespace(value="bullish"), confidence=0.8, age_candles=0)
@@ -567,16 +563,10 @@ def test_telegram_grid_renders_each_confirmation_status(status, expected):
     }
     result = PipelineResult(run.run_id, run.correlation_id, "BTC", PipelineStage.COMPLETED, PipelineContext(run, outputs), PipelineStatistics(1, {}, {}, 14), None, None, now, now)
     message = TelegramNotifier.format(result)
-    assert f"ENTRY CONFIRMATION {status.upper()}" in message
-    assert expected in message
-    if status == "confirmed":
-        assert "Generated at:" in message
-        assert "Valid until:" in message
-        assert "Remaining validity:" in message
+    assert "Monatise NO_TRADE: BTC" in message
+    assert "ENTRY CONFIRMATION" not in message
+    assert expected not in message
     assert "executed" not in message.lower()
-    if status == "invalidated":
-        assert "GRID ACTIVE ENTRY BLOCKED" in message
-        assert "GRID DECISION READY" not in message
 
 
 def test_telegram_directional_setup_ignores_legacy_risk_rejection():

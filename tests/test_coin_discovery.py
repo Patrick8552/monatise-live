@@ -185,7 +185,7 @@ def test_format_dynamic_analysis_shows_zone_targets_and_never_an_entry_field():
     assert "Run: run-1" in message
 
 
-def test_format_dynamic_analysis_shows_the_full_grid_plan_and_grid_score():
+def test_format_dynamic_analysis_rejects_legacy_grid_payloads():
     message = TelegramNotifier.format_dynamic_analysis({
         "symbol": "DOGE", "interval": "15m", "classification": "grid", "direction": "two_sided",
         "provenance": {"instrument": "DOGEUSDT", "exchange": "Binance", "source": "CoinGlass"},
@@ -202,17 +202,12 @@ def test_format_dynamic_analysis_shows_the_full_grid_plan_and_grid_score():
         "run_id": "run-3",
     })
 
-    assert "Monatise dynamic scan: DOGE TWO_SIDED (GRID)" in message
-    assert "Center: 0.0699" in message
-    assert "Buy levels: 0.06972 | 0.06946" in message
-    assert "Sell levels: 0.07018 | 0.07047" in message
-    assert "Boundaries: 0.06946 — 0.07047" in message
-    assert "Invalidation: below 0.06932 or above 0.07061" in message
-    # The grid classification is qualified by grid_score (8, above threshold),
-    # not the unrelated signed score (-2) -- showing -2 here would make an
-    # actionable grid look like it's failing its own threshold.
-    assert "Score: 8/10" in message
-    assert "Score: -2/10" not in message
+    assert "Monatise dynamic scan: DOGE NONE (NO_TRADE)" in message
+    assert "Center:" not in message
+    assert "Buy levels:" not in message
+    assert "Sell levels:" not in message
+    assert "Boundaries:" not in message
+    assert "Score: -2/10" in message
     assert '"entry"' not in message
 
 

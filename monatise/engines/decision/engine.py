@@ -38,7 +38,7 @@ from monatise.engines.supply_demand.models import ZoneStrength
 
 
 class DecisionEngine:
-    """Aggregates evidence and classifies GRID, TREND, or NO_TRADE.
+    """Aggregates evidence and classifies TREND or NO_TRADE.
 
     The Decision Engine does not size positions, create executable stops,
     create orders, or bypass the Risk Validation Engine.
@@ -66,7 +66,9 @@ class DecisionEngine:
 
         long_score = self._direction_score(evidence, DecisionDirection.LONG)
         short_score = self._direction_score(evidence, DecisionDirection.SHORT)
-        grid_score = self._grid_score(request, evidence)
+        # Grid/two-sided analysis is disabled system-wide. Range evidence may
+        # still inform blockers, but it can never become an analysis outcome.
+        grid_score = 0.0
 
         directional_total = long_score + short_score
         conflict_ratio = (
@@ -76,7 +78,7 @@ class DecisionEngine:
         )
 
         signed_signal_score = round((long_score - short_score) * 10)
-        grid_signal_score = round(grid_score * 10)
+        grid_signal_score = 0
 
         classification, direction = self._classify(
             request=request,
@@ -86,43 +88,10 @@ class DecisionEngine:
             blockers=blockers,
         )
 
-        grid_context_warnings = {
-            "order flow unavailable",
-            "regime is unstable",
-            "market structure is unstable",
-        }
-        grid_blockers = [blocker for blocker in blockers if blocker not in grid_context_warnings]
-        # This override exists to rescue a GRID call from soft blockers that
-        # shouldn't apply to grid logic (e.g. an unstable regime doesn't
-        # invalidate two-sided liquidity). It must only fire when there were
-        # actual blockers being exempted — not whenever grid_blockers happens
-        # to be empty, which is also true when there were no blockers at all.
-        # Bug: the original `not grid_blockers` check was true in both cases,
-        # so a clean, unblocked, and objectively stronger TREND classification
-        # from _classify() (grid_score < directional_score) could be silently
-        # overwritten by GRID just because grid_signal_score cleared an
-        # absolute bar, with no comparison to how strong the trend was.
-        exempted_soft_blockers = bool(blockers) and not grid_blockers
-        if (
-            request.minimum_signal_score > 0
-            and exempted_soft_blockers
-            and grid_signal_score >= request.minimum_signal_score
-        ):
-            classification = DecisionClassification.GRID
-            direction = DecisionDirection.TWO_SIDED
-            blockers = grid_blockers
-
         if classification is DecisionClassification.TREND and abs(signed_signal_score) < request.minimum_signal_score:
             blockers.append(
                 f"signed signal score {signed_signal_score:+d} is below threshold "
                 f"{request.minimum_signal_score:+d}"
-            )
-            classification = DecisionClassification.NO_TRADE
-            direction = DecisionDirection.NONE
-        elif classification is DecisionClassification.GRID and grid_signal_score < request.minimum_signal_score:
-            blockers.append(
-                f"grid signal score {grid_signal_score} is below threshold "
-                f"{request.minimum_signal_score}"
             )
             classification = DecisionClassification.NO_TRADE
             direction = DecisionDirection.NONE
@@ -151,9 +120,7 @@ class DecisionEngine:
             request=request,
         )
 
-        if classification is DecisionClassification.GRID:
-            reasons.append("two-sided liquidity and range conditions favor grid logic")
-        elif classification is DecisionClassification.TREND:
+        if classification is DecisionClassification.TREND:
             reasons.append("directional structure and aligned evidence favor trend logic")
         else:
             reasons.append("current evidence does not justify a trade setup")
@@ -185,7 +152,6 @@ class DecisionEngine:
                 "requires_risk_validation": True,
                 "execution_enabled": False,
                 "signed_signal_score": signed_signal_score,
-                "grid_signal_score": grid_signal_score,
                 "minimum_signal_score": request.minimum_signal_score,
             },
         )
@@ -575,9 +541,6 @@ class DecisionEngine:
         if request.require_structure_for_trend and not trend_allowed:
             directional_score = 0.0
 
-        if grid_score >= directional_score and grid_score >= request.minimum_conviction:
-            return DecisionClassification.GRID, DecisionDirection.TWO_SIDED
-
         if directional_score >= request.minimum_conviction:
             return DecisionClassification.TREND, direction
 
@@ -592,10 +555,7 @@ class DecisionEngine:
         grid_score: float,
         conflict_ratio: float,
     ) -> float:
-        if classification is DecisionClassification.GRID:
-            base = grid_score
-            conflict_penalty = 0.0
-        elif classification is DecisionClassification.TREND:
+        if classification is DecisionClassification.TREND:
             base = max(long_score, short_score)
             conflict_penalty = conflict_ratio * 0.40
         else:
