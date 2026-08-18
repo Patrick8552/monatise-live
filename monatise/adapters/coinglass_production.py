@@ -105,6 +105,7 @@ class CoinGlassProductionAdapter:
         "/api/futures/supported-coins": set(),
         "/api/futures/supported-exchange-pairs": {"exchange"},
         "/api/futures/coins-price-change": set(),
+        "/api/futures/coins-markets": {"exchange_list", "page", "per_page"},
         "/api/futures/avg-true-range/list": set(),
         "/api/futures/top-long-short-account-ratio/history": {"exchange", "symbol", "interval", "limit", "start_time", "end_time"},
         "/api/futures/top-long-short-position-ratio/history": {"exchange", "symbol", "interval", "limit", "start_time", "end_time"},
@@ -341,6 +342,31 @@ class CoinGlassProductionAdapter:
         if not isinstance(rows, list):
             raise CoinGlassError("CoinGlass price changes must be a list")
         return tuple(row for row in rows if isinstance(row, dict))
+
+    def futures_coins_markets(self, *, maximum_pages: int = 10, per_page: int = 100) -> tuple[dict[str, Any], ...]:
+        """Return the paginated aggregate futures market universe.
+
+        Unlike ``coins-price-change``, this dataset contains the liquidity and
+        open-interest fields required to reject thin markets before analysis.
+        """
+        rows: list[dict[str, Any]] = []
+        page_size = max(10, min(100, int(per_page)))
+        for page in range(1, max(1, min(20, int(maximum_pages))) + 1):
+            payload = self.dashboard_query("/api/futures/coins-markets", {
+                "exchange_list": "Binance,OKX,Bybit",
+                "page": str(page),
+                "per_page": str(page_size),
+            })
+            batch = payload.get("data", [])
+            if isinstance(batch, dict):
+                batch = batch.get("list") or batch.get("data") or []
+            if not isinstance(batch, list):
+                raise CoinGlassError("CoinGlass coins markets must be a list")
+            valid = [row for row in batch if isinstance(row, dict)]
+            rows.extend(valid)
+            if len(valid) < page_size:
+                break
+        return tuple(rows)
 
     def derivatives_snapshot(self, symbol: str, interval: str = "1h") -> dict[str, float | None]:
         symbol = self._crypto_symbol(symbol)

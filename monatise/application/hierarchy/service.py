@@ -25,7 +25,7 @@ class ShadowHierarchyService:
         self.publisher = publisher
         self.current_price_provider = current_price_provider
 
-    async def tick(self, symbol: str, *, observed_at: datetime | None = None, macro_degraded: bool = True) -> dict[str, Any]:
+    async def tick(self, symbol: str, *, observed_at: datetime | None = None, macro_degraded: bool = True, market_context: dict[str, Any] | None = None) -> dict[str, Any]:
         now = observed_at or datetime.now(timezone.utc)
         snapshots = await self.coordinator.collect_due(symbol, watching=self.evaluator.watching(symbol), observed_at=now)
         if not snapshots:
@@ -65,7 +65,7 @@ class ShadowHierarchyService:
                 except Exception:
                     LOGGER.warning("hierarchical CoinGlass current price unavailable", extra={"symbol": symbol.upper()})
             try:
-                delivery_result = await self.publisher(self._format_notification(evaluation, publication_id=trigger_id, current_price=current_price, price_observed_at=now))
+                delivery_result = await self.publisher(self._format_notification(evaluation, publication_id=trigger_id, current_price=current_price, price_observed_at=now, market_context=market_context))
                 telegram_message_id = self._telegram_message_id(delivery_result)
             except Exception as exc:
                 publication_failed = True
@@ -118,7 +118,7 @@ class ShadowHierarchyService:
         }
 
     @staticmethod
-    def _format_notification(evaluation: ShadowEvaluation, *, publication_id: str, current_price: float | None = None, price_observed_at: datetime | None = None, price_source: str = "coinglass") -> str:
+    def _format_notification(evaluation: ShadowEvaluation, *, publication_id: str, current_price: float | None = None, price_observed_at: datetime | None = None, price_source: str = "coinglass", market_context: dict[str, Any] | None = None) -> str:
         bundle = evaluation.bundle
         if bundle is None:
             raise ValueError("notification requires a validated evidence bundle")
@@ -129,13 +129,29 @@ class ShadowHierarchyService:
         expiry = format_nigeria_time(risk.expires_at)
         observed = nigeria_isoformat(price_observed_at or evaluation.evaluated_at)
         current = f"{current_price:,.8f}".rstrip("0").rstrip(".") if current_price is not None else "unavailable"
+        context = market_context or {}
+        discovery = context.get("discovery") or {}
+        derivatives = context.get("derivatives") or {}
+        evidence = (
+            f"Discovery score {float(discovery.get('score', 0)):.2f} | confidence: confirmed hierarchy\n"
+            f"Funding {_display_metric(derivatives.get('funding_rate', discovery.get('funding_rate')))} | "
+            f"OI ${_display_metric(derivatives.get('open_interest', discovery.get('open_interest_usd')))} "
+            f"({float(discovery.get('open_interest_change_15m', 0)):+.2f}%/15m) | "
+            f"Volume ${_display_metric(derivatives.get('derivatives_volume', discovery.get('volume_usd')))}\n"
+            f"CVD {_display_metric(derivatives.get('cvd_change', derivatives.get('cvd')))} | "
+            f"Liquidations ${_display_metric(derivatives.get('liquidation_volume'))} | "
+            f"Order-book imbalance {_display_metric(derivatives.get('order_book_imbalance'))}"
+        )
         return (
             f"Monatise HIERARCHY SHADOW — observation only, not a trade order\n"
-            f"{bundle.symbol} | {direction} | 4H + 1H aligned | 15M setup confirmed | 5M trigger confirmed | 1M entry refined\n"
+            f"{bundle.symbol} | {direction} | {context.get('verified_market', 'CoinGlass verified futures market')}\n"
+            f"15M directional thesis confirmed | 5M structure confirmed | 1M entry trigger refined\n"
             f"Current CoinGlass price: {current} | source {price_source} | observed {observed}\n"
             f"Entry {risk.reference_entry:.8g} | Stop {risk.final_stop:.8g} | Target {risk.target_liquidity:.8g} | R:R {risk.calculated_reward_to_risk:.2f}\n"
+            f"{evidence}\n"
             f"Expires {expiry} | Valid for {validity_minutes} min\n"
-            f"Strategy {bundle.strategy_version} | Evidence {bundle.bundle_id[:12]} | Publication {publication_id[:16]}"
+            f"Strategy {bundle.strategy_version} | Evidence {bundle.bundle_id[:12]} | Publication {publication_id[:16]}\n"
+            f"Analysis only — no trade executed"
         )
 
     @staticmethod
@@ -150,3 +166,10 @@ class ShadowHierarchyService:
     @property
     def execution_enabled(self) -> bool:
         return False
+
+
+def _display_metric(value: Any) -> str:
+    try:
+        return f"{float(value):,.4g}"
+    except (TypeError, ValueError):
+        return "unavailable"

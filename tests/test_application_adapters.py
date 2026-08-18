@@ -262,6 +262,24 @@ def test_coinglass_counts_an_exhausted_request_not_each_retry_attempt():
     assert adapter.health().consecutive_failures == 1
 
 
+def test_coinglass_futures_coins_markets_paginates_liquidity_universe():
+    calls = []
+
+    def transport(path, params, _timeout):
+        calls.append((path, params))
+        page = int(params["page"])
+        count = 10 if page == 1 else 1
+        return {"code": 0, "data": [{"symbol": f"COIN{page}-{index}", "volume_usd_24h": 10_000_000, "open_interest_usd": 2_000_000} for index in range(count)]}
+
+    adapter = CoinGlassProductionAdapter(lambda: "secret", transport=transport, maximum_attempts=1, requests_per_second=100000)
+    rows = adapter.futures_coins_markets(maximum_pages=3, per_page=10)
+
+    assert len(rows) == 11
+    assert [params["page"] for _path, params in calls] == ["1", "2"]
+    assert calls[0][0] == "/api/futures/coins-markets"
+    assert calls[0][1]["exchange_list"] == "Binance,OKX,Bybit"
+
+
 def test_coinglass_retries_generic_transport_failures():
     attempts = []
 

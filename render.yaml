@@ -95,11 +95,13 @@ services:
       - key: MONATISE_COIN_DISCOVERY_ANALYSIS_ENABLED
         value: true
       - key: MONATISE_COIN_DISCOVERY_ANALYSIS_CAP
-        value: 5
-      - key: MONATISE_COIN_DISCOVERY_ANALYSIS_INTERVAL
-        value: 15m
-      - key: MONATISE_COIN_DISCOVERY_ANALYSIS_COOLDOWN_SECONDS
-        value: 21600
+        value: 10
+      - key: MONATISE_COIN_DISCOVERY_CANDIDATE_LIMIT
+        value: 20
+      - key: MONATISE_COIN_DISCOVERY_MIN_VOLUME_USD
+        value: 5000000
+      - key: MONATISE_COIN_DISCOVERY_MIN_OPEN_INTEREST_USD
+        value: 1000000
 
   - type: keyvalue
     name: monatise-live-redis

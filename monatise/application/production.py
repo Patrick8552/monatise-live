@@ -167,6 +167,7 @@ class ProductionASGI(OrchestrationASGI):
             return
         if scope.get("type") == "http" and path in {
             "/api/markets",
+            "/api/public/significant-universe",
             "/api/analysis/fibonacci",
             "/api/context/radar",
             "/api/coinglass/context",
@@ -183,6 +184,7 @@ class ProductionASGI(OrchestrationASGI):
                 return
             handlers = {
                 "/api/markets": self._market_summary,
+                "/api/public/significant-universe": self._significant_universe,
                 "/api/analysis/fibonacci": self._fibonacci_analysis,
                 "/api/context/radar": self._context_radar,
                 "/api/coinglass/context": self._coinglass_context,
@@ -319,6 +321,19 @@ class ProductionASGI(OrchestrationASGI):
         }
         self._market_summary_cache = (now, payload)
         return 200, payload
+
+    async def _significant_universe(self, _scope: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        if self.runtime.redis is None:
+            return 503, {"status": "unavailable", "candidates": [], "execution_enabled": False}
+        namespace = self.runtime.environment.get("MONATISE_REDIS_NAMESPACE", "monatise:production-analysis")
+        raw = await self.runtime.redis.get(f"{namespace}:coinglass:ranked-universe")
+        try:
+            candidates = json.loads(raw) if raw else []
+        except (TypeError, ValueError):
+            candidates = []
+        if not isinstance(candidates, list):
+            candidates = []
+        return 200, {"status": "ready" if candidates else "warming", "candidates": candidates[:20], "source": "CoinGlass significant futures universe", "execution_enabled": False}
 
     async def _analysis_candles(self, scope: dict[str, Any], *, minimum: int) -> tuple[int, dict[str, Any] | list[Candle], str, str]:
         query = parse_qs(scope.get("query_string", b"").decode())

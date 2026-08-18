@@ -363,7 +363,7 @@ refreshXConnection();
 
 function setupDashboardInstall() {
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("./sw.js?v=20260818-directional-v2").catch(() => {});
+    navigator.serviceWorker.register("./sw.js?v=20260818-universe-v1").catch(() => {});
   }
   window.addEventListener("beforeinstallprompt", (event) => {
     event.preventDefault();
@@ -2339,6 +2339,28 @@ function renderMonitorGrid() {
 async function refreshAutonomousMonitor() {
   if (!els.monitorStatus || state.monitor.scanning) return;
   state.monitor.scanning = true;
+  try {
+    const response = await fetch("/api/public/significant-universe", { cache: "no-store" });
+    if (response.ok) {
+      const payload = await response.json();
+      const candidates = Array.isArray(payload.candidates) ? payload.candidates : [];
+      if (candidates.length) {
+        state.monitor.results = Object.fromEntries(candidates.map((item) => [item.symbol, {
+          coin: item.symbol, pair: `${item.symbol}USDT`, price: `Score ${Number(item.score || 0).toFixed(1)}`,
+          changePct: Number(item.change_15m || 0),
+          direction: `${String(item.direction || "watch").toUpperCase()} · ${(item.reasons || []).slice(0, 2).join(" · ")}`,
+          updatedAt: Date.now()
+        }]));
+        state.monitor.lastRun = Date.now();
+        state.monitor.scanning = false;
+        els.monitorStatus.textContent = `Significant CoinGlass universe · ${candidates.length} ranked candidates · directional confirmation required`;
+        renderMonitorGrid();
+        return;
+      }
+    }
+  } catch {
+    // Fall through to the rotating-market fallback while the server scanner warms up.
+  }
   const keys = monitorAssetKeys();
   const batchSize = 8;
   const start = state.monitor.cursor % keys.length;
