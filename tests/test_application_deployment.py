@@ -123,6 +123,10 @@ def test_scheduled_analysis_configuration_is_explicit_bounded_and_crypto_only():
     assert scheduled_analysis_configuration({
         "MONATISE_SCHEDULED_ANALYSIS_ENABLED": "true",
     }) == (SCHEDULED_ANALYSIS_DEFAULT_SYMBOLS, ("15m",))
+    assert scheduled_analysis_configuration({
+        "MONATISE_SCHEDULED_ANALYSIS_ENABLED": "true",
+        "MONATISE_SCHEDULED_ANALYSIS_SYMBOLS": "BNB,XRP,ADA,AVAX,LINK,SUI",
+    }) == (("BNB", "XRP", "ADA", "AVAX", "LINK", "SUI"), ("15m",))
     with pytest.raises(ValueError, match="unsupported scheduled analysis symbols"):
         scheduled_analysis_configuration({
             "MONATISE_SCHEDULED_ANALYSIS_ENABLED": "true",
@@ -920,18 +924,44 @@ def test_analyse_records_a_decision_snapshot_with_every_stage_output():
     snapshot = json.loads(payload_json)
     assert symbol == "BTC"
     assert interval == "15m"
-    assert classification == "grid"
+    assert classification == "no_trade"
     assert schema_version >= 1
     assert snapshot["symbol"] == "BTC"
     assert snapshot["interval"] == "15m"
     assert snapshot["code_version"] == "abc123"
     assert snapshot["schema_version"] >= 1
     assert set(snapshot["outputs"]) == {"decision", "market_data", "price_action"}
+    assert snapshot["outputs"]["decision"]["classification"] == "no_trade"
+    assert snapshot["outputs"]["decision"]["direction"] == "none"
+    assert "grid_plan" not in snapshot
+    assert "grid_spacing_strategy" not in snapshot
     # Candles are a compact reference (window bounds + latest bar), not the
     # full duplicated array.
     candle_reference = snapshot["outputs"]["market_data"]["candles"]
     assert candle_reference["count"] == 1
     assert candle_reference["latest"]["close"] == 65_000
+
+
+def test_analyse_resolves_supported_altcoin_before_directional_pipeline():
+    captured = []
+
+    class Orchestrator:
+        async def run(self, run):
+            captured.append(run)
+            return _full_grid_result(run)
+
+    class CoinGlass:
+        def resolve_futures_asset(self, symbol):
+            assert symbol == "BNB"
+            return SimpleNamespace(base_asset="BNB")
+
+    runtime = OrchestrationRuntime(environment={})
+    runtime.application = SimpleNamespace(orchestrator=Orchestrator(), infrastructure=SimpleNamespace(audit=SimpleNamespace(append=lambda **_: None)))
+    runtime.coinglass = CoinGlass()
+
+    asyncio.run(runtime.analyse("BNB", interval="15m", notify=False))
+
+    assert captured[0].symbol == "BNB"
 
 
 def test_analyse_does_not_record_a_snapshot_when_postgres_is_unavailable():

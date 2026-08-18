@@ -363,7 +363,7 @@ refreshXConnection();
 
 function setupDashboardInstall() {
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("./sw.js?v=20260811-dashboard-reliability-v3").catch(() => {});
+    navigator.serviceWorker.register("./sw.js?v=20260818-directional-v2").catch(() => {});
   }
   window.addEventListener("beforeinstallprompt", (event) => {
     event.preventDefault();
@@ -755,7 +755,7 @@ function renderLiveAlerts() {
     els.liveAlertList.innerHTML = `
       <div class="news-item">
         <strong>No live events yet</strong>
-        <small>State changes, entries, and grid completions will appear here.</small>
+        <small>Directional state changes, entries, and target completions will appear here.</small>
       </div>
     `;
     return;

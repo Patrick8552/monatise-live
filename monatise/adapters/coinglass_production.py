@@ -135,6 +135,11 @@ class CoinGlassProductionAdapter:
     def resolve_futures_asset(self, value: str) -> CoinGlassFuturesAsset:
         """Resolve a user ticker to a verified CoinGlass futures market."""
         base, requested_pair = self._requested_crypto_asset(value)
+        if requested_pair is None:
+            with self._lock:
+                cached_resolution = self._resolved_assets.get(base)
+            if cached_resolution is not None:
+                return cached_resolution
         observed_at = self._utc_timestamp()
         supported = set(self.supported_futures_coins())
         if base not in supported:

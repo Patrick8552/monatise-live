@@ -256,7 +256,7 @@ class HierarchyLayerEvaluator:
         if regime is RegimeState.TREND_DOWN:
             return StrategicState.SHORT_ONLY
         if regime in {RegimeState.RANGE, RegimeState.COMPRESSION}:
-            return StrategicState.GRID_ALLOWED
+            return StrategicState.NEUTRAL
         if regime in {RegimeState.UNSTABLE, RegimeState.UNKNOWN}:
             return StrategicState.BLOCKED
         return StrategicState.NEUTRAL
@@ -265,8 +265,8 @@ class HierarchyLayerEvaluator:
     def _strategy_state(layer: LayerAnalysis, regime: RegimeState) -> StrategicState:
         if regime in {RegimeState.UNSTABLE, RegimeState.UNKNOWN}:
             return StrategicState.BLOCKED
-        if regime in {RegimeState.RANGE, RegimeState.COMPRESSION} and layer.liquidity.balanced:
-            return StrategicState.GRID_ALLOWED
+        if regime in {RegimeState.RANGE, RegimeState.COMPRESSION}:
+            return StrategicState.NEUTRAL
         if layer.structure.bias is StructureBias.BULLISH:
             return StrategicState.LONG_ONLY
         if layer.structure.bias is StructureBias.BEARISH:
@@ -277,8 +277,8 @@ class HierarchyLayerEvaluator:
     def _setup_state(layer: LayerAnalysis, strategic: Any) -> tuple[SetupState, str]:
         if strategic in {StrategicState.BLOCKED, StrategicState.NEUTRAL}:
             return SetupState.NO_SETUP, "neutral"
-        expected = "long" if strategic is StrategicState.LONG_ONLY else "short" if strategic is StrategicState.SHORT_ONLY else "grid"
-        bias_aligned = expected == "grid" or (expected == "long" and layer.structure.bias is StructureBias.BULLISH) or (expected == "short" and layer.structure.bias is StructureBias.BEARISH)
+        expected = "long" if strategic is StrategicState.LONG_ONLY else "short"
+        bias_aligned = (expected == "long" and layer.structure.bias is StructureBias.BULLISH) or (expected == "short" and layer.structure.bias is StructureBias.BEARISH)
         if layer.sweep.has_confirmed_sweep and layer.reclaim.has_confirmed_reclaim and bias_aligned:
             return SetupState.SETUP_CONFIRMED, expected
         if layer.sweep.has_possible_sweep or layer.sweep.has_confirmed_sweep or layer.zones.price_inside_zone:
@@ -287,7 +287,7 @@ class HierarchyLayerEvaluator:
 
     @staticmethod
     def _trigger_state(layer: LayerAnalysis, direction: str) -> TriggerState:
-        aligned = direction == "grid" or (direction == "long" and layer.structure.bias is StructureBias.BULLISH) or (direction == "short" and layer.structure.bias is StructureBias.BEARISH)
+        aligned = (direction == "long" and layer.structure.bias is StructureBias.BULLISH) or (direction == "short" and layer.structure.bias is StructureBias.BEARISH)
         if aligned and (layer.reclaim.has_confirmed_reclaim or layer.structure.has_confirmed_break):
             return TriggerState.TRIGGER_CONFIRMED
         return TriggerState.TRIGGER_REJECTED
@@ -295,7 +295,7 @@ class HierarchyLayerEvaluator:
     def _risk(self, layer: LayerAnalysis, trigger: EvidenceContext, now: datetime, *, entry_layer: LayerAnalysis | None = None, stop_layer: LayerAnalysis | None = None):
         direction = trigger.direction
         if direction not in {"long", "short"}:
-            raise ValueError("grid risk proposal requires a dedicated grid builder")
+            raise ValueError("directional risk proposal requires long or short direction")
         refinement = entry_layer or layer
         stop_structure = stop_layer or layer
         price = refinement.market.price
@@ -330,7 +330,7 @@ class HierarchyLayerEvaluator:
 
     @staticmethod
     def _direction(state: StrategicState) -> str:
-        return "long" if state is StrategicState.LONG_ONLY else "short" if state is StrategicState.SHORT_ONLY else "grid" if state is StrategicState.GRID_ALLOWED else "neutral"
+        return "long" if state is StrategicState.LONG_ONLY else "short" if state is StrategicState.SHORT_ONLY else "neutral"
 
     @staticmethod
     def _layer_evidence(layer: LayerAnalysis) -> dict[str, Any]:

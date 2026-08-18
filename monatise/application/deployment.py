@@ -19,7 +19,7 @@ from uuid import uuid4
 from urllib.request import Request, urlopen
 
 from monatise.application.composition import create_application, create_durable_infrastructure
-from monatise.application.production_analysis import ACTIVE_GRID_SPACING_STRATEGY, build_directional_plan, build_moving_grid_plan, build_production_analysis_run, build_setup_validity, sanitized_result, strongest_confirmation_signal
+from monatise.application.production_analysis import SUPPORTED_PRODUCTION_SYMBOLS, build_directional_plan, build_production_analysis_run, build_setup_validity, sanitized_result, strongest_confirmation_signal
 from monatise.application.dynamic_analysis import finalize_dynamic_analysis
 from monatise.application.persistence import PostgresDocumentStore, _json_value
 from monatise.application.workflows import TelegramNotifier
@@ -44,7 +44,8 @@ MIGRATION_LOCK_ID = 4_602_161_943_641_489_731
 FALSE_VALUES = {"0", "false", "no", "off", "disabled", ""}
 COINGLASS_PROVIDER_KEY = "coinglass.market_provider"
 SCHEDULED_ANALYSIS_JOB_PREFIX = "scheduled-analysis"
-SCHEDULED_ANALYSIS_DEFAULT_SYMBOLS = ("BTC", "ETH", "SOL")
+SCHEDULED_ANALYSIS_DEFAULT_SYMBOLS = ("BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX", "LINK", "SUI")
+SCHEDULED_ANALYSIS_SUPPORTED_SYMBOLS = frozenset(SCHEDULED_ANALYSIS_DEFAULT_SYMBOLS)
 # Bump whenever the snapshot payload shape changes, so a later replay can
 # tell which schema a given historical row was written under.
 DECISION_SNAPSHOT_SCHEMA_VERSION = 1
@@ -99,7 +100,7 @@ def scheduled_analysis_configuration(environment: Mapping[str, str]) -> tuple[tu
         return None
     raw_symbols = environment.get("MONATISE_SCHEDULED_ANALYSIS_SYMBOLS", ",".join(SCHEDULED_ANALYSIS_DEFAULT_SYMBOLS))
     symbols = tuple(dict.fromkeys(part.strip().upper() for part in raw_symbols.split(",") if part.strip()))
-    unsupported = tuple(symbol for symbol in symbols if symbol not in SCHEDULED_ANALYSIS_DEFAULT_SYMBOLS)
+    unsupported = tuple(symbol for symbol in symbols if symbol not in SCHEDULED_ANALYSIS_SUPPORTED_SYMBOLS)
     if not symbols:
         raise ValueError("scheduled analysis requires at least one symbol")
     if unsupported:
@@ -1053,7 +1054,14 @@ class OrchestrationRuntime:
     async def analyse(self, symbol: str, correlation_id: str | None = None, *, interval: str = "1h", source: str = "monatise.production", notify: bool = True, notification_policy: str = "every_analysis") -> dict[str, Any]:
         if self.application is None:
             raise RuntimeError("orchestration runtime is unavailable")
-        result = await self.application.orchestrator.run(build_production_analysis_run(symbol, interval=interval, correlation_id=correlation_id, source=source))
+        normalized = symbol.strip().upper()
+        verified_dynamic = normalized not in SUPPORTED_PRODUCTION_SYMBOLS
+        if verified_dynamic:
+            if self.coinglass is None:
+                raise RuntimeError("verified CoinGlass symbol resolution is unavailable")
+            asset = await asyncio.to_thread(self.coinglass.resolve_futures_asset, normalized)
+            normalized = asset.base_asset
+        result = await self.application.orchestrator.run(build_production_analysis_run(normalized, interval=interval, correlation_id=correlation_id, source=source, verified_dynamic=verified_dynamic))
         should_notify = notify and self.telegram is not None
         notification_state = None
         if should_notify and notification_policy == "qualified_changes":
@@ -1127,10 +1135,16 @@ class OrchestrationRuntime:
         monatise_application_streams, so it can be pruned on a retention
         schedule without touching that table's immutability guarantee.
         """
-        market_data_raw = result.context.outputs.get("market_data")
         outputs: dict[str, Any] = {}
         for name, value in result.context.outputs.items():
             serialized = _json_value(value)
+            if name == "decision" and isinstance(serialized, dict) and str(serialized.get("classification", "")).casefold() in {"grid", "two_sided"}:
+                serialized["classification"] = "no_trade"
+                serialized["direction"] = "none"
+                metadata = serialized.get("metadata")
+                if isinstance(metadata, dict):
+                    metadata.pop("grid_signal_score", None)
+                    metadata.pop("grid_plan", None)
             if name == "market_data" and isinstance(serialized, dict):
                 # Candles are the bulk of this payload and are the one input
                 # CoinGlass CAN answer historically later (unlike derivatives),
@@ -1139,20 +1153,10 @@ class OrchestrationRuntime:
                 serialized["candles"] = _compact_candle_reference(getattr(value, "candles", ()) or ())
             outputs[name] = serialized
 
-        # Recomputed fresh (build_moving_grid_plan is a pure function of
-        # market_data) rather than read from a module constant, so this
-        # reflects what spacing strategy actually resolved for this run --
-        # including the case where it fails closed to None.
-        grid_plan = None
-        if market_data_raw is not None:
-            try:
-                grid_plan = build_moving_grid_plan(market_data_raw)
-            except Exception:
-                grid_plan = None
-        grid_spacing_strategy = grid_plan.get("spacing_strategy") if grid_plan else ACTIVE_GRID_SPACING_STRATEGY
-
         decision_output = result.context.outputs.get("decision")
         classification = getattr(getattr(decision_output, "classification", None), "value", None)
+        if classification in {"grid", "two_sided"}:
+            classification = "no_trade"
 
         snapshot = {
             "schema_version": DECISION_SNAPSHOT_SCHEMA_VERSION,
@@ -1162,8 +1166,6 @@ class OrchestrationRuntime:
             "interval": interval,
             "source": source,
             "observed_at": datetime.now(timezone.utc).isoformat(),
-            "grid_spacing_strategy": grid_spacing_strategy,
-            "grid_plan": grid_plan,
             "code_version": self.environment.get("RENDER_GIT_COMMIT") or self.environment.get("MONATISE_GIT_COMMIT", ""),
             "status": result.status.value,
             "blocked_by": result.blocked_by,

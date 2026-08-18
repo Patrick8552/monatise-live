@@ -310,18 +310,7 @@ def build_production_analysis_run(symbol: str, *, interval: str = "1h", correlat
 
     def price_action(context: Any) -> PriceActionRequest:
         market = output(context, "market_data")
-        grid = build_moving_grid_plan(market)
-        if grid is None or market.price is None:
-            return PriceActionRequest(market)
-        level, expected_direction = nearest_grid_level(grid, float(market.price))
-        zone_half_width = grid["spacing"] * 0.15
-        return PriceActionRequest(
-            market,
-            expected_direction=expected_direction,
-            entry_price=level,
-            entry_zone_low=level - zone_half_width,
-            entry_zone_high=level + zone_half_width,
-        )
+        return PriceActionRequest(market)
 
     inputs = {
         "market_data": MarketDataRequest(normalized, interval=interval, candle_limit=240, max_age_seconds=maximum_age_seconds),
