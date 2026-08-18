@@ -333,7 +333,8 @@ class ProductionASGI(OrchestrationASGI):
             candidates = []
         if not isinstance(candidates, list):
             candidates = []
-        return 200, {"status": "ready" if candidates else "warming", "candidates": candidates[:20], "source": "CoinGlass significant futures universe", "execution_enabled": False}
+        scan_completed = bool(getattr(self.runtime, "dependencies", {}).get("coin_discovery", {}).get("last_success_at"))
+        return 200, {"status": "ready" if candidates or scan_completed else "warming", "candidates": candidates[:20], "source": "CoinGlass significant futures universe", "execution_enabled": False}
 
     async def _analysis_candles(self, scope: dict[str, Any], *, minimum: int) -> tuple[int, dict[str, Any] | list[Candle], str, str]:
         query = parse_qs(scope.get("query_string", b"").decode())

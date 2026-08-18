@@ -594,7 +594,7 @@ class OrchestrationRuntime:
         baseline_key = f"{namespace}:coinglass:supported-coins"
         interval_seconds = max(60, int(self.environment.get("MONATISE_COIN_DISCOVERY_INTERVAL_SECONDS", "300")))
         analysis_enabled = _true(self.environment.get("MONATISE_COIN_DISCOVERY_ANALYSIS_ENABLED", "true"))
-        analysis_cap = max(0, int(self.environment.get("MONATISE_COIN_DISCOVERY_ANALYSIS_CAP", "5")))
+        analysis_cap = max(10, int(self.environment.get("MONATISE_COIN_DISCOVERY_ANALYSIS_CAP", "10")))
         candidate_limit = max(1, int(self.environment.get("MONATISE_COIN_DISCOVERY_CANDIDATE_LIMIT", "20")))
         minimum_volume = max(0.0, float(self.environment.get("MONATISE_COIN_DISCOVERY_MIN_VOLUME_USD", "5000000")))
         minimum_open_interest = max(0.0, float(self.environment.get("MONATISE_COIN_DISCOVERY_MIN_OPEN_INTEREST_USD", "1000000")))
@@ -616,31 +616,48 @@ class OrchestrationRuntime:
                     base for exchange, _instrument, base, quote in exchange_pairs
                     if exchange.casefold() in {"binance", "okx", "bybit"} and quote.upper() in {"USDT", "USDC", "USD"}
                 }
+                market_priority = {
+                    (quote, exchange): quote_rank * 10 + exchange_rank
+                    for quote_rank, quote in enumerate(("USDT", "USDC", "USD"))
+                    for exchange_rank, exchange in enumerate(("binance", "okx", "bybit"))
+                }
+                verified_markets: dict[str, tuple[str, str, str]] = {}
+                verified_ranks: dict[str, int] = {}
+                for exchange, instrument, base, quote in exchange_pairs:
+                    rank = market_priority.get((quote.upper(), exchange.casefold()))
+                    if rank is None or (base in verified_ranks and verified_ranks[base] <= rank):
+                        continue
+                    verified_ranks[base] = rank
+                    verified_markets[base] = (exchange, instrument, quote)
                 eligible = current & verified
                 new_coins = sorted(current - previous) if previous else []
                 await self.redis.set(baseline_key, json.dumps(sorted(current)), ex=2_592_000)
-                ranked = rank_significant_futures_universe(eligible, markets, minimum_volume_usd=minimum_volume, minimum_open_interest_usd=minimum_open_interest, limit=candidate_limit)
+                ranked = rank_significant_futures_universe(eligible, markets, minimum_volume_usd=minimum_volume, minimum_open_interest_usd=minimum_open_interest, limit=candidate_limit, verified_markets=verified_markets)
                 await self.redis.set(ranked_key, json.dumps([item.to_dict() for item in ranked]), ex=max(interval_seconds * 3, 900))
                 analyzed = 0
+                analysis_failures: list[dict[str, str]] = []
                 hierarchy_results: list[dict[str, Any]] = []
                 if analysis_enabled and self.hierarchy_service is not None:
                     async def analyze_candidate(candidate: Any) -> dict[str, Any]:
                         derivatives = await asyncio.to_thread(self.coinglass.derivatives_snapshot, candidate.symbol, "15m")
                         return await self.hierarchy_service.tick(candidate.symbol, market_context={
                             "discovery": candidate.to_dict(), "derivatives": derivatives,
-                            "verified_market": f"{candidate.symbol} perpetual (CoinGlass verified futures universe)",
+                            "verified_market": f"{candidate.instrument} on {candidate.exchange} ({candidate.quote_asset}-quoted perpetual)",
                         })
 
                     outcomes = await asyncio.gather(*(analyze_candidate(item) for item in ranked[:analysis_cap]), return_exceptions=True)
                     for candidate, outcome in zip(ranked[:analysis_cap], outcomes):
                         if isinstance(outcome, Exception):
                             LOGGER.warning("Significant-universe hierarchy analysis failed", extra={"symbol": candidate.symbol, "error_type": type(outcome).__name__})
+                            analysis_failures.append({"symbol": candidate.symbol, "error_type": type(outcome).__name__})
                             continue
                         analyzed += 1
                         hierarchy_results.append(outcome)
                 result = {
                     "supported_coins": len(current), "verified_liquid_quote_coins": len(eligible), "new_coins": len(new_coins), "ranked_candidates": len(ranked),
-                    "extended_universe_analyzed": analyzed, "telegram_published": sum(bool(item.get("telegram_published")) for item in hierarchy_results),
+                    "extended_universe_analysis_attempted": min(len(ranked), analysis_cap), "extended_universe_analyzed": analyzed,
+                    "extended_universe_analysis_failures": analysis_failures,
+                    "telegram_published": sum(bool(item.get("telegram_published")) for item in hierarchy_results),
                     "candidates": [item.to_dict() for item in ranked],
                 }
                 self.dependencies["coin_discovery"].update({

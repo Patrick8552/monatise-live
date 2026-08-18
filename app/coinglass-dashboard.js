@@ -2060,6 +2060,28 @@ function populateAssetSelect() {
   els.assetSelect.value = ASSETS[current] ? current : "BTC";
 }
 
+function registerDynamicUniverseAssets(candidates) {
+  let added = false;
+  candidates.forEach((item) => {
+    const coin = String(item.symbol || "").trim().toUpperCase();
+    const instrument = String(item.instrument || "").trim().toUpperCase();
+    const exchange = String(item.exchange || "").trim();
+    if (!coin || !instrument || !exchange || ASSETS[coin]) return;
+    const asset = {
+      coin,
+      hyper: "",
+      pair: instrument,
+      exchange,
+      quote: String(item.quote_asset || "").trim().toUpperCase(),
+      tv: `${exchange.toUpperCase()}:${instrument}`
+    };
+    ASSETS[coin] = asset;
+    ASSET_DEFINITIONS.push(asset);
+    added = true;
+  });
+  if (added) populateAssetSelect();
+}
+
 function selectedCoin() {
   return selectedAsset().coin;
 }
@@ -2268,7 +2290,8 @@ async function getPriceForAsset(asset, limit = "96") {
   // selected exchange first, then fall back through the broad-coverage
   // crypto venues rather than failing outright -- but always label which
   // exchange the data actually came from, never silently substitute.
-  const attempts = [preferred, ...CRYPTO_FALLBACK_EXCHANGES.filter((name) => name !== preferred)];
+  const attempts = [asset.exchange, preferred, ...CRYPTO_FALLBACK_EXCHANGES]
+    .filter((name, index, values) => name && values.indexOf(name) === index);
   let lastError = null;
   for (const exchange of attempts) {
     const params = new URLSearchParams({ exchange, symbol: asset.pair, interval, limit });
@@ -2319,14 +2342,13 @@ function monitorAssetKeys() {
 function renderMonitorGrid() {
   if (!els.monitorGrid) return;
   const results = Object.values(state.monitor.results)
-    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
-    .slice(0, 4);
+    .sort((a, b) => (b.score || 0) - (a.score || 0));
   els.monitorGrid.innerHTML = results.length
     ? results.map((item) => {
         const pct = Number(item.changePct);
         const className = item.error ? "error" : pct > 0 ? "positive" : pct < 0 ? "negative" : "";
         return `
-          <button type="button" class="monitor-card ${className}" data-monitor-asset="${item.coin}" ${ASSETS[item.coin] ? "" : "disabled"}>
+          <button type="button" class="monitor-card ${className}" data-monitor-asset="${item.coin}">
             <span>${item.pair}</span>
             <strong>${item.price || "$--"}</strong>
             <small>${item.error ? item.error : `${formatPercent(pct || 0, 2)} · ${item.direction}`}</small>
@@ -2345,8 +2367,10 @@ async function refreshAutonomousMonitor() {
       const payload = await response.json();
       const candidates = Array.isArray(payload.candidates) ? payload.candidates : [];
       if (candidates.length) {
+        registerDynamicUniverseAssets(candidates);
         state.monitor.results = Object.fromEntries(candidates.map((item) => [item.symbol, {
-          coin: item.symbol, pair: `${item.symbol}USDT`, price: `Score ${Number(item.score || 0).toFixed(1)}`,
+          coin: item.symbol, pair: item.instrument, price: `Score ${Number(item.score || 0).toFixed(1)}`,
+          score: Number(item.score || 0),
           changePct: Number(item.change_15m || 0),
           direction: `${String(item.direction || "watch").toUpperCase()} · ${(item.reasons || []).slice(0, 2).join(" · ")}`,
           updatedAt: Date.now()

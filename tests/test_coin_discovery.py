@@ -88,12 +88,18 @@ def test_significant_universe_accepts_real_coinglass_directional_volume_shape():
         "open_interest_change_percent_15m": -0.14, "volume_change_percent_1h": -1.23,
     }]
 
-    ranked = rank_significant_futures_universe({"ETH"}, rows)
+    ranked = rank_significant_futures_universe(
+        {"ETH"}, rows, verified_markets={"ETH": ("Binance", "ETHUSDT", "USDT")}
+    )
 
     assert len(ranked) == 1
     assert ranked[0].direction == "short"
     assert ranked[0].volume_usd == 11_613_828_992
-    assert ranked[0].volume_change_15m == -1.23
+    assert ranked[0].volume_change_percent == -1.23
+    assert ranked[0].volume_change_interval == "1h"
+    assert ranked[0].instrument == "ETHUSDT"
+    assert ranked[0].exchange == "Binance"
+    assert "volume change (1h)" in ranked[0].reasons[-1]
 
 
 def test_format_dynamic_analysis_shows_zone_targets_and_never_an_entry_field():
