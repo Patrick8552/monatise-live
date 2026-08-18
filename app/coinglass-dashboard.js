@@ -2326,7 +2326,7 @@ function renderMonitorGrid() {
         const pct = Number(item.changePct);
         const className = item.error ? "error" : pct > 0 ? "positive" : pct < 0 ? "negative" : "";
         return `
-          <button type="button" class="monitor-card ${className}" data-monitor-asset="${item.coin}">
+          <button type="button" class="monitor-card ${className}" data-monitor-asset="${item.coin}" ${ASSETS[item.coin] ? "" : "disabled"}>
             <span>${item.pair}</span>
             <strong>${item.price || "$--"}</strong>
             <small>${item.error ? item.error : `${formatPercent(pct || 0, 2)} · ${item.direction}`}</small>
@@ -2378,7 +2378,7 @@ async function refreshAutonomousMonitor() {
       pair: asset.pair,
       price: formatUsd(last.close),
       changePct,
-      direction: changePct > 0.12 ? "bid lifting" : changePct < -0.12 ? "offer pressure" : "range",
+      direction: "WATCH",
       updatedAt: Date.now()
     };
   }));

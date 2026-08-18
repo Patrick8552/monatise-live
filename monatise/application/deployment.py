@@ -604,16 +604,22 @@ class OrchestrationRuntime:
             started_at = datetime.now(timezone.utc)
             self.dependencies["coin_discovery"].update({"last_started_at": started_at.isoformat(), "last_error": None})
             try:
-                coins, markets = await asyncio.gather(
+                coins, markets, exchange_pairs = await asyncio.gather(
                     asyncio.to_thread(self.coinglass.supported_futures_coins),
                     asyncio.to_thread(self.coinglass.futures_coins_markets),
+                    asyncio.to_thread(self.coinglass.supported_exchange_pairs),
                 )
                 previous_raw = await self.redis.get(baseline_key)
                 previous = set(json.loads(previous_raw)) if previous_raw else set()
                 current = set(coins)
+                verified = {
+                    base for exchange, _instrument, base, quote in exchange_pairs
+                    if exchange.casefold() in {"binance", "okx", "bybit"} and quote.upper() in {"USDT", "USDC", "USD"}
+                }
+                eligible = current & verified
                 new_coins = sorted(current - previous) if previous else []
                 await self.redis.set(baseline_key, json.dumps(sorted(current)), ex=2_592_000)
-                ranked = rank_significant_futures_universe(current, markets, minimum_volume_usd=minimum_volume, minimum_open_interest_usd=minimum_open_interest, limit=candidate_limit)
+                ranked = rank_significant_futures_universe(eligible, markets, minimum_volume_usd=minimum_volume, minimum_open_interest_usd=minimum_open_interest, limit=candidate_limit)
                 await self.redis.set(ranked_key, json.dumps([item.to_dict() for item in ranked]), ex=max(interval_seconds * 3, 900))
                 analyzed = 0
                 hierarchy_results: list[dict[str, Any]] = []
@@ -633,7 +639,7 @@ class OrchestrationRuntime:
                         analyzed += 1
                         hierarchy_results.append(outcome)
                 result = {
-                    "supported_coins": len(current), "new_coins": len(new_coins), "ranked_candidates": len(ranked),
+                    "supported_coins": len(current), "verified_liquid_quote_coins": len(eligible), "new_coins": len(new_coins), "ranked_candidates": len(ranked),
                     "extended_universe_analyzed": analyzed, "telegram_published": sum(bool(item.get("telegram_published")) for item in hierarchy_results),
                     "candidates": [item.to_dict() for item in ranked],
                 }

@@ -47,7 +47,7 @@ def rank_significant_futures_universe(
         symbol = str(row.get("symbol") or row.get("coin") or row.get("base_asset") or "").strip().upper()
         if symbol not in supported or not _eligible_symbol(symbol):
             continue
-        volume = _number(row, "volume_usd", "volume_usd_24h", "volume_24h_usd", "turnover_24h", "total_volume_usd")
+        volume = _market_volume(row)
         oi = _number(row, "open_interest_usd", "openInterestUsd", "open_interest")
         if volume < minimum_volume_usd or oi < minimum_open_interest_usd:
             continue
@@ -55,7 +55,7 @@ def rank_significant_futures_universe(
         change_15m = _number(row, "price_change_percent_15m", "price_change_15m")
         change_1h = _number(row, "price_change_percent_1h", "price_change_1h")
         change_24h = _number(row, "price_change_percent_24h", "price_change_24h")
-        volume_change_15m = _number(row, "volume_change_percent_15m")
+        volume_change_15m = _number(row, "volume_change_percent_15m", "volume_change_percent_1h")
         oi_change_15m = _number(row, "open_interest_change_percent_15m")
         funding_rate = _number(row, "avg_funding_rate_by_oi", "funding_rate")
         acceleration = change_5m * 3.0 + change_15m * 2.0 + change_1h
@@ -92,3 +92,14 @@ def _number(row: dict[str, Any], *keys: str) -> float:
         if isfinite(number):
             return number
     return 0.0
+
+
+def _market_volume(row: dict[str, Any]) -> float:
+    direct = _number(row, "volume_usd", "volume_usd_24h", "volume_24h_usd", "turnover_24h", "total_volume_usd")
+    if direct > 0:
+        return direct
+    # CoinGlass futures/coins-markets exposes directional 24h volume legs,
+    # rather than a total-volume field. Both legs are required for the total.
+    long_volume = _number(row, "long_volume_usd_24h")
+    short_volume = _number(row, "short_volume_usd_24h")
+    return long_volume + short_volume if long_volume > 0 and short_volume > 0 else 0.0

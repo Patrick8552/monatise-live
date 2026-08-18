@@ -343,7 +343,7 @@ class CoinGlassProductionAdapter:
             raise CoinGlassError("CoinGlass price changes must be a list")
         return tuple(row for row in rows if isinstance(row, dict))
 
-    def futures_coins_markets(self, *, maximum_pages: int = 10, per_page: int = 100) -> tuple[dict[str, Any], ...]:
+    def futures_coins_markets(self, *, maximum_pages: int = 20, per_page: int = 100) -> tuple[dict[str, Any], ...]:
         """Return the paginated aggregate futures market universe.
 
         Unlike ``coins-price-change``, this dataset contains the liquidity and

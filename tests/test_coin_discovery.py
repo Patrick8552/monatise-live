@@ -79,6 +79,23 @@ def test_significant_universe_rejects_conflicting_timeframes_and_honors_limit():
     assert ranked[0].symbol in {"B", "C"}
 
 
+def test_significant_universe_accepts_real_coinglass_directional_volume_shape():
+    rows = [{
+        "symbol": "ETH", "open_interest_usd": 9_998_188_964,
+        "long_volume_usd_24h": 5_837_517_935, "short_volume_usd_24h": 5_776_311_057,
+        "price_change_percent_5m": -0.05, "price_change_percent_15m": -0.06,
+        "price_change_percent_1h": -0.48, "price_change_percent_24h": -0.5,
+        "open_interest_change_percent_15m": -0.14, "volume_change_percent_1h": -1.23,
+    }]
+
+    ranked = rank_significant_futures_universe({"ETH"}, rows)
+
+    assert len(ranked) == 1
+    assert ranked[0].direction == "short"
+    assert ranked[0].volume_usd == 11_613_828_992
+    assert ranked[0].volume_change_15m == -1.23
+
+
 def test_format_dynamic_analysis_shows_zone_targets_and_never_an_entry_field():
     message = TelegramNotifier.format_dynamic_analysis({
         "symbol": "PEPE", "interval": "1h", "classification": "trend", "direction": "long",
