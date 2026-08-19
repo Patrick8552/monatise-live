@@ -42,7 +42,8 @@ class AlpacaMarketDataAdapter:
         return self._get(f"/v2/stocks/{symbol.upper()}/snapshot", {"feed": self.feed})
 
     def stock_bars(self, symbol: str, timeframe: str = "1Hour", limit: int = 200) -> list[dict[str, Any]]:
-        start = (datetime.now(timezone.utc) - timedelta(days=45)).isoformat()
+        lookback_days = 365 if timeframe.strip().casefold() in {"1day", "day", "1d"} else 45
+        start = (datetime.now(timezone.utc) - timedelta(days=lookback_days)).isoformat()
         payload = self._get(
             f"/v2/stocks/{symbol.upper()}/bars",
             {"timeframe": timeframe, "start": start, "limit": min(max(limit, 30), 1000), "sort": "desc", "feed": self.feed},
