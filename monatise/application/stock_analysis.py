@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 
-def build_stock_analysis(context: dict[str, Any], *, bars: list[dict[str, Any]] | None = None, snapshot: dict[str, Any] | None = None, finnhub: dict[str, Any] | None = None) -> dict[str, Any]:
+def build_stock_analysis(context: dict[str, Any], *, bars: list[dict[str, Any]] | None = None, snapshot: dict[str, Any] | None = None, finnhub: dict[str, Any] | None = None, flashalpha: dict[str, Any] | None = None) -> dict[str, Any]:
     """Convert Quiver alternative data into an analysis-only stock watch signal."""
     summary = context.get("summary") if isinstance(context.get("summary"), dict) else {}
     score = int(summary.get("score") or 0)
@@ -30,7 +30,10 @@ def build_stock_analysis(context: dict[str, Any], *, bars: list[dict[str, Any]] 
         "activity": summary.get("activity") or {},
         "data_source": context.get("source") or "Quiver Quantitative",
         "direction_authority": "Quiver insider and Congress activity",
-        "additional_context": summarize_finnhub_context(finnhub or {}, snapshot or {}),
+        "additional_context": {
+            **summarize_finnhub_context(finnhub or {}, snapshot or {}),
+            "flashalpha": summarize_flashalpha_context(flashalpha or {}),
+        },
         "execution": {"enabled": False, "orders_placed": 0},
     }
     result.update(build_directional_levels(decision, bars or [], snapshot or {}))
@@ -53,6 +56,19 @@ def summarize_finnhub_context(finnhub: dict[str, Any], snapshot: dict[str, Any])
         "alpaca_quote_divergence_pct": round(divergence, 3) if divergence is not None else None,
         "news_count": len(finnhub.get("news") or []),
         "analyst_consensus": {key: int(latest.get(key) or 0) for key in ("strongBuy", "buy", "hold", "sell", "strongSell")},
+        "authoritative_for_direction": False,
+    }
+
+
+def summarize_flashalpha_context(flashalpha: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "source": flashalpha.get("source") or "FlashAlpha",
+        "available": not flashalpha.get("unavailable") and flashalpha.get("net_gex") is not None,
+        "gamma_flip": flashalpha.get("gamma_flip"),
+        "net_gex": flashalpha.get("net_gex"),
+        "net_gex_label": flashalpha.get("net_gex_label"),
+        "underlying_price": flashalpha.get("underlying_price"),
+        "as_of": flashalpha.get("as_of"),
         "authoritative_for_direction": False,
     }
 

@@ -31,6 +31,7 @@ from monatise.adapters.backpack import BackpackAdapter, BackpackCredentials
 from monatise.adapters.alpaca import AlpacaMarketDataAdapter
 from monatise.adapters.quiver import QuiverAdapter, normalize_quiver_symbol
 from monatise.adapters.finnhub import FinnhubAdapter, FinnhubAdapterError
+from monatise.adapters.flashalpha import FlashAlphaAdapter, FlashAlphaAdapterError
 from monatise.application.stock_analysis import build_stock_analysis
 from monatise.analysis.tradingview import TRADINGVIEW_ALERT_LIMIT, TRADINGVIEW_FRESH_SECONDS, enrich_tradingview_alert, normalize_tradingview_alert
 from monatise.adapters.x_macro import XMacroAdapter, XMacroPost
@@ -1313,10 +1314,16 @@ class OrchestrationRuntime:
             except FinnhubAdapterError:
                 return {"source": "Finnhub", "unavailable": True}
 
-        context, bars, snapshot, finnhub = await asyncio.gather(
-            quiver_task, bars_task, snapshot_task, asyncio.to_thread(finnhub_context)
+        def flashalpha_context() -> dict[str, Any]:
+            try:
+                return FlashAlphaAdapter.from_env().context(normalized)
+            except FlashAlphaAdapterError:
+                return {"source": "FlashAlpha", "unavailable": True}
+
+        context, bars, snapshot, finnhub, flashalpha = await asyncio.gather(
+            quiver_task, bars_task, snapshot_task, asyncio.to_thread(finnhub_context), asyncio.to_thread(flashalpha_context)
         )
-        return build_stock_analysis(context, bars=bars, snapshot=snapshot, finnhub=finnhub)
+        return build_stock_analysis(context, bars=bars, snapshot=snapshot, finnhub=finnhub, flashalpha=flashalpha)
 
     async def _telegram_notification_candidate(self, result: Any, interval: str) -> dict[str, Any] | None:
         outputs = result.context.outputs
