@@ -1,7 +1,13 @@
 import asyncio
+import json
 from datetime import datetime, timedelta, timezone
 
-from monatise.application.deployment import OrchestrationRuntime
+from monatise.application.deployment import (
+    OrchestrationRuntime,
+    _interleave_stock_candidates,
+    _setup_alert_state,
+    _setup_materially_changed,
+)
 from monatise.application.stock_universe import (
     StockCandidate,
     StockUniverseConfiguration,
@@ -45,6 +51,14 @@ def test_universe_filters_inactive_otc_and_leveraged_assets():
     ], CONFIG)
     assert [row["symbol"] for row in eligible] == ["AAA"]
     assert excluded == {"inactive_or_untradable": 1, "unsupported_exchange": 1, "leveraged_or_inverse": 1}
+
+
+def test_unlimited_universe_does_not_drop_assets_late_in_provider_order():
+    assets = [asset(f"S{index}") for index in range(6_005)]
+    eligible, excluded = eligible_stock_assets(assets, StockUniverseConfiguration(maximum_universe_size=0))
+    assert len(eligible) == 6_005
+    assert eligible[-1]["symbol"] == "S6004"
+    assert excluded == {}
 
 
 def test_stage_a_ranks_long_and_short_separately_and_filters_quality():
@@ -98,6 +112,25 @@ def test_market_stock_telegram_contains_required_provenance_and_risk_fields():
     assert "Long Corp" in message and "Direction: LONG" in message
     assert "Entry:" in message and "Invalidation:" in message and "Targets:" in message
     assert "Quiver:" in message and "no trade was executed" in message
+
+
+def test_shortlist_interleaving_balances_provider_enrichment_slots():
+    longs = [StockCandidate(f"L{index}", "Long", "long", 5, 100, 10, 50_000_000, ()) for index in range(5)]
+    shorts = [StockCandidate(f"S{index}", "Short", "short", 5, 100, 10, 50_000_000, ()) for index in range(5)]
+    ordered = _interleave_stock_candidates(longs, shorts)
+    assert [candidate.side for candidate in ordered[:6]] == ["long", "short", "long", "short", "long", "short"]
+    assert [candidate.side for candidate in ordered[:4]] == ["long", "short", "long", "short"]
+
+
+def test_setup_dedupe_ignores_noise_but_accepts_material_changes():
+    previous = _setup_alert_state({"direction": "LONG", "score": 8, "entry": 100, "stop_loss": 98, "targets": [104]})
+    noisy = _setup_alert_state({"direction": "LONG", "score": 8, "entry": 100.1, "stop_loss": 98.1, "targets": [104.1]})
+    moved = _setup_alert_state({"direction": "LONG", "score": 8, "entry": 100.6, "stop_loss": 98.6, "targets": [104.7]})
+    reversed_setup = _setup_alert_state({"direction": "SHORT", "score": -8, "entry": 100, "stop_loss": 102, "targets": [96]})
+    encoded = json.dumps(previous).encode()
+    assert not _setup_materially_changed(encoded, noisy)
+    assert _setup_materially_changed(encoded, moved)
+    assert _setup_materially_changed(encoded, reversed_setup)
 
 
 class Redis:

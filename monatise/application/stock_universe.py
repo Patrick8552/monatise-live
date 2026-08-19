@@ -15,7 +15,7 @@ class StockUniverseConfiguration:
     minimum_price: float = 5.0
     maximum_spread_bps: float = 80.0
     minimum_daily_dollar_volume: float = 5_000_000.0
-    maximum_universe_size: int = 6_000
+    maximum_universe_size: int = 0
     include_leveraged: bool = False
     shortlist_per_side: int = 5
     minimum_score: int = 7
@@ -51,7 +51,7 @@ def eligible_stock_assets(assets: Iterable[dict[str, Any]], configuration: Stock
             exclusions[reason] = exclusions.get(reason, 0) + 1
             continue
         eligible.append(asset)
-        if len(eligible) >= configuration.maximum_universe_size:
+        if configuration.maximum_universe_size > 0 and len(eligible) >= configuration.maximum_universe_size:
             break
     return eligible, exclusions
 

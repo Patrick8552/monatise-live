@@ -66,6 +66,64 @@ SCHEDULED_ANALYSIS_INTERVAL_SECONDS = {
     "1h": 3_600, "4h": 14_400, "6h": 21_600, "8h": 28_800,
     "12h": 43_200, "1d": 86_400, "1w": 604_800,
 }
+SETUP_MATERIAL_CHANGE_BPS = 50.0
+
+
+def _interleave_stock_candidates(longs: list[StockCandidate], shorts: list[StockCandidate]) -> tuple[StockCandidate, ...]:
+    balanced: list[StockCandidate] = []
+    for index in range(max(len(longs), len(shorts))):
+        if index < len(longs):
+            balanced.append(longs[index])
+        if index < len(shorts):
+            balanced.append(shorts[index])
+    return tuple(balanced)
+
+
+def _setup_alert_state(analysis: Mapping[str, Any]) -> dict[str, Any]:
+    targets = analysis.get("targets")
+    if not isinstance(targets, (list, tuple)):
+        targets = [analysis.get("target")]
+    return {
+        "direction": str(analysis.get("direction") or "").upper(),
+        "score": int(analysis.get("score") or 0),
+        "entry": analysis.get("entry"),
+        "stop": analysis.get("stop_loss"),
+        "targets": list(targets),
+    }
+
+
+def _setup_materially_changed(previous_raw: Any, current: Mapping[str, Any], *, threshold_bps: float = SETUP_MATERIAL_CHANGE_BPS) -> bool:
+    try:
+        if isinstance(previous_raw, bytes):
+            previous_raw = previous_raw.decode("utf-8")
+        previous = json.loads(previous_raw) if isinstance(previous_raw, str) else previous_raw
+    except (UnicodeDecodeError, json.JSONDecodeError, TypeError):
+        return True
+    if not isinstance(previous, Mapping):
+        return True
+    if str(previous.get("direction") or "").upper() != str(current.get("direction") or "").upper():
+        return True
+    if abs(int(previous.get("score") or 0) - int(current.get("score") or 0)) >= 2:
+        return True
+
+    previous_levels = [previous.get("entry"), previous.get("stop"), *(previous.get("targets") or [])]
+    current_levels = [current.get("entry"), current.get("stop"), *(current.get("targets") or [])]
+    if len(previous_levels) != len(current_levels):
+        return True
+    for old, new in zip(previous_levels, current_levels):
+        try:
+            old_value, new_value = float(old), float(new)
+        except (TypeError, ValueError):
+            if old != new:
+                return True
+            continue
+        baseline = abs(old_value)
+        if baseline == 0:
+            if new_value != old_value:
+                return True
+        elif abs(new_value - old_value) / baseline * 10_000 >= threshold_bps:
+            return True
+    return False
 
 
 def _false(value: str | None) -> bool:
@@ -710,7 +768,7 @@ class OrchestrationRuntime:
             minimum_price=max(0.01, float(self.environment.get("MONATISE_STOCK_MIN_PRICE", "5"))),
             maximum_spread_bps=max(1.0, float(self.environment.get("MONATISE_STOCK_MAX_SPREAD_BPS", "80"))),
             minimum_daily_dollar_volume=max(0.0, float(self.environment.get("MONATISE_STOCK_MIN_DOLLAR_VOLUME", "5000000"))),
-            maximum_universe_size=max(100, int(self.environment.get("MONATISE_STOCK_UNIVERSE_MAX", "6000"))),
+            maximum_universe_size=max(0, int(self.environment.get("MONATISE_STOCK_UNIVERSE_MAX", "0"))),
             include_leveraged=_true(self.environment.get("MONATISE_STOCK_INCLUDE_LEVERAGED", "false")),
             shortlist_per_side=max(1, int(self.environment.get("MONATISE_STOCK_SHORTLIST_PER_SIDE", "5"))),
             minimum_score=max(1, int(self.environment.get("MONATISE_STOCK_MINIMUM_SCORE", "7"))),
@@ -764,7 +822,8 @@ class OrchestrationRuntime:
 
     async def _run_stock_universe_scan(self, configuration: StockUniverseConfiguration, cooldown_seconds: int, namespace: str) -> dict[str, Any]:
         alpaca = AlpacaMarketDataAdapter.from_env()
-        universe_key = f"{namespace}:stock-universe:eligible"
+        universe_scope = str(configuration.maximum_universe_size) if configuration.maximum_universe_size > 0 else "all"
+        universe_key = f"{namespace}:stock-universe:eligible:v2:{universe_scope}:{int(configuration.include_leveraged)}"
         raw_cached = await self.redis.get(universe_key)
         exclusions: dict[str, int] = {}
         if raw_cached:
@@ -793,7 +852,10 @@ class OrchestrationRuntime:
         snapshots = {symbol: snapshot for batch in batch_results for symbol, snapshot in batch.items()}
         longs, shorts, snapshot_exclusions = rank_stock_universe(assets, snapshots, configuration)
         for reason, count in snapshot_exclusions.items(): exclusions[reason] = exclusions.get(reason, 0) + count
-        shortlisted = tuple(longs[:configuration.shortlist_per_side] + shorts[:configuration.shortlist_per_side])
+        shortlisted = _interleave_stock_candidates(
+            longs[:configuration.shortlist_per_side],
+            shorts[:configuration.shortlist_per_side],
+        )
         outcomes = await asyncio.gather(*(self._analyze_market_stock(candidate, configuration, index) for index, candidate in enumerate(shortlisted)), return_exceptions=True)
         analyzed = qualified = published = 0
         failures: list[dict[str, str]] = []
@@ -813,19 +875,21 @@ class OrchestrationRuntime:
                     suppressions[reason] = suppressions.get(reason, 0) + 1
                 continue
             qualified += 1
-            signature = hashlib.sha256(json.dumps({
-                "direction": outcome.get("direction"), "entry": outcome.get("entry"),
-                "stop": outcome.get("stop_loss"), "targets": outcome.get("targets"),
-            }, sort_keys=True).encode()).hexdigest()[:16]
-            dedupe_key = f"{namespace}:stock-setup-alert:{candidate.symbol}:{signature}"
-            if not await self.redis.set(dedupe_key, "reserved", nx=True, ex=cooldown_seconds):
+            alert_state = _setup_alert_state(outcome)
+            dedupe_key = f"{namespace}:stock-setup-alert:{candidate.symbol}"
+            previous_state = await self.redis.get(dedupe_key)
+            if previous_state and not _setup_materially_changed(previous_state, alert_state):
                 suppressions["duplicate_unchanged"] = suppressions.get("duplicate_unchanged", 0) + 1
                 continue
+            await self.redis.set(dedupe_key, json.dumps(alert_state, separators=(",", ":"), sort_keys=True), ex=cooldown_seconds)
             try:
                 await self.telegram.stock_analysis_notification(TelegramNotifier.format_market_stock_setup(outcome))
                 published += 1
             except Exception as exc:
-                await self.redis.delete(dedupe_key)
+                if previous_state:
+                    await self.redis.set(dedupe_key, previous_state, ex=cooldown_seconds)
+                else:
+                    await self.redis.delete(dedupe_key)
                 failures.append({"symbol": candidate.symbol, "error_type": type(exc).__name__})
         return {
             "universe_source": universe_source, "universe_size": len(assets), "snapshots_received": len(snapshots),
@@ -939,18 +1003,20 @@ class OrchestrationRuntime:
             analyzed += 1
             if outcome.get("setup_status") != "confirmed":
                 continue
-            signature = hashlib.sha256(json.dumps({
-                "direction": outcome.get("direction"), "entry": outcome.get("entry"),
-                "stop": outcome.get("stop_loss"), "target": outcome.get("target"),
-            }, sort_keys=True).encode()).hexdigest()[:16]
-            cooldown_key = f"{namespace}:flashalpha-futures-alert:{symbol}:{signature}"
-            if not await self.redis.set(cooldown_key, "reserved", nx=True, ex=cooldown_seconds):
+            alert_state = _setup_alert_state(outcome)
+            cooldown_key = f"{namespace}:flashalpha-futures-alert:{symbol}"
+            previous_state = await self.redis.get(cooldown_key)
+            if previous_state and not _setup_materially_changed(previous_state, alert_state):
                 continue
+            await self.redis.set(cooldown_key, json.dumps(alert_state, separators=(",", ":"), sort_keys=True), ex=cooldown_seconds)
             try:
                 await self.telegram.stock_analysis_notification(TelegramNotifier.format_flashalpha_futures_analysis(outcome))
                 published += 1
             except Exception as exc:
-                await self.redis.delete(cooldown_key)
+                if previous_state:
+                    await self.redis.set(cooldown_key, previous_state, ex=cooldown_seconds)
+                else:
+                    await self.redis.delete(cooldown_key)
                 LOGGER.warning("FlashAlpha futures Telegram delivery failed", extra={"symbol": symbol, "error_type": type(exc).__name__})
         return {"symbols": len(symbols), "analyzed": analyzed, "published": published, "failures": failures}
 

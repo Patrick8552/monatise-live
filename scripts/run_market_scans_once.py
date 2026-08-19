@@ -19,7 +19,7 @@ def stock_configuration() -> StockUniverseConfiguration:
         minimum_price=max(0.01, float(os.getenv("MONATISE_STOCK_MIN_PRICE", "5"))),
         maximum_spread_bps=max(1.0, float(os.getenv("MONATISE_STOCK_MAX_SPREAD_BPS", "80"))),
         minimum_daily_dollar_volume=max(0.0, float(os.getenv("MONATISE_STOCK_MIN_DOLLAR_VOLUME", "5000000"))),
-        maximum_universe_size=max(100, int(os.getenv("MONATISE_STOCK_UNIVERSE_MAX", "6000"))),
+        maximum_universe_size=max(0, int(os.getenv("MONATISE_STOCK_UNIVERSE_MAX", "0"))),
         include_leveraged=_true(os.getenv("MONATISE_STOCK_INCLUDE_LEVERAGED", "false")),
         shortlist_per_side=max(1, int(os.getenv("MONATISE_STOCK_SHORTLIST_PER_SIDE", "5"))),
         minimum_score=max(1, int(os.getenv("MONATISE_STOCK_MINIMUM_SCORE", "7"))),

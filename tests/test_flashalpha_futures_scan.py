@@ -7,6 +7,7 @@ from monatise.application.workflows import TelegramNotifier
 
 class Redis:
     def __init__(self): self.values = {}
+    async def get(self, key): return self.values.get(key)
     async def set(self, key, value, **kwargs):
         if kwargs.get("nx") and key in self.values: return False
         self.values[key] = value
