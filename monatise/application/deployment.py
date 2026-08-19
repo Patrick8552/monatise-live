@@ -33,6 +33,7 @@ from monatise.adapters.quiver import QuiverAdapter, normalize_quiver_symbol
 from monatise.adapters.finnhub import FinnhubAdapter, FinnhubAdapterError
 from monatise.adapters.flashalpha import FlashAlphaAdapter, FlashAlphaAdapterError
 from monatise.application.stock_analysis import build_stock_analysis
+from monatise.application.flashalpha_analysis import FLASHALPHA_FUTURES_SYMBOLS, build_flashalpha_futures_analysis
 from monatise.application.universe_discovery import rank_significant_futures_universe
 from monatise.analysis.tradingview import TRADINGVIEW_ALERT_LIMIT, TRADINGVIEW_FRESH_SECONDS, enrich_tradingview_alert, normalize_tradingview_alert
 from monatise.adapters.x_macro import XMacroAdapter, XMacroPost
@@ -739,6 +740,96 @@ class OrchestrationRuntime:
         }
         return (job_id,)
 
+    async def _register_flashalpha_futures_monitor(self) -> tuple[str, ...]:
+        api_key_configured = bool(self.environment.get("FLASHALPHA_API_KEY", "").strip())
+        default_enabled = "true" if api_key_configured else "false"
+        if not _true(self.environment.get("MONATISE_FLASHALPHA_FUTURES_SCAN_ENABLED", default_enabled)):
+            self.dependencies["flashalpha_futures_scan"] = {"status": "ok", "enabled": False}
+            return ()
+        if self.application is None or self.telegram is None or self.redis is None:
+            self.dependencies["flashalpha_futures_scan"] = {"status": "error", "enabled": True}
+            raise RuntimeError("FlashAlpha futures scan dependencies are unavailable")
+        if not api_key_configured:
+            self.dependencies["flashalpha_futures_scan"] = {"status": "error", "enabled": True, "configured": False}
+            raise RuntimeError("FlashAlpha futures scan is enabled but FLASHALPHA_API_KEY is missing")
+
+        raw_symbols = self.environment.get("MONATISE_FLASHALPHA_FUTURES_SYMBOLS", ",".join(FLASHALPHA_FUTURES_SYMBOLS))
+        symbols = tuple(dict.fromkeys(part.strip().upper().removesuffix("=F") for part in raw_symbols.split(",") if part.strip()))
+        if not symbols:
+            raise ValueError("FlashAlpha futures scan requires at least one symbol")
+        interval_seconds = max(300, int(self.environment.get("MONATISE_FLASHALPHA_FUTURES_SCAN_INTERVAL_SECONDS", "900")))
+        cooldown_seconds = max(300, int(self.environment.get("MONATISE_FLASHALPHA_FUTURES_SCAN_COOLDOWN_SECONDS", "3600")))
+        namespace = self.environment.get("MONATISE_REDIS_NAMESPACE", "monatise:production-analysis")
+
+        async def monitor() -> dict[str, Any]:
+            started_at = datetime.now(timezone.utc)
+            self.dependencies["flashalpha_futures_scan"].update({"last_started_at": started_at.isoformat(), "last_error": None})
+            try:
+                result = await self._analyze_flashalpha_futures(symbols, cooldown_seconds, namespace)
+                self.dependencies["flashalpha_futures_scan"].update({
+                    "last_success_at": datetime.now(timezone.utc).isoformat(), "last_result": result, "last_error": None,
+                })
+                return result
+            except Exception as exc:
+                self.dependencies["flashalpha_futures_scan"].update({
+                    "last_failure_at": datetime.now(timezone.utc).isoformat(), "last_error": type(exc).__name__,
+                })
+                raise
+
+        job_id = "flashalpha-cme-futures-scan-telegram"
+        await self.application.infrastructure.scheduler.register(JobDefinition(
+            job_id=job_id,
+            name="FlashAlpha CME futures setup scanner",
+            task=monitor,
+            schedule_type=ScheduleType.INTERVAL,
+            interval=timedelta(seconds=interval_seconds),
+            timeout_seconds=min(max(interval_seconds - 1, 60), 240),
+            retry_policy=RetryPolicy(maximum_attempts=2, delay_seconds=5, maximum_delay_seconds=15),
+            tags=("flashalpha", "cme", "futures-universe", "telegram", "read-only"),
+            metadata={"notification_only": True, "execution_enabled": False, "qualified_setups_only": True},
+        ))
+        self.dependencies["flashalpha_futures_scan"] = {
+            "status": "ok", "enabled": True, "configured": True, "job": job_id,
+            "symbols": list(symbols), "poll_interval_seconds": interval_seconds, "cooldown_seconds": cooldown_seconds,
+        }
+        return (job_id,)
+
+    async def _analyze_flashalpha_futures(self, symbols: tuple[str, ...], cooldown_seconds: int, namespace: str) -> dict[str, Any]:
+        adapter = FlashAlphaAdapter.from_env()
+
+        async def analyze(symbol: str) -> tuple[str, dict[str, Any] | Exception]:
+            try:
+                context = await asyncio.to_thread(adapter.context, f"{symbol}=F")
+                return symbol, build_flashalpha_futures_analysis(context)
+            except Exception as exc:
+                return symbol, exc
+
+        outcomes = await asyncio.gather(*(analyze(symbol) for symbol in symbols))
+        analyzed = published = 0
+        failures: list[dict[str, str]] = []
+        for symbol, outcome in outcomes:
+            if isinstance(outcome, Exception):
+                LOGGER.warning("FlashAlpha futures analysis failed", extra={"symbol": symbol, "error_type": type(outcome).__name__})
+                failures.append({"symbol": symbol, "error_type": type(outcome).__name__})
+                continue
+            analyzed += 1
+            if outcome.get("setup_status") != "confirmed":
+                continue
+            signature = hashlib.sha256(json.dumps({
+                "direction": outcome.get("direction"), "entry": outcome.get("entry"),
+                "stop": outcome.get("stop_loss"), "target": outcome.get("target"),
+            }, sort_keys=True).encode()).hexdigest()[:16]
+            cooldown_key = f"{namespace}:flashalpha-futures-alert:{symbol}:{signature}"
+            if not await self.redis.set(cooldown_key, "reserved", nx=True, ex=cooldown_seconds):
+                continue
+            try:
+                await self.telegram.stock_analysis_notification(TelegramNotifier.format_flashalpha_futures_analysis(outcome))
+                published += 1
+            except Exception as exc:
+                await self.redis.delete(cooldown_key)
+                LOGGER.warning("FlashAlpha futures Telegram delivery failed", extra={"symbol": symbol, "error_type": type(exc).__name__})
+        return {"symbols": len(symbols), "analyzed": analyzed, "published": published, "failures": failures}
+
     async def _analyze_stocks(self, symbols: tuple[str, ...], cooldown_seconds: int, namespace: str) -> int:
         """Cooldown-gated per symbol so each of the fixed Quiver stocks is
         re-analyzed and re-notified a few times a day. This is independent of
@@ -881,6 +972,7 @@ class OrchestrationRuntime:
             await self._register_x_macro_monitor()
             await self._register_coin_discovery_monitor()
             await self._register_stock_scan_monitor()
+            await self._register_flashalpha_futures_monitor()
             await self._register_decision_snapshot_retention()
             await self._register_tradingview_alert_retention()
             self.leadership = RedisSchedulerLeadership(

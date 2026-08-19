@@ -5,7 +5,7 @@ import os
 from dataclasses import dataclass
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 
@@ -31,15 +31,22 @@ class FlashAlphaAdapter:
         return bool(self.api_key)
 
     def context(self, symbol: str) -> dict[str, Any]:
-        ticker = symbol.upper()
-        gex = self._get(f"/v1/exposure/gex/{ticker}")
+        ticker = normalize_flashalpha_symbol(symbol)
+        encoded = quote(ticker, safe="")
+        gex = self._get(f"/v1/exposure/gex/{encoded}")
+        levels_response = self._get(f"/v1/exposure/levels/{encoded}")
         payload = gex if isinstance(gex, dict) else {}
+        levels_payload = levels_response if isinstance(levels_response, dict) else {}
+        levels = levels_payload.get("levels") if isinstance(levels_payload.get("levels"), dict) else {}
         return {
             "source": "FlashAlpha",
             "symbol": ticker,
-            "as_of": payload.get("as_of"),
-            "underlying_price": payload.get("underlying_price"),
-            "gamma_flip": payload.get("gamma_flip"),
+            "as_of": levels_payload.get("as_of") or payload.get("as_of"),
+            "underlying_price": levels_payload.get("underlying_price") or payload.get("underlying_price"),
+            "gamma_flip": levels.get("gamma_flip") or payload.get("gamma_flip"),
+            "call_wall": levels.get("call_wall"),
+            "put_wall": levels.get("put_wall"),
+            "zero_dte_magnet": levels.get("zero_dte_magnet"),
             "net_gex": payload.get("net_gex"),
             "net_gex_label": payload.get("net_gex_label"),
         }
@@ -61,3 +68,10 @@ class FlashAlphaAdapter:
             raise FlashAlphaAdapterError(f"FlashAlpha HTTP {error.code}") from error
         except (URLError, TimeoutError, OSError, json.JSONDecodeError) as error:
             raise FlashAlphaAdapterError(f"FlashAlpha unavailable: {type(error).__name__}") from error
+
+
+def normalize_flashalpha_symbol(symbol: str) -> str:
+    ticker = symbol.strip().upper()
+    if not ticker:
+        raise FlashAlphaAdapterError("FlashAlpha symbol is required")
+    return ticker if ticker.endswith("=F") else ticker

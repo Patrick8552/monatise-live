@@ -4,6 +4,8 @@ import math
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from monatise.application.flashalpha_analysis import flashalpha_directional_bias
+
 
 def build_stock_analysis(context: dict[str, Any], *, bars: list[dict[str, Any]] | None = None, snapshot: dict[str, Any] | None = None, finnhub: dict[str, Any] | None = None, flashalpha: dict[str, Any] | None = None) -> dict[str, Any]:
     """Convert Quiver alternative data into an analysis-only stock watch signal."""
@@ -18,6 +20,10 @@ def build_stock_analysis(context: dict[str, Any], *, bars: list[dict[str, Any]] 
         decision, reason = "SELL_WATCH", "ALTERNATIVE_DATA_CAUTIOUS"
     else:
         decision, reason = "NO_TRADE", "CONFLUENCE_BELOW_THRESHOLD"
+    flashalpha_summary = summarize_flashalpha_context(flashalpha or {})
+    expected_bias = "bullish" if decision == "BUY_WATCH" else "bearish" if decision == "SELL_WATCH" else None
+    if expected_bias and flashalpha_summary["available"] and flashalpha_summary["directional_bias"] != expected_bias:
+        decision, reason = "NO_TRADE", "FLASHALPHA_POSITIONING_CONFLICT"
     result = {
         "asset": context.get("symbol"),
         "asset_class": "stock",
@@ -32,7 +38,7 @@ def build_stock_analysis(context: dict[str, Any], *, bars: list[dict[str, Any]] 
         "direction_authority": "Quiver insider and Congress activity",
         "additional_context": {
             **summarize_finnhub_context(finnhub or {}, snapshot or {}),
-            "flashalpha": summarize_flashalpha_context(flashalpha or {}),
+            "flashalpha": flashalpha_summary,
         },
         "execution": {"enabled": False, "orders_placed": 0},
     }
@@ -67,9 +73,12 @@ def summarize_flashalpha_context(flashalpha: dict[str, Any]) -> dict[str, Any]:
         "gamma_flip": flashalpha.get("gamma_flip"),
         "net_gex": flashalpha.get("net_gex"),
         "net_gex_label": flashalpha.get("net_gex_label"),
+        "call_wall": flashalpha.get("call_wall"),
+        "put_wall": flashalpha.get("put_wall"),
         "underlying_price": flashalpha.get("underlying_price"),
         "as_of": flashalpha.get("as_of"),
-        "authoritative_for_direction": False,
+        "directional_bias": flashalpha_directional_bias(flashalpha),
+        "authoritative_for_direction": "confirmation_only",
     }
 
 

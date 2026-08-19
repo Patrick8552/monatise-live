@@ -349,6 +349,26 @@ class TelegramNotifier:
         ]
         return "\n".join(lines)
 
+    @staticmethod
+    def format_flashalpha_futures_analysis(analysis: dict[str, Any]) -> str:
+        asset = analysis.get("asset", "UNKNOWN")
+        direction = str(analysis.get("direction") or "NONE")
+        lines = [
+            f"Monatise CME futures setup: {asset} {direction}",
+            f"FlashAlpha score: {int(analysis.get('score') or 0):+d}/10 | threshold: ±{int(analysis.get('score_threshold') or 7)}",
+            f"Entry: {_price(analysis.get('entry'))}",
+            f"Invalidation / gamma flip: {_price(analysis.get('stop_loss'))}",
+            f"Target / {'call' if direction == 'LONG' else 'put'} wall: {_price(analysis.get('target'))}",
+            f"Reward/risk: {float(analysis.get('reward_risk') or 0):.2f}",
+        ]
+        if analysis.get("net_gex_label"):
+            lines.append(f"Gamma regime: {analysis['net_gex_label']}")
+        lines += [
+            "Source: FlashAlpha CME options-on-futures positioning (Black-76).",
+            "Notification only; no trade was executed.",
+        ]
+        return "\n".join(lines)
+
     @property
     def execution_enabled(self) -> bool:
         return False
