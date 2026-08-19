@@ -34,6 +34,7 @@ from monatise.adapters.finnhub import FinnhubAdapter, FinnhubAdapterError
 from monatise.adapters.flashalpha import FlashAlphaAdapter, FlashAlphaAdapterError
 from monatise.application.stock_analysis import build_stock_analysis
 from monatise.application.flashalpha_analysis import FLASHALPHA_FUTURES_SYMBOLS, build_flashalpha_futures_analysis
+from monatise.application.stock_universe import StockCandidate, StockUniverseConfiguration, build_technical_stock_setup, eligible_stock_assets, rank_stock_universe
 from monatise.application.universe_discovery import rank_significant_futures_universe
 from monatise.analysis.tradingview import TRADINGVIEW_ALERT_LIMIT, TRADINGVIEW_FRESH_SECONDS, enrich_tradingview_alert, normalize_tradingview_alert
 from monatise.adapters.x_macro import XMacroAdapter, XMacroPost
@@ -703,17 +704,29 @@ class OrchestrationRuntime:
             self.dependencies["stock_scan"] = {"status": "error", "enabled": True}
             raise RuntimeError("Stock scan monitoring dependencies are unavailable")
         namespace = self.environment.get("MONATISE_REDIS_NAMESPACE", "monatise:production-analysis")
-        interval_seconds = max(60, int(self.environment.get("MONATISE_STOCK_SCAN_INTERVAL_SECONDS", "1800")))
+        interval_seconds = max(300, int(self.environment.get("MONATISE_STOCK_SCAN_INTERVAL_SECONDS", "1800")))
         cooldown_seconds = max(300, int(self.environment.get("MONATISE_STOCK_SCAN_COOLDOWN_SECONDS", "21600")))
+        configuration = StockUniverseConfiguration(
+            minimum_price=max(0.01, float(self.environment.get("MONATISE_STOCK_MIN_PRICE", "5"))),
+            maximum_spread_bps=max(1.0, float(self.environment.get("MONATISE_STOCK_MAX_SPREAD_BPS", "80"))),
+            minimum_daily_dollar_volume=max(0.0, float(self.environment.get("MONATISE_STOCK_MIN_DOLLAR_VOLUME", "5000000"))),
+            maximum_universe_size=max(100, int(self.environment.get("MONATISE_STOCK_UNIVERSE_MAX", "6000"))),
+            include_leveraged=_true(self.environment.get("MONATISE_STOCK_INCLUDE_LEVERAGED", "false")),
+            shortlist_per_side=max(1, int(self.environment.get("MONATISE_STOCK_SHORTLIST_PER_SIDE", "5"))),
+            minimum_score=max(1, int(self.environment.get("MONATISE_STOCK_MINIMUM_SCORE", "7"))),
+            minimum_reward_risk=max(1.0, float(self.environment.get("MONATISE_STOCK_MINIMUM_REWARD_RISK", "1.5"))),
+        )
 
         async def monitor() -> dict[str, Any]:
             started_at = datetime.now(timezone.utc)
             self.dependencies["stock_scan"].update({"last_started_at": started_at.isoformat(), "last_error": None})
             try:
-                analyzed = await self._analyze_stocks(STOCK_SCAN_SYMBOLS, cooldown_seconds, namespace)
-                result = {"symbols": len(STOCK_SCAN_SYMBOLS), "analyzed": analyzed}
+                result = await self._run_stock_universe_scan(configuration, cooldown_seconds, namespace)
+                completed_at = datetime.now(timezone.utc)
                 self.dependencies["stock_scan"].update({
-                    "last_success_at": datetime.now(timezone.utc).isoformat(), "last_result": result, "last_error": None,
+                    "last_success_at": completed_at.isoformat(),
+                    "next_expected_at": (completed_at + timedelta(seconds=interval_seconds)).isoformat(),
+                    "last_result": result, "last_error": None,
                 })
                 return result
             except Exception as exc:
@@ -725,20 +738,131 @@ class OrchestrationRuntime:
         job_id = "quiver-stock-scan-telegram"
         await self.application.infrastructure.scheduler.register(JobDefinition(
             job_id=job_id,
-            name="Quiver stock scan Telegram notifier",
+            name="Monatise dynamic US stock universe scanner",
             task=monitor,
             schedule_type=ScheduleType.INTERVAL,
             interval=timedelta(seconds=interval_seconds),
             timeout_seconds=min(max(interval_seconds - 1, 30), 180),
             retry_policy=RetryPolicy(maximum_attempts=2, delay_seconds=5, maximum_delay_seconds=15),
-            tags=("quiver", "stocks", "telegram", "read-only"),
-            metadata={"notification_only": True, "execution_enabled": False},
+            tags=("monatise", "stocks", "universe", "quiver", "flashalpha", "telegram", "read-only"),
+            metadata={"notification_only": True, "execution_enabled": False, "qualified_setups_only": True, "two_stage": True},
         ))
         self.dependencies["stock_scan"] = {
             "status": "ok", "enabled": True, "job": job_id,
             "poll_interval_seconds": interval_seconds, "cooldown_seconds": cooldown_seconds,
+            "maximum_universe_size": configuration.maximum_universe_size,
+            "shortlist_per_side": configuration.shortlist_per_side,
+            "minimum_score": configuration.minimum_score,
+            "minimum_reward_risk": configuration.minimum_reward_risk,
+            "enrichment_caps_per_cycle": {
+                "quiver": max(0, int(self.environment.get("MONATISE_STOCK_QUIVER_CAP_PER_CYCLE", "6"))),
+                "flashalpha": max(0, int(self.environment.get("MONATISE_STOCK_FLASHALPHA_CAP_PER_CYCLE", "4"))),
+                "finnhub": max(0, int(self.environment.get("MONATISE_STOCK_FINNHUB_CAP_PER_CYCLE", "6"))),
+            },
         }
         return (job_id,)
+
+    async def _run_stock_universe_scan(self, configuration: StockUniverseConfiguration, cooldown_seconds: int, namespace: str) -> dict[str, Any]:
+        alpaca = AlpacaMarketDataAdapter.from_env()
+        universe_key = f"{namespace}:stock-universe:eligible"
+        raw_cached = await self.redis.get(universe_key)
+        exclusions: dict[str, int] = {}
+        if raw_cached:
+            assets = json.loads(raw_cached)
+            universe_source = "redis_cache"
+        else:
+            discovered = await asyncio.to_thread(alpaca.active_stock_assets)
+            assets, exclusions = eligible_stock_assets(discovered, configuration)
+            await self.redis.set(universe_key, json.dumps(assets, separators=(",", ":")), ex=21_600)
+            universe_source = "alpaca_assets"
+
+        snapshot_batches = [tuple(str(row["symbol"]).upper() for row in assets[index:index + 200]) for index in range(0, len(assets), 200)]
+        semaphore = asyncio.Semaphore(4)
+        snapshot_failures = 0
+
+        async def fetch_batch(batch: tuple[str, ...]) -> dict[str, dict[str, Any]]:
+            nonlocal snapshot_failures
+            async with semaphore:
+                try:
+                    return await asyncio.to_thread(alpaca.stock_snapshots, batch)
+                except Exception:
+                    snapshot_failures += 1
+                    return {}
+
+        batch_results = await asyncio.gather(*(fetch_batch(batch) for batch in snapshot_batches))
+        snapshots = {symbol: snapshot for batch in batch_results for symbol, snapshot in batch.items()}
+        longs, shorts, snapshot_exclusions = rank_stock_universe(assets, snapshots, configuration)
+        for reason, count in snapshot_exclusions.items(): exclusions[reason] = exclusions.get(reason, 0) + count
+        shortlisted = tuple(longs[:configuration.shortlist_per_side] + shorts[:configuration.shortlist_per_side])
+        outcomes = await asyncio.gather(*(self._analyze_market_stock(candidate, configuration, index) for index, candidate in enumerate(shortlisted)), return_exceptions=True)
+        analyzed = qualified = published = 0
+        failures: list[dict[str, str]] = []
+        suppressions: dict[str, int] = {}
+        provider_degraded = {"quiver": 0, "flashalpha": 0, "finnhub": 0}
+        for candidate, outcome in zip(shortlisted, outcomes):
+            if isinstance(outcome, Exception):
+                failures.append({"symbol": candidate.symbol, "error_type": type(outcome).__name__})
+                continue
+            analyzed += 1
+            additional = outcome.get("additional_context") or {}
+            if not (additional.get("quiver") or {}).get("available"): provider_degraded["quiver"] += 1
+            if (additional.get("flashalpha") or {}).get("unavailable"): provider_degraded["flashalpha"] += 1
+            if (additional.get("finnhub") or {}).get("unavailable"): provider_degraded["finnhub"] += 1
+            if outcome.get("setup_status") != "confirmed":
+                for reason in outcome.get("suppression_reasons") or ["not_qualified"]:
+                    suppressions[reason] = suppressions.get(reason, 0) + 1
+                continue
+            qualified += 1
+            signature = hashlib.sha256(json.dumps({
+                "direction": outcome.get("direction"), "entry": outcome.get("entry"),
+                "stop": outcome.get("stop_loss"), "targets": outcome.get("targets"),
+            }, sort_keys=True).encode()).hexdigest()[:16]
+            dedupe_key = f"{namespace}:stock-setup-alert:{candidate.symbol}:{signature}"
+            if not await self.redis.set(dedupe_key, "reserved", nx=True, ex=cooldown_seconds):
+                suppressions["duplicate_unchanged"] = suppressions.get("duplicate_unchanged", 0) + 1
+                continue
+            try:
+                await self.telegram.stock_analysis_notification(TelegramNotifier.format_market_stock_setup(outcome))
+                published += 1
+            except Exception as exc:
+                await self.redis.delete(dedupe_key)
+                failures.append({"symbol": candidate.symbol, "error_type": type(exc).__name__})
+        return {
+            "universe_source": universe_source, "universe_size": len(assets), "snapshots_received": len(snapshots),
+            "snapshot_batch_failures": snapshot_failures, "excluded": exclusions,
+            "stage_a_long_ranked": len(longs), "stage_a_short_ranked": len(shorts),
+            "shortlisted_long": min(len(longs), configuration.shortlist_per_side),
+            "shortlisted_short": min(len(shorts), configuration.shortlist_per_side),
+            "deep_analysis_attempted": len(shortlisted), "deep_analysis_completed": analyzed,
+            "qualified_setups": qualified, "telegram_published": published,
+            "suppressions": suppressions, "failures": failures, "provider_degraded": provider_degraded,
+        }
+
+    async def _analyze_market_stock(self, candidate: StockCandidate, configuration: StockUniverseConfiguration, enrichment_index: int) -> dict[str, Any]:
+        alpaca = AlpacaMarketDataAdapter.from_env()
+        hourly_task = asyncio.to_thread(alpaca.stock_bars, candidate.symbol, "1Hour", 220)
+        daily_task = asyncio.to_thread(alpaca.stock_bars, candidate.symbol, "1Day", 120)
+
+        async def optional_context(factory: Any, fallback: dict[str, Any]) -> dict[str, Any]:
+            try:
+                return await asyncio.wait_for(asyncio.to_thread(factory), timeout=15)
+            except Exception:
+                return fallback
+
+        quiver_task = optional_context(
+            lambda: QuiverAdapter.from_env().context(candidate.symbol),
+            {"source": "Quiver Quantitative", "available": False, "summary": {"score": 0, "cautions": ["provider unavailable"]}},
+        ) if enrichment_index < max(0, int(self.environment.get("MONATISE_STOCK_QUIVER_CAP_PER_CYCLE", "6"))) else asyncio.sleep(0, result={"source": "Quiver Quantitative", "available": False, "summary": {"score": 0, "cautions": ["cycle quota reserved"]}})
+        flashalpha_task = optional_context(
+            lambda: FlashAlphaAdapter.from_env().context(candidate.symbol),
+            {"source": "FlashAlpha", "unavailable": True},
+        ) if enrichment_index < max(0, int(self.environment.get("MONATISE_STOCK_FLASHALPHA_CAP_PER_CYCLE", "4"))) else asyncio.sleep(0, result={"source": "FlashAlpha", "unavailable": True, "reason": "cycle quota reserved"})
+        finnhub_task = optional_context(
+            lambda: FinnhubAdapter.from_env().context(candidate.symbol),
+            {"source": "Finnhub", "unavailable": True},
+        ) if enrichment_index < max(0, int(self.environment.get("MONATISE_STOCK_FINNHUB_CAP_PER_CYCLE", "6"))) else asyncio.sleep(0, result={"source": "Finnhub", "unavailable": True, "reason": "cycle quota reserved"})
+        hourly, daily, quiver, flashalpha, finnhub = await asyncio.gather(hourly_task, daily_task, quiver_task, flashalpha_task, finnhub_task)
+        return build_technical_stock_setup(candidate, hourly, daily, configuration=configuration, quiver=quiver, flashalpha=flashalpha, finnhub=finnhub)
 
     async def _register_flashalpha_futures_monitor(self) -> tuple[str, ...]:
         api_key_configured = bool(self.environment.get("FLASHALPHA_API_KEY", "").strip())
