@@ -21,7 +21,7 @@ class AlpacaMarketDataAdapter:
     base_url: str = "https://data.alpaca.markets"
     feed: str = "iex"
     timeout: float = 12
-    trading_base_url: str = "https://api.alpaca.markets"
+    trading_base_url: str = "https://paper-api.alpaca.markets"
 
     @classmethod
     def from_env(cls) -> "AlpacaMarketDataAdapter":
@@ -31,7 +31,7 @@ class AlpacaMarketDataAdapter:
             os.getenv("ALPACA_DATA_BASE_URL", "https://data.alpaca.markets").rstrip("/"),
             os.getenv("ALPACA_DATA_FEED", "iex").strip() or "iex",
             float(os.getenv("ALPACA_TIMEOUT_SECONDS", "12")),
-            os.getenv("ALPACA_TRADING_BASE_URL", "https://api.alpaca.markets").rstrip("/"),
+            os.getenv("ALPACA_TRADING_BASE_URL", "https://paper-api.alpaca.markets").rstrip("/"),
         )
 
     @property
