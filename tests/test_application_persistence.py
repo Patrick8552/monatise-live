@@ -206,6 +206,34 @@ def test_durable_audit_repository_restores_unique_longest_fork_without_deleting_
     asyncio.run(scenario())
 
 
+def test_durable_audit_repository_ignores_higher_orphan_and_restores_complete_chain():
+    async def scenario():
+        backend = MemoryDocumentStore()
+        repository = DurableAuditRepository(backend)
+        await repository.append(
+            record_type=AuditRecordType.SYSTEM, action=AuditAction.CREATED,
+            actor=AuditActor("base", "application"), source="test", payload={"step": 1},
+        )
+        await repository.append(
+            record_type=AuditRecordType.SYSTEM, action=AuditAction.CREATED,
+            actor=AuditActor("base", "application"), source="test", payload={"step": 2},
+        )
+        orphan = dict(backend.streams["audit"][-1])
+        orphan["sequence"] = 4
+        orphan["previous_hash"] = "missing-parent-hash"
+        orphan["integrity_hash"] = "orphan-hash"
+        backend.streams["audit"].append(orphan)
+
+        restored = DurableAuditRepository(backend)
+
+        assert await restored.verify_integrity() == ()
+        snapshot = await restored.snapshot()
+        assert [record.sequence for record in snapshot.records] == [1, 2]
+        assert len(backend.streams["audit"]) == 3
+
+    asyncio.run(scenario())
+
+
 def _tied_audit_stream():
     """Two branches that both sign the same next sequence off a shared
     ancestor -- a genuine tie at the true maximum, unlike the "longest fork"

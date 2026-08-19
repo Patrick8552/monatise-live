@@ -19,7 +19,7 @@ from uuid import uuid4
 from urllib.request import Request, urlopen
 
 from monatise.application.composition import create_application, create_durable_infrastructure
-from monatise.application.production_analysis import ACTIVE_GRID_SPACING_STRATEGY, build_directional_plan, build_moving_grid_plan, build_production_analysis_run, build_setup_validity, sanitized_result, strongest_confirmation_signal
+from monatise.application.production_analysis import SUPPORTED_PRODUCTION_SYMBOLS, build_directional_plan, build_production_analysis_run, build_setup_validity, sanitized_result, strongest_confirmation_signal
 from monatise.application.dynamic_analysis import finalize_dynamic_analysis
 from monatise.application.persistence import PostgresDocumentStore, _json_value
 from monatise.application.workflows import TelegramNotifier
@@ -33,6 +33,7 @@ from monatise.adapters.quiver import QuiverAdapter, normalize_quiver_symbol
 from monatise.adapters.finnhub import FinnhubAdapter, FinnhubAdapterError
 from monatise.adapters.flashalpha import FlashAlphaAdapter, FlashAlphaAdapterError
 from monatise.application.stock_analysis import build_stock_analysis
+from monatise.application.universe_discovery import rank_significant_futures_universe
 from monatise.analysis.tradingview import TRADINGVIEW_ALERT_LIMIT, TRADINGVIEW_FRESH_SECONDS, enrich_tradingview_alert, normalize_tradingview_alert
 from monatise.adapters.x_macro import XMacroAdapter, XMacroPost
 from monatise.live.config import RuntimeConfig
@@ -45,7 +46,9 @@ MIGRATION_LOCK_ID = 4_602_161_943_641_489_731
 FALSE_VALUES = {"0", "false", "no", "off", "disabled", ""}
 COINGLASS_PROVIDER_KEY = "coinglass.market_provider"
 SCHEDULED_ANALYSIS_JOB_PREFIX = "scheduled-analysis"
-SCHEDULED_ANALYSIS_DEFAULT_SYMBOLS = ("BTC", "ETH", "SOL")
+SCHEDULED_ANALYSIS_DEFAULT_SYMBOLS = ("BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX", "LINK", "SUI")
+SCHEDULED_ANALYSIS_SUPPORTED_SYMBOLS = frozenset(SCHEDULED_ANALYSIS_DEFAULT_SYMBOLS)
+DIRECTIONAL_ANALYSIS_SYMBOLS_KEY = "MONATISE_DIRECTIONAL_ANALYSIS_SYMBOLS"
 # Bump whenever the snapshot payload shape changes, so a later replay can
 # tell which schema a given historical row was written under.
 DECISION_SNAPSHOT_SCHEMA_VERSION = 1
@@ -98,9 +101,16 @@ def scheduled_analysis_configuration(environment: Mapping[str, str]) -> tuple[tu
     """Return the production analysis schedule without granting execution capability."""
     if not _true(environment.get("MONATISE_SCHEDULED_ANALYSIS_ENABLED")):
         return None
-    raw_symbols = environment.get("MONATISE_SCHEDULED_ANALYSIS_SYMBOLS", ",".join(SCHEDULED_ANALYSIS_DEFAULT_SYMBOLS))
+    raw_symbols = environment.get(DIRECTIONAL_ANALYSIS_SYMBOLS_KEY)
+    if raw_symbols is None:
+        legacy_symbols = environment.get("MONATISE_SCHEDULED_ANALYSIS_SYMBOLS")
+        legacy_btc_only = tuple(part.strip().upper() for part in (legacy_symbols or "").split(",") if part.strip()) == ("BTC",)
+        if environment.get("MONATISE_ENVIRONMENT", "").strip().casefold() == "production" and legacy_btc_only:
+            raw_symbols = ",".join(SCHEDULED_ANALYSIS_DEFAULT_SYMBOLS)
+        else:
+            raw_symbols = legacy_symbols or ",".join(SCHEDULED_ANALYSIS_DEFAULT_SYMBOLS)
     symbols = tuple(dict.fromkeys(part.strip().upper() for part in raw_symbols.split(",") if part.strip()))
-    unsupported = tuple(symbol for symbol in symbols if symbol not in SCHEDULED_ANALYSIS_DEFAULT_SYMBOLS)
+    unsupported = tuple(symbol for symbol in symbols if symbol not in SCHEDULED_ANALYSIS_SUPPORTED_SYMBOLS)
     if not symbols:
         raise ValueError("scheduled analysis requires at least one symbol")
     if unsupported:
@@ -475,8 +485,8 @@ class OrchestrationRuntime:
         self.hierarchy_service = ShadowHierarchyService(self.hierarchy, HierarchyLayerEvaluator(configuration=configuration), repository, publisher=publisher, current_price_provider=current_price_provider)
         scheduler = self.application.infrastructure.scheduler
         job_ids: list[str] = []
-        raw_symbols = self.environment.get("MONATISE_SCHEDULED_ANALYSIS_SYMBOLS", "BTC,ETH,SOL")
-        symbols = tuple(dict.fromkeys(item.strip().upper() for item in raw_symbols.split(",") if item.strip()))
+        scheduled = scheduled_analysis_configuration({**self.environment, "MONATISE_SCHEDULED_ANALYSIS_ENABLED": "true"})
+        symbols = scheduled[0] if scheduled is not None else SCHEDULED_ANALYSIS_DEFAULT_SYMBOLS
         for symbol in symbols:
             job_id = f"hierarchy-shadow-{symbol.casefold()}"
 
@@ -583,54 +593,73 @@ class OrchestrationRuntime:
             raise RuntimeError("Coin discovery monitoring dependencies are unavailable")
         namespace = self.environment.get("MONATISE_REDIS_NAMESPACE", "monatise:production-analysis")
         baseline_key = f"{namespace}:coinglass:supported-coins"
-        threshold = max(1.0, float(self.environment.get("MONATISE_VOLATILITY_ALERT_PERCENT", "15")))
         interval_seconds = max(60, int(self.environment.get("MONATISE_COIN_DISCOVERY_INTERVAL_SECONDS", "300")))
         analysis_enabled = _true(self.environment.get("MONATISE_COIN_DISCOVERY_ANALYSIS_ENABLED", "true"))
-        analysis_cap = max(0, int(self.environment.get("MONATISE_COIN_DISCOVERY_ANALYSIS_CAP", "5")))
-        analysis_interval = self.environment.get("MONATISE_COIN_DISCOVERY_ANALYSIS_INTERVAL", "15m")
-        analysis_cooldown_seconds = max(300, int(self.environment.get("MONATISE_COIN_DISCOVERY_ANALYSIS_COOLDOWN_SECONDS", "21600")))
+        analysis_cap = max(10, int(self.environment.get("MONATISE_COIN_DISCOVERY_ANALYSIS_CAP", "10")))
+        candidate_limit = max(1, int(self.environment.get("MONATISE_COIN_DISCOVERY_CANDIDATE_LIMIT", "20")))
+        minimum_volume = max(0.0, float(self.environment.get("MONATISE_COIN_DISCOVERY_MIN_VOLUME_USD", "5000000")))
+        minimum_open_interest = max(0.0, float(self.environment.get("MONATISE_COIN_DISCOVERY_MIN_OPEN_INTEREST_USD", "1000000")))
+        ranked_key = f"{namespace}:coinglass:ranked-universe"
 
         async def monitor() -> dict[str, Any]:
             started_at = datetime.now(timezone.utc)
             self.dependencies["coin_discovery"].update({"last_started_at": started_at.isoformat(), "last_error": None})
             try:
-                coins, changes = await asyncio.gather(
+                coins, markets, exchange_pairs = await asyncio.gather(
                     asyncio.to_thread(self.coinglass.supported_futures_coins),
-                    asyncio.to_thread(self.coinglass.futures_price_changes),
+                    asyncio.to_thread(self.coinglass.futures_coins_markets),
+                    asyncio.to_thread(self.coinglass.supported_exchange_pairs),
                 )
                 previous_raw = await self.redis.get(baseline_key)
                 previous = set(json.loads(previous_raw)) if previous_raw else set()
                 current = set(coins)
+                verified = {
+                    base for exchange, _instrument, base, quote in exchange_pairs
+                    if exchange.casefold() in {"binance", "okx", "bybit"} and quote.upper() in {"USDT", "USDC", "USD"}
+                }
+                market_priority = {
+                    (quote, exchange): quote_rank * 10 + exchange_rank
+                    for quote_rank, quote in enumerate(("USDT", "USDC", "USD"))
+                    for exchange_rank, exchange in enumerate(("binance", "okx", "bybit"))
+                }
+                verified_markets: dict[str, tuple[str, str, str]] = {}
+                verified_ranks: dict[str, int] = {}
+                for exchange, instrument, base, quote in exchange_pairs:
+                    rank = market_priority.get((quote.upper(), exchange.casefold()))
+                    if rank is None or (base in verified_ranks and verified_ranks[base] <= rank):
+                        continue
+                    verified_ranks[base] = rank
+                    verified_markets[base] = (exchange, instrument, quote)
+                eligible = current & verified
                 new_coins = sorted(current - previous) if previous else []
-                delivered = 0
-                for symbol in new_coins:
-                    message = "\n".join((
-                        f"NEW COIN · {symbol}",
-                        "CoinGlass has added this asset to its supported futures universe.",
-                        "Status: discovery only — wait for liquidity, price history, and risk validation before considering a setup.",
-                    ))
-                    delivered += int(await self._deliver_coin_alert(f"new:{symbol}", message, ttl_seconds=604_800))
                 await self.redis.set(baseline_key, json.dumps(sorted(current)), ex=2_592_000)
-                movers = []
-                for row in changes:
-                    symbol = str(row.get("symbol") or row.get("coin") or "").strip().upper()
-                    change = self._price_change_24h(row)
-                    if symbol and change is not None and abs(change) >= threshold:
-                        movers.append((symbol, change))
-                selected_movers = sorted(movers, key=lambda item: abs(item[1]), reverse=True)[:10]
-                for symbol, change in selected_movers:
-                    direction = "up" if change > 0 else "down"
-                    message = "\n".join((
-                        f"VOLATILITY PICKUP · {symbol}",
-                        f"24h move: {change:+.2f}% · threshold {threshold:.2f}%",
-                        "Status: watchlist alert — CoinGlass structure, funding, OI, liquidation, and liquidity confirmation required.",
-                    ))
-                    delivered += int(await self._deliver_coin_alert(f"volatility:{symbol}:{direction}", message, ttl_seconds=86_400))
+                ranked = rank_significant_futures_universe(eligible, markets, minimum_volume_usd=minimum_volume, minimum_open_interest_usd=minimum_open_interest, limit=candidate_limit, verified_markets=verified_markets)
+                await self.redis.set(ranked_key, json.dumps([item.to_dict() for item in ranked]), ex=max(interval_seconds * 3, 900))
+                analyzed = 0
+                analysis_failures: list[dict[str, str]] = []
+                hierarchy_results: list[dict[str, Any]] = []
+                if analysis_enabled and self.hierarchy_service is not None:
+                    async def analyze_candidate(candidate: Any) -> dict[str, Any]:
+                        derivatives = await asyncio.to_thread(self.coinglass.derivatives_snapshot, candidate.symbol, "15m")
+                        return await self.hierarchy_service.tick(candidate.symbol, market_context={
+                            "discovery": candidate.to_dict(), "derivatives": derivatives,
+                            "verified_market": f"{candidate.instrument} on {candidate.exchange} ({candidate.quote_asset}-quoted perpetual)",
+                        })
 
-                analyzed = await self._analyze_volatile_movers(selected_movers, analysis_enabled, analysis_cap, analysis_interval, analysis_cooldown_seconds, namespace)
+                    outcomes = await asyncio.gather(*(analyze_candidate(item) for item in ranked[:analysis_cap]), return_exceptions=True)
+                    for candidate, outcome in zip(ranked[:analysis_cap], outcomes):
+                        if isinstance(outcome, Exception):
+                            LOGGER.warning("Significant-universe hierarchy analysis failed", extra={"symbol": candidate.symbol, "error_type": type(outcome).__name__})
+                            analysis_failures.append({"symbol": candidate.symbol, "error_type": type(outcome).__name__})
+                            continue
+                        analyzed += 1
+                        hierarchy_results.append(outcome)
                 result = {
-                    "supported_coins": len(current), "new_coins": len(new_coins), "movers": len(selected_movers),
-                    "delivered": delivered, "extended_universe_analyzed": analyzed,
+                    "supported_coins": len(current), "verified_liquid_quote_coins": len(eligible), "new_coins": len(new_coins), "ranked_candidates": len(ranked),
+                    "extended_universe_analysis_attempted": min(len(ranked), analysis_cap), "extended_universe_analyzed": analyzed,
+                    "extended_universe_analysis_failures": analysis_failures,
+                    "telegram_published": sum(bool(item.get("telegram_published")) for item in hierarchy_results),
+                    "candidates": [item.to_dict() for item in ranked],
                 }
                 self.dependencies["coin_discovery"].update({
                     "last_success_at": datetime.now(timezone.utc).isoformat(), "last_result": result, "last_error": None,
@@ -645,22 +674,23 @@ class OrchestrationRuntime:
         job_id = "coinglass-coin-discovery-telegram"
         await self.application.infrastructure.scheduler.register(JobDefinition(
             job_id=job_id,
-            name="CoinGlass new coin and volatility Telegram scanner",
+            name="CoinGlass significant futures universe scanner",
             task=monitor,
             schedule_type=ScheduleType.INTERVAL,
             interval=timedelta(seconds=interval_seconds),
             timeout_seconds=min(max(interval_seconds - 1, 30), 180),
             retry_policy=RetryPolicy(maximum_attempts=2, delay_seconds=5, maximum_delay_seconds=15),
-            tags=("coinglass", "new-coins", "volatility", "telegram", "read-only"),
-            metadata={"notification_only": True, "execution_enabled": False, "volatility_threshold_percent": threshold},
+            tags=("coinglass", "futures-universe", "directional", "telegram", "read-only"),
+            metadata={"notification_only": True, "execution_enabled": False, "directional_only": True},
         ))
         self.dependencies["coin_discovery"] = {
             "status": "ok", "enabled": True, "job": job_id,
-            "poll_interval_seconds": interval_seconds, "volatility_threshold_percent": threshold,
+            "poll_interval_seconds": interval_seconds,
             "extended_universe_analysis_enabled": analysis_enabled,
             "extended_universe_analysis_cap": analysis_cap,
-            "extended_universe_analysis_interval": analysis_interval,
-            "extended_universe_analysis_cooldown_seconds": analysis_cooldown_seconds,
+            "candidate_limit": candidate_limit,
+            "minimum_volume_usd": minimum_volume,
+            "minimum_open_interest_usd": minimum_open_interest,
         }
         return (job_id,)
 
@@ -711,9 +741,8 @@ class OrchestrationRuntime:
 
     async def _analyze_stocks(self, symbols: tuple[str, ...], cooldown_seconds: int, namespace: str) -> int:
         """Cooldown-gated per symbol so each of the fixed Quiver stocks is
-        re-analyzed and re-notified a few times a day, matching the crypto
-        coin-discovery cadence -- notifies unconditionally on the outcome,
-        NO_TRADE included, same as _analyze_volatile_movers."""
+        re-analyzed and re-notified a few times a day. This is independent of
+        the crypto hierarchy's directional-only notification policy."""
         claimed: list[str] = []
         for symbol in symbols:
             cooldown_key = f"{namespace}:stock-alert:analysis:{symbol}"
@@ -746,71 +775,6 @@ class OrchestrationRuntime:
                 continue
             analyzed += 1
         return analyzed
-
-    async def _analyze_volatile_movers(
-        self,
-        selected_movers: list[tuple[str, float]],
-        analysis_enabled: bool,
-        analysis_cap: int,
-        analysis_interval: str,
-        analysis_cooldown_seconds: int,
-        namespace: str,
-    ) -> int:
-        """Run verified dynamic analysis (resolve_futures_asset + full engine chain)
-        on the strongest movers and deliver the result, instead of leaving the
-        watchlist alert as the only signal. Capped and cooldown-gated per symbol
-        so a persistently volatile coin is re-analyzed a few times a day, not on
-        every 5-minute scan and not only once."""
-        if not (analysis_enabled and analysis_cap > 0 and selected_movers):
-            return 0
-
-        claimed: list[str] = []
-        for symbol, _change in selected_movers[:analysis_cap]:
-            cooldown_key = f"{namespace}:coin-alert:analysis:{symbol}"
-            if await self.redis.set(cooldown_key, "reserved", nx=True, ex=analysis_cooldown_seconds):
-                claimed.append(symbol)
-        if not claimed:
-            return 0
-
-        outcomes = await asyncio.gather(
-            *(
-                self.analyse_dynamic_coinglass(symbol, interval=analysis_interval, source="monatise.coin_discovery")
-                for symbol in claimed
-            ),
-            return_exceptions=True,
-        )
-        analyzed = 0
-        for symbol, outcome in zip(claimed, outcomes):
-            if isinstance(outcome, Exception):
-                LOGGER.warning(
-                    "Extended-universe volatility analysis failed",
-                    extra={"symbol": symbol, "error_type": type(outcome).__name__},
-                )
-                await self.redis.delete(f"{namespace}:coin-alert:analysis:{symbol}")
-                continue
-            try:
-                message = TelegramNotifier.format_dynamic_analysis(outcome)
-                await self.telegram.dynamic_analysis_notification(message)
-            except Exception as exc:
-                LOGGER.warning(
-                    "Dynamic analysis delivery failed",
-                    extra={"symbol": symbol, "error_type": type(exc).__name__},
-                )
-                continue
-            analyzed += 1
-        return analyzed
-
-    async def _deliver_coin_alert(self, identity: str, message: str, *, ttl_seconds: int) -> bool:
-        key = f"{self.environment.get('MONATISE_REDIS_NAMESPACE', 'monatise:production-analysis')}:coin-alert:{identity}"
-        if not await self.redis.set(key, "reserved", nx=True, ex=300):
-            return False
-        try:
-            await self.telegram.coin_discovery_notification(message)
-            await self.redis.set(key, "delivered", ex=ttl_seconds)
-            return True
-        except Exception:
-            await self.redis.delete(key)
-            raise
 
     @staticmethod
     def _price_change_24h(row: Mapping[str, Any]) -> float | None:
@@ -1054,7 +1018,14 @@ class OrchestrationRuntime:
     async def analyse(self, symbol: str, correlation_id: str | None = None, *, interval: str = "1h", source: str = "monatise.production", notify: bool = True, notification_policy: str = "every_analysis") -> dict[str, Any]:
         if self.application is None:
             raise RuntimeError("orchestration runtime is unavailable")
-        result = await self.application.orchestrator.run(build_production_analysis_run(symbol, interval=interval, correlation_id=correlation_id, source=source))
+        normalized = symbol.strip().upper()
+        verified_dynamic = normalized not in SUPPORTED_PRODUCTION_SYMBOLS
+        if verified_dynamic:
+            if self.coinglass is None:
+                raise RuntimeError("verified CoinGlass symbol resolution is unavailable")
+            asset = await asyncio.to_thread(self.coinglass.resolve_futures_asset, normalized)
+            normalized = asset.base_asset
+        result = await self.application.orchestrator.run(build_production_analysis_run(normalized, interval=interval, correlation_id=correlation_id, source=source, verified_dynamic=verified_dynamic))
         should_notify = notify and self.telegram is not None
         notification_state = None
         if should_notify and notification_policy == "qualified_changes":
@@ -1128,10 +1099,16 @@ class OrchestrationRuntime:
         monatise_application_streams, so it can be pruned on a retention
         schedule without touching that table's immutability guarantee.
         """
-        market_data_raw = result.context.outputs.get("market_data")
         outputs: dict[str, Any] = {}
         for name, value in result.context.outputs.items():
             serialized = _json_value(value)
+            if name == "decision" and isinstance(serialized, dict) and str(serialized.get("classification", "")).casefold() in {"grid", "two_sided"}:
+                serialized["classification"] = "no_trade"
+                serialized["direction"] = "none"
+                metadata = serialized.get("metadata")
+                if isinstance(metadata, dict):
+                    metadata.pop("grid_signal_score", None)
+                    metadata.pop("grid_plan", None)
             if name == "market_data" and isinstance(serialized, dict):
                 # Candles are the bulk of this payload and are the one input
                 # CoinGlass CAN answer historically later (unlike derivatives),
@@ -1140,20 +1117,10 @@ class OrchestrationRuntime:
                 serialized["candles"] = _compact_candle_reference(getattr(value, "candles", ()) or ())
             outputs[name] = serialized
 
-        # Recomputed fresh (build_moving_grid_plan is a pure function of
-        # market_data) rather than read from a module constant, so this
-        # reflects what spacing strategy actually resolved for this run --
-        # including the case where it fails closed to None.
-        grid_plan = None
-        if market_data_raw is not None:
-            try:
-                grid_plan = build_moving_grid_plan(market_data_raw)
-            except Exception:
-                grid_plan = None
-        grid_spacing_strategy = grid_plan.get("spacing_strategy") if grid_plan else ACTIVE_GRID_SPACING_STRATEGY
-
         decision_output = result.context.outputs.get("decision")
         classification = getattr(getattr(decision_output, "classification", None), "value", None)
+        if classification in {"grid", "two_sided"}:
+            classification = "no_trade"
 
         snapshot = {
             "schema_version": DECISION_SNAPSHOT_SCHEMA_VERSION,
@@ -1163,8 +1130,6 @@ class OrchestrationRuntime:
             "interval": interval,
             "source": source,
             "observed_at": datetime.now(timezone.utc).isoformat(),
-            "grid_spacing_strategy": grid_spacing_strategy,
-            "grid_plan": grid_plan,
             "code_version": self.environment.get("RENDER_GIT_COMMIT") or self.environment.get("MONATISE_GIT_COMMIT", ""),
             "status": result.status.value,
             "blocked_by": result.blocked_by,
@@ -1329,6 +1294,10 @@ class OrchestrationRuntime:
         outputs = result.context.outputs
         key = (result.symbol, interval)
         previous = await self._telegram_notification_state(key)
+        if (previous or {}).get("classification") == "grid":
+            # Retire legacy grid state silently. Grid/two-sided analysis is no
+            # longer a valid notification or cancellation outcome.
+            previous = {"version": int((previous or {}).get("version", 0) or 0)}
         expired_grid = self._expired_grid_candidate(previous)
         if expired_grid is not None:
             return expired_grid
@@ -1346,12 +1315,13 @@ class OrchestrationRuntime:
         metadata = getattr(decision, "metadata", {}) or {}
         classification = getattr(getattr(decision, "classification", None), "value", "no_trade")
         direction = getattr(getattr(decision, "direction", None), "value", "none")
+        if classification == "grid" or direction == "two_sided":
+            return None
         threshold = int(metadata.get("minimum_signal_score", 7) or 7)
         signed_score = int(metadata.get("signed_signal_score", 0) or 0)
-        score = int(metadata.get("grid_signal_score", 0) or 0) if classification == "grid" else abs(signed_score)
+        score = abs(signed_score)
         direction_is_qualified = (
-            classification == "grid"
-            or (direction == "long" and signed_score >= threshold)
+            (direction == "long" and signed_score >= threshold)
             or (direction == "short" and signed_score <= -threshold)
         )
         # A confirmed grid must survive ordinary score noise. A single NO_TRADE

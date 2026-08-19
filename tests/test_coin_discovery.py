@@ -1,9 +1,8 @@
 import asyncio
 from types import SimpleNamespace
 
-import pytest
-
 from monatise.application.deployment import OrchestrationRuntime
+from monatise.application.universe_discovery import rank_significant_futures_universe
 from monatise.application.workflows import TelegramNotifier
 
 
@@ -43,126 +42,64 @@ class _AlertRedis:
         self.values.pop(key, None)
 
 
-def test_coin_alert_is_only_deduplicated_after_delivery():
-    class Telegram:
-        async def coin_discovery_notification(self, message):
-            assert message == "new coin"
+def test_significant_universe_filters_and_ranks_directional_liquid_markets():
+    rows = [
+        {"symbol": "PEPE", "volume_usd": 50_000_000, "open_interest_usd": 8_000_000,
+         "price_change_percent_5m": 0.4, "price_change_percent_15m": 0.8, "price_change_percent_1h": 1.2, "price_change_percent_24h": 5},
+        {"symbol": "WIF", "volume_usd": 40_000_000, "open_interest_usd": 7_000_000,
+         "price_change_percent_5m": -0.5, "price_change_percent_15m": -0.9, "price_change_percent_1h": -1.4, "price_change_percent_24h": -6},
+        {"symbol": "USDC", "volume_usd": 999_000_000, "open_interest_usd": 99_000_000,
+         "price_change_percent_5m": 2, "price_change_percent_15m": 2, "price_change_percent_1h": 2},
+        {"symbol": "ABC3L", "volume_usd": 99_000_000, "open_interest_usd": 9_000_000,
+         "price_change_percent_5m": 2, "price_change_percent_15m": 2, "price_change_percent_1h": 2},
+        {"symbol": "DUST", "volume_usd": 10_000, "open_interest_usd": 5_000,
+         "price_change_percent_5m": 10, "price_change_percent_15m": 10, "price_change_percent_1h": 10},
+    ]
 
-    runtime = object.__new__(OrchestrationRuntime)
-    runtime.environment = {"MONATISE_REDIS_NAMESPACE": "test"}
-    runtime.redis = _AlertRedis()
-    runtime.telegram = Telegram()
+    ranked = rank_significant_futures_universe({"PEPE", "WIF", "USDC", "ABC3L", "DUST"}, rows)
 
-    assert asyncio.run(runtime._deliver_coin_alert("new:ABC", "new coin", ttl_seconds=604800)) is True
-    assert runtime.redis.values["test:coin-alert:new:ABC"] == ("delivered", 604800)
-    assert asyncio.run(runtime._deliver_coin_alert("new:ABC", "new coin", ttl_seconds=604800)) is False
-
-
-def test_failed_coin_alert_releases_reservation_for_retry():
-    class Telegram:
-        async def coin_discovery_notification(self, message):
-            raise RuntimeError("temporary Telegram failure")
-
-    runtime = object.__new__(OrchestrationRuntime)
-    runtime.environment = {"MONATISE_REDIS_NAMESPACE": "test"}
-    runtime.redis = _AlertRedis()
-    runtime.telegram = Telegram()
-
-    with pytest.raises(RuntimeError, match="temporary Telegram failure"):
-        asyncio.run(runtime._deliver_coin_alert("new:ABC", "new coin", ttl_seconds=604800))
-    assert "test:coin-alert:new:ABC" not in runtime.redis.values
+    assert {item.symbol for item in ranked} == {"PEPE", "WIF"}
+    assert {item.direction for item in ranked} == {"long", "short"}
+    assert all(item.score > 0 for item in ranked)
 
 
-def test_analyze_volatile_movers_respects_cap_and_delivers_dynamic_analysis():
-    class Telegram:
-        def __init__(self):
-            self.delivered = []
+def test_significant_universe_rejects_conflicting_timeframes_and_honors_limit():
+    rows = [
+        {"symbol": "A", "volume_usd": 50_000_000, "open_interest_usd": 8_000_000,
+         "price_change_percent_5m": 1, "price_change_percent_15m": -1, "price_change_percent_1h": 0},
+        {"symbol": "B", "volume_usd": 60_000_000, "open_interest_usd": 9_000_000,
+         "price_change_percent_5m": 1, "price_change_percent_15m": 1, "price_change_percent_1h": 1},
+        {"symbol": "C", "volume_usd": 70_000_000, "open_interest_usd": 10_000_000,
+         "price_change_percent_5m": -1, "price_change_percent_15m": -1, "price_change_percent_1h": -1},
+    ]
 
-        async def dynamic_analysis_notification(self, message):
-            self.delivered.append(message)
+    ranked = rank_significant_futures_universe({"A", "B", "C"}, rows, limit=1)
 
-    class Runtime(OrchestrationRuntime):
-        pass
-
-    runtime = Runtime.__new__(Runtime)
-    runtime.redis = _AlertRedis()
-    runtime.telegram = Telegram()
-    runtime.calls = []
-
-    async def analyse_dynamic_coinglass(symbol, *, interval, source):
-        runtime.calls.append((symbol, interval, source))
-        return {
-            "symbol": symbol, "interval": interval, "classification": "trend", "direction": "long",
-            "provenance": {"instrument": f"{symbol}USDT", "exchange": "Binance", "source": "CoinGlass"},
-            "evidence": {"current_price": 1.23}, "data_quality": {"passed": True, "failures": [], "warnings": []},
-            "entry_zone": {"low": 1.1, "high": 1.2}, "entry_trigger": "confirmed retest",
-            "invalidation": 1.0, "targets": [1.5], "reward_risk": 2.0,
-            "score": 8, "score_threshold": 7, "volatility_assessment": "continuation requires confirmation",
-            "expires_at": "2026-08-13T00:00:00+00:00", "run_id": "run-1",
-        }
-
-    runtime.analyse_dynamic_coinglass = analyse_dynamic_coinglass
-
-    movers = [("PEPE", 42.0), ("WIF", -30.0), ("BONK", 25.0)]
-    analyzed = asyncio.run(runtime._analyze_volatile_movers(movers, True, 2, "1h", 21_600, "test"))
-
-    assert analyzed == 2
-    assert [symbol for symbol, _interval, _source in runtime.calls] == ["PEPE", "WIF"]
-    assert len(runtime.telegram.delivered) == 2
-    assert "Monatise dynamic scan: PEPE LONG (TREND)" in runtime.telegram.delivered[0]
+    assert len(ranked) == 1
+    assert ranked[0].symbol in {"B", "C"}
 
 
-def test_analyze_volatile_movers_disabled_by_config():
-    runtime = OrchestrationRuntime.__new__(OrchestrationRuntime)
-    analyzed = asyncio.run(runtime._analyze_volatile_movers([("PEPE", 42.0)], False, 5, "1h", 21_600, "test"))
-    assert analyzed == 0
+def test_significant_universe_accepts_real_coinglass_directional_volume_shape():
+    rows = [{
+        "symbol": "ETH", "open_interest_usd": 9_998_188_964,
+        "long_volume_usd_24h": 5_837_517_935, "short_volume_usd_24h": 5_776_311_057,
+        "price_change_percent_5m": -0.05, "price_change_percent_15m": -0.06,
+        "price_change_percent_1h": -0.48, "price_change_percent_24h": -0.5,
+        "open_interest_change_percent_15m": -0.14, "volume_change_percent_1h": -1.23,
+    }]
 
+    ranked = rank_significant_futures_universe(
+        {"ETH"}, rows, verified_markets={"ETH": ("Binance", "ETHUSDT", "USDT")}
+    )
 
-def test_analyze_volatile_movers_releases_cooldown_on_analysis_failure():
-    runtime = OrchestrationRuntime.__new__(OrchestrationRuntime)
-    runtime.redis = _AlertRedis()
-
-    class Telegram:
-        async def dynamic_analysis_notification(self, message):
-            raise AssertionError("should not deliver a failed analysis")
-
-    runtime.telegram = Telegram()
-
-    async def analyse_dynamic_coinglass(symbol, *, interval, source):
-        raise ValueError("CoinGlass does not list SCAM as a supported futures coin")
-
-    runtime.analyse_dynamic_coinglass = analyse_dynamic_coinglass
-
-    analyzed = asyncio.run(runtime._analyze_volatile_movers([("SCAM", 99.0)], True, 5, "1h", 21_600, "test"))
-
-    assert analyzed == 0
-    assert "test:coin-alert:analysis:SCAM" not in runtime.redis.values
-
-
-def test_analyze_volatile_movers_is_cooldown_gated_across_calls():
-    runtime = OrchestrationRuntime.__new__(OrchestrationRuntime)
-    runtime.redis = _AlertRedis()
-
-    class Telegram:
-        def __init__(self):
-            self.delivered = []
-
-        async def dynamic_analysis_notification(self, message):
-            self.delivered.append(message)
-
-    runtime.telegram = Telegram()
-    calls = []
-
-    async def analyse_dynamic_coinglass(symbol, *, interval, source):
-        calls.append(symbol)
-        return {"symbol": symbol, "classification": "no_trade", "data_quality": {"passed": True}}
-
-    runtime.analyse_dynamic_coinglass = analyse_dynamic_coinglass
-
-    asyncio.run(runtime._analyze_volatile_movers([("PEPE", 42.0)], True, 5, "1h", 21_600, "test"))
-    asyncio.run(runtime._analyze_volatile_movers([("PEPE", 45.0)], True, 5, "1h", 21_600, "test"))
-
-    assert calls == ["PEPE"]  # second call is still within the cooldown window
+    assert len(ranked) == 1
+    assert ranked[0].direction == "short"
+    assert ranked[0].volume_usd == 11_613_828_992
+    assert ranked[0].volume_change_percent == -1.23
+    assert ranked[0].volume_change_interval == "1h"
+    assert ranked[0].instrument == "ETHUSDT"
+    assert ranked[0].exchange == "Binance"
+    assert "volume change (1h)" in ranked[0].reasons[-1]
 
 
 def test_format_dynamic_analysis_shows_zone_targets_and_never_an_entry_field():
@@ -185,7 +122,7 @@ def test_format_dynamic_analysis_shows_zone_targets_and_never_an_entry_field():
     assert "Run: run-1" in message
 
 
-def test_format_dynamic_analysis_shows_the_full_grid_plan_and_grid_score():
+def test_format_dynamic_analysis_rejects_legacy_grid_payloads():
     message = TelegramNotifier.format_dynamic_analysis({
         "symbol": "DOGE", "interval": "15m", "classification": "grid", "direction": "two_sided",
         "provenance": {"instrument": "DOGEUSDT", "exchange": "Binance", "source": "CoinGlass"},
@@ -202,17 +139,12 @@ def test_format_dynamic_analysis_shows_the_full_grid_plan_and_grid_score():
         "run_id": "run-3",
     })
 
-    assert "Monatise dynamic scan: DOGE TWO_SIDED (GRID)" in message
-    assert "Center: 0.0699" in message
-    assert "Buy levels: 0.06972 | 0.06946" in message
-    assert "Sell levels: 0.07018 | 0.07047" in message
-    assert "Boundaries: 0.06946 — 0.07047" in message
-    assert "Invalidation: below 0.06932 or above 0.07061" in message
-    # The grid classification is qualified by grid_score (8, above threshold),
-    # not the unrelated signed score (-2) -- showing -2 here would make an
-    # actionable grid look like it's failing its own threshold.
-    assert "Score: 8/10" in message
-    assert "Score: -2/10" not in message
+    assert "Monatise dynamic scan: DOGE NONE (NO_TRADE)" in message
+    assert "Center:" not in message
+    assert "Buy levels:" not in message
+    assert "Sell levels:" not in message
+    assert "Boundaries:" not in message
+    assert "Score: -2/10" in message
     assert '"entry"' not in message
 
 

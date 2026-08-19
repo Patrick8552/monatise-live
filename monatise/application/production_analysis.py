@@ -40,6 +40,7 @@ ADAPTIVE_ATR_WINDOW = 14
 ADAPTIVE_ATR_MULTIPLIER = 0.75
 ADAPTIVE_SPACING_BOUNDS_PCT = {"BTC": (0.0008, 0.0040)}
 SUPPORTED_PRODUCTION_INTERVALS = frozenset({"1m", "3m", "5m", "15m", "30m", "1h", "4h", "6h", "8h", "12h", "1d", "1w"})
+PRODUCTION_SIGNAL_SCORE_THRESHOLD = 6
 INTERVAL_SECONDS = {
     "1m": 60, "3m": 180, "5m": 300, "15m": 900, "30m": 1_800,
     "1h": 3_600, "4h": 14_400, "6h": 21_600, "8h": 28_800,
@@ -310,18 +311,7 @@ def build_production_analysis_run(symbol: str, *, interval: str = "1h", correlat
 
     def price_action(context: Any) -> PriceActionRequest:
         market = output(context, "market_data")
-        grid = build_moving_grid_plan(market)
-        if grid is None or market.price is None:
-            return PriceActionRequest(market)
-        level, expected_direction = nearest_grid_level(grid, float(market.price))
-        zone_half_width = grid["spacing"] * 0.15
-        return PriceActionRequest(
-            market,
-            expected_direction=expected_direction,
-            entry_price=level,
-            entry_zone_low=level - zone_half_width,
-            entry_zone_high=level + zone_half_width,
-        )
+        return PriceActionRequest(market)
 
     inputs = {
         "market_data": MarketDataRequest(normalized, interval=interval, candle_limit=240, max_age_seconds=maximum_age_seconds),
@@ -334,7 +324,7 @@ def build_production_analysis_run(symbol: str, *, interval: str = "1h", correlat
         "fibonacci_liquidity": lambda c: FibonacciRequest(output(c, "market_data"), output(c, "market_structure"), output(c, "liquidity"), output(c, "supply_demand"), output(c, "reclaim"), minimum_structure_confidence=0),
         "order_flow": flow,
         "price_action": price_action,
-        "decision": lambda c: DecisionRequest(output(c, "market_data"), None, output(c, "regime"), output(c, "liquidity"), output(c, "liquidity_sweep"), output(c, "supply_demand"), output(c, "reclaim"), output(c, "market_structure"), output(c, "fibonacci_liquidity"), output(c, "order_flow"), minimum_conviction=0.55, high_conviction=0.75, maximum_conflict_ratio=0.45, grid_regime_bonus=0.12, trend_regime_bonus=0.12, require_structure_for_trend=True, require_two_sided_liquidity_for_grid=True, minimum_signal_score=7),
+        "decision": lambda c: DecisionRequest(output(c, "market_data"), None, output(c, "regime"), output(c, "liquidity"), output(c, "liquidity_sweep"), output(c, "supply_demand"), output(c, "reclaim"), output(c, "market_structure"), output(c, "fibonacci_liquidity"), output(c, "order_flow"), minimum_conviction=0.55, high_conviction=0.75, maximum_conflict_ratio=0.45, grid_regime_bonus=0.12, trend_regime_bonus=0.12, require_structure_for_trend=True, require_two_sided_liquidity_for_grid=True, minimum_signal_score=PRODUCTION_SIGNAL_SCORE_THRESHOLD),
         "rsi": lambda c: RSIRequest(output(c, "market_data"), output(c, "market_structure"), output(c, "regime")),
         "portfolio_intelligence": PortfolioIntelligenceRequest(100_000, ()),
         "intelligence_learning": LearningRequest((), minimum_samples=1),
@@ -352,7 +342,6 @@ def sanitized_result(result: Any) -> dict[str, Any]:
     metadata = getattr(decision, "metadata", {}) or {}
     price = getattr(market, "price", None)
     directional_plan = build_directional_plan(price, direction)
-    grid_plan = build_moving_grid_plan(market) if classification == "grid" else None
     confirmation_status = getattr(getattr(price_action, "status", None), "value", "pending")
     confirmation_signal = strongest_confirmation_signal(price_action)
     confirmation_age = int(getattr(confirmation_signal, "age_candles", 0) or 0)
@@ -360,8 +349,8 @@ def sanitized_result(result: Any) -> dict[str, Any]:
     generated_at = getattr(result, "finished_at", None) or getattr(run, "requested_at", None) or datetime.now(timezone.utc)
     validity = build_setup_validity(
         getattr(market, "interval", None),
-        generated_at, age_candles=confirmation_age if classification == "grid" else 0,
-    ) if classification != "grid" or confirmation_status == "confirmed" else None
+        generated_at, age_candles=0,
+    )
     return {
         "run_id": result.run_id,
         "correlation_id": result.correlation_id,
@@ -372,17 +361,11 @@ def sanitized_result(result: Any) -> dict[str, Any]:
         "direction": direction,
         "conviction": getattr(decision, "conviction", None),
         "score": metadata.get("signed_signal_score"),
-        "grid_score": metadata.get("grid_signal_score"),
         "score_threshold": metadata.get("minimum_signal_score", 7),
-        # A "grid" classification with no grid_plan means price has already
-        # broken outside the rolling-range bands (build_moving_grid_plan
-        # fails closed to None) -- report no entry rather than the raw
-        # price, which would otherwise look like a real actionable level.
-        "entry": directional_plan["entry"] if directional_plan else price if classification == "grid" and grid_plan is not None else None,
+        "entry": directional_plan["entry"] if directional_plan else None,
         "invalidation": directional_plan["invalidation"] if directional_plan else None,
         "target": directional_plan["target"] if directional_plan else None,
         "reward_risk": None,
-        "grid_plan": grid_plan,
         "entry_confirmation_status": confirmation_status,
         "entry_confirmation_required": bool(getattr(price_action, "entry_confirmation_required", True)),
         "price_action_confirmed": bool(getattr(price_action, "has_confirmation", False)),

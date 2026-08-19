@@ -48,10 +48,12 @@ def finalize_dynamic_analysis(
         failures.append("malformed order-book imbalance")
     classification = str(analysis.get("classification") or "no_trade")
     direction = str(analysis.get("direction") or "none")
-    if classification in {"grid", "trend"} and not _derivatives_confirm(direction, derivatives):
+    if classification == "grid":
+        failures.append("grid and two-sided analysis is disabled")
+    if classification == "trend" and not _derivatives_confirm(direction, derivatives):
         failures.append("CoinGlass order flow (net CVD) does not confirm this setup")
     plan = _planned_setup(analysis, candles, price) if not failures else None
-    if not failures and classification in {"grid", "trend"} and plan is None:
+    if not failures and classification == "trend" and plan is None:
         failures.append("no structurally valid entry zone could be planned")
     if failures:
         analysis.update({

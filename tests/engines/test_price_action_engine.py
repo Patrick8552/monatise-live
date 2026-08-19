@@ -331,7 +331,7 @@ def test_sanitized_result_reports_no_entry_when_grid_classification_has_no_grid_
 
     payload = sanitized_result(result)
 
-    assert payload["grid_plan"] is None
+    assert "grid_plan" not in payload
     assert payload["entry"] is None
 
 
@@ -440,13 +440,14 @@ def test_adaptive_atr_v2_is_a_no_op_for_symbols_without_configured_bounds():
     assert adaptive["basis"] == default["basis"] == "rolling_range"
 
 
-def test_production_price_action_receives_nearest_moving_grid_side_and_zone():
+def test_production_price_action_has_no_grid_derived_direction_or_zone():
     candles = [Candle(str(i), 64_600, 64_971, 64_473, 64_722, 10) for i in range(20)]
     snapshot = market(candles)
     run = build_production_analysis_run("BTC", interval="15m")
     request_builder = run.stage_inputs["price_action"]
     context = SimpleNamespace(outputs={"market_data": snapshot})
     built = request_builder(context)
-    assert built.expected_direction is PriceActionDirection.BULLISH
-    assert built.entry_price == pytest.approx(64_222)
-    assert built.entry_zone_low < built.entry_price < built.entry_zone_high
+    assert built.expected_direction is None
+    assert built.entry_price is None
+    assert built.entry_zone_low is None
+    assert built.entry_zone_high is None

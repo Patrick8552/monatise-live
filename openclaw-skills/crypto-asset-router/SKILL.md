@@ -1,6 +1,6 @@
 ---
 name: crypto-asset-router
-description: Route `/analyze BTC`, `/analyze WOOD`, `/btc`, API-style, or natural-language Monatise analysis requests for any cryptocurrency ticker. BTC, ETH, and SOL get full grid/trend analysis; any other crypto ticker (e.g. WOOD, PEPE) gets verified read-only dynamic analysis against live CoinGlass data. Reject non-crypto instruments (forex, commodities, indices) and never execute trades.
+description: Route `/analyze BTC`, `/analyze WOOD`, `/btc`, API-style, or natural-language Monatise analysis requests for any cryptocurrency ticker. BTC, ETH, and SOL get full directional analysis; any other crypto ticker (e.g. WOOD, PEPE) gets verified read-only dynamic analysis against live CoinGlass data. Reject non-crypto instruments (forex, commodities, indices) and never execute trades.
 ---
 # Crypto Asset Router
 Normalize the requested symbol (strip `/analyze`, quote-currency suffixes like `-USDT`/`/USDT`, etc.).
@@ -11,4 +11,3 @@ Normalize the requested symbol (strip `/analyze`, quote-currency suffixes like `
 - If the requested symbol is forex, a commodity, an index, or otherwise not a crypto ticker, reject the request without calling either script.
 
 Return the script's completed result verbatim. Do not call order, configuration-write, or deployment tools.
-

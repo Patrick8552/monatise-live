@@ -355,16 +355,21 @@ class DurableAuditRepository:
             by_hash = {value["integrity_hash"]: value for value in values}
             if len(by_hash) != len(values):
                 raise RuntimeError("durable audit hash is duplicated during restoration")
-            maximum = max(int(value["sequence"]) for value in values)
-            endpoints = [value for value in values if int(value["sequence"]) == maximum]
+            for value in values:
+                int(value["sequence"])
         except (KeyError, TypeError, ValueError) as exc:
             raise RuntimeError("durable audit sequence is invalid during restoration") from exc
 
         chains: list[tuple[dict[str, Any], ...]] = []
-        for endpoint in endpoints:
+        # Do not assume the numerically-highest row belongs to a complete
+        # chain. A crashed or superseded writer can leave an orphan with a
+        # higher sequence whose parent was never committed. Consider every
+        # row as a possible endpoint, then keep only root-linked chains.
+        # Orphaned rows remain untouched in the durable stream as evidence.
+        for endpoint in values:
             reverse_chain: list[dict[str, Any]] = []
             current: dict[str, Any] | None = endpoint
-            expected = maximum
+            expected = int(endpoint["sequence"])
             seen: set[str] = set()
             while current is not None and expected > 0:
                 integrity_hash = current["integrity_hash"]
@@ -378,9 +383,12 @@ class DurableAuditRepository:
             if expected == 0 and current is None:
                 chains.append(tuple(reversed(reverse_chain)))
 
+        if not chains:
+            raise RuntimeError("durable audit sequence is incomplete during restoration")
+
+        maximum = max(int(chain[-1]["sequence"]) for chain in chains)
+        chains = [chain for chain in chains if int(chain[-1]["sequence"]) == maximum]
         if len(chains) != 1:
-            if not chains:
-                raise RuntimeError("durable audit sequence is incomplete during restoration")
             if not force_resolve:
                 raise AmbiguousDurableAuditChainError("durable audit sequence is ambiguous during restoration")
             chains.sort(key=lambda chain: chain[-1]["integrity_hash"])

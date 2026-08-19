@@ -130,10 +130,11 @@ def test_real_twenty_engine_trend_short_pipeline():
     assert result.context.outputs["decision"].direction.value == "short"
 
 
-def test_real_twenty_engine_grid_pipeline():
+def test_real_twenty_engine_never_returns_grid_pipeline():
     result, _ = run_real_pipeline(grid=True)
     assert result.status is PipelineStage.COMPLETED, (result.blocked_by, result.failure)
-    assert result.context.outputs["decision"].classification.value == "grid"
+    assert result.context.outputs["decision"].classification.value in {"trend", "no_trade"}
+    assert result.context.outputs["decision"].classification.value != "grid"
 
 
 def decision_request(outputs, **kwargs):

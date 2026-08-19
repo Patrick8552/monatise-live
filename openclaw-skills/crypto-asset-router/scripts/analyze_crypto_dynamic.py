@@ -127,11 +127,14 @@ def analyze(asset: str, interval: str = "1h", payload: dict | None = None) -> di
         invalid_reasons.append("provenance is missing a verified instrument/exchange")
     if not provenance.get("supported_coins_observed_at") or not provenance.get("market_observed_at"):
         invalid_reasons.append("provenance is missing source timestamps")
-    if classification not in {"grid", "trend", "no_trade"}:
-        invalid_reasons.append("classification is not a recognized value")
+    if classification not in {"trend", "no_trade"}:
+        if classification in {"grid", "two_sided"}:
+            invalid_reasons.append("directional analysis is required; grid and two-sided setups are disabled")
+        else:
+            invalid_reasons.append("classification is not a recognized value")
         classification = "no_trade"
 
-    actionable = classification in {"grid", "trend"} and not invalid_reasons and quality.get("passed") is True
+    actionable = classification == "trend" and not invalid_reasons and quality.get("passed") is True
 
     if actionable:
         missing = []
@@ -148,8 +151,6 @@ def analyze(asset: str, interval: str = "1h", payload: dict | None = None) -> di
             missing.append("reward_risk")
         if not str(analysis.get("expires_at") or "").strip():
             missing.append("expires_at")
-        if classification == "grid" and not _valid_grid_plan(analysis.get("grid_plan")):
-            missing.append("grid_plan")
         if missing:
             actionable = False
             invalid_reasons.append("actionable setup is missing " + ", ".join(missing))
@@ -169,9 +170,7 @@ def analyze(asset: str, interval: str = "1h", payload: dict | None = None) -> di
         "invalidation": analysis.get("invalidation") if actionable else None,
         "targets": list(analysis.get("targets") or []) if actionable else [],
         "reward_risk": analysis.get("reward_risk") if actionable else None,
-        "grid_plan": analysis.get("grid_plan") if actionable and classification == "grid" else None,
         "score": analysis.get("score"),
-        "grid_score": analysis.get("grid_score"),
         "score_threshold": analysis.get("score_threshold", 7),
         "provenance": provenance,
         "evidence": analysis.get("evidence") if isinstance(analysis.get("evidence"), dict) else {},
@@ -206,18 +205,6 @@ def telegram(result: dict) -> str:
         failures = result["data_quality"]["failures"][:3]
         if failures:
             lines += ["Why:", *[f"• {item}" for item in failures]]
-    elif result["classification"] == "grid":
-        grid = result["grid_plan"]
-        lines.append("Decision: GRID (TWO_SIDED)")
-        lines += [
-            f"Center: {grid['center']:,.8g}",
-            "Buy levels: " + " | ".join(f"{value:,.8g}" for value in grid["buy_levels"]),
-            "Sell levels: " + " | ".join(f"{value:,.8g}" for value in grid["sell_levels"]),
-            f"Boundaries: {grid['lower_boundary']:,.8g} — {grid['upper_boundary']:,.8g}",
-            f"Invalidation: below {grid['lower_invalidation']:,.8g} or above {grid['upper_invalidation']:,.8g}",
-            f"Spacing: {grid['spacing']:,.8g} | {grid['levels_per_side']} levels per side",
-            f"Trigger: {result['entry_trigger']}",
-        ]
     else:
         lines.append(f"Decision: {result['classification'].upper()} ({result['direction'].upper()})")
         zone = result["entry_zone"]
@@ -227,7 +214,7 @@ def telegram(result: dict) -> str:
         lines.append("Targets: " + " | ".join(f"{item:,.8g}" for item in result["targets"]))
         lines.append(f"Reward:risk: {result['reward_risk']:.2f}")
 
-    display_score = result.get("grid_score") if result["classification"] == "grid" else result.get("score")
+    display_score = result.get("score")
     if display_score is not None:
         lines.append(f"Score: {display_score}/10 | threshold: ±{result['score_threshold']}")
 

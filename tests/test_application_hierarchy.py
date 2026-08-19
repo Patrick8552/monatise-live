@@ -31,6 +31,7 @@ from monatise.application.hierarchy import (
 )
 from monatise.core.models import Candle
 from monatise.application.hierarchy.evaluator import LayerAnalysis
+from monatise.engines.market_structure.models import StructureBias
 
 
 NOW = datetime(2026, 8, 2, 12, 0, 20, tzinfo=timezone.utc)
@@ -466,6 +467,21 @@ def test_shadow_service_persists_layer_evidence_and_never_publishes():
         assert comparisons and all(item["execution_enabled"] is False for item in comparisons)
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(("confirmed_sweep", "confirmed_reclaim"), [(True, False), (False, True)])
+def test_hierarchy_accepts_either_aligned_15m_displacement_confirmation(confirmed_sweep, confirmed_reclaim):
+    layer = SimpleNamespace(
+        sweep=SimpleNamespace(has_confirmed_sweep=confirmed_sweep, has_possible_sweep=False),
+        reclaim=SimpleNamespace(has_confirmed_reclaim=confirmed_reclaim),
+        zones=SimpleNamespace(price_inside_zone=False),
+        structure=SimpleNamespace(bias=StructureBias.BULLISH),
+    )
+
+    state, direction = HierarchyLayerEvaluator._setup_state(layer, StrategicState.LONG_ONLY)
+
+    assert state is SetupState.SETUP_CONFIRMED
+    assert direction == "long"
 
 
 def test_confirmed_hierarchy_produces_valid_shadow_bundle_and_risk_bridge():

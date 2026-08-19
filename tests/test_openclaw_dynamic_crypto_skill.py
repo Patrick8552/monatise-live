@@ -75,30 +75,15 @@ def test_confirmed_trend_is_actionable_with_full_plan():
     assert '"entry"' not in message and "Entry:" not in message.replace("Entry zone", "").replace("Entry trigger", "")
 
 
-def test_grid_decision_displays_grid_score_not_the_unrelated_trend_score():
+def test_legacy_grid_decision_fails_closed_to_no_trade():
     result = MODULE.analyze("WOOD", payload=payload(classification="grid", direction="two_sided"))
-    assert result["actionable"] is True
-    assert result["classification"] == "grid"
+    assert result["actionable"] is False
+    assert result["classification"] == "no_trade"
+    assert "grid_plan" not in result
     message = MODULE.telegram(result)
-    assert "Score: 3/10" in message
-    assert "Score: 8/10" not in message
-
-
-def test_grid_decision_shows_the_full_multi_level_grid_plan():
-    result = MODULE.analyze("WOOD", payload=payload(classification="grid", direction="two_sided"))
-    assert result["actionable"] is True
-    assert result["grid_plan"]["buy_levels"] == [0.41, 0.40, 0.39]
-    assert result["grid_plan"]["sell_levels"] == [0.43, 0.44, 0.45]
-    message = MODULE.telegram(result)
-    assert "Decision: GRID (TWO_SIDED)" in message
-    assert "Center: 0.42" in message
-    assert "Buy levels: 0.41 | 0.4 | 0.39" in message
-    assert "Sell levels: 0.43 | 0.44 | 0.45" in message
-    assert "Boundaries: 0.39 — 0.45" in message
-    assert "Invalidation: below 0.38 or above 0.46" in message
-    assert "Spacing: 0.01 | 3 levels per side" in message
-    # a grid has no single directional entry/target -- only the multi-level plan
-    assert "Entry zone:" not in message and "Targets:" not in message
+    assert "Decision: NO_TRADE" in message
+    assert "Buy levels:" not in message
+    assert "Sell levels:" not in message
 
 
 def test_grid_without_a_valid_grid_plan_fails_closed_to_no_trade():
@@ -107,7 +92,7 @@ def test_grid_without_a_valid_grid_plan_fails_closed_to_no_trade():
     result = MODULE.analyze("WOOD", payload=data)
     assert result["actionable"] is False
     assert result["classification"] == "no_trade"
-    assert any("grid_plan" in reason for reason in result["data_quality"]["failures"])
+    assert any("directional analysis is required" in reason for reason in result["data_quality"]["failures"])
 
 
 def test_grid_plan_missing_boundary_fields_fails_closed_instead_of_crashing():
@@ -121,7 +106,7 @@ def test_grid_plan_missing_boundary_fields_fails_closed_instead_of_crashing():
 
     assert result["actionable"] is False
     assert result["classification"] == "no_trade"
-    assert any("grid_plan" in reason for reason in result["data_quality"]["failures"])
+    assert any("directional analysis is required" in reason for reason in result["data_quality"]["failures"])
     MODULE.telegram(result)  # must not raise
 
 

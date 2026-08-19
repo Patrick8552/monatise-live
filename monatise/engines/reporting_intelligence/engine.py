@@ -279,7 +279,6 @@ class ReportingIntelligenceEngine:
             details={
                 "long_score": request.decision.long_score,
                 "short_score": request.decision.short_score,
-                "grid_score": request.decision.grid_score,
                 "conflict_ratio": request.decision.conflict_ratio,
             },
         )

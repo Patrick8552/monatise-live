@@ -29,7 +29,7 @@ test("market integrations clearly expand and collapse", async ({ page }) => {
   await expect(page.getByText("Your CoinGlass API key", { exact: true })).toBeVisible();
 });
 
-test("production grid analysis renders projected decision-ready levels without a risk gate", async ({ page }) => {
+test("legacy grid analysis fails closed and is never rendered", async ({ page }) => {
   await page.route("**/api/public/analysis?*", (route) => route.fulfill({
     contentType: "application/json",
     body: JSON.stringify({
@@ -57,24 +57,20 @@ test("production grid analysis renders projected decision-ready levels without a
   await page.goto("/coinglass-dashboard.html");
 
   const production = page.locator("#hyperList");
-  await expect(production).toContainText("GRID DECISION READY");
-  await expect(production).toContainText("Projected decision geometry");
-  await expect(production).toContainText("$99.00 / $98.00 / $97.00");
-  await expect(production).toContainText("$101.00 / $102.00 / $103.00");
-  await expect(production).toContainText("Below $96.00 or above $104.00");
-  await expect(production).not.toContainText("RISK BLOCKED");
-  await expect(production).not.toContainText("Risk review");
+  await expect(production).toContainText("NO TRADE");
+  await expect(production).not.toContainText("GRID DECISION READY");
+  await expect(production).not.toContainText("Buy levels");
+  await expect(production).not.toContainText("Sell levels");
+  await expect(production).not.toContainText("Two-sided");
 
   const generated = page.locator("article").filter({ has: page.getByRole("heading", { name: "Monatise Generated Signals" }) });
-  await expect(generated).toContainText("GRID · DECISION READY");
-  await expect(generated).toContainText("Grid bids");
-  await expect(generated).toContainText("Grid offers");
-  await expect(generated).not.toContainText("WAIT · NO TRADE");
+  await expect(generated).toContainText("WAIT · NO TRADE");
+  await expect(generated).not.toContainText("Grid bids");
+  await expect(generated).not.toContainText("Grid offers");
 
   const framework = page.locator("article").filter({ has: page.getByRole("heading", { name: "Monatise Framework" }) });
-  await expect(framework).toContainText("GRID");
-  await expect(framework).toContainText("Decision Ready");
-  await expect(framework).not.toContainText("BUY\n");
+  await expect(framework).toContainText("NO TRADE");
+  await expect(framework).not.toContainText("GRID");
 });
 
 test("production outage fails supported assets closed", async ({ page }) => {
@@ -103,29 +99,19 @@ test("rapid asset switching never renders analysis from the previous asset", asy
   await page.route("**/api/public/analysis?*", async (route) => {
     const symbol = new URL(route.request().url()).searchParams.get("symbol");
     if (symbol === "BTC") await new Promise((resolve) => setTimeout(resolve, 500));
-    const center = symbol === "ETH" ? 1900 : 65000;
     await route.fulfill({
       contentType: "application/json",
       body: JSON.stringify({
         ok: true,
         analysis: {
           symbol,
-          classification: "grid",
-          direction: "two_sided",
+          classification: "no_trade",
+          direction: "none",
           status: "completed",
           blocked_by: null,
           completed_stages: 13,
-          grid_score: 8,
           conviction: 0.75,
-          grid_plan: {
-            center,
-            buy_levels: [center - 10, center - 20, center - 30],
-            sell_levels: [center + 10, center + 20, center + 30],
-            lower_invalidation: center - 40,
-            upper_invalidation: center + 40,
-            levels_per_side: 3
-          },
-          reasons: ["two-sided liquidity favors grid logic"]
+          reasons: [`${symbol} current evidence does not justify a trade setup`]
         }
       })
     });
@@ -135,8 +121,8 @@ test("rapid asset switching never renders analysis from the previous asset", asy
   await page.locator("#assetSelect").selectOption("ETH");
 
   const production = page.locator("#hyperList");
-  await expect(production).toContainText("$1,900", { timeout: 10_000 });
-  await expect(production).not.toContainText("$65,000");
+  await expect(production).toContainText("ETH current evidence", { timeout: 10_000 });
+  await expect(production).not.toContainText("BTC current evidence");
   await expect(page.locator("#assetSelect")).toHaveValue("ETH");
 });
 

@@ -236,7 +236,7 @@ def test_macro_event_lock_forces_no_trade() -> None:
     assert any("event lock" in blocker for blocker in result.blockers)
 
 
-def test_range_and_balanced_liquidity_can_produce_grid() -> None:
+def test_range_and_balanced_liquidity_never_produces_grid() -> None:
     request = base_request()
 
     balanced_liquidity = LiquidityAssessment(
@@ -281,8 +281,8 @@ def test_range_and_balanced_liquidity_can_produce_grid() -> None:
 
     result = DecisionEngine().assess(request)
 
-    assert result.classification is DecisionClassification.GRID
-    assert result.direction is DecisionDirection.TWO_SIDED
+    assert result.classification is DecisionClassification.NO_TRADE
+    assert result.direction is DecisionDirection.NONE
 
 
 def test_conflicting_directional_evidence_can_block() -> None:
@@ -335,7 +335,7 @@ def test_signed_signal_score_threshold_allows_qualified_directional_trade() -> N
     assert result.state is DecisionState.APPROVED_FOR_RISK_REVIEW
 
 
-def test_qualified_grid_score_takes_priority_over_directional_conflict() -> None:
+def test_two_sided_evidence_cannot_override_directional_conflict() -> None:
     request = base_request()
     balanced_liquidity = LiquidityAssessment(
         symbol=request.market.symbol,
@@ -386,14 +386,14 @@ def test_qualified_grid_score_takes_priority_over_directional_conflict() -> None
 
     result = DecisionEngine().assess(qualified)
 
-    assert result.metadata["grid_signal_score"] >= 7
-    assert result.classification is DecisionClassification.GRID
-    assert result.direction is DecisionDirection.TWO_SIDED
-    assert result.state is DecisionState.APPROVED_FOR_RISK_REVIEW
-    assert result.conviction == result.grid_score
-    assert "order flow unavailable" not in result.blockers
-    assert "regime is unstable" not in result.blockers
-    assert "market structure is unstable" not in result.blockers
+    assert "grid_signal_score" not in result.metadata
+    assert result.classification is DecisionClassification.NO_TRADE
+    assert result.direction is DecisionDirection.NONE
+    assert result.state is DecisionState.BLOCKED
+    assert result.grid_score == 0
+    assert "order flow unavailable" in result.blockers
+    assert "regime is unstable" in result.blockers
+    assert "market structure is unstable" in result.blockers
 
 
 def test_signal_score_override_does_not_beat_a_clean_stronger_trend() -> None:

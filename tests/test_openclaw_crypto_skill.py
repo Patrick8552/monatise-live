@@ -58,20 +58,18 @@ def test_scores_inside_threshold_are_no_trade():
     assert MODULE.analyze("BTC", payload=payload(direction="short", score=-6), current_time=WEEKDAY)["decision"] == "NO_TRADE"
 
 
-def test_grid_score_seven_is_grid_trade_analysis():
+def test_legacy_grid_payload_fails_closed_to_no_trade():
     result = MODULE.analyze(
         "BTC",
         payload=payload(classification="grid", direction="two_sided", score=0, grid_score=7),
         current_time=WEEKDAY,
     )
-    assert result["decision"] == "GRID"
-    assert result["reason_code"] == "GRID_SCORE_THRESHOLD_MET"
-    assert len(result["grid_plan"]["buy_levels"]) == 3
-    assert len(result["grid_plan"]["sell_levels"]) == 3
+    assert result["decision"] == "NO_TRADE"
+    assert result["reason_code"] == "DIRECTIONAL_ANALYSIS_REQUIRED"
+    assert "grid_plan" not in result
     message = MODULE.telegram(result)
-    assert "Buy levels: $99.00 | $98.00 | $97.00" in message
-    assert "Sell levels: $101.00 | $102.00 | $103.00" in message
-    assert "Entry:" not in message
+    assert "Buy levels:" not in message
+    assert "Sell levels:" not in message
 
 
 def test_grid_plan_missing_boundary_fields_fails_closed_instead_of_crashing():
@@ -84,7 +82,7 @@ def test_grid_plan_missing_boundary_fields_fails_closed_instead_of_crashing():
     result = MODULE.analyze("BTC", payload=broken, current_time=WEEKDAY)
 
     assert result["decision"] == "NO_TRADE"
-    assert result["reason_code"] == "INVALID_GRID_LEVELS"
+    assert result["reason_code"] == "DIRECTIONAL_ANALYSIS_REQUIRED"
     MODULE.telegram(result)  # must not raise
 
 
@@ -93,7 +91,7 @@ def test_grid_without_multiple_levels_fails_closed():
     data["grid_plan"] = None
     result = MODULE.analyze("BTC", payload=data, current_time=WEEKDAY)
     assert result["decision"] == "NO_TRADE"
-    assert result["reason_code"] == "INVALID_GRID_LEVELS"
+    assert result["reason_code"] == "DIRECTIONAL_ANALYSIS_REQUIRED"
 
 
 def test_inverted_grid_levels_fail_closed():
@@ -102,7 +100,7 @@ def test_inverted_grid_levels_fail_closed():
     data["grid_plan"]["sell_levels"] = [99.0, 98.0, 97.0]
     result = MODULE.analyze("BTC", payload=data, current_time=WEEKDAY)
     assert result["decision"] == "NO_TRADE"
-    assert result["reason_code"] == "INVALID_GRID_LEVELS"
+    assert result["reason_code"] == "DIRECTIONAL_ANALYSIS_REQUIRED"
 
 
 def test_weekend_is_always_no_trade():
