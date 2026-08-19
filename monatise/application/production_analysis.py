@@ -40,6 +40,7 @@ ADAPTIVE_ATR_WINDOW = 14
 ADAPTIVE_ATR_MULTIPLIER = 0.75
 ADAPTIVE_SPACING_BOUNDS_PCT = {"BTC": (0.0008, 0.0040)}
 SUPPORTED_PRODUCTION_INTERVALS = frozenset({"1m", "3m", "5m", "15m", "30m", "1h", "4h", "6h", "8h", "12h", "1d", "1w"})
+PRODUCTION_SIGNAL_SCORE_THRESHOLD = 6
 INTERVAL_SECONDS = {
     "1m": 60, "3m": 180, "5m": 300, "15m": 900, "30m": 1_800,
     "1h": 3_600, "4h": 14_400, "6h": 21_600, "8h": 28_800,
@@ -323,7 +324,7 @@ def build_production_analysis_run(symbol: str, *, interval: str = "1h", correlat
         "fibonacci_liquidity": lambda c: FibonacciRequest(output(c, "market_data"), output(c, "market_structure"), output(c, "liquidity"), output(c, "supply_demand"), output(c, "reclaim"), minimum_structure_confidence=0),
         "order_flow": flow,
         "price_action": price_action,
-        "decision": lambda c: DecisionRequest(output(c, "market_data"), None, output(c, "regime"), output(c, "liquidity"), output(c, "liquidity_sweep"), output(c, "supply_demand"), output(c, "reclaim"), output(c, "market_structure"), output(c, "fibonacci_liquidity"), output(c, "order_flow"), minimum_conviction=0.55, high_conviction=0.75, maximum_conflict_ratio=0.45, grid_regime_bonus=0.12, trend_regime_bonus=0.12, require_structure_for_trend=True, require_two_sided_liquidity_for_grid=True, minimum_signal_score=7),
+        "decision": lambda c: DecisionRequest(output(c, "market_data"), None, output(c, "regime"), output(c, "liquidity"), output(c, "liquidity_sweep"), output(c, "supply_demand"), output(c, "reclaim"), output(c, "market_structure"), output(c, "fibonacci_liquidity"), output(c, "order_flow"), minimum_conviction=0.55, high_conviction=0.75, maximum_conflict_ratio=0.45, grid_regime_bonus=0.12, trend_regime_bonus=0.12, require_structure_for_trend=True, require_two_sided_liquidity_for_grid=True, minimum_signal_score=PRODUCTION_SIGNAL_SCORE_THRESHOLD),
         "rsi": lambda c: RSIRequest(output(c, "market_data"), output(c, "market_structure"), output(c, "regime")),
         "portfolio_intelligence": PortfolioIntelligenceRequest(100_000, ()),
         "intelligence_learning": LearningRequest((), minimum_samples=1),

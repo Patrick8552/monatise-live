@@ -15,7 +15,7 @@ import monatise.application.deployment as deployment_module
 from monatise.application.deployment import COINGLASS_PROVIDER_KEY, SCHEDULED_ANALYSIS_DEFAULT_SYMBOLS, MigrationRunner, OrchestrationASGI, OrchestrationRuntime, PaperSafetyConfiguration, RedisCoordinationStore, RedisSchedulerLeadership, TelegramNotificationTransport, register_coinglass_provider, scheduled_analysis_configuration
 from monatise.application.registry import CANONICAL_ENGINE_ORDER
 from monatise.application.registry import PRODUCTION_ENGINE_ORDER
-from monatise.application.production_analysis import build_production_analysis_run
+from monatise.application.production_analysis import PRODUCTION_SIGNAL_SCORE_THRESHOLD, build_production_analysis_run
 from monatise.core.models import Candle
 from monatise.infrastructure.dependency_injection import Container
 from monatise.engines.decision.models import DecisionClassification
@@ -159,6 +159,7 @@ def test_production_analysis_graph_completely_excludes_risk_engine_and_consumers
     assert "execution_policy" not in run.stage_inputs
     assert "governance_loss_control" not in run.stage_inputs
     assert set(PRODUCTION_ENGINE_ORDER).issubset(CANONICAL_ENGINE_ORDER)
+    assert PRODUCTION_SIGNAL_SCORE_THRESHOLD == 6
 
 
 def test_order_flow_input_uses_real_change_and_split_liquidations_not_duplicated_levels():

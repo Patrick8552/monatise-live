@@ -279,7 +279,11 @@ class HierarchyLayerEvaluator:
             return SetupState.NO_SETUP, "neutral"
         expected = "long" if strategic is StrategicState.LONG_ONLY else "short"
         bias_aligned = (expected == "long" and layer.structure.bias is StructureBias.BULLISH) or (expected == "short" and layer.structure.bias is StructureBias.BEARISH)
-        if layer.sweep.has_confirmed_sweep and layer.reclaim.has_confirmed_reclaim and bias_aligned:
+        # A confirmed sweep and a confirmed reclaim are alternative forms of
+        # 15m displacement evidence. Requiring both suppressed otherwise clean
+        # setups before the mandatory 5m trigger could evaluate them.
+        displacement_confirmed = layer.sweep.has_confirmed_sweep or layer.reclaim.has_confirmed_reclaim
+        if displacement_confirmed and bias_aligned:
             return SetupState.SETUP_CONFIRMED, expected
         if layer.sweep.has_possible_sweep or layer.sweep.has_confirmed_sweep or layer.zones.price_inside_zone:
             return SetupState.WATCHING, expected
