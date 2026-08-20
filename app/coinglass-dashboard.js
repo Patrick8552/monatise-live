@@ -1967,9 +1967,10 @@ async function startVoiceRecording() {
 async function timedFetch(name, source, url, options = {}) {
   const started = performance.now();
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const { timeoutMs = FETCH_TIMEOUT_MS, ...fetchOptions } = options;
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(url, { ...options, signal: controller.signal });
+    const response = await fetch(url, { ...fetchOptions, signal: controller.signal });
     const ms = Math.round(performance.now() - started);
     if (!response.ok) {
       throw new Error(`${response.status} ${response.statusText}`);
@@ -1979,7 +1980,7 @@ async function timedFetch(name, source, url, options = {}) {
     return data;
   } catch (error) {
     const ms = Math.round(performance.now() - started);
-    const resolved = error.name === "AbortError" ? new Error(`request timed out after ${FETCH_TIMEOUT_MS / 1000}s`) : error;
+    const resolved = error.name === "AbortError" ? new Error(`request timed out after ${timeoutMs / 1000}s`) : error;
     recordTelemetry(name, source, false, ms, resolved.message);
     throw resolved;
   } finally {
@@ -2549,7 +2550,10 @@ async function getProductionAnalysis() {
     `${asset.coin} production analysis`,
     "Monatise production",
     `/api/public/analysis?symbol=${asset.coin}&interval=${encodeURIComponent(cryptoAnalysisFrames().primary)}`,
-    { cache: "no-store" }
+    // The read-only production decision traverses the full 14-stage engine
+    // graph. It is intentionally slower than single-provider dashboard reads,
+    // so do not abort it using the generic 20-second market-data deadline.
+    { cache: "no-store", timeoutMs: 90_000 }
   );
   if (payload?.ok !== true || !payload.analysis) throw new Error("production analysis returned no result");
   return payload.analysis;

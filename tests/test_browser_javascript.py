@@ -56,6 +56,13 @@ def test_coinglass_dashboard_handles_current_sentiment_shape_and_liquidity_fallb
     assert "Production 13-stage pipeline" not in source
 
 
+def test_production_analysis_has_pipeline_specific_timeout_without_changing_market_timeout() -> None:
+    source = COINGLASS_DASHBOARD_JS.read_text(encoding="utf-8")
+
+    assert "const { timeoutMs = FETCH_TIMEOUT_MS, ...fetchOptions } = options;" in source
+    assert '{ cache: "no-store", timeoutMs: 90_000 }' in source
+
+
 def test_dashboard_does_not_restore_removed_london_runtime_gate() -> None:
     source = "\n".join(path.read_text(encoding="utf-8") for path in (ROOT / "app").glob("*.js"))
     assert "londonSession(" not in source
