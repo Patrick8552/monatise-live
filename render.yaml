@@ -51,6 +51,8 @@ services:
         value: true
       - key: MONATISE_HIERARCHICAL_TELEGRAM_PUBLISH_ENABLED
         value: true
+      - key: MONATISE_TELEGRAM_NOTIFICATIONS_ENABLED
+        value: false
       - key: MONATISE_HIERARCHICAL_INTERVAL_SECONDS
         value: 900
       - key: MONATISE_HIERARCHICAL_ALWAYS_COLLECT_5M
