@@ -31,7 +31,7 @@
             <div class="mobile-price-chip" aria-label="Selected asset live price">
               <span id="headerMarketSymbol">BTCUSDT</span>
               <strong id="headerAssetPrice">$--</strong>
-              <small id="headerPriceChange">Waiting for candles</small>
+              <small id="headerPriceChange">Loading candles</small>
             </div>
           </div>
         </div>
@@ -214,7 +214,7 @@
             <div class="panel-head">
               <div>
                 <h2>Monatise Generated Signals</h2>
-                <p id="signalTimestamp">Waiting for first market read</p>
+                <p id="signalTimestamp">Loading first market read</p>
               </div>
               <span id="signalState" class="pill">signal pending</span>
             </div>
@@ -231,7 +231,7 @@
                       <span>Directional Setup</span>
                       <strong id="signalEntry">--</strong>
                     </div>
-                    <span id="setupGridStatus" class="setup-grid-status">WAIT · NO TRADE</span>
+                    <span id="setupGridStatus" class="setup-grid-status">NO TRADE</span>
                   </div>
                   <div class="setup-context-strip">
                     <span id="setupContextDirection">WAIT CONTEXT</span>
@@ -258,23 +258,23 @@
                       <small>CHoCH / BOS</small>
                     </div>
                   </div>
-                  <small id="setupGridValidity" class="setup-grid-validity">Waiting for a valid snapshot</small>
-                  <small id="signalEntryPlan" class="visually-hidden">Waiting for a directional setup.</small>
+                  <small id="setupGridValidity" class="setup-grid-validity">No trade until a valid snapshot</small>
+                  <small id="signalEntryPlan" class="visually-hidden">No trade until a directional setup confirms.</small>
                 </div>
                 <div>
                   <span>Invalidation</span>
                   <strong id="signalInvalidation">--</strong>
-                  <small id="signalInvalidationPlan">Waiting for invalidation.</small>
+                  <small id="signalInvalidationPlan">No trade without invalidation.</small>
                 </div>
                 <div>
                   <span>Target</span>
                   <strong id="signalGridHedge">--</strong>
-                  <small id="signalGridHedgePlan">Waiting for target.</small>
+                  <small id="signalGridHedgePlan">No trade without a target.</small>
                 </div>
                 <div>
                   <span>Evidence</span>
                   <strong id="signalEvidence">0 checks</strong>
-                  <small id="signalEvidencePlan">Waiting for framework checks.</small>
+                  <small id="signalEvidencePlan">No trade until framework checks complete.</small>
                 </div>
               </div>
             </div>
@@ -282,7 +282,7 @@
               <div class="trader-mode-head">
                 <div>
                   <span>Trader Mode</span>
-                  <strong id="traderRiskNote">Waiting for active signal</strong>
+                  <strong id="traderRiskNote">No trade without an active signal</strong>
                 </div>
                 <div class="trader-inputs">
                   <label>
@@ -321,7 +321,7 @@
             <div class="panel-head">
               <div>
                 <h2>Monatise Framework</h2>
-                <p id="frameworkSource">Waiting for selected asset context</p>
+                <p id="frameworkSource">Loading selected asset context</p>
               </div>
               <span id="setupConfidence" class="pill">probability --</span>
             </div>
@@ -334,7 +334,7 @@
               <div class="setup-card">
                 <span>Direction</span>
                 <strong id="gridDirection">No directional setup</strong>
-                <small id="gridPlan">Wait for directional data alignment.</small>
+                <small id="gridPlan">No trade until directional data aligns.</small>
               </div>
               <div class="setup-card">
                 <span>Take Profit</span>
@@ -361,17 +361,17 @@
             <div class="research-grid">
               <div class="research-card">
                 <span>History + VWAP Study</span>
-                <strong id="historySignal">Waiting</strong>
+                <strong id="historySignal">Loading</strong>
                 <small id="historyStats">Needs recent candles.</small>
               </div>
               <div class="research-card">
                 <span>VWAP Position</span>
-                <strong id="vwapSignal">Waiting</strong>
+                <strong id="vwapSignal">Loading</strong>
                 <small id="vwapDetail">VWAP distance will appear here.</small>
               </div>
               <div class="research-card">
                 <span>Scale Plan</span>
-                <strong id="scaleAction">Wait</strong>
+                <strong id="scaleAction">No trade</strong>
                 <small id="scalePlan">No averaging plan yet.</small>
               </div>
               <div class="research-card">
@@ -386,7 +386,7 @@
             <div class="panel-head">
               <div>
                 <h2 id="pricePanelTitle">BTC Live Candles</h2>
-                <p id="priceSource">Waiting for live candles</p>
+                <p id="priceSource">Loading live candles</p>
               </div>
               <span id="pricePulse" class="pill">idle</span>
             </div>
@@ -397,7 +397,7 @@
               <span class="legend-liq">Liquidity zones</span>
               <span class="legend-signal">Monatise signals</span>
             </div>
-            <div id="structureSummary" class="structure-summary">Waiting for market structure.</div>
+            <div id="structureSummary" class="structure-summary">Loading market structure.</div>
           </article>
 
           <article class="panel wide tradingview-panel">
@@ -461,7 +461,7 @@
             </div>
             <div class="gauge-wrap">
               <div class="gauge" id="fgGauge"><span>--</span></div>
-              <p id="fgLabel">Waiting for index</p>
+              <p id="fgLabel">Loading index</p>
             </div>
           </article>
 
@@ -612,6 +612,6 @@
     </dialog>
     <script src="https://cdn.ably.com/lib/ably.min-2.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="./coinglass-dashboard.js?v=20260818-universe-v1"></script>
+    <script src="./coinglass-dashboard.js?v=20260820-signal-core-v1"></script>
   </body>
 </html>

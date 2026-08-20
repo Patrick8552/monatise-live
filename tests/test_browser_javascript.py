@@ -56,6 +56,21 @@ def test_coinglass_dashboard_handles_current_sentiment_shape_and_liquidity_fallb
     assert "Production 13-stage pipeline" not in source
 
 
+def test_dashboard_signal_core_is_authoritative_and_production_is_advisory() -> None:
+    source = COINGLASS_DASHBOARD_JS.read_text(encoding="utf-8")
+    html = (ROOT / "app" / "coinglass-dashboard.html").read_text(encoding="utf-8")
+    assert "const SIGNAL_CORE_MIN_EVIDENCE = 3;" in source
+    assert "evidenceScore >= SIGNAL_CORE_MIN_EVIDENCE" in source
+    assert "function signalMarketDataFresh()" in source
+    assert "&& freshMarketData" in source
+    assert "Signal Core remains authoritative for dashboard analysis" in source
+    assert "Advisory conflict noted; Signal Core decision and risk controls remain unchanged" in source
+    assert "renderAuthoritativeFramework(setup);" not in source
+    assert "productionAdvisoryUnavailable: true" in source
+    assert "WAIT · NO TRADE" not in source + html
+    assert "say NO TRADE instead of fabricating a trade" in source
+
+
 def test_dashboard_does_not_restore_removed_london_runtime_gate() -> None:
     source = "\n".join(path.read_text(encoding="utf-8") for path in (ROOT / "app").glob("*.js"))
     assert "londonSession(" not in source

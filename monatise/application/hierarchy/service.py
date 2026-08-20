@@ -43,7 +43,12 @@ class ShadowHierarchyService:
 
         duplicate = False
         trigger_id: str | None = None
-        eligible = evaluation.validation is not None and evaluation.validation.eligible_for_shadow_decision
+        signal_core = self._signal_core_evidence(evaluation)
+        eligible = (
+            evaluation.validation is not None
+            and evaluation.validation.eligible_for_shadow_decision
+            and signal_core["score"] >= 3
+        )
         publication_available = self.coordinator.configuration.telegram_publish_enabled and self.publisher is not None
         if eligible and publication_available and evaluation.trigger_5m is not None and evaluation.trigger_5m.state is TriggerState.TRIGGER_CONFIRMED:
             claimed, trigger_id = await self.coordinator.claim_closed_trigger(
@@ -100,6 +105,7 @@ class ShadowHierarchyService:
         return self._result(symbol, tuple(snapshots), evaluation, duplicate=duplicate, published=published, publication_failed=publication_failed, publication_id=trigger_id, telegram_message_id=telegram_message_id)
 
     def _result(self, symbol: str, layers: tuple[str, ...], evaluation: ShadowEvaluation | None, *, duplicate: bool, published: bool = False, publication_failed: bool = False, publication_id: str | None = None, telegram_message_id: int | None = None) -> dict[str, Any]:
+        signal_core = self._signal_core_evidence(evaluation)
         return {
             "symbol": symbol.upper(),
             "layers_observed": list(layers),
@@ -114,6 +120,9 @@ class ShadowHierarchyService:
             "telegram_publication_failed": publication_failed,
             "publication_id": publication_id,
             "telegram_message_id": telegram_message_id,
+            "signal_core_state": "CONFIRMED" if signal_core["score"] >= 3 else "NO TRADE",
+            "signal_core_score": signal_core["score"],
+            "signal_core_evidence": signal_core["evidence"],
             "execution_enabled": False,
         }
 
@@ -142,10 +151,13 @@ class ShadowHierarchyService:
             f"Liquidations ${_display_metric(derivatives.get('liquidation_volume'))} | "
             f"Order-book imbalance {_display_metric(derivatives.get('order_book_imbalance'))}"
         )
+        signal_core = ShadowHierarchyService._signal_core_evidence(evaluation)
+        core_labels = ", ".join(name for name, ready in signal_core["evidence"].items() if ready) or "none"
         return (
-            f"Monatise HIERARCHY SHADOW — observation only, not a trade order\n"
+            f"Monatise ALTCOIN SIGNAL CORE — observation only, not a trade order\n"
             f"{bundle.symbol} | {direction} | {context.get('verified_market', 'CoinGlass verified futures market')}\n"
-            f"15M directional thesis confirmed | 5M structure confirmed | 1M entry trigger refined\n"
+            f"Signal Core CONFIRMED {signal_core['score']}/4 | {core_labels}\n"
+            f"1H direction | 15M location | 5M confirmation | 1M entry refined\n"
             f"Current CoinGlass price: {current} | source {price_source} | observed {observed}\n"
             f"Entry {risk.reference_entry:.8g} | Stop {risk.final_stop:.8g} | Target {risk.target_liquidity:.8g} | R:R {risk.calculated_reward_to_risk:.2f}\n"
             f"{evidence}\n"
@@ -153,6 +165,31 @@ class ShadowHierarchyService:
             f"Strategy {bundle.strategy_version} | Evidence {bundle.bundle_id[:12]} | Publication {publication_id[:16]}\n"
             f"Analysis only — no trade executed"
         )
+
+    @staticmethod
+    def _signal_core_evidence(evaluation: ShadowEvaluation | None) -> dict[str, Any]:
+        if evaluation is None:
+            evidence = {"structure": False, "liquidity": False, "value": False, "confirmation": False}
+            return {"score": 0, "evidence": evidence}
+        setup = dict(evaluation.setup_15m.evidence) if evaluation.setup_15m is not None else {}
+        trigger = dict(evaluation.trigger_5m.evidence) if evaluation.trigger_5m is not None else {}
+        structure = evaluation.strategy_1h is not None and evaluation.strategy_1h.direction in {"long", "short"}
+        liquidity = bool(setup.get("confirmed_sweep") or setup.get("possible_sweep"))
+        value = bool(setup.get("confirmed_reclaim") or setup.get("price_inside_zone"))
+        if evaluation.setup_15m is not None and evaluation.setup_15m.state.value == "setup_confirmed" and not (liquidity or value):
+            # Compatibility for persisted evidence created before Signal Core
+            # stored the individual location groups.
+            value = True
+        confirmation = bool(trigger.get("confirmed_reclaim") or trigger.get("confirmed_break")) or (
+            evaluation.trigger_5m is not None and evaluation.trigger_5m.state is TriggerState.TRIGGER_CONFIRMED
+        )
+        evidence = {
+            "structure": structure,
+            "liquidity": liquidity,
+            "value": value,
+            "confirmation": confirmation,
+        }
+        return {"score": sum(evidence.values()), "evidence": evidence}
 
     @staticmethod
     def _telegram_message_id(delivery_result: Any) -> int | None:

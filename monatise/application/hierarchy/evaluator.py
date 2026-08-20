@@ -263,10 +263,9 @@ class HierarchyLayerEvaluator:
 
     @staticmethod
     def _strategy_state(layer: LayerAnalysis, regime: RegimeState) -> StrategicState:
-        if regime in {RegimeState.UNSTABLE, RegimeState.UNKNOWN}:
-            return StrategicState.BLOCKED
-        if regime in {RegimeState.RANGE, RegimeState.COMPRESSION}:
-            return StrategicState.NEUTRAL
+        # The altcoin Signal Core treats the 4h regime engine as advisory.
+        # Fresh 1h structure is the directional authority; data freshness and
+        # structural risk remain hard gates later in the pipeline.
         if layer.structure.bias is StructureBias.BULLISH:
             return StrategicState.LONG_ONLY
         if layer.structure.bias is StructureBias.BEARISH:
@@ -279,11 +278,15 @@ class HierarchyLayerEvaluator:
             return SetupState.NO_SETUP, "neutral"
         expected = "long" if strategic is StrategicState.LONG_ONLY else "short"
         bias_aligned = (expected == "long" and layer.structure.bias is StructureBias.BULLISH) or (expected == "short" and layer.structure.bias is StructureBias.BEARISH)
-        # A confirmed sweep and a confirmed reclaim are alternative forms of
-        # 15m displacement evidence. Requiring both suppressed otherwise clean
-        # setups before the mandatory 5m trigger could evaluate them.
-        displacement_confirmed = layer.sweep.has_confirmed_sweep or layer.reclaim.has_confirmed_reclaim
-        if displacement_confirmed and bias_aligned:
+        # Liquidity and value/location are independent Signal Core evidence.
+        # Either can advance an aligned setup to the 5m confirmation layer;
+        # the final notifier still requires three of four evidence groups.
+        location_confirmed = (
+            layer.sweep.has_confirmed_sweep
+            or layer.reclaim.has_confirmed_reclaim
+            or layer.zones.price_inside_zone
+        )
+        if location_confirmed and bias_aligned:
             return SetupState.SETUP_CONFIRMED, expected
         if layer.sweep.has_possible_sweep or layer.sweep.has_confirmed_sweep or layer.zones.price_inside_zone:
             return SetupState.WATCHING, expected

@@ -12,7 +12,7 @@ const SHELL_ASSETS = [
   "./game.js?v=20260629-crypto-trainer",
   "./assets/payout-clients.svg",
   "./coinglass-dashboard.css?v=20260814-ui-depth-v1",
-  "./coinglass-dashboard.js?v=20260818-universe-v1",
+  "./coinglass-dashboard.js?v=20260820-signal-core-v1",
   "./memecoins.css?v=20260715-memecoins",
   "./memecoins.js?v=20260814-bugfix-v1",
   "./manifest.webmanifest?v=20260727-brand-v2",

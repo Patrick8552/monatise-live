@@ -51,7 +51,9 @@ class CanonicalEvidenceAdapter:
             reasons.append("evidence_expired")
         if any(context.data_quality in {DataQualityState.UNAVAILABLE, DataQualityState.REVISED} for context in contexts):
             reasons.append("data_unavailable_or_revised")
-        if bundle.regime_4h.state is StrategicState.BLOCKED or bundle.strategy_1h.state is StrategicState.BLOCKED:
+        # The 4h regime is advisory for altcoin Signal Core publication. The
+        # 1h structure remains directional authority and may still block.
+        if bundle.strategy_1h.state is StrategicState.BLOCKED:
             reasons.append("strategic_context_blocked")
         if bundle.setup_15m.state is not SetupState.SETUP_CONFIRMED:
             reasons.append("setup_not_confirmed")
@@ -83,4 +85,3 @@ class CanonicalEvidenceAdapter:
             "minimum_reward_risk": risk.minimum_reward_to_risk,
             "signal_expires_at": risk.expires_at,
         }
-
