@@ -1150,6 +1150,15 @@ class OrchestrationRuntime:
             telegram_token = self.environment.get("MONATISE_TELEGRAM_BOT_TOKEN", "")
             telegram_chat = self.environment.get("MONATISE_TELEGRAM_CHAT_ID", "")
             telegram_notifications_enabled = _true(self.environment.get("MONATISE_TELEGRAM_NOTIFICATIONS_ENABLED", "false"))
+            if not telegram_notifications_enabled:
+                self.environment = {
+                    **self.environment,
+                    "MONATISE_HIERARCHICAL_TELEGRAM_PUBLISH_ENABLED": "false",
+                    "MONATISE_X_MONITOR_ENABLED": "false",
+                    "MONATISE_COIN_DISCOVERY_ENABLED": "false",
+                    "MONATISE_STOCK_SCAN_ENABLED": "false",
+                    "MONATISE_FLASHALPHA_FUTURES_SCAN_ENABLED": "false",
+                }
             if telegram_notifications_enabled and telegram_token and telegram_chat:
                 secrets = EnvironmentSecretBoundary(self.environment)
                 self.telegram = TelegramNotifier(TelegramNotificationTransport(lambda: secrets.get("MONATISE_TELEGRAM_BOT_TOKEN")), telegram_chat)
