@@ -32,8 +32,8 @@ function cryptoAnalysisFrames() {
 }
 const MIN_CONTEXT_SIGNAL_CONFIDENCE = 50;
 const MIN_ENTRY_NOTIFICATION_CONFIDENCE = 65;
-const MIN_ENTRY_NOTIFICATION_CHECKS = 6;
-const SCORE_TRADE_THRESHOLD = 7;
+const MIN_ENTRY_NOTIFICATION_CHECKS = 3;
+const SIGNAL_CORE_MIN_EVIDENCE = 3;
 const ASSET_DEFINITIONS = [
   "BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "ADA", "AVAX", "LINK", "TRX", "TON", "DOT", "BCH", "LTC", "UNI", "NEAR",
   "APT", "ICP", "ETC", "ATOM", "FIL", "ARB", "OP", "SUI", "SEI", "INJ", "TIA", "WLD", "AAVE", "MKR", "RUNE", "GRT",
@@ -981,7 +981,7 @@ function snapshotLockedSignal(candidate, setup, price) {
       evidence: candidate.evidence,
       status: resolvedStatus,
       stateLabel: `setup ${resolvedLabel}`,
-      thesis: resolution?.detail || `Setup canceled. Structural invalidation confirmed beyond ${formatUsd(locked.invalidation)}. Waiting for the next snapshot.`,
+      thesis: resolution?.detail || `Setup canceled. Structural invalidation confirmed beyond ${formatUsd(locked.invalidation)}. No trade until the next snapshot.`,
       entryPlan: "No new entry until a fresh BUY or SELL snapshot forms.",
       invalidationPlan: resolution?.detail || "Major structural invalidation canceled the setup. A fresh snapshot is required.",
       time: candidate.time
@@ -1033,24 +1033,24 @@ function lockedSignalResolution(signal, price, now = Date.now()) {
   if (Number(signal.reassessAtMs) && now >= Number(signal.reassessAtMs)) {
     return {
       status: "expired",
-      detail: `Snapshot expired at ${signal.reassessTime}. Waiting for the next framework pass.`
+      detail: `Snapshot expired at ${signal.reassessTime}. No trade until the next framework pass.`
     };
   }
   if (!Number.isFinite(mark)) return null;
   if (signal.action === "BUY") {
     if (Number.isFinite(target) && mark >= target) {
-      return { status: "target-hit", detail: `Target reached at ${formatUsd(target)} with mark at ${formatUsd(mark)}. Waiting for the next snapshot.` };
+      return { status: "target-hit", detail: `Target reached at ${formatUsd(target)} with mark at ${formatUsd(mark)}. No trade until the next snapshot.` };
     }
     if (isSignalInvalidated(signal.action, mark, invalidation)) {
-      return { status: "invalidated", detail: `BUY invalidation accepted below ${formatUsd(invalidation)} with mark at ${formatUsd(mark)}. Waiting for the next snapshot.` };
+      return { status: "invalidated", detail: `BUY invalidation accepted below ${formatUsd(invalidation)} with mark at ${formatUsd(mark)}. No trade until the next snapshot.` };
     }
   }
   if (signal.action === "SELL") {
     if (Number.isFinite(target) && mark <= target) {
-      return { status: "target-hit", detail: `Target reached at ${formatUsd(target)} with mark at ${formatUsd(mark)}. Waiting for the next snapshot.` };
+      return { status: "target-hit", detail: `Target reached at ${formatUsd(target)} with mark at ${formatUsd(mark)}. No trade until the next snapshot.` };
     }
     if (isSignalInvalidated(signal.action, mark, invalidation)) {
-      return { status: "invalidated", detail: `SELL invalidation accepted above ${formatUsd(invalidation)} with mark at ${formatUsd(mark)}. Waiting for the next snapshot.` };
+      return { status: "invalidated", detail: `SELL invalidation accepted above ${formatUsd(invalidation)} with mark at ${formatUsd(mark)}. No trade until the next snapshot.` };
     }
   }
   return null;
@@ -1086,7 +1086,7 @@ function invalidationInstruction(action, invalidation, plan = null) {
   const detail = plan?.detail ? ` ${plan.detail}` : "";
   if (action === "BUY") return `Invalidate only after acceptance below ${formatUsd(invalidation)}.${detail}`;
   if (action === "SELL") return `Invalidate only after acceptance above ${formatUsd(invalidation)}.${detail}`;
-  return "VWAP and market structure are the wait-state guard rails.";
+  return "No trade: VWAP and market structure remain the guard rails.";
 }
 
 function hasStructuralInvalidation(signal, setup, price) {
@@ -1333,16 +1333,16 @@ function buildGeneratedSignal(setup, price, vwap) {
         ? setup.frameworkGate?.summary || "NO TRADE until the full framework sequence confirms."
         : actionBlocked
           ? `No trade: dynamic stop is too wide for ${setup.asset}. Use small lot size only if a later setup becomes tradable; otherwise wait for a closer structural sweep or lower ATR.`
-          : `No ${setupAction} entry yet. Wait for the full framework sequence: liquidity sweep, rejection, CHoCH/BOS, retest, and confirmation candle.`
+          : `No trade: the ${setupAction} sequence still needs liquidity, rejection, CHoCH/BOS, retest, and a confirmation candle.`
       : !setup.tradeReady
-        ? `Potential ${executableAction} pullback entry at ${formatUsd(executableEntry)}; current mark ${formatUsd(mark)} is not approved for entry. Context strength ${setup.contextConfidence}%. ${setup.frameworkGate?.summary || "Wait for the full sequence."}`
+        ? `Potential ${executableAction} pullback entry at ${formatUsd(executableEntry)}; current mark ${formatUsd(mark)} is not approved for entry. Context strength ${setup.contextConfidence}%. ${setup.frameworkGate?.summary || "No trade until the full sequence confirms."}`
       : invalidationPlan.reducedSize
         ? `Potential ${executableAction} ${entryMode === "mark" ? "mark-price" : "maneuver"} entry ${formatUsd(executableEntry)}; analysis favors the entry, but use small lot size, keep the wider invalidation, and hold account risk constant. First target ${formatUsd(target)}.`
         : `Potential ${executableAction} ${entryMode === "mark" ? "mark-price" : "pullback"} entry ${formatUsd(executableEntry)}; analysis ${entryMode === "mark" ? "supports using current price" : "requires price to pull back"}. First target ${formatUsd(target)}.`,
     invalidationPlan: executableAction === "WAIT"
       ? actionBlocked
         ? `${invalidationPlan.detail} Stop became unreasonable, so Monatise stays in NO TRADE. If the next valid setup still needs a wide stop, use small lot size.`
-        : "VWAP and market structure are the wait-state guard rails."
+        : "No trade: VWAP and market structure remain the guard rails."
       : invalidationInstruction(executableAction, invalidation, invalidationPlan),
     buyGridPlan: gridSidePlan("buy", executableAction, setup.asset, buyGrid, setup.scaleAction),
     sellGridPlan: gridSidePlan("sell", executableAction, setup.asset, sellGrid, setup.scaleAction),
@@ -1434,7 +1434,7 @@ function setupInvalidationPlan(signal) {
   if (signal.action === "SELL") {
     return `One overall invalidation for the setup: the sell idea is wrong only above ${formatUsd(signal.invalidation)}.`;
   }
-  return "VWAP and market structure are the wait-state guard rails.";
+  return "No trade: VWAP and market structure remain the guard rails.";
 }
 
 function renderSetupLevels(container, levels, primaryLevel = Number.NaN) {
@@ -1462,7 +1462,7 @@ function renderSetupGrid(signal) {
   const profitLevels = Number.isFinite(Number(signal.target)) ? [Number(signal.target)] : [];
   const entryModeLabel = signal.entryMode === "mark" ? "MARK ENTRY" : signal.entryMode === "pullback" ? "PULLBACK ENTRY" : "ENTRY PENDING";
 
-  els.setupGridStatus.textContent = pending || !isDirectional ? "WAIT · NO TRADE" : `${signal.action} · ACTIVE`;
+  els.setupGridStatus.textContent = pending || !isDirectional ? "NO TRADE" : `${signal.action} · ACTIVE`;
   els.setupGridStatus.className = `setup-grid-status ${pending || !isDirectional ? "waiting" : isBuy ? "positive" : "negative"}`;
   els.setupContextDirection.textContent = isDirectional ? `${signal.action} CONTEXT` : "WAIT CONTEXT";
   els.setupContextDirection.className = isBuy ? "positive" : isSell ? "negative" : "";
@@ -1516,6 +1516,20 @@ function indicatorRow(name) {
   return (state.market.indicatorRows || []).find((row) => row.name === name) || null;
 }
 
+function signalMarketDataFresh() {
+  const last = state.priceSeries.at(-1);
+  const rawTime = Number(last?.time);
+  if (!last || !Number.isFinite(rawTime) || !Number.isFinite(last.close)) return false;
+  const timestamp = rawTime < 1_000_000_000_000 ? rawTime * 1000 : rawTime;
+  const interval = cryptoAnalysisFrames().primary;
+  const amount = Math.max(1, Number.parseInt(interval, 10) || 1);
+  const unit = interval.endsWith("w") ? 7 * 86_400_000
+    : interval.endsWith("d") ? 86_400_000
+      : interval.endsWith("h") ? 3_600_000
+        : 60_000;
+  return Date.now() - timestamp <= Math.max(15 * 60_000, amount * unit * 3);
+}
+
 function currentFrameworkGate(direction, confidence, liveChecks) {
   const side = direction === "BUY SETUP" ? "BUY" : direction === "SELL SETUP" ? "SELL" : "WAIT";
   const marker = state.market.structureMarker || null;
@@ -1523,27 +1537,44 @@ function currentFrameworkGate(direction, confidence, liveChecks) {
   const grab = indicatorRow("Liquidity Grabs");
   const wick = indicatorRow("Wick Extremity");
   const trend = indicatorRow("Dynamic Trend Pivot");
-  const fib = indicatorRow("Auto Fib Retracement");
-  const volume = indicatorRow("Volume Profile");
+  const vwapAligned = scoreMatchesSide(state.market.vwapScore, side);
+  const liquidityAligned = scoreMatchesSide(grab?.score, side)
+    || scoreMatchesSide(wick?.score, side)
+    || (side === "BUY" && ["short squeeze", "bid wall"].includes(state.market.liquidationBias))
+    || (side === "SELL" && ["long flush", "ask wall"].includes(state.market.liquidationBias));
+  const structureAligned = markerMatches || scoreMatchesSide(trend?.score, side);
+  const rejectionAligned = scoreMatchesSide(wick?.score, side) || markerMatches;
+  const evidence = [
+    { name: "structure", ready: structureAligned },
+    { name: "liquidity", ready: liquidityAligned },
+    { name: "VWAP / value", ready: vwapAligned },
+    { name: "confirmation", ready: rejectionAligned }
+  ];
+  const evidenceScore = evidence.filter((item) => item.ready).length;
+  const freshMarketData = signalMarketDataFresh();
   const missing = [];
 
   if (side === "WAIT") missing.push("higher-timeframe bias");
+  if (!freshMarketData) missing.push("fresh market candles");
   if (liveChecks < MIN_ENTRY_NOTIFICATION_CHECKS) missing.push("live data quorum");
-  if (!scoreMatchesSide(grab?.score, side)) missing.push("liquidity sweep");
-  if (!scoreMatchesSide(wick?.score, side)) missing.push("strong rejection");
-  if (!markerMatches || !["CHOCH", "BOS"].includes(marker?.type)) missing.push("CHoCH/BOS");
-  if (!scoreMatchesSide(trend?.score, side)) missing.push("retest / structure pivot");
-  if (!scoreMatchesSide(fib?.score, side)) missing.push("premium/discount Fibonacci zone");
-  if (!scoreMatchesSide(volume?.score, side)) missing.push("POC / volume profile alignment");
-  if (Number(confidence) < MIN_ENTRY_NOTIFICATION_CONFIDENCE) missing.push(`probability >= ${MIN_ENTRY_NOTIFICATION_CONFIDENCE}%`);
+  evidence.filter((item) => !item.ready).forEach((item) => missing.push(item.name));
+  if (Number(confidence) < MIN_CONTEXT_SIGNAL_CONFIDENCE) missing.push(`context >= ${MIN_CONTEXT_SIGNAL_CONFIDENCE}%`);
 
+  const ready = side !== "WAIT"
+    && freshMarketData
+    && liveChecks >= MIN_ENTRY_NOTIFICATION_CHECKS
+    && Number(confidence) >= MIN_CONTEXT_SIGNAL_CONFIDENCE
+    && evidenceScore >= SIGNAL_CORE_MIN_EVIDENCE;
   return {
     side,
-    ready: side !== "WAIT" && missing.length === 0,
+    evidence,
+    evidenceScore,
+    freshMarketData,
+    ready,
     missing,
-    summary: missing.length
-      ? `NO TRADE: waiting for ${missing.slice(0, 4).join(", ")}${missing.length > 4 ? ", ..." : ""}.`
-      : `${side} framework sequence confirmed: sweep, rejection, CHoCH/BOS, retest, and decision evidence.`
+    summary: ready
+      ? `${side} Signal Core confirmed with ${evidenceScore}/4 evidence: structure, liquidity, VWAP/value, and execution alignment.`
+      : `${side === "WAIT" ? "NO TRADE" : `${side} conditional · NO TRADE`}: ${evidenceScore}/4 core evidence; missing ${missing.slice(0, 3).join(", ")}${missing.length > 3 ? ", ..." : ""}.`
   };
 }
 
@@ -1570,7 +1601,7 @@ function renderTraderMode(signal = state.activeSignal) {
     els.traderPositionSize.textContent = "--";
     els.traderStopDistance.textContent = "--";
     els.traderRewardRisk.textContent = "--";
-    els.traderRiskNote.textContent = "Waiting for an active BUY or SELL snapshot with invalidation.";
+    els.traderRiskNote.textContent = "No trade until an active BUY or SELL snapshot has invalidation.";
     return;
   }
 
@@ -1617,7 +1648,7 @@ function renderGeneratedSignal(signal) {
 
 function renderSignalLog() {
   if (!state.signals.length) {
-    els.signalLog.innerHTML = `<div class="signal-row"><strong>No signals yet</strong><span>--</span><small>Waiting for the first framework pass.</small></div>`;
+    els.signalLog.innerHTML = `<div class="signal-row"><strong>No signals yet</strong><span>--</span><small>No trade until the first framework pass completes.</small></div>`;
     return;
   }
   els.signalLog.innerHTML = state.signals.slice(0, 5).map((signal) => `
@@ -1719,7 +1750,7 @@ function localCopilotAnswer(question) {
   const personalPrefix = `${s.asset} personal read: ${isActive ? `${s.signalAction} snapshot is active` : `${s.direction} is not an active entry yet`}.`;
   const levels = isActive
     ? `${s.signalEntry}: ${s.signalEntryPlan} Invalidation ${s.signalInvalidation}; target ${s.signalTarget}.`
-    : `No locked entry/target yet. Wait for an active BUY or SELL snapshot; current guard rail is ${s.signalInvalidation}.`;
+    : `No trade: there is no locked BUY or SELL entry/target; current guard rail is ${s.signalInvalidation}.`;
 
   if (q.includes("should i") || q.includes("can i") || q.includes("enter") || q.includes("buy now") || q.includes("sell now")) {
     return [
@@ -1776,7 +1807,7 @@ function localCopilotAnswer(question) {
       `Target: ${s.signalTarget}.`,
       isActive
         ? "Treat this as the first target from the locked snapshot; reassess after the snapshot window or if invalidation hits."
-        : "No active target is locked yet because the setup is still waiting.",
+        : "No trade: no active target is locked.",
       `Thesis: ${s.signalThesis}`
     ].join("\n");
   }
@@ -1814,7 +1845,7 @@ async function askOpenAICopilot(question) {
         "When the user asks what they should do, frame the answer as conditional analysis: if they choose to trade, use the displayed entry, invalidation, target, and risk controls.",
         "Do not invent live prices, exchange fills, or execution certainty.",
         "Answer with entry, invalidation, target, directional setup, take-profit area, and caution when relevant.",
-        "If the dashboard has no active BUY or SELL snapshot, say to wait instead of fabricating a trade.",
+        "If the dashboard has no active BUY or SELL snapshot, say NO TRADE instead of fabricating a trade.",
         "This is trading analysis, not financial advice."
       ].join(" "),
       input: [
@@ -2160,7 +2191,7 @@ function chooseAsset(coin) {
   els.headerPriceChange.className = "";
   els.hyperList.innerHTML = lockedRows("Production analysis", `Refreshing decision pipeline for ${coin}`, [
     "Previous asset analysis cleared",
-    "Waiting for the current asset response"
+    "Loading the current asset response"
   ], "refreshing");
   setLockedSignal(null);
   state.realtime.lastSetup = null;
@@ -3007,7 +3038,7 @@ function studyHistoricalPattern(series) {
       score: 0,
       action: "wait",
       stats: "Need at least 20 candles.",
-      plan: "Wait for more history before averaging.",
+      plan: "No trade until more history is available.",
       memory: "--",
       detail: "CoinGlass historical study needs a larger sample."
     };
@@ -3678,20 +3709,13 @@ function applyMonatiseFramework() {
   const direction = score >= 2 ? "BUY SETUP" : score <= -2 ? "SELL SETUP" : "WAIT";
   const frameworkGate = currentFrameworkGate(direction, contextConfidence, liveChecks);
   const contextSignalReady = direction !== "WAIT" && contextConfidence >= MIN_CONTEXT_SIGNAL_CONFIDENCE;
-  const scoreTradeReady = direction !== "WAIT" && Math.abs(score) >= SCORE_TRADE_THRESHOLD;
-  const tradeReady = frameworkGate.ready || scoreTradeReady;
-  const effectiveGate = scoreTradeReady && !frameworkGate.ready
-    ? {
-        ...frameworkGate,
-        ready: true,
-        summary: `${direction.startsWith("BUY") ? "+" : "-"}${Math.abs(score)} score threshold reached; display trade setup approved.`
-      }
-    : frameworkGate;
+  const tradeReady = frameworkGate.ready;
+  const effectiveGate = frameworkGate;
   const confidence = contextSignalReady ? contextConfidence : 0;
 
   els.frameworkSource.textContent = usesCryptoMultiFrame(asset)
-    ? `${asset.coin} selected · production multi-timeframe context + CoinGlass derivatives`
-    : `${asset.coin} selected · native indicator stack + CoinGlass market context`;
+    ? `${asset.coin} selected · Signal Core multi-timeframe context + CoinGlass modifiers`
+    : `${asset.coin} selected · Signal Core structure + market context`;
   const displayedDirection = tradeReady
     ? direction.replace(" SETUP", "")
     : contextSignalReady
@@ -3701,11 +3725,11 @@ function applyMonatiseFramework() {
   els.setupDirection.className = tradeReady && direction.includes("BUY") ? "positive" : tradeReady && direction.includes("SELL") ? "negative" : "";
   els.setupConfidence.textContent = contextSignalReady ? `context strength ${confidence}%` : `context strength < ${MIN_CONTEXT_SIGNAL_CONFIDENCE}%`;
   els.frameworkChecks.textContent = `${liveChecks} / ${checks.length}`;
-  els.frameworkBias.textContent = `${tradeReady ? "Entry Ready" : contextSignalReady ? "Context Signal" : "No Trade"} · Context strength ${contextConfidence}% · Score ${score >= 0 ? "+" : ""}${score} from ${checks.length} checks`;
+  els.frameworkBias.textContent = `${tradeReady ? "Confirmed" : contextSignalReady ? "Conditional · No Trade" : "No Trade"} · ${effectiveGate.evidenceScore || 0}/4 core evidence · Context ${contextConfidence}%`;
   els.setupReason.textContent = `${contextSignalReady && !tradeReady ? `Context signal active from ${MIN_CONTEXT_SIGNAL_CONFIDENCE}-100% strength. ` : ""}${effectiveGate.summary} ${checks.map((check) => `${check.name}: ${check.detail}`).join(" · ")}`;
 
   let gridDirection = `No directional setup ${asset.coin}`;
-  let gridPlan = "Wait until funding, open interest, liquidation, and structure align directionally.";
+  let gridPlan = "No trade until structure, liquidity and value align directionally.";
   let takeProfitDirection = "TP pending";
   let takeProfitPlan = "No take-profit area until a BUY or SELL context signal appears.";
 
@@ -3738,7 +3762,8 @@ function applyMonatiseFramework() {
     contextSignalReady,
     frameworkReady: tradeReady,
     tradeReady,
-    scoreTradeReady,
+    signalCoreEvidence: effectiveGate.evidence,
+    signalCoreEvidenceScore: effectiveGate.evidenceScore,
     liveChecks,
     score,
     gridDirection,
@@ -3759,80 +3784,33 @@ function applyMonatiseFramework() {
 
 function applyProductionDecision(setup) {
   const analysis = state.productionAnalysis;
-  const productionRequired = ["BTC", "ETH", "SOL"].includes(String(setup.asset || "").toUpperCase());
-  if (!analysis && productionRequired) {
-    const summary = `Production analysis unavailable for ${setup.asset}; no trade signal can be activated.`;
+  if (!analysis) {
     return {
       ...setup,
-      direction: "WAIT",
-      confidence: 0,
-      contextConfidence: 0,
-      contextSignalReady: false,
-      frameworkReady: false,
-      tradeReady: false,
       productionClassification: "unavailable",
-      productionUnavailable: true,
-      gridDirection: `Production confirmation unavailable for ${setup.asset}`,
-      gridPlan: summary,
-      frameworkGate: { side: "WAIT", ready: false, missing: ["production analysis"], summary }
+      productionAdvisoryUnavailable: true,
+      productionSummary: "Production pipeline unavailable; Signal Core remains authoritative for dashboard analysis."
     };
   }
-  if (!analysis) return setup;
   const classification = String(analysis.classification || "no_trade").toLowerCase();
   const direction = String(analysis.direction || "none").toLowerCase();
   const reasons = Array.isArray(analysis.reasons) ? analysis.reasons.filter(Boolean) : [];
   const summary = reasons.length
     ? `Production ${classification.replace("_", " ")}: ${reasons.slice(0, 3).join("; ")}`
     : `Production ${classification.replace("_", " ")} at ${analysis.completed_stages || 0}/${Math.max(1, Number(analysis.stage_total) || 14)} stages.`;
-  if (classification === "no_trade") {
-    if (setup.scoreTradeReady) {
-      return {
-        ...setup,
-        productionClassification: classification,
-        productionSummary: summary,
-        frameworkGate: {
-          ...setup.frameworkGate,
-          ready: true,
-          summary: `${setup.frameworkGate.summary} Production currently reports no trade; execution remains disabled.`
-        }
-      };
-    }
-    return {
-      ...setup,
-      direction: "WAIT",
-      confidence: 0,
-      contextSignalReady: false,
-      frameworkReady: false,
-      tradeReady: false,
-      productionClassification: classification,
-      frameworkGate: { side: "WAIT", ready: false, missing: [], summary }
-    };
-  }
-  const directional = classification === "trend" && ["long", "short"].includes(direction);
-  const decisionReady = analysis.status === "completed" && !analysis.blocked_by;
-  if (directional) {
-    return {
-      ...setup,
-      direction: direction === "long" ? "BUY SETUP" : "SELL SETUP",
-      confidence: Math.round(Number(analysis.conviction || 0) * 100),
-      contextConfidence: Math.round(Number(analysis.conviction || 0) * 100),
-      contextSignalReady: true,
-      frameworkReady: decisionReady,
-      tradeReady: decisionReady,
-      productionClassification: classification,
-      frameworkGate: { side: direction === "long" ? "BUY" : "SELL", ready: decisionReady, missing: decisionReady ? [] : ["completed decision pipeline"], summary }
-    };
-  }
+  const productionSide = classification === "trend" && direction === "long"
+    ? "BUY"
+    : classification === "trend" && direction === "short"
+      ? "SELL"
+      : "WAIT";
+  const coreSide = setup.direction === "BUY SETUP" ? "BUY" : setup.direction === "SELL SETUP" ? "SELL" : "WAIT";
+  const agrees = productionSide === "WAIT" || coreSide === "WAIT" || productionSide === coreSide;
   return {
     ...setup,
-    direction: "WAIT",
-    contextSignalReady: false,
-    frameworkReady: false,
-    tradeReady: false,
     productionClassification: classification,
-    gridDirection: setup.gridDirection,
-    gridPlan: summary,
-    frameworkGate: { side: "WAIT", ready: false, missing: [], summary }
+    productionSide,
+    productionAgrees: agrees,
+    productionSummary: `${summary} ${agrees ? "Advisory alignment does not change the Signal Core decision." : "Advisory conflict noted; Signal Core decision and risk controls remain unchanged."}`
   };
 }
 
@@ -3874,10 +3852,10 @@ function gridPlanForResearch(side, action, vwapSignal) {
     return "Build offers above mark as price extends; manage squeeze risk with smaller order spacing.";
   }
   if (side === "buy" && vwapSignal === "below VWAP") {
-    return "Wait for VWAP reclaim before increasing long exposure; keep entries smaller below VWAP.";
+    return "No trade until VWAP reclaim confirms; keep entries smaller below VWAP.";
   }
   if (side === "sell" && vwapSignal === "above VWAP") {
-    return "Wait for VWAP rejection before increasing short exposure; keep entries smaller above VWAP.";
+    return "No trade until VWAP rejection confirms; keep entries smaller above VWAP.";
   }
   return side === "buy"
     ? "Build bids below mark, harvest mean reversion, avoid chasing above current price."
@@ -4280,7 +4258,6 @@ async function refreshDashboard() {
   await Promise.allSettled(jobs);
   if (!isCurrentRefresh()) return;
   const setup = applyProductionDecision(applyMonatiseFramework());
-  renderAuthoritativeFramework(setup);
   publishGeneratedSignal(setup);
   evaluateLiveAlerts(setup);
   const coreReady = Number.isFinite(state.lastPrice) && state.lastPrice > 0;

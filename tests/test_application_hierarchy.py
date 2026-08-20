@@ -138,6 +138,8 @@ def test_hierarchy_short_notification_preserves_directional_risk_geometry():
     evaluation = ShadowEvaluation("BTC", NOW, macro, regime, strategy, setup, trigger, bundle, None, True, ())
 
     message = ShadowHierarchyService._format_notification(evaluation, publication_id="short-publication", current_price=100.25, price_observed_at=NOW)
+    assert "Monatise ALTCOIN SIGNAL CORE" in message
+    assert "Signal Core CONFIRMED 3/4" in message
 
     assert "BTC | SHORT" in message
     assert "Current CoinGlass price: 100.25 | source coinglass | observed 2026-08-02T13:00:20+01:00" in message
@@ -524,6 +526,8 @@ def test_confirmed_hierarchy_produces_valid_shadow_bundle_and_risk_bridge():
     assert result.bundle.risk_inputs.structural_invalidation == 115
     assert result.execution_enabled is False
     message = ShadowHierarchyService._format_notification(result, publication_id="publication-123456789")
+    assert "Monatise ALTCOIN SIGNAL CORE" in message
+    assert "Signal Core CONFIRMED 4/4" in message
     assert "Expires 2026-08-02 13:15:20 WAT" in message
     assert "Valid for 15 min" in message
     assert "Publication publication-1234" in message
@@ -569,6 +573,8 @@ def test_confirmed_hierarchy_produces_valid_shadow_bundle_and_risk_bridge():
         retried = await service.tick("BTC", observed_at=NOW + timedelta(seconds=1))
 
         assert failed["telegram_publication_failed"] is True
+        assert failed["signal_core_state"] == "CONFIRMED"
+        assert failed["signal_core_score"] == 4
         assert retried["duplicate_blocked"] is True
         assert retried["telegram_published"] is False
         assert len(attempts) == 1
