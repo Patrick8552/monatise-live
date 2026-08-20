@@ -99,7 +99,8 @@ class PipelineOrchestrator:
         for registration in self.registry.ordered():
             stage_started = perf_counter()
             attempts[registration.name] = 1
-            await self._event(run, "analysis.stage.started", {"engine": registration.name})
+            if self._persist_stage_progress(run):
+                await self._event(run, "analysis.stage.started", {"engine": registration.name})
             try:
                 if registration.name not in run.stage_inputs:
                     raise KeyError(f"stage input is missing: {registration.name}")
@@ -121,7 +122,8 @@ class PipelineOrchestrator:
                 context = context.with_output(registration.name, output)
                 durations[registration.name] = (perf_counter() - stage_started) * 1000
                 await self.infrastructure.observability.histogram("pipeline.stage.duration_ms", durations[registration.name], labels={"engine": registration.name, "status": "completed"})
-                await self._event(run, "analysis.stage.completed", {"engine": registration.name, "duration_ms": durations[registration.name]})
+                if self._persist_stage_progress(run):
+                    await self._event(run, "analysis.stage.completed", {"engine": registration.name, "duration_ms": durations[registration.name]})
                 if registration.blocking is not None and registration.blocking(output):
                     blocked_by = registration.name
                     status = PipelineStage.BLOCKED
@@ -180,6 +182,17 @@ class PipelineOrchestrator:
 
     async def _event(self, run: AnalysisRun, event_type: str, payload: dict[str, Any], priority: EventPriority = EventPriority.NORMAL) -> None:
         await self.infrastructure.event_bus.publish(DomainEvent(event_type, _json_safe(payload), run.metadata.source, run.symbol, run.correlation_id, priority=priority), idempotency_key=f"{run.run_id}:{event_type}:{payload.get('engine', '')}")
+
+    @staticmethod
+    def _persist_stage_progress(run: AnalysisRun) -> bool:
+        """Keep read-only dashboard refreshes out of the durable-event hot path.
+
+        Run-level, blocked, and failed events remain durable. Successful stage
+        progress is already represented in the returned result and final audit
+        record, so writing two PostgreSQL events per stage only delays the web
+        response without changing its decision.
+        """
+        return run.metadata.source != "monatise.web"
 
     async def _audit(self, run: AnalysisRun, action: AuditAction, payload: dict[str, Any]) -> None:
         version = getattr(self.infrastructure.configuration.snapshot(), "version", None)

@@ -1353,7 +1353,11 @@ class OrchestrationRuntime:
                     symbol=result.symbol,
                 )
                 LOGGER.warning("Telegram notification delivery failed", extra={"error_type": type(exc).__name__, "run_id": result.run_id})
-        if self.postgres is not None:
+        # Browser refreshes are read-only and can be frequent. Scheduled
+        # production runs already capture the durable replay snapshot; making
+        # the dashboard wait for the same large insert adds latency without
+        # changing the analysis result.
+        if self.postgres is not None and source != "monatise.web":
             try:
                 # After notification delivery, bounded by a timeout: this is
                 # pure telemetry for a future backtest and must never delay

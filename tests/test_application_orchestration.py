@@ -69,6 +69,24 @@ def test_pipeline_executes_all_twenty_engines_in_canonical_order():
     assert result.execution_enabled is False
 
 
+def test_web_analysis_skips_redundant_durable_stage_progress_events():
+    orchestrator, _, bus = make_orchestrator()
+    inputs = {name: object() for name in CANONICAL_ENGINE_ORDER}
+
+    result = asyncio.run(orchestrator.run(AnalysisRun(
+        "BTC",
+        inputs,
+        metadata=PipelineExecutionMetadata(actor_id="test", source="monatise.web", retry_delay_seconds=0),
+    )))
+    events = asyncio.run(bus.store.all())
+    event_types = [envelope.event.event_type for envelope in events]
+
+    assert result.status is PipelineStage.COMPLETED
+    assert "analysis.stage.started" not in event_types
+    assert "analysis.stage.completed" not in event_types
+    assert event_types == ["analysis.run.started", "analysis.run.completed"]
+
+
 def test_blocking_result_stops_every_downstream_engine():
     orchestrator, calls, _ = make_orchestrator(blocked_at="risk_validation")
     inputs = {name: object() for name in CANONICAL_ENGINE_ORDER}
