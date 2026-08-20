@@ -719,7 +719,29 @@ class ProductionASGI(OrchestrationASGI):
             task = asyncio.create_task(self.runtime.analyse(symbol, interval=interval, source="monatise.web", notify=False))
             self._public_analysis_inflight[cache_key] = task
         try:
-            analysis = await asyncio.shield(task)
+            timeout_seconds = max(0.01, float(self.runtime.environment.get("MONATISE_PUBLIC_ANALYSIS_TIMEOUT_SECONDS", "60")))
+            analysis = await asyncio.wait_for(asyncio.shield(task), timeout=timeout_seconds)
+        except TimeoutError:
+            LOGGER.warning("public analysis still processing", extra={"symbol": symbol, "interval": interval})
+            return 200, {
+                "ok": True,
+                "source": "monatise-live",
+                "interval": interval,
+                "analysis": {
+                    "symbol": symbol,
+                    "status": "processing",
+                    "classification": "no_trade",
+                    "direction": "none",
+                    "completed_stages": 0,
+                    "stage_total": 14,
+                    "blocked_by": "pipeline_processing",
+                    "reasons": ["Production pipeline is still processing; fail-closed NO TRADE until confirmation completes."],
+                    "execution_enabled": False,
+                },
+                "cache_hit": False,
+                "processing": True,
+                "execution_enabled": False,
+            }
         except Exception as exc:
             LOGGER.exception("public analysis failed", extra={"error_type": type(exc).__name__})
             return 503, {"status": "analysis_unavailable", "error_type": type(exc).__name__}

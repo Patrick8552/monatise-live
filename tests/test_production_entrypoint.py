@@ -490,6 +490,25 @@ def test_public_dashboard_analysis_cache_spans_dashboard_refresh_interval():
     assert len(runtime.calls) == 1
 
 
+def test_public_dashboard_analysis_reports_processing_instead_of_unavailable_on_timeout():
+    runtime = Runtime()
+    runtime.environment["MONATISE_PUBLIC_ANALYSIS_TIMEOUT_SECONDS"] = "0.01"
+
+    async def slow_analysis(symbol, **kwargs):
+        runtime.calls.append((symbol, kwargs))
+        await asyncio.sleep(60)
+
+    runtime.analyse = slow_analysis
+    response = get(ProductionASGI(runtime), "/api/public/analysis", query="symbol=BTC&interval=1h")
+    payload = json.loads(response[1]["body"])
+
+    assert response[0]["status"] == 200
+    assert payload["processing"] is True
+    assert payload["analysis"]["classification"] == "no_trade"
+    assert payload["analysis"]["blocked_by"] == "pipeline_processing"
+    assert payload["analysis"]["execution_enabled"] is False
+
+
 def test_public_dashboard_analysis_rejects_unsupported_assets_and_intervals():
     app = ProductionASGI(Runtime())
     assert get(app, "/api/public/analysis", query="symbol=XRP&interval=1h")[0]["status"] == 400

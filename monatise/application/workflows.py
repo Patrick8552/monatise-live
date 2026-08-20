@@ -349,6 +349,74 @@ class TelegramNotifier:
         ]
         return "\n".join(lines)
 
+    @staticmethod
+    def format_flashalpha_futures_analysis(analysis: dict[str, Any]) -> str:
+        asset = analysis.get("asset", "UNKNOWN")
+        direction = str(analysis.get("direction") or "NONE")
+        lines = [
+            f"Monatise CME futures setup: {asset} {direction}",
+            f"FlashAlpha score: {int(analysis.get('score') or 0):+d}/10 | threshold: ±{int(analysis.get('score_threshold') or 7)}",
+            f"Entry: {_price(analysis.get('entry'))}",
+            f"Invalidation / gamma flip: {_price(analysis.get('stop_loss'))}",
+            f"Target / {'call' if direction == 'LONG' else 'put'} wall: {_price(analysis.get('target'))}",
+            f"Reward/risk: {float(analysis.get('reward_risk') or 0):.2f}",
+        ]
+        if analysis.get("net_gex_label"):
+            lines.append(f"Gamma regime: {analysis['net_gex_label']}")
+        lines += [
+            "Source: FlashAlpha CME options-on-futures positioning (Black-76).",
+            "Notification only; no trade was executed.",
+        ]
+        return "\n".join(lines)
+
+    @staticmethod
+    def format_market_stock_setup(analysis: dict[str, Any]) -> str:
+        direction = str(analysis.get("direction") or "NONE").upper()
+        asset = str(analysis.get("asset") or "UNKNOWN")
+        name = str(analysis.get("company_name") or asset)
+        targets = analysis.get("targets") or [analysis.get("target")]
+        lines = [
+            f"Monatise US stock setup: {asset} — {name}",
+            f"Direction: {direction}",
+            f"Monatise score: {int(analysis.get('score') or 0):+d}/10 | threshold: ±{int(analysis.get('score_threshold') or 7)}",
+            f"Current: {_price(analysis.get('current_price'))}",
+            f"Entry: {_price(analysis.get('entry'))}",
+            f"Trigger: {analysis.get('confirmation_trigger', 'confirmed technical trigger')}",
+            f"Invalidation: {_price(analysis.get('stop_loss'))}",
+            "Targets: " + " | ".join(_price(item) for item in targets if item is not None),
+            f"Reward/risk: {float(analysis.get('reward_risk') or 0):.2f}",
+            f"Timeframe: {analysis.get('timeframe', '1h / 1d')}",
+            f"Valid until: {analysis.get('valid_until', 'n/a')}",
+        ]
+        reasons = list(analysis.get("reasons") or [])[:5]
+        if reasons:
+            lines.append("Technical hierarchy: " + "; ".join(str(reason) for reason in reasons))
+        context = analysis.get("additional_context") or {}
+        quiver = context.get("quiver") or {}
+        quiver_summary = quiver.get("summary") or {}
+        lines.append(
+            f"Quiver: {int(quiver_summary.get('score') or 0):+d}/10 — "
+            + ("; ".join(str(item) for item in (quiver_summary.get("drivers") or [])[:3]) or "no fresh directional insider/Congress evidence")
+        )
+        flashalpha = context.get("flashalpha") or {}
+        if not flashalpha.get("unavailable") and flashalpha.get("gamma_flip") is not None:
+            lines.append(
+                f"FlashAlpha: flip {_price(flashalpha.get('gamma_flip'))} | call wall {_price(flashalpha.get('call_wall'))} | "
+                f"put wall {_price(flashalpha.get('put_wall'))} | regime {flashalpha.get('net_gex_label') or 'n/a'}"
+            )
+        finnhub = context.get("finnhub") or {}
+        warnings = []
+        if finnhub.get("earnings"): warnings.append("earnings calendar event present")
+        if finnhub.get("news"): warnings.append(f"{len(finnhub['news'])} recent company-news items")
+        if warnings: lines.append("News/event context: " + "; ".join(warnings))
+        freshness = analysis.get("data_freshness") or {}
+        lines.append(f"Freshness: latest hourly bar {freshness.get('latest_hourly_bar', 'n/a')}")
+        lines += [
+            "Sources: Monatise technical hierarchy; Alpaca market data; Quiver/Finnhub/FlashAlpha where available.",
+            "Notification only; no trade was executed.",
+        ]
+        return "\n".join(lines)
+
     @property
     def execution_enabled(self) -> bool:
         return False

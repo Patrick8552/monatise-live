@@ -1030,6 +1030,21 @@ def test_snapshot_write_is_bounded_by_a_timeout(monkeypatch):
     assert result["symbol"] == "BTC"
 
 
+def test_web_analysis_does_not_write_a_duplicate_decision_snapshot():
+    class Orchestrator:
+        async def run(self, run):
+            return _full_grid_result(run)
+
+    runtime = OrchestrationRuntime(environment={})
+    runtime.application = SimpleNamespace(orchestrator=Orchestrator(), infrastructure=SimpleNamespace(audit=SimpleNamespace(append=lambda **_: None)))
+    runtime.postgres = _FakePostgresConnection()
+
+    result = asyncio.run(runtime.analyse("BTC", interval="15m", source="monatise.web", notify=False))
+
+    assert result["symbol"] == "BTC"
+    assert runtime.postgres.calls == []
+
+
 def test_decision_snapshot_retention_job_registers_and_deletes_old_rows():
     class Scheduler:
         def __init__(self): self.definitions = []

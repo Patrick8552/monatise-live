@@ -35,6 +35,34 @@ def test_finnhub_enriches_but_cannot_change_quiver_direction() -> None:
     assert result["additional_context"]["news_count"] == 2
 
 
+def test_flashalpha_confirms_quiver_direction() -> None:
+    result = build_stock_analysis(
+        {"symbol": "SPY", "available": True, "summary": {"score": 3}},
+        flashalpha={"source": "FlashAlpha", "net_gex": 2850000000, "net_gex_label": "positive", "underlying_price": 597.5, "gamma_flip": 595.25},
+    )
+    assert result["decision"] == "BUY_WATCH"
+    assert result["additional_context"]["flashalpha"]["authoritative_for_direction"] == "confirmation_only"
+    assert result["additional_context"]["flashalpha"]["net_gex_label"] == "positive"
+    assert result["additional_context"]["flashalpha"]["available"] is True
+
+
+def test_flashalpha_conflict_suppresses_quiver_watch() -> None:
+    result = build_stock_analysis(
+        {"symbol": "SPY", "available": True, "summary": {"score": 3}},
+        flashalpha={"source": "FlashAlpha", "net_gex": 1, "underlying_price": 590, "gamma_flip": 595.25},
+    )
+    assert result["decision"] == "NO_TRADE"
+    assert result["reason_code"] == "FLASHALPHA_POSITIONING_CONFLICT"
+
+
+def test_flashalpha_unavailable_is_reported_but_not_fatal() -> None:
+    result = build_stock_analysis(
+        {"symbol": "SPY", "available": True, "summary": {"score": 3}},
+        flashalpha={"source": "FlashAlpha", "unavailable": True},
+    )
+    assert result["additional_context"]["flashalpha"]["available"] is False
+
+
 def test_confirmed_breakout_builds_structural_entry_stop_and_two_r_target() -> None:
     levels = build_directional_levels("BUY_WATCH", timestamped_bars(), {"latestQuote": {"bp": 122.9, "ap": 123.1}}, now=NOW)
     assert levels["setup_status"] == "confirmed"

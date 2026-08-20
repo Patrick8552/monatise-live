@@ -34,11 +34,14 @@ class FinnhubAdapter:
         quote = self._get("/quote", {"symbol": ticker})
         news = self._get("/company-news", {"symbol": ticker, "from": (today - timedelta(days=7)).isoformat(), "to": today.isoformat()})
         recommendations = self._get("/stock/recommendation", {"symbol": ticker})
+        earnings = self._get("/calendar/earnings", {"symbol": ticker, "from": today.isoformat(), "to": (today + timedelta(days=7)).isoformat()})
+        earnings_rows = earnings.get("earningsCalendar", []) if isinstance(earnings, dict) else []
         return {
             "source": "Finnhub",
             "quote": quote if isinstance(quote, dict) else {},
             "news": [row for row in news if isinstance(row, dict)][:10] if isinstance(news, list) else [],
             "recommendations": [row for row in recommendations if isinstance(row, dict)][:3] if isinstance(recommendations, list) else [],
+            "earnings": [row for row in earnings_rows if isinstance(row, dict)][:5] if isinstance(earnings_rows, list) else [],
         }
 
     def _get(self, path: str, query: dict[str, Any]) -> Any:
