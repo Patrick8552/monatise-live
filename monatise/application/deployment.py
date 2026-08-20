@@ -1149,7 +1149,8 @@ class OrchestrationRuntime:
             )
             telegram_token = self.environment.get("MONATISE_TELEGRAM_BOT_TOKEN", "")
             telegram_chat = self.environment.get("MONATISE_TELEGRAM_CHAT_ID", "")
-            if telegram_token and telegram_chat:
+            telegram_notifications_enabled = _true(self.environment.get("MONATISE_TELEGRAM_NOTIFICATIONS_ENABLED", "true"))
+            if telegram_notifications_enabled and telegram_token and telegram_chat:
                 secrets = EnvironmentSecretBoundary(self.environment)
                 self.telegram = TelegramNotifier(TelegramNotificationTransport(lambda: secrets.get("MONATISE_TELEGRAM_BOT_TOKEN")), telegram_chat)
             x_token = self.environment.get("MONATISE_X_BEARER_TOKEN", "")
@@ -1212,7 +1213,7 @@ class OrchestrationRuntime:
             }
             self.dependencies["notifications"] = {
                 "status": "ok",
-                "telegram": "configured_notification_only" if self.environment.get("MONATISE_TELEGRAM_BOT_TOKEN") and self.environment.get("MONATISE_TELEGRAM_CHAT_ID") else "unavailable_optional",
+                "telegram": "disabled" if not telegram_notifications_enabled else ("configured_notification_only" if self.telegram is not None else "unavailable_optional"),
                 "openclaw": "configured_analysis_only" if self.environment.get("MONATISE_OPENCLAW_TOKEN") else "unavailable_optional",
                 "x_macro": "configured_read_only" if self.x_macro is not None else "unavailable_optional",
                 "coin_discovery": "configured_notification_only",
