@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
-from monatise.application.stock_analysis import build_directional_levels, build_stock_analysis
+from monatise.application.stock_analysis import build_directional_levels, build_stock_analysis, refresh_setup_validity
 
 
 NOW = datetime(2026, 8, 7, 19, tzinfo=timezone.utc)
@@ -101,9 +101,9 @@ def test_confirmed_setup_expiry_is_anchored_to_confirmation_candle() -> None:
     )
     assert result["setup_state"] == "ACTIVE"
     assert result["analysis_timeframe"] == "1H" and result["trigger_timeframe"] == "15M"
-    assert result["setup_created_at"] == (NOW - timedelta(hours=1)).isoformat()
-    assert result["setup_expires_at"] == (NOW + timedelta(minutes=30)).isoformat()
-    assert result["validity_remaining_seconds"] == 1800
+    assert result["setup_created_at"] == (NOW - timedelta(minutes=45)).isoformat()
+    assert result["setup_expires_at"] == (NOW + timedelta(minutes=45)).isoformat()
+    assert result["validity_remaining_seconds"] == 2700
 
 
 def test_expired_setup_becomes_no_trade_and_levels_are_removed() -> None:
@@ -141,3 +141,19 @@ def test_setup_cannot_remain_active_beyond_regular_session_close() -> None:
     )
     assert result["setup_state"] == "EXPIRED"
     assert result["expiry_reason"] == "SESSION_EXPIRED"
+
+
+def test_cached_setup_validity_is_recomputed_without_mutating_cached_payload() -> None:
+    cached = {
+        "setup_state": "ACTIVE", "decision": "BUY_WATCH", "reason_code": "CONFIRMED",
+        "setup_expires_at": (NOW + timedelta(minutes=5)).isoformat(),
+        "validity_remaining_seconds": 3600, "entry": 100, "stop_loss": 98, "target": 104,
+        "reward_risk": 2,
+    }
+    refreshed = refresh_setup_validity(cached, NOW)
+    assert refreshed["validity_remaining_seconds"] == 300
+    assert cached["validity_remaining_seconds"] == 3600
+
+    expired = refresh_setup_validity(cached, NOW + timedelta(minutes=6))
+    assert expired["setup_state"] == "EXPIRED" and expired["decision"] == "NO_TRADE"
+    assert expired["entry"] is None and expired["stop_loss"] is None and expired["target"] is None

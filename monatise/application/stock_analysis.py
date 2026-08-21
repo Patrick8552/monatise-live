@@ -51,17 +51,21 @@ def build_stock_analysis(
     current_time = now or datetime.now(timezone.utc)
     evidence_bars = trigger_bars if trigger_bars is not None else bars or []
     result.update(build_directional_levels(decision, evidence_bars, snapshot or {}, now=current_time, candle_minutes=15 if trigger_bars is not None else 60))
-    result.update(build_setup_lifecycle(result, evidence_bars, current_time, validity_minutes=validity_minutes))
+    result.update(build_setup_lifecycle(
+        result, evidence_bars, current_time, validity_minutes=validity_minutes,
+        candle_minutes=15 if trigger_bars is not None else 60,
+    ))
     return result
 
 
 def build_setup_lifecycle(
     analysis: dict[str, Any], bars: list[dict[str, Any]], now: datetime,
-    *, validity_minutes: int = 60,
+    *, validity_minutes: int = 60, candle_minutes: int = 60,
 ) -> dict[str, Any]:
     generated_at = now.astimezone(timezone.utc)
     clean = [row for row in bars if _bar_time(row.get("t")) is not None]
-    confirmed_close = _bar_time(clean[-1].get("t")) if clean else None
+    bar_open = _bar_time(clean[-1].get("t")) if clean else None
+    confirmed_close = bar_open + timedelta(minutes=max(1, candle_minutes)) if bar_open else None
     market_data_as_of = confirmed_close.isoformat() if confirmed_close else None
     setup_status = str(analysis.get("setup_status") or "watch")
     actionable = analysis.get("decision") in {"BUY_WATCH", "SELL_WATCH"} and setup_status == "confirmed" and confirmed_close is not None
@@ -91,6 +95,24 @@ def build_setup_lifecycle(
         "setup_expires_at": expires_at.isoformat() if expires_at else None,
         "validity_remaining_seconds": remaining, "setup_state": state, "expiry_reason": expiry_reason,
     }
+
+
+def refresh_setup_validity(analysis: dict[str, Any], now: datetime | None = None) -> dict[str, Any]:
+    """Return a cache-safe setup snapshot with validity derived from absolute expiry."""
+    refreshed = dict(analysis)
+    expires_at = _bar_time(refreshed.get("setup_expires_at"))
+    if refreshed.get("setup_state") != "ACTIVE" or expires_at is None:
+        return refreshed
+    current_time = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    remaining = max(0, int((expires_at - current_time).total_seconds()))
+    refreshed["validity_remaining_seconds"] = remaining
+    if remaining == 0:
+        refreshed.update({
+            "setup_state": "EXPIRED", "expiry_reason": "SETUP_EXPIRED",
+            "decision": "NO_TRADE", "reason_code": "SETUP_EXPIRED", "setup_status": "expired",
+            "entry": None, "stop_loss": None, "target": None, "reward_risk": None,
+        })
+    return refreshed
 
 
 def _regular_session_close(timestamp: datetime) -> datetime:
