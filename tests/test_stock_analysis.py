@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from monatise.application.stock_analysis import build_directional_levels, build_stock_analysis
 
 
-NOW = datetime(2026, 8, 7, 20, tzinfo=timezone.utc)
+NOW = datetime(2026, 8, 7, 19, tzinfo=timezone.utc)
 
 
 def timestamped_bars() -> list[dict]:
@@ -91,3 +91,53 @@ def test_breakout_far_beyond_entry_is_marked_missed() -> None:
     levels = build_directional_levels("BUY_WATCH", timestamped_bars(), {"latestQuote": {"bp": 149, "ap": 151}}, now=NOW)
     assert levels["setup_status"] == "entry_missed"
     assert levels["entry"] is None
+
+
+def test_confirmed_setup_expiry_is_anchored_to_confirmation_candle() -> None:
+    result = build_stock_analysis(
+        {"symbol": "NVDA", "available": True, "summary": {"score": 3}},
+        trigger_bars=timestamped_bars(), snapshot={"latestQuote": {"bp": 122.9, "ap": 123.1}},
+        now=NOW, validity_minutes=90,
+    )
+    assert result["setup_state"] == "ACTIVE"
+    assert result["analysis_timeframe"] == "1H" and result["trigger_timeframe"] == "15M"
+    assert result["setup_created_at"] == (NOW - timedelta(hours=1)).isoformat()
+    assert result["setup_expires_at"] == (NOW + timedelta(minutes=30)).isoformat()
+    assert result["validity_remaining_seconds"] == 1800
+
+
+def test_expired_setup_becomes_no_trade_and_levels_are_removed() -> None:
+    result = build_stock_analysis(
+        {"symbol": "NVDA", "available": True, "summary": {"score": 3}},
+        trigger_bars=timestamped_bars(), snapshot={"latestQuote": {"bp": 122.9, "ap": 123.1}},
+        now=NOW, validity_minutes=30,
+    )
+    assert result["setup_state"] == "EXPIRED"
+    assert result["decision"] == "NO_TRADE" and result["reason_code"] == "SETUP_EXPIRED"
+    assert result["entry"] is None and result["stop_loss"] is None and result["target"] is None
+
+
+def test_refresh_time_does_not_replace_confirmation_time() -> None:
+    first = build_stock_analysis(
+        {"symbol": "NVDA", "available": True, "summary": {"score": 3}}, trigger_bars=timestamped_bars(),
+        snapshot={"latestQuote": {"bp": 122.9, "ap": 123.1}}, now=NOW, validity_minutes=120,
+    )
+    second = build_stock_analysis(
+        {"symbol": "NVDA", "available": True, "summary": {"score": 3}}, trigger_bars=timestamped_bars(),
+        snapshot={"latestQuote": {"bp": 122.9, "ap": 123.1}}, now=NOW + timedelta(minutes=10), validity_minutes=120,
+    )
+    assert first["setup_created_at"] == second["setup_created_at"]
+    assert first["setup_expires_at"] == second["setup_expires_at"]
+    assert second["validity_remaining_seconds"] == first["validity_remaining_seconds"] - 600
+
+
+def test_setup_cannot_remain_active_beyond_regular_session_close() -> None:
+    after_close = datetime(2026, 8, 7, 20, 5, tzinfo=timezone.utc)
+    bars = timestamped_bars()
+    bars[-1]["t"] = datetime(2026, 8, 7, 19, 45, tzinfo=timezone.utc).isoformat()
+    result = build_stock_analysis(
+        {"symbol": "NVDA", "available": True, "summary": {"score": 3}}, trigger_bars=bars,
+        snapshot={"latestQuote": {"bp": 122.9, "ap": 123.1}}, now=after_close, validity_minutes=90,
+    )
+    assert result["setup_state"] == "EXPIRED"
+    assert result["expiry_reason"] == "SESSION_EXPIRED"

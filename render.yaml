@@ -45,6 +45,8 @@ services:
         value: 900
       - key: MONATISE_SCHEDULED_ANALYSIS_TIMEFRAMES
         value: 15m
+      - key: MONATISE_STOCK_15M_VALIDITY_MINUTES
+        value: 60
       - key: MONATISE_OPENCLAW_CACHE_TTL_SECONDS
         value: 60
       - key: MONATISE_HIERARCHICAL_SHADOW_ENABLED

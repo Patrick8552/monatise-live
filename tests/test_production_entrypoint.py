@@ -625,6 +625,38 @@ def test_openclaw_status_rejects_wrong_or_missing_credentials():
     assert openclaw_status(ProductionASGI(runtime))[0] == 503
 
 
+def test_public_stock_search_and_analysis_are_read_only() -> None:
+    app = ProductionASGI(Runtime())
+    search_messages = get(app, "/api/stocks/search", query="q=nv")
+    search = json.loads(search_messages[1]["body"])
+    assert search_messages[0]["status"] == 200
+    assert search["results"][0]["symbol"] == "NVDA"
+    assert search["execution_enabled"] is False
+
+    analysis_messages = get(app, "/api/stocks/NVDA/analysis")
+    analysis = json.loads(analysis_messages[1]["body"])
+    assert analysis_messages[0]["status"] == 200
+    assert analysis["symbol"] == "NVDA"
+    assert analysis["analysis"]["execution"] == {"enabled": False, "orders_placed": 0}
+    assert analysis["execution_enabled"] is False
+
+
+def test_public_stock_scanner_uses_shared_analysis_cache() -> None:
+    runtime = Runtime()
+    app = ProductionASGI(runtime)
+    messages = get(app, "/api/stocks/scanner")
+    payload = json.loads(messages[1]["body"])
+    assert messages[0]["status"] == 200
+    assert [item["asset"] for item in payload["results"]] == ["AAPL", "TSLA", "NVDA", "QQQ", "SPY"]
+    assert payload["providers"] == ["Alpaca", "FlashAlpha", "Quiver Quantitative", "Finnhub"]
+    assert payload["execution_enabled"] is False
+
+
+def test_public_stock_analysis_rejects_malformed_symbol() -> None:
+    messages = get(ProductionASGI(Runtime()), "/api/stocks/NVDA%20DROP/analysis")
+    assert messages[0]["status"] == 400
+
+
 def test_openclaw_status_rejects_unsupported_intervals():
     app = ProductionASGI(Runtime())
     assert openclaw_status(app, query="symbol=BTC&interval=2h")[0] == 400
