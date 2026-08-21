@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#07110f" />
+    <title>Monatise Stocks</title>
+    <meta name="description" content="Multi-provider US stock scanning and analysis from Monatise." />
+    <link rel="icon" href="./monatise-yinyang.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="./stocks.css?v=20260821-v1" />
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="./"><img src="./monatise-yinyang.svg" alt="" /><span>Monatise</span></a>
+      <nav aria-label="Primary navigation">
+        <a href="./coinglass-dashboard.html">Crypto</a><a class="active" href="./stocks.html">Stocks</a><a href="./memecoins.html">Memecoins</a>
+      </nav>
+      <span class="analysis-only">Analysis only · execution disabled</span>
+    </header>
+    <main>
+      <section class="hero">
+        <div><p class="eyebrow">US equities intelligence</p><h1>Stocks, through one evidence stack.</h1><p>Alpaca price structure, FlashAlpha positioning, Quiver activity and Finnhub context—without invented levels.</p></div>
+        <form id="stockSearchForm" class="search-box" role="search">
+          <label for="stockSearch">Search any supported ticker</label>
+          <div><input id="stockSearch" type="search" autocomplete="off" placeholder="AAPL, NVDA, SPY…" maxlength="40" /><button type="submit">Analyse</button></div>
+          <div id="searchResults" class="search-results" aria-live="polite"></div>
+        </form>
+      </section>
+
+      <section class="provider-strip" aria-label="Provider responsibilities">
+        <article><span>Price authority</span><strong>Alpaca</strong><em>Bars, quote, levels, ATR</em></article>
+        <article><span>Positioning</span><strong>FlashAlpha</strong><em>GEX, flip and walls</em></article>
+        <article><span>Direction context</span><strong>Quiver</strong><em>Insider and Congress activity</em></article>
+        <article><span>Validation</span><strong>Finnhub</strong><em>Quote, analysts and news</em></article>
+      </section>
+
+      <section class="workspace">
+        <div class="section-head"><div><p class="eyebrow">Live opportunity set</p><h2>Stock scanner</h2></div><button id="refreshScanner" type="button">Refresh scanner</button></div>
+        <div class="filters">
+          <label>Signal<select id="signalFilter"><option value="ALL">All</option><option>BUY_WATCH</option><option>SELL_WATCH</option><option>NO_TRADE</option></select></label>
+          <label>Validity<select id="validityFilter"><option value="ALL">All</option><option>ACTIVE</option><option>EXPIRED</option><option>INVALIDATED</option><option>NO_TRADE</option></select></label>
+          <label>Timeframe<select id="timeframeFilter"><option value="ALL">All</option><option value="15M">15M trigger</option><option value="1H">1H structure</option></select></label>
+        </div>
+        <p id="scannerStatus" class="status" role="status">Loading scanner…</p>
+        <div class="table-wrap"><table><thead><tr><th>Symbol</th><th>Signal</th><th>Setup</th><th>Price / Entry</th><th>Risk</th><th>FlashAlpha</th><th>Validity</th><th>Reason</th></tr></thead><tbody id="scannerRows"></tbody></table></div>
+      </section>
+
+      <section id="analysisPanel" class="analysis-panel" aria-live="polite">
+        <div class="empty-state"><p class="eyebrow">On-demand analysis</p><h2>Select a scanner result or search for a ticker.</h2><p>The server will run the same multi-provider pipeline used by Monatise stock analysis.</p></div>
+      </section>
+    </main>
+    <script src="./stocks.js?v=20260821-v1"></script>
+  </body>
+</html>

@@ -3,11 +3,17 @@ from __future__ import annotations
 import math
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from monatise.application.flashalpha_analysis import flashalpha_directional_bias
 
 
-def build_stock_analysis(context: dict[str, Any], *, bars: list[dict[str, Any]] | None = None, snapshot: dict[str, Any] | None = None, finnhub: dict[str, Any] | None = None, flashalpha: dict[str, Any] | None = None) -> dict[str, Any]:
+def build_stock_analysis(
+    context: dict[str, Any], *, bars: list[dict[str, Any]] | None = None,
+    trigger_bars: list[dict[str, Any]] | None = None, snapshot: dict[str, Any] | None = None,
+    finnhub: dict[str, Any] | None = None, flashalpha: dict[str, Any] | None = None,
+    now: datetime | None = None, validity_minutes: int = 60,
+) -> dict[str, Any]:
     """Convert Quiver alternative data into an analysis-only stock watch signal."""
     summary = context.get("summary") if isinstance(context.get("summary"), dict) else {}
     score = int(summary.get("score") or 0)
@@ -42,8 +48,56 @@ def build_stock_analysis(context: dict[str, Any], *, bars: list[dict[str, Any]] 
         },
         "execution": {"enabled": False, "orders_placed": 0},
     }
-    result.update(build_directional_levels(decision, bars or [], snapshot or {}))
+    current_time = now or datetime.now(timezone.utc)
+    evidence_bars = trigger_bars if trigger_bars is not None else bars or []
+    result.update(build_directional_levels(decision, evidence_bars, snapshot or {}, now=current_time, candle_minutes=15 if trigger_bars is not None else 60))
+    result.update(build_setup_lifecycle(result, evidence_bars, current_time, validity_minutes=validity_minutes))
     return result
+
+
+def build_setup_lifecycle(
+    analysis: dict[str, Any], bars: list[dict[str, Any]], now: datetime,
+    *, validity_minutes: int = 60,
+) -> dict[str, Any]:
+    generated_at = now.astimezone(timezone.utc)
+    clean = [row for row in bars if _bar_time(row.get("t")) is not None]
+    confirmed_close = _bar_time(clean[-1].get("t")) if clean else None
+    market_data_as_of = confirmed_close.isoformat() if confirmed_close else None
+    setup_status = str(analysis.get("setup_status") or "watch")
+    actionable = analysis.get("decision") in {"BUY_WATCH", "SELL_WATCH"} and setup_status == "confirmed" and confirmed_close is not None
+    nominal_expiry = confirmed_close + timedelta(minutes=max(1, validity_minutes)) if actionable and confirmed_close else None
+    session_expiry = _regular_session_close(confirmed_close) if actionable and confirmed_close else None
+    expires_at = min(nominal_expiry, session_expiry) if nominal_expiry and session_expiry else nominal_expiry
+    state = "ACTIVE" if actionable else "NO_TRADE"
+    expiry_reason = None
+    remaining = max(0, int((expires_at - generated_at).total_seconds())) if expires_at else 0
+    if actionable and expires_at and generated_at >= expires_at:
+        state = "EXPIRED"
+        expiry_reason = "SESSION_EXPIRED" if session_expiry and expires_at == session_expiry and nominal_expiry and session_expiry < nominal_expiry else "SETUP_EXPIRED"
+        remaining = 0
+        analysis.update({
+            "decision": "NO_TRADE", "reason_code": expiry_reason, "setup_status": "expired",
+            "entry": None, "stop_loss": None, "target": None, "reward_risk": None,
+        })
+    elif setup_status == "entry_missed":
+        state, expiry_reason = "INVALIDATED", "ENTRY_MISSED"
+    elif setup_status == "market_data_unavailable":
+        state, expiry_reason = "NO_TRADE", "MARKET_DATA_STALE"
+    return {
+        "context_timeframe": "4H/Daily", "analysis_timeframe": "1H", "trigger_timeframe": "15M",
+        "analysis_generated_at": generated_at.isoformat(), "market_data_as_of": market_data_as_of,
+        "last_confirmed_candle_close": market_data_as_of,
+        "setup_created_at": confirmed_close.isoformat() if actionable and confirmed_close else None,
+        "setup_expires_at": expires_at.isoformat() if expires_at else None,
+        "validity_remaining_seconds": remaining, "setup_state": state, "expiry_reason": expiry_reason,
+    }
+
+
+def _regular_session_close(timestamp: datetime) -> datetime:
+    eastern = ZoneInfo("America/New_York")
+    local = timestamp.astimezone(eastern)
+    close = local.replace(hour=16, minute=0, second=0, microsecond=0)
+    return close.astimezone(timezone.utc)
 
 
 def summarize_finnhub_context(finnhub: dict[str, Any], snapshot: dict[str, Any]) -> dict[str, Any]:
@@ -82,13 +136,16 @@ def summarize_flashalpha_context(flashalpha: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def build_directional_levels(decision: str, bars: list[dict[str, Any]], snapshot: dict[str, Any], *, now: datetime | None = None) -> dict[str, Any]:
+def build_directional_levels(
+    decision: str, bars: list[dict[str, Any]], snapshot: dict[str, Any], *,
+    now: datetime | None = None, candle_minutes: int = 60,
+) -> dict[str, Any]:
     clean = [row for row in bars if all(_positive_number(row.get(key)) for key in ("h", "l", "c"))]
     if decision not in {"BUY_WATCH", "SELL_WATCH"} or len(clean) < 22:
         return {"setup_status": "watch", "entry": None, "stop_loss": None, "target": None, "reward_risk": None}
     current_time = now or datetime.now(timezone.utc)
     latest_time = _bar_time(clean[-1].get("t"))
-    if latest_time is None or latest_time + timedelta(hours=1) > current_time or current_time - latest_time > timedelta(days=4):
+    if latest_time is None or latest_time + timedelta(minutes=max(1, candle_minutes)) > current_time or current_time - latest_time > timedelta(days=4):
         return {"setup_status": "market_data_unavailable", "entry": None, "stop_loss": None, "target": None, "reward_risk": None}
     previous, latest = clean[-21:-1], clean[-1]
     ranges = []

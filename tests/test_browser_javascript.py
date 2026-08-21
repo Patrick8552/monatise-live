@@ -10,15 +10,28 @@ APP_JS = ROOT / "app" / "app.js"
 INDEX_HTML = ROOT / "app" / "index.html"
 COINGLASS_DASHBOARD_JS = ROOT / "app" / "coinglass-dashboard.js"
 MEMECOINS_JS = ROOT / "app" / "memecoins.js"
+STOCKS_JS = ROOT / "app" / "stocks.js"
 
 
 def test_dashboard_javascript_has_valid_syntax() -> None:
     node = shutil.which("node")
     if node is None:
         return
-    for script in (APP_JS, COINGLASS_DASHBOARD_JS, MEMECOINS_JS):
+    for script in (APP_JS, COINGLASS_DASHBOARD_JS, MEMECOINS_JS, STOCKS_JS):
         result = subprocess.run([node, "--check", str(script)], capture_output=True, text=True, check=False)
         assert result.returncode == 0, result.stderr
+
+
+def test_stock_workspace_uses_server_side_multi_provider_endpoints_and_lifecycle() -> None:
+    source = STOCKS_JS.read_text(encoding="utf-8")
+    html = (ROOT / "app" / "stocks.html").read_text(encoding="utf-8")
+    assert 'getJson("/api/stocks/scanner")' in source
+    assert "/api/stocks/${encodeURIComponent(symbol)}/analysis" in source
+    assert "/api/stocks/search?q=" in source
+    assert "setup_expires_at" in source and "validity_remaining_seconds" in source
+    assert "FlashAlpha" in html and "Alpaca" in html and "Quiver" in html and "Finnhub" in html
+    for forbidden in ("FLASHALPHA_API_KEY", "ALPACA_API_KEY", "FINNHUB_API_KEY"):
+        assert forbidden not in source + html
 
 
 def test_coinglass_dashboard_price_history_respects_the_interval_dropdown() -> None:

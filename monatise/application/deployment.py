@@ -1566,7 +1566,8 @@ class OrchestrationRuntime:
         alpaca = AlpacaMarketDataAdapter.from_env()
         normalized = normalize_quiver_symbol(symbol)
         quiver_task = asyncio.to_thread(QuiverAdapter.from_env().context, normalized)
-        bars_task = asyncio.to_thread(alpaca.stock_bars, symbol)
+        bars_task = asyncio.to_thread(alpaca.stock_bars, symbol, "1Hour")
+        trigger_bars_task = asyncio.to_thread(alpaca.stock_bars, symbol, "15Min")
         snapshot_task = asyncio.to_thread(alpaca.stock_snapshot, symbol)
 
         def finnhub_context() -> dict[str, Any]:
@@ -1581,10 +1582,11 @@ class OrchestrationRuntime:
             except FlashAlphaAdapterError:
                 return {"source": "FlashAlpha", "unavailable": True}
 
-        context, bars, snapshot, finnhub, flashalpha = await asyncio.gather(
-            quiver_task, bars_task, snapshot_task, asyncio.to_thread(finnhub_context), asyncio.to_thread(flashalpha_context)
+        context, bars, trigger_bars, snapshot, finnhub, flashalpha = await asyncio.gather(
+            quiver_task, bars_task, trigger_bars_task, snapshot_task, asyncio.to_thread(finnhub_context), asyncio.to_thread(flashalpha_context)
         )
-        return build_stock_analysis(context, bars=bars, snapshot=snapshot, finnhub=finnhub, flashalpha=flashalpha)
+        validity_minutes = max(15, int(self.environment.get("MONATISE_STOCK_15M_VALIDITY_MINUTES", "60")))
+        return build_stock_analysis(context, bars=bars, trigger_bars=trigger_bars, snapshot=snapshot, finnhub=finnhub, flashalpha=flashalpha, validity_minutes=validity_minutes)
 
     async def _telegram_notification_candidate(self, result: Any, interval: str) -> dict[str, Any] | None:
         outputs = result.context.outputs

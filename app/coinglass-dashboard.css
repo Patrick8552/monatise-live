@@ -1622,3 +1622,4 @@ canvas {
 .x-connection-card small {
   color: var(--muted);
 }
+.stocks-shortcut{position:fixed;right:18px;bottom:18px;z-index:30;padding:10px 14px;border:1px solid rgba(117,255,214,.36);border-radius:999px;background:#10221d;color:#75ffd6;font:700 .78rem/1 Inter,system-ui,sans-serif;text-decoration:none;box-shadow:0 12px 36px rgba(0,0,0,.3)}

@@ -8,6 +8,7 @@ import json
 import logging
 import mimetypes
 import asyncio
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 import secrets
@@ -73,6 +74,14 @@ class ProductionASGI(OrchestrationASGI):
         "1h": 7_200, "4h": 28_800, "6h": 43_200, "8h": 57_600,
         "12h": 86_400, "1d": 172_800, "1w": 1_209_600,
     }
+    STOCK_DIRECTORY = {
+        "AAPL": "Apple", "AMD": "Advanced Micro Devices", "AMZN": "Amazon", "AVGO": "Broadcom",
+        "COIN": "Coinbase", "GOOGL": "Alphabet", "JPM": "JPMorgan Chase", "META": "Meta Platforms",
+        "MSFT": "Microsoft", "NFLX": "Netflix", "NVDA": "NVIDIA", "QQQ": "Invesco QQQ",
+        "SPY": "SPDR S&P 500 ETF", "TSLA": "Tesla", "XOM": "Exxon Mobil",
+    }
+    STOCK_SCANNER_SYMBOLS = ("AAPL", "TSLA", "NVDA", "QQQ", "SPY")
+    STOCK_SYMBOL_PATTERN = re.compile(r"^[A-Z][A-Z0-9.-]{0,9}$")
 
     def __init__(self, runtime: OrchestrationRuntime | None = None, static_dir: Path | None = None) -> None:
         super().__init__(runtime or ProductionRuntime())
@@ -128,6 +137,27 @@ class ProductionASGI(OrchestrationASGI):
                 "groups": {"crypto": list(crypto), "stocks": list(stocks)},
                 "execution_enabled": False,
             })
+            return
+        if scope.get("type") == "http" and path in {"/api/stocks/search", "/api/stocks/scanner"}:
+            if scope.get("method", "GET").upper() != "GET":
+                await self._respond(send, 405, {"status": "method_not_allowed"})
+                return
+            if self._market_rate_limited(scope, maximum=30):
+                await self._respond(send, 429, {"status": "rate_limited"})
+                return
+            code, payload = await (self._stocks_search(scope) if path.endswith("/search") else self._stocks_scanner())
+            await self._respond(send, code, payload)
+            return
+        if scope.get("type") == "http" and path.startswith("/api/stocks/") and path.endswith("/analysis"):
+            if scope.get("method", "GET").upper() != "GET":
+                await self._respond(send, 405, {"status": "method_not_allowed"})
+                return
+            if self._market_rate_limited(scope, maximum=20):
+                await self._respond(send, 429, {"status": "rate_limited"})
+                return
+            symbol = path.removeprefix("/api/stocks/").removesuffix("/analysis").strip("/").upper()
+            code, payload = await self._stock_analysis(symbol)
+            await self._respond(send, code, payload)
             return
         if scope.get("type") == "http" and path == "/api/me":
             if scope.get("method", "GET").upper() != "GET":
@@ -256,6 +286,47 @@ class ProductionASGI(OrchestrationASGI):
         if len(self._market_rate_windows) > 2048:
             self._market_rate_windows = {key: value for key, value in self._market_rate_windows.items() if value[0] == window}
         return count > maximum
+
+    async def _stocks_search(self, scope: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        query = parse_qs(scope.get("query_string", b"").decode())
+        term = str(query.get("q", [""])[0]).strip().upper()
+        if len(term) > 40:
+            return 400, {"status": "invalid_request", "reason": "search query is too long"}
+        matches = [
+            {"symbol": symbol, "name": name, "asset_class": "stock", "tradable": False}
+            for symbol, name in self.STOCK_DIRECTORY.items()
+            if not term or term in symbol or term.casefold() in name.casefold()
+        ][:10]
+        return 200, {"status": "ready", "query": term, "results": matches, "execution_enabled": False}
+
+    async def _stock_analysis(self, symbol: str) -> tuple[int, dict[str, Any]]:
+        if not self.STOCK_SYMBOL_PATTERN.fullmatch(symbol):
+            return 400, {"status": "invalid_request", "reason": "unsupported stock symbol"}
+        try:
+            analysis, cache_hit = await asyncio.wait_for(self._cached_openclaw_stock_analysis((symbol, "1h")), timeout=30)
+        except (TypeError, ValueError) as exc:
+            return 400, {"status": "invalid_request", "reason": str(exc)}
+        except Exception as exc:
+            LOGGER.warning("stock analysis unavailable", extra={"symbol": symbol, "error_type": type(exc).__name__})
+            return 503, {"status": "analysis_unavailable", "symbol": symbol, "error_type": type(exc).__name__}
+        return 200, {
+            "status": "ready", "symbol": symbol, "company_name": self.STOCK_DIRECTORY.get(symbol, symbol),
+            "analysis": analysis, "cache_hit": cache_hit, "execution_enabled": False,
+        }
+
+    async def _stocks_scanner(self) -> tuple[int, dict[str, Any]]:
+        async def analyze(symbol: str) -> dict[str, Any]:
+            code, payload = await self._stock_analysis(symbol)
+            if code != 200:
+                return {"asset": symbol, "company_name": self.STOCK_DIRECTORY.get(symbol, symbol), "decision": "NO_TRADE", "setup_state": "NO_TRADE", "reason_code": payload.get("status", "ANALYSIS_UNAVAILABLE").upper()}
+            return {"company_name": payload["company_name"], **payload["analysis"]}
+
+        results = await asyncio.gather(*(analyze(symbol) for symbol in self.STOCK_SCANNER_SYMBOLS))
+        return 200, {
+            "status": "ready", "generated_at": datetime.now(timezone.utc).isoformat(), "refresh_seconds": 120,
+            "results": results, "providers": ["Alpaca", "FlashAlpha", "Quiver Quantitative", "Finnhub"],
+            "execution_enabled": False,
+        }
 
     def _openclaw_cache_ttl(self) -> float:
         raw_ttl = self.runtime.environment.get("MONATISE_OPENCLAW_CACHE_TTL_SECONDS", "300")
