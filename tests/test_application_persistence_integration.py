@@ -62,8 +62,13 @@ def test_telegram_queue_leases_retries_and_dead_letters_against_real_service():
             assert await store.enqueue_telegram_command(1, {"update_id": 1, "text": "/help"}) is True
             leased = await store.dequeue_telegram_command(timeout_seconds=0)
             assert leased["update_id"] == 1
-            assert await store.recover_telegram_commands(lease_seconds=120) == 0
-            assert await store.recover_telegram_commands(lease_seconds=0) == 1
+            assert await store.recover_telegram_commands() == 0
+            assert await store.renew_telegram_command(leased, lease_seconds=120) is True
+            await client.zadd(store.key("telegram-command", "leases-v2"), {leased["__monatise_lease_token"]: 0})
+            assert await store.recover_telegram_commands() == 1
+            assert await store.finish_telegram_command(leased) is False
+            assert await store.retry_telegram_command(leased, max_attempts=2) is None
+            assert await client.llen(store.key("telegram-command", "pending")) == 1
 
             leased = await store.dequeue_telegram_command(timeout_seconds=0)
             assert await store.retry_telegram_command(leased, max_attempts=2) is True
@@ -76,7 +81,7 @@ def test_telegram_queue_leases_retries_and_dead_letters_against_real_service():
             leased = await store.dequeue_telegram_command(timeout_seconds=0)
             assert await store.retry_telegram_command(leased, max_attempts=2) is False
             assert await client.llen(store.key("telegram-command", "pending")) == 0
-            assert await client.llen(store.key("telegram-command", "processing")) == 0
+            assert await client.hlen(store.key("telegram-command", "processing-v2")) == 0
             assert await client.llen(store.key("telegram-command", "dead-letter")) == 1
             metrics = await store.telegram_queue_metrics()
             assert metrics["dead_letter_count"] == 1

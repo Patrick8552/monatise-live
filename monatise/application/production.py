@@ -37,6 +37,10 @@ from monatise.core.models import Candle
 LOGGER = logging.getLogger("monatise.production")
 
 
+class TelegramLeaseLost(RuntimeError):
+    """Raised when a worker no longer owns a Telegram command lease."""
+
+
 def telegram_webhook_secret(token: str) -> str:
     return hashlib.sha256(f"monatise-telegram-webhook:{token}".encode()).hexdigest()
 
@@ -94,6 +98,8 @@ class ProductionRuntime(OrchestrationRuntime):
 
 
 class ProductionASGI(OrchestrationASGI):
+    TELEGRAM_LEASE_SECONDS = 120
+    TELEGRAM_HEARTBEAT_SECONDS = 30
     MARKET_SYMBOLS = {"BTC", "ETH", "SOL", "XRP", "DOGE", "BNB"}
     MARKET_INTERVALS = set(CoinGlassProductionAdapter.SUPPORTED_INTERVALS)
     INTERVAL_MAX_AGE_SECONDS = {
@@ -404,11 +410,19 @@ class ProductionASGI(OrchestrationASGI):
 
     async def _process_telegram_command_once(self, *, timeout_seconds: int = 1) -> bool:
         coordination = self.runtime.redis_coordination
-        payload = await coordination.dequeue_telegram_command(timeout_seconds=timeout_seconds)
+        payload = await coordination.dequeue_telegram_command(
+            timeout_seconds=timeout_seconds, lease_seconds=self.TELEGRAM_LEASE_SECONDS,
+        )
         if payload is None:
             return False
+        heartbeat = asyncio.create_task(self._telegram_lease_heartbeat(coordination, payload), name="telegram-lease-heartbeat")
         try:
-            await self._handle_telegram_command(str(payload.get("text") or ""))
+            await self._handle_telegram_command(
+                str(payload.get("text") or ""),
+                ownership_check=lambda: coordination.renew_telegram_command(payload),
+            )
+        except TelegramLeaseLost:
+            LOGGER.warning("Discarding stale Telegram command result", extra={"update_id": payload.get("update_id")})
         except asyncio.CancelledError:
             await coordination.retry_telegram_command(payload)
             raise
@@ -419,16 +433,38 @@ class ProductionASGI(OrchestrationASGI):
                 LOGGER.error("Telegram command moved to dead-letter queue", extra={"update_id": payload.get("update_id")})
             await asyncio.sleep(1)
         else:
-            await coordination.finish_telegram_command(payload)
+            if not await coordination.finish_telegram_command(payload):
+                LOGGER.warning("Telegram command completion rejected after lease loss", extra={"update_id": payload.get("update_id")})
+        finally:
+            heartbeat.cancel()
+            with suppress(asyncio.CancelledError):
+                await heartbeat
         return True
 
-    async def _handle_telegram_command(self, text: str) -> None:
+    async def _telegram_lease_heartbeat(self, coordination: Any, payload: dict[str, Any]) -> None:
+        while True:
+            await asyncio.sleep(self.TELEGRAM_HEARTBEAT_SECONDS)
+            try:
+                renewed = await coordination.renew_telegram_command(payload, lease_seconds=self.TELEGRAM_LEASE_SECONDS)
+            except Exception as exc:
+                LOGGER.warning("Telegram lease heartbeat failed", extra={"error_type": type(exc).__name__, "update_id": payload.get("update_id")})
+                return
+            if not renewed:
+                return
+
+    @staticmethod
+    async def _send_owned_telegram_response(notifier: Any, response: str, ownership_check: Any | None) -> None:
+        if ownership_check is not None and not await ownership_check():
+            raise TelegramLeaseLost("Telegram command lease is no longer owned")
+        await notifier.command_response(response)
+
+    async def _handle_telegram_command(self, text: str, *, ownership_check: Any | None = None) -> None:
         notifier = self.runtime.telegram
         if notifier is None:
             return
         help_text = "Monatise remote analysis\nUse /analyze BTC or /analyze NVDA. Add crypto or stock when a symbol is ambiguous.\nAnalysis only; trade execution is disabled."
         if re.fullmatch(r"/(?:start|help)(?:@[A-Za-z0-9_]+)?", text, re.IGNORECASE):
-            await notifier.command_response(help_text)
+            await self._send_owned_telegram_response(notifier, help_text, ownership_check)
             return
         match = self.TELEGRAM_COMMAND_PATTERN.fullmatch(text)
         raw_asset = (match.group(1) if match else "") or ""
@@ -436,7 +472,7 @@ class ProductionASGI(OrchestrationASGI):
         symbol = parts[0].lstrip("$") if parts else ""
         asset_class = parts[1].casefold() if len(parts) == 2 else None
         if not match or not self.STOCK_SYMBOL_PATTERN.fullmatch(symbol) or len(parts) > 2 or asset_class not in {None, "crypto", "stock"}:
-            await notifier.command_response(help_text)
+            await self._send_owned_telegram_response(notifier, help_text, ownership_check)
             return
         try:
             resolved_class, resolved_symbol = await self._telegram_asset_classification(symbol, asset_class)
@@ -453,7 +489,7 @@ class ProductionASGI(OrchestrationASGI):
         except Exception as exc:
             LOGGER.warning("Telegram command analysis failed", extra={"symbol": symbol, "error_type": type(exc).__name__})
             response = f"Monatise NO TRADE: {symbol}\nReason: analysis is currently unavailable.\nExecution: disabled"
-        await notifier.command_response(response)
+        await self._send_owned_telegram_response(notifier, response, ownership_check)
 
     async def _telegram_asset_classification(self, symbol: str, requested_class: str | None) -> tuple[str, str]:
         if requested_class is not None:
@@ -615,9 +651,12 @@ class ProductionASGI(OrchestrationASGI):
             metrics = await coordination.telegram_queue_metrics()
         dependency = getattr(self.runtime, "dependencies", {}).get("telegram_inbound", {})
         running = self._telegram_worker is not None and not self._telegram_worker.done()
+        worker_state = "running" if running else "stopped"
+        if running and dependency.get("worker") == "retrying":
+            worker_state = "redis_retrying"
         return {
             **metrics,
-            "worker": dependency.get("worker", "running" if running else "stopped"),
+            "worker": worker_state,
             "worker_error_type": dependency.get("worker_error_type"),
             "worker_error_at": dependency.get("worker_error_at"),
             "registration": dependency.get("registration", "not_configured"),

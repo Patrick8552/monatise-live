@@ -495,88 +495,127 @@ return 1
             json.dumps(queued_payload, separators=(",", ":")),
         ))
 
-    async def dequeue_telegram_command(self, *, timeout_seconds: int = 1) -> dict[str, Any] | None:
+    async def dequeue_telegram_command(self, *, timeout_seconds: int = 1, lease_seconds: int = 120) -> dict[str, Any] | None:
         deadline = time() + max(0, timeout_seconds)
+        token = str(uuid4())
         script = """
 local value = redis.call('RPOP', KEYS[1])
 if not value then return nil end
-local receipt = cjson.encode({payload=cjson.decode(value), leased_at=tonumber(ARGV[1])})
-redis.call('LPUSH', KEYS[2], receipt)
-return receipt
+local envelope = cjson.encode({payload=cjson.decode(value), token=ARGV[1], leased_at=tonumber(ARGV[2])})
+redis.call('HSET', KEYS[2], ARGV[1], envelope)
+redis.call('ZADD', KEYS[3], tonumber(ARGV[3]), ARGV[1])
+return envelope
 """
         while True:
             value = await self.client.eval(
                 script,
-                2,
+                3,
                 self.key("telegram-command", "pending"),
-                self.key("telegram-command", "processing"),
+                self.key("telegram-command", "processing-v2"),
+                self.key("telegram-command", "leases-v2"),
+                token,
                 time(),
+                time() + lease_seconds,
             )
             if value is not None:
                 envelope = json.loads(value)
                 payload = dict(envelope["payload"])
-                payload["__monatise_queue_receipt"] = value
+                payload["__monatise_lease_token"] = envelope["token"]
                 return payload
             if time() >= deadline:
                 return None
             await asyncio.sleep(min(0.1, max(0, deadline - time())))
 
-    async def finish_telegram_command(self, payload: dict[str, Any]) -> None:
-        receipt = payload.get("__monatise_queue_receipt")
-        if receipt is not None:
-            async with self.client.pipeline(transaction=True) as pipeline:
-                pipeline.lrem(self.key("telegram-command", "processing"), 1, receipt)
-                pipeline.set(self.key("telegram-command", "last-success-at"), str(time()))
-                await pipeline.execute()
+    async def renew_telegram_command(self, payload: dict[str, Any], *, lease_seconds: int = 120) -> bool:
+        token = str(payload.get("__monatise_lease_token") or "")
+        if not token:
+            return False
+        script = """
+local envelope = redis.call('HGET', KEYS[1], ARGV[1])
+if not envelope then return 0 end
+local decoded = cjson.decode(envelope)
+if decoded['token'] ~= ARGV[1] then return 0 end
+decoded['leased_at'] = tonumber(ARGV[2])
+redis.call('HSET', KEYS[1], ARGV[1], cjson.encode(decoded))
+redis.call('ZADD', KEYS[2], tonumber(ARGV[3]), ARGV[1])
+return 1
+"""
+        now = time()
+        return bool(await self.client.eval(
+            script, 2, self.key("telegram-command", "processing-v2"),
+            self.key("telegram-command", "leases-v2"), token, now, now + lease_seconds,
+        ))
 
-    async def retry_telegram_command(self, payload: dict[str, Any], *, max_attempts: int = 3) -> bool:
-        receipt = payload.get("__monatise_queue_receipt")
-        pending_payload = {key: value for key, value in payload.items() if key != "__monatise_queue_receipt"}
+    async def finish_telegram_command(self, payload: dict[str, Any]) -> bool:
+        token = str(payload.get("__monatise_lease_token") or "")
+        if not token:
+            return False
+        script = """
+if redis.call('HEXISTS', KEYS[1], ARGV[1]) == 0 then return 0 end
+redis.call('HDEL', KEYS[1], ARGV[1])
+redis.call('ZREM', KEYS[2], ARGV[1])
+redis.call('SET', KEYS[3], ARGV[2])
+return 1
+"""
+        return bool(await self.client.eval(
+            script, 3, self.key("telegram-command", "processing-v2"),
+            self.key("telegram-command", "leases-v2"), self.key("telegram-command", "last-success-at"),
+            token, time(),
+        ))
+
+    async def retry_telegram_command(self, payload: dict[str, Any], *, max_attempts: int = 3) -> bool | None:
+        token = str(payload.get("__monatise_lease_token") or "")
+        if not token:
+            return None
+        pending_payload = {key: value for key, value in payload.items() if key != "__monatise_lease_token"}
         pending_payload["attempts"] = int(pending_payload.get("attempts", 0)) + 1
         encoded = json.dumps(pending_payload, separators=(",", ":"))
-        processing = self.key("telegram-command", "processing")
-        async with self.client.pipeline(transaction=True) as pipeline:
-            if receipt is not None:
-                pipeline.lrem(processing, 1, receipt)
-            if pending_payload["attempts"] < max_attempts:
-                # LPUSH keeps the retry behind commands already waiting at the
-                # right-hand (consumer) side of the FIFO queue.
-                pipeline.lpush(self.key("telegram-command", "pending"), encoded)
-            else:
-                pipeline.lpush(self.key("telegram-command", "dead-letter"), encoded)
-            pipeline.incr(self.key("telegram-command", "retry-count"))
-            await pipeline.execute()
-        return pending_payload["attempts"] < max_attempts
+        script = """
+if redis.call('HEXISTS', KEYS[1], ARGV[1]) == 0 then return 0 end
+redis.call('HDEL', KEYS[1], ARGV[1])
+redis.call('ZREM', KEYS[2], ARGV[1])
+redis.call('LPUSH', KEYS[3], ARGV[2])
+redis.call('INCR', KEYS[4])
+return 1
+"""
+        destination = self.key("telegram-command", "pending" if pending_payload["attempts"] < max_attempts else "dead-letter")
+        owned = bool(await self.client.eval(
+            script, 4, self.key("telegram-command", "processing-v2"), self.key("telegram-command", "leases-v2"),
+            destination, self.key("telegram-command", "retry-count"), token, encoded,
+        ))
+        return pending_payload["attempts"] < max_attempts if owned else None
 
-    async def recover_telegram_commands(self, *, lease_seconds: int = 120) -> int:
-        processing = self.key("telegram-command", "processing")
+    async def recover_telegram_commands(self) -> int:
+        processing = self.key("telegram-command", "processing-v2")
+        leases = self.key("telegram-command", "leases-v2")
         pending = self.key("telegram-command", "pending")
         script = """
-local values = redis.call('LRANGE', KEYS[1], 0, -1)
+local tokens = redis.call('ZRANGEBYSCORE', KEYS[2], '-inf', ARGV[1])
 local recovered = 0
-for _, value in ipairs(values) do
-  local ok, envelope = pcall(cjson.decode, value)
-  if ok and envelope['leased_at'] and envelope['leased_at'] <= tonumber(ARGV[1]) then
-    if redis.call('LREM', KEYS[1], 1, value) == 1 then
-      redis.call('LPUSH', KEYS[2], cjson.encode(envelope['payload']))
-      recovered = recovered + 1
-    end
+for _, token in ipairs(tokens) do
+  local value = redis.call('HGET', KEYS[1], token)
+  if value then
+    local envelope = cjson.decode(value)
+    redis.call('HDEL', KEYS[1], token)
+    redis.call('LPUSH', KEYS[3], cjson.encode(envelope['payload']))
+    recovered = recovered + 1
   end
+  redis.call('ZREM', KEYS[2], token)
 end
 return recovered
 """
-        return int(await self.client.eval(script, 2, processing, pending, time() - lease_seconds))
+        return int(await self.client.eval(script, 3, processing, leases, pending, time()))
 
     async def telegram_queue_metrics(self) -> dict[str, Any]:
         """Return sanitized operational telemetry for health and operator views."""
         started = perf_counter()
         try:
             pending = self.key("telegram-command", "pending")
-            processing = self.key("telegram-command", "processing")
+            processing = self.key("telegram-command", "processing-v2")
             async with self.client.pipeline(transaction=False) as pipeline:
                 pipeline.ping()
                 pipeline.llen(pending)
-                pipeline.llen(processing)
+                pipeline.hlen(processing)
                 pipeline.llen(self.key("telegram-command", "dead-letter"))
                 pipeline.get(self.key("telegram-command", "retry-count"))
                 pipeline.get(self.key("telegram-command", "last-success-at"))

@@ -33,7 +33,8 @@ class Coordination:
         payload = self.pending.pop(0)
         self.processing.append(payload)
         return payload
-    async def finish_telegram_command(self, payload): self.processing.remove(payload)
+    async def renew_telegram_command(self, payload, **kwargs): return payload in self.processing
+    async def finish_telegram_command(self, payload): self.processing.remove(payload); return True
     async def retry_telegram_command(self, payload, **kwargs):
         self.processing.remove(payload)
         self.pending.append(payload)
@@ -289,6 +290,47 @@ def test_telegram_worker_survives_transient_dequeue_failure(monkeypatch):
     assert calls == 2
     assert runtime.dependencies["telegram_inbound"]["worker"] == "retrying"
     assert runtime.dependencies["telegram_inbound"]["status"] == "degraded"
+
+
+def test_telegram_health_uses_actual_worker_task_lifecycle():
+    async def scenario():
+        runtime = Runtime()
+        runtime.dependencies = {"telegram_inbound": {"worker": "running", "registration": "registered"}}
+        app = ProductionASGI(runtime)
+        task = asyncio.create_task(asyncio.sleep(0))
+        await task
+        app._telegram_worker = task
+
+        telemetry = await app._telegram_queue_telemetry()
+
+        assert telemetry["worker"] == "stopped"
+
+    asyncio.run(scenario())
+
+
+def test_long_running_telegram_command_renews_lease(monkeypatch):
+    runtime = Runtime()
+    runtime.telegram = Telegram()
+    app = ProductionASGI(runtime)
+    app.TELEGRAM_HEARTBEAT_SECONDS = 0.001
+    renewals = 0
+    original_renew = runtime.redis_coordination.renew_telegram_command
+
+    async def renew(payload, **kwargs):
+        nonlocal renewals
+        renewals += 1
+        return await original_renew(payload, **kwargs)
+
+    async def slow_handler(text, **kwargs):
+        await asyncio.sleep(0.01)
+        assert await kwargs["ownership_check"]() is True
+
+    monkeypatch.setattr(runtime.redis_coordination, "renew_telegram_command", renew)
+    monkeypatch.setattr(app, "_handle_telegram_command", slow_handler)
+    asyncio.run(runtime.redis_coordination.enqueue_telegram_command(8, {"update_id": 8, "text": "/help"}))
+
+    assert asyncio.run(app._process_telegram_command_once(timeout_seconds=0)) is True
+    assert renewals >= 2
 
 
 def test_production_analysis_is_authenticated_symbol_only_and_non_executable():
