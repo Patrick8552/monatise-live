@@ -64,7 +64,8 @@ test("legacy grid analysis fails closed and is never rendered", async ({ page })
   await expect(production).not.toContainText("Two-sided");
 
   const generated = page.locator("article").filter({ has: page.getByRole("heading", { name: "Monatise Generated Signals" }) });
-  await expect(generated).toContainText("WAIT · NO TRADE");
+  await expect(generated).toContainText("NO TRADE");
+  await expect(generated).not.toContainText("WAIT · NO TRADE");
   await expect(generated).not.toContainText("Grid bids");
   await expect(generated).not.toContainText("Grid offers");
 
@@ -86,13 +87,13 @@ test("production outage fails supported assets closed", async ({ page }) => {
   await expect(production).toContainText("production analysis unavailable", { ignoreCase: true });
 
   const generated = page.locator("article").filter({ has: page.getByRole("heading", { name: "Monatise Generated Signals" }) });
-  await expect(generated).toContainText("WAIT · NO TRADE");
-  await expect(generated).toContainText("production unavailable", { ignoreCase: true });
+  await expect(generated).toContainText("NO TRADE");
+  await expect(generated).not.toContainText("WAIT · NO TRADE");
   await expect(generated).not.toContainText(/(BUY|SELL) · ACTIVE/);
 
   const framework = page.locator("article").filter({ has: page.getByRole("heading", { name: "Monatise Framework" }) });
   await expect(framework).toContainText("NO TRADE");
-  await expect(framework).toContainText("Production Unavailable");
+  await expect(framework).not.toContainText(/(BUY|SELL) · ACTIVE/);
 });
 
 test("rapid asset switching never renders analysis from the previous asset", async ({ page }) => {
