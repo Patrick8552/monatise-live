@@ -1,4 +1,4 @@
-const CACHE_NAME = "monatise-shell-20260821-stocks-v1";
+const CACHE_NAME = "monatise-shell-20260821-stocks-v2";
 const SHELL_ASSETS = [
   "./",
   "./cg.html",

@@ -38,6 +38,12 @@ def test_stock_workspace_uses_server_side_multi_provider_endpoints_and_lifecycle
         assert forbidden not in source + html
 
 
+def test_stock_workspace_is_visible_in_every_primary_product_navigation() -> None:
+    for page in ("index.html", "coinglass-dashboard.html", "memecoins.html", "game.html"):
+        html = (ROOT / "app" / page).read_text(encoding="utf-8")
+        assert 'href="./stocks.html">Stocks</a>' in html
+
+
 def test_coinglass_dashboard_price_history_respects_the_interval_dropdown() -> None:
     source = COINGLASS_DASHBOARD_JS.read_text(encoding="utf-8")
     # Previously hardcoded to ANALYSIS_INTERVAL ("30m") for every asset
