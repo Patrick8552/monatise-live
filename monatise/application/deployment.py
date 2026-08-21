@@ -492,7 +492,16 @@ return encoded
         script = """
 local pending_type = redis.call('TYPE', KEYS[2]).ok
 if pending_type ~= 'none' and pending_type ~= 'list' then return -2 end
-if redis.call('EXISTS', KEYS[1]) == 1 then return 0 end
+local dedup_type = redis.call('TYPE', KEYS[1]).ok
+local dedup_valid = false
+local dedup_corrupt = false
+if dedup_type == 'string' then
+  dedup_valid = redis.call('GET', KEYS[1]) == '1' and redis.call('TTL', KEYS[1]) > 0
+  dedup_corrupt = not dedup_valid
+elseif dedup_type ~= 'none' then
+  dedup_corrupt = true
+end
+if dedup_valid then return 0 end
 local redis_time = redis.call('TIME')
 local now = tonumber(redis_time[1]) + tonumber(redis_time[2]) / 1000000
 local queued_payload = cjson.decode(ARGV[2])
@@ -501,14 +510,19 @@ redis.call('LPUSH', KEYS[2], cjson.encode(queued_payload))
 -- Deduplication is secondary metadata. If this write fails, retain the
 -- accepted command so a provider retry can at worst produce at-least-once
 -- delivery instead of suppressing a command that was never queued.
-redis.pcall('SET', KEYS[1], '1', 'NX', 'EX', ARGV[1])
+local dedup_write = redis.pcall('SET', KEYS[1], '1', 'EX', ARGV[1])
+if dedup_corrupt or (type(dedup_write) == 'table' and dedup_write['err']) then
+  local flagged = redis.pcall('INCR', KEYS[3])
+  if type(flagged) == 'table' and flagged['err'] then redis.pcall('SET', KEYS[3], '1') end
+end
 return 1
 """
         outcome = int(await self.client.eval(
             script,
-            2,
+            3,
             self.key("telegram-update", str(update_id)),
             self.key("telegram-command", "pending"),
+            self.key("telegram-command", "counter-corruption-count"),
             ttl_seconds,
             json.dumps(payload, separators=(",", ":")),
         ))
@@ -628,16 +642,21 @@ local function safe_increment(key, amount)
     if type(flagged) == 'table' and flagged['err'] then redis.pcall('SET', KEYS[5], '1') end
   end
 end
-if not key_is(KEYS[1], 'hash') or not key_is(KEYS[2], 'zset') or not key_is(KEYS[3], 'string') then
+if not key_is(KEYS[1], 'hash') or not key_is(KEYS[2], 'zset') then
   safe_increment(KEYS[4], 1)
   return -2
 end
 if redis.call('HEXISTS', KEYS[1], ARGV[1]) == 0 then return 0 end
+local success_type = redis.call('TYPE', KEYS[3]).ok
+local success_corrupt = success_type ~= 'none' and (success_type ~= 'string' or tonumber(redis.call('GET', KEYS[3])) == nil)
 redis.call('HDEL', KEYS[1], ARGV[1])
 redis.call('ZREM', KEYS[2], ARGV[1])
 local redis_time = redis.call('TIME')
 local now = tonumber(redis_time[1]) + tonumber(redis_time[2]) / 1000000
-redis.call('SET', KEYS[3], tostring(now))
+local telemetry_write = redis.pcall('SET', KEYS[3], tostring(now))
+if success_corrupt or (type(telemetry_write) == 'table' and telemetry_write['err']) then
+  safe_increment(KEYS[5], 1)
+end
 return 1
 """
         outcome = int(await self.client.eval(
@@ -816,6 +835,8 @@ return {recovered, quarantined, #tokens}
         def counter(value: Any) -> tuple[int, bool]:
             if value is None:
                 return 0, False
+            if isinstance(value, Exception):
+                return 0, True
             try:
                 rendered = value.decode("utf-8") if isinstance(value, bytes) else str(value)
                 return int(rendered), False
@@ -838,12 +859,30 @@ return {recovered, quarantined, #tokens}
                 pipeline.get(self.key("telegram-command", "dlq-overflow-count"))
                 pipeline.get(self.key("telegram-command", "invariant-violation-count"))
                 pipeline.get(self.key("telegram-command", "counter-corruption-count"))
-                ping, pending_depth, active_leases, dead_letters, retries_raw, last_success, oldest, redis_time, dlq_overflows_raw, invariant_violations_raw, counter_corruptions_raw = await pipeline.execute()
+                results = await pipeline.execute(raise_on_error=False)
+            ping, pending_depth, active_leases, dead_letters, retries_raw, last_success, oldest, redis_time, dlq_overflows_raw, invariant_violations_raw, counter_corruptions_raw = results
             retries, retries_corrupt = counter(retries_raw)
             dlq_overflows, dlq_overflows_corrupt = counter(dlq_overflows_raw)
             invariant_violations, invariant_violations_corrupt = counter(invariant_violations_raw)
             counter_corruptions, counter_marker_corrupt = counter(counter_corruptions_raw)
-            corrupt_counters = sum((retries_corrupt, dlq_overflows_corrupt, invariant_violations_corrupt, counter_marker_corrupt))
+            corrupt_counter_keys = [name for name, corrupt in (
+                ("retry_count", retries_corrupt),
+                ("dlq_overflow_count", dlq_overflows_corrupt),
+                ("invariant_violation_count", invariant_violations_corrupt),
+                ("counter_corruption_count", counter_marker_corrupt),
+            ) if corrupt]
+            corrupt_counters = len(corrupt_counter_keys)
+            operational_errors = [value for value in (ping, pending_depth, active_leases, dead_letters, last_success, oldest, redis_time) if isinstance(value, Exception)]
+            if operational_errors:
+                return {
+                    "redis": "degraded", "redis_latency_ms": round((perf_counter() - started) * 1000, 2),
+                    "error_type": type(operational_errors[0]).__name__, "pending_depth": None,
+                    "active_lease_count": None, "retry_count": retries, "dead_letter_count": None,
+                    "dlq_overflow_count": dlq_overflows, "invariant_violation_count": invariant_violations,
+                    "counter_corruption_count": counter_corruptions + corrupt_counters,
+                    "counter_corruption_keys": corrupt_counter_keys, "queue_status": "degraded",
+                    "last_success_at": None, "oldest_queued_age_seconds": None,
+                }
             oldest_payload = json.loads(oldest) if oldest else {}
             queued_at = float(oldest_payload.get("queued_at", 0) or 0)
             redis_now = float(redis_time[0]) + float(redis_time[1]) / 1_000_000
@@ -857,6 +896,7 @@ return {recovered, quarantined, #tokens}
                 "dlq_overflow_count": dlq_overflows,
                 "invariant_violation_count": invariant_violations,
                 "counter_corruption_count": counter_corruptions + corrupt_counters,
+                "counter_corruption_keys": corrupt_counter_keys,
                 "queue_status": "degraded" if dlq_overflows or invariant_violations or counter_corruptions or corrupt_counters else "ok",
                 "last_success_at": datetime.fromtimestamp(float(last_success), timezone.utc).isoformat() if last_success else None,
                 "oldest_queued_age_seconds": round(max(0, redis_now - queued_at), 1) if queued_at else None,
@@ -879,6 +919,7 @@ return {recovered, quarantined, #tokens}
                 "retry_count": None, "dead_letter_count": None, "last_success_at": None,
                 "dlq_overflow_count": dlq_overflows, "invariant_violation_count": invariant_violations,
                 "counter_corruption_count": counter_corruptions + sum((dlq_corrupt, invariant_corrupt, marker_corrupt)),
+                "counter_corruption_keys": [],
                 "queue_status": "degraded",
                 "oldest_queued_age_seconds": None,
             }

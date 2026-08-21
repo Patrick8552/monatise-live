@@ -204,6 +204,20 @@ def test_telegram_queue_metadata_failures_cannot_break_message_ownership():
         processing = store.key("telegram-command", "processing-v2")
         leases = store.key("telegram-command", "leases-v2")
         try:
+            dedup = store.key("telegram-update", "28")
+            await client.set(dedup, "1")
+            assert await store.enqueue_telegram_command(28, {"update_id": 28, "text": "/help"}) is True
+            assert await client.ttl(dedup) > 0
+            repaired = await store.dequeue_telegram_command(timeout_seconds=0)
+            assert await store.finish_telegram_command(repaired) is True
+
+            dedup = store.key("telegram-update", "29")
+            await client.set(dedup, "malformed", ex=60)
+            assert await store.enqueue_telegram_command(29, {"update_id": 29, "text": "/help"}) is True
+            assert await client.get(dedup) == "1"
+            repaired = await store.dequeue_telegram_command(timeout_seconds=0)
+            assert await store.finish_telegram_command(repaired) is True
+
             await client.set(pending, "wrong-type")
             with pytest.raises(RuntimeError, match="pending queue key-type invariant"):
                 await store.enqueue_telegram_command(30, {"update_id": 30, "text": "/help"})
@@ -218,7 +232,26 @@ def test_telegram_queue_metadata_failures_cannot_break_message_ownership():
             assert await client.hlen(processing) == 0
             assert await client.zcard(leases) == 0
             retried = await store.dequeue_telegram_command(timeout_seconds=0)
+            await client.delete(store.key("telegram-command", "last-success-at"))
+            await client.lpush(store.key("telegram-command", "last-success-at"), "corrupt")
             assert await store.finish_telegram_command(retried) is True
+            assert await client.hlen(processing) == 0
+            assert await client.zcard(leases) == 0
+            assert await client.type(store.key("telegram-command", "last-success-at")) == "string"
+
+            await client.set(store.key("telegram-command", "counter-corruption-count"), "0")
+            await client.delete(store.key("telegram-command", "retry-count"))
+            await client.lpush(store.key("telegram-command", "retry-count"), "corrupt")
+            await client.set(store.key("telegram-command", "dlq-overflow-count"), "5")
+            await client.set(store.key("telegram-command", "invariant-violation-count"), "2")
+            metrics = await store.telegram_queue_metrics()
+            assert metrics["retry_count"] == 0
+            assert metrics["dlq_overflow_count"] == 5
+            assert metrics["invariant_violation_count"] == 2
+            assert metrics["counter_corruption_count"] == 1
+            assert metrics["counter_corruption_keys"] == ["retry_count"]
+            assert metrics["queue_status"] == "degraded"
+            await client.delete(store.key("telegram-command", "retry-count"))
 
             await client.lpush(store.key("telegram-command", "dead-letter"), "existing")
             assert await store.enqueue_telegram_command(31, {"update_id": 31, "text": "/help"}) is True
@@ -231,7 +264,7 @@ def test_telegram_queue_metadata_failures_cannot_break_message_ownership():
             assert await client.zcard(leases) == 0
 
             metrics = await store.telegram_queue_metrics()
-            assert metrics["counter_corruption_count"] == 2
+            assert metrics["counter_corruption_count"] == 1
             assert metrics["queue_status"] == "degraded"
         finally:
             keys = await client.keys(f"{namespace}:*")
