@@ -28,7 +28,7 @@ from monatise.analysis.tradingview import TRADINGVIEW_FRESH_SECONDS, TRADINGVIEW
 from monatise.adapters.memecoins import creator_leaderboard, discover_pumpfun, inspect_memecoin, resolve_creator
 
 from monatise.adapters.coinglass_production import CoinGlassProductionAdapter
-from monatise.application.deployment import OrchestrationASGI, OrchestrationRuntime, TradingViewAlertDuplicate
+from monatise.application.deployment import OrchestrationASGI, OrchestrationRuntime, TelegramCommandTransition, TradingViewAlertDuplicate
 from monatise.application.stock_analysis import refresh_setup_validity
 from monatise.engines.market_data import MarketDataEngine, MarketDataRequest
 from monatise.core.models import Candle
@@ -424,13 +424,20 @@ class ProductionASGI(OrchestrationASGI):
         except TelegramLeaseLost:
             LOGGER.warning("Discarding stale Telegram command result", extra={"update_id": payload.get("update_id")})
         except asyncio.CancelledError:
-            await coordination.retry_telegram_command(payload)
+            try:
+                await coordination.release_telegram_command(payload)
+            except Exception as exc:
+                # The lease remains recoverable by Redis expiry; a transient
+                # release failure must not prevent graceful process shutdown.
+                LOGGER.warning("Telegram command release failed during shutdown", extra={"error_type": type(exc).__name__, "update_id": payload.get("update_id")})
             raise
         except Exception as exc:
             LOGGER.warning("Telegram command delivery failed; retrying", extra={"error_type": type(exc).__name__, "update_id": payload.get("update_id")})
-            retrying = await coordination.retry_telegram_command(payload)
-            if not retrying:
+            transition = await coordination.retry_telegram_command(payload)
+            if transition is TelegramCommandTransition.DEAD_LETTERED:
                 LOGGER.error("Telegram command moved to dead-letter queue", extra={"update_id": payload.get("update_id")})
+            elif transition is TelegramCommandTransition.OWNERSHIP_LOST:
+                LOGGER.warning("Telegram command retry rejected after lease loss", extra={"update_id": payload.get("update_id")})
             await asyncio.sleep(1)
         else:
             if not await coordination.finish_telegram_command(payload):

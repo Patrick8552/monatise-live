@@ -12,6 +12,7 @@ import os
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from enum import Enum
 from pathlib import Path
 from time import perf_counter, time
 from typing import Any, Mapping
@@ -53,6 +54,14 @@ SCHEDULED_ANALYSIS_SUPPORTED_SYMBOLS = frozenset(SCHEDULED_ANALYSIS_DEFAULT_SYMB
 DIRECTIONAL_ANALYSIS_SYMBOLS_KEY = "MONATISE_DIRECTIONAL_ANALYSIS_SYMBOLS"
 # Bump whenever the snapshot payload shape changes, so a later replay can
 # tell which schema a given historical row was written under.
+
+
+class TelegramCommandTransition(str, Enum):
+    REQUEUED = "requeued"
+    DEAD_LETTERED = "dead_lettered"
+    OWNERSHIP_LOST = "ownership_lost"
+
+
 DECISION_SNAPSHOT_SCHEMA_VERSION = 1
 DECISION_SNAPSHOT_WRITE_TIMEOUT_SECONDS = 5.0
 DECISION_SNAPSHOT_RETENTION_DAYS = 30
@@ -501,9 +510,11 @@ return 1
         script = """
 local value = redis.call('RPOP', KEYS[1])
 if not value then return nil end
-local envelope = cjson.encode({payload=cjson.decode(value), token=ARGV[1], leased_at=tonumber(ARGV[2])})
+local redis_time = redis.call('TIME')
+local now = tonumber(redis_time[1]) + tonumber(redis_time[2]) / 1000000
+local envelope = cjson.encode({payload=cjson.decode(value), token=ARGV[1], leased_at=now})
 redis.call('HSET', KEYS[2], ARGV[1], envelope)
-redis.call('ZADD', KEYS[3], tonumber(ARGV[3]), ARGV[1])
+redis.call('ZADD', KEYS[3], now + tonumber(ARGV[2]), ARGV[1])
 return envelope
 """
         while True:
@@ -514,8 +525,7 @@ return envelope
                 self.key("telegram-command", "processing-v2"),
                 self.key("telegram-command", "leases-v2"),
                 token,
-                time(),
-                time() + lease_seconds,
+                lease_seconds,
             )
             if value is not None:
                 envelope = json.loads(value)
@@ -535,15 +545,16 @@ local envelope = redis.call('HGET', KEYS[1], ARGV[1])
 if not envelope then return 0 end
 local decoded = cjson.decode(envelope)
 if decoded['token'] ~= ARGV[1] then return 0 end
-decoded['leased_at'] = tonumber(ARGV[2])
+local redis_time = redis.call('TIME')
+local now = tonumber(redis_time[1]) + tonumber(redis_time[2]) / 1000000
+decoded['leased_at'] = now
 redis.call('HSET', KEYS[1], ARGV[1], cjson.encode(decoded))
-redis.call('ZADD', KEYS[2], tonumber(ARGV[3]), ARGV[1])
+redis.call('ZADD', KEYS[2], now + tonumber(ARGV[2]), ARGV[1])
 return 1
 """
-        now = time()
         return bool(await self.client.eval(
             script, 2, self.key("telegram-command", "processing-v2"),
-            self.key("telegram-command", "leases-v2"), token, now, now + lease_seconds,
+            self.key("telegram-command", "leases-v2"), token, lease_seconds,
         ))
 
     async def finish_telegram_command(self, payload: dict[str, Any]) -> bool:
@@ -554,19 +565,21 @@ return 1
 if redis.call('HEXISTS', KEYS[1], ARGV[1]) == 0 then return 0 end
 redis.call('HDEL', KEYS[1], ARGV[1])
 redis.call('ZREM', KEYS[2], ARGV[1])
-redis.call('SET', KEYS[3], ARGV[2])
+local redis_time = redis.call('TIME')
+local now = tonumber(redis_time[1]) + tonumber(redis_time[2]) / 1000000
+redis.call('SET', KEYS[3], tostring(now))
 return 1
 """
         return bool(await self.client.eval(
             script, 3, self.key("telegram-command", "processing-v2"),
             self.key("telegram-command", "leases-v2"), self.key("telegram-command", "last-success-at"),
-            token, time(),
+            token,
         ))
 
-    async def retry_telegram_command(self, payload: dict[str, Any], *, max_attempts: int = 3) -> bool | None:
+    async def retry_telegram_command(self, payload: dict[str, Any], *, max_attempts: int = 3) -> TelegramCommandTransition:
         token = str(payload.get("__monatise_lease_token") or "")
         if not token:
-            return None
+            return TelegramCommandTransition.OWNERSHIP_LOST
         pending_payload = {key: value for key, value in payload.items() if key != "__monatise_lease_token"}
         pending_payload["attempts"] = int(pending_payload.get("attempts", 0)) + 1
         encoded = json.dumps(pending_payload, separators=(",", ":"))
@@ -583,28 +596,58 @@ return 1
             script, 4, self.key("telegram-command", "processing-v2"), self.key("telegram-command", "leases-v2"),
             destination, self.key("telegram-command", "retry-count"), token, encoded,
         ))
-        return pending_payload["attempts"] < max_attempts if owned else None
+        if not owned:
+            return TelegramCommandTransition.OWNERSHIP_LOST
+        return TelegramCommandTransition.REQUEUED if pending_payload["attempts"] < max_attempts else TelegramCommandTransition.DEAD_LETTERED
+
+    async def release_telegram_command(self, payload: dict[str, Any]) -> TelegramCommandTransition:
+        """Release an owned command during graceful shutdown without consuming an attempt."""
+        token = str(payload.get("__monatise_lease_token") or "")
+        if not token:
+            return TelegramCommandTransition.OWNERSHIP_LOST
+        pending_payload = {key: value for key, value in payload.items() if key != "__monatise_lease_token"}
+        encoded = json.dumps(pending_payload, separators=(",", ":"))
+        script = """
+if redis.call('HEXISTS', KEYS[1], ARGV[1]) == 0 then return 0 end
+redis.call('HDEL', KEYS[1], ARGV[1])
+redis.call('ZREM', KEYS[2], ARGV[1])
+redis.call('LPUSH', KEYS[3], ARGV[2])
+return 1
+"""
+        owned = bool(await self.client.eval(
+            script, 3, self.key("telegram-command", "processing-v2"), self.key("telegram-command", "leases-v2"),
+            self.key("telegram-command", "pending"), token, encoded,
+        ))
+        return TelegramCommandTransition.REQUEUED if owned else TelegramCommandTransition.OWNERSHIP_LOST
 
     async def recover_telegram_commands(self) -> int:
         processing = self.key("telegram-command", "processing-v2")
         leases = self.key("telegram-command", "leases-v2")
         pending = self.key("telegram-command", "pending")
         script = """
-local tokens = redis.call('ZRANGEBYSCORE', KEYS[2], '-inf', ARGV[1])
+local redis_time = redis.call('TIME')
+local now = tonumber(redis_time[1]) + tonumber(redis_time[2]) / 1000000
+local tokens = redis.call('ZRANGEBYSCORE', KEYS[2], '-inf', now)
 local recovered = 0
 for _, token in ipairs(tokens) do
   local value = redis.call('HGET', KEYS[1], token)
   if value then
-    local envelope = cjson.decode(value)
+    local ok, envelope = pcall(cjson.decode, value)
     redis.call('HDEL', KEYS[1], token)
-    redis.call('LPUSH', KEYS[3], cjson.encode(envelope['payload']))
-    recovered = recovered + 1
+    if ok and type(envelope) == 'table' and type(envelope['payload']) == 'table' then
+      redis.call('LPUSH', KEYS[3], cjson.encode(envelope['payload']))
+      recovered = recovered + 1
+    else
+      redis.call('LPUSH', KEYS[4], cjson.encode({reason='malformed_lease_envelope', lease_token=token, quarantined_at=now}))
+    end
   end
   redis.call('ZREM', KEYS[2], token)
 end
 return recovered
 """
-        return int(await self.client.eval(script, 3, processing, leases, pending, time()))
+        return int(await self.client.eval(
+            script, 4, processing, leases, pending, self.key("telegram-command", "dead-letter"),
+        ))
 
     async def telegram_queue_metrics(self) -> dict[str, Any]:
         """Return sanitized operational telemetry for health and operator views."""

@@ -13,6 +13,7 @@ import pytest
 import monatise.application.production as production_module
 from monatise.adapters.coinglass_production import CoinGlassProductionAdapter
 from monatise.application.production import ProductionASGI, ProductionRuntime, telegram_webhook_secret
+from monatise.application.deployment import TelegramCommandTransition
 from monatise.application.registry import PRODUCTION_ENGINE_ORDER
 from monatise.core.models import Candle
 
@@ -38,7 +39,11 @@ class Coordination:
     async def retry_telegram_command(self, payload, **kwargs):
         self.processing.remove(payload)
         self.pending.append(payload)
-        return True
+        return TelegramCommandTransition.REQUEUED
+    async def release_telegram_command(self, payload):
+        self.processing.remove(payload)
+        self.pending.append(payload)
+        return TelegramCommandTransition.REQUEUED
     async def recover_telegram_commands(self):
         self.pending.extend(self.processing)
         recovered = len(self.processing)
