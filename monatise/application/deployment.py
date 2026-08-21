@@ -214,6 +214,9 @@ class TelegramNotificationTransport:
     async def send_message(self, chat_id: str, text: str) -> int:
         return await asyncio.to_thread(self._send, chat_id, text)
 
+    async def set_webhook(self, url: str, secret_token: str) -> bool:
+        return await asyncio.to_thread(self._set_webhook, url, secret_token)
+
     def _send(self, chat_id: str, text: str) -> int:
         token = self._token_provider()
         if not token:
@@ -235,6 +238,24 @@ class TelegramNotificationTransport:
                 return message_id
         except Exception as exc:
             raise RuntimeError("Telegram notification delivery failed") from exc
+
+    def _set_webhook(self, url: str, secret_token: str) -> bool:
+        token = self._token_provider()
+        if not token:
+            raise RuntimeError("Telegram credential is unavailable")
+        body = json.dumps({
+            "url": url,
+            "secret_token": secret_token,
+            "allowed_updates": ["message"],
+            "drop_pending_updates": False,
+        }, separators=(",", ":")).encode()
+        request = Request(f"https://api.telegram.org/bot{token}/setWebhook", data=body, headers={"content-type": "application/json"}, method="POST")
+        try:
+            with urlopen(request, timeout=15) as response:  # noqa: S310
+                payload = json.loads(response.read().decode())
+                return response.status < 300 and payload.get("ok") is True
+        except Exception as exc:
+            raise RuntimeError("Telegram webhook registration failed") from exc
 
 
 _TELEGRAM_LABEL = re.compile(r"(^|\|\s*)([^|:\n]+):(?=\s)", re.MULTILINE)

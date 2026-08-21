@@ -36,6 +36,10 @@ from monatise.core.models import Candle
 LOGGER = logging.getLogger("monatise.production")
 
 
+def telegram_webhook_secret(token: str) -> str:
+    return hashlib.sha256(f"monatise-telegram-webhook:{token}".encode()).hexdigest()
+
+
 class ProductionRuntime(OrchestrationRuntime):
     async def start(self) -> None:
         LOGGER.info("validating production safety configuration")
@@ -58,6 +62,26 @@ class ProductionRuntime(OrchestrationRuntime):
             raise ValueError("production safety configuration is missing or invalid: " + ", ".join(invalid))
         LOGGER.info("production safety configuration validated")
         await super().start()
+        await self._register_telegram_webhook()
+
+    async def _register_telegram_webhook(self) -> None:
+        token = self.environment.get("MONATISE_TELEGRAM_BOT_TOKEN", "").strip()
+        public_url = self.environment.get("MONATISE_PUBLIC_URL", "").strip().rstrip("/")
+        configured = self.telegram is not None and bool(token and public_url.startswith("https://"))
+        status = {"status": "ok", "enabled": configured, "execution_enabled": False}
+        if not configured:
+            status["registration"] = "not_configured"
+            self.dependencies["telegram_inbound"] = status
+            return
+        secret_token = telegram_webhook_secret(token)
+        try:
+            registered = await self.telegram.register_webhook(f"{public_url}/api/telegram/webhook", secret_token)
+        except Exception as exc:
+            LOGGER.warning("Telegram webhook registration failed", extra={"error_type": type(exc).__name__})
+            status.update({"status": "degraded", "registration": "failed"})
+        else:
+            status.update({"status": "ok" if registered else "degraded", "registration": "registered" if registered else "rejected"})
+        self.dependencies["telegram_inbound"] = status
 
     def readiness(self) -> tuple[bool, dict[str, Any]]:
         # During a zero-downtime deploy the live instance owns the scheduler
@@ -83,6 +107,7 @@ class ProductionASGI(OrchestrationASGI):
     }
     STOCK_SCANNER_SYMBOLS = ("AAPL", "TSLA", "NVDA", "QQQ", "SPY")
     STOCK_SYMBOL_PATTERN = re.compile(r"^[A-Z][A-Z0-9.-]{0,9}$")
+    TELEGRAM_COMMAND_PATTERN = re.compile(r"^/(?:analyse|analyze)(?:@[A-Za-z0-9_]+)?(?:\s+(.+))?$", re.IGNORECASE)
 
     def __init__(self, runtime: OrchestrationRuntime | None = None, static_dir: Path | None = None) -> None:
         super().__init__(runtime or ProductionRuntime())
@@ -95,9 +120,17 @@ class ProductionASGI(OrchestrationASGI):
         self._quiver_web_cache: dict[str, tuple[float, dict[str, Any]]] = {}
         self._quiver_web_inflight: dict[str, asyncio.Task[dict[str, Any]]] = {}
         self._market_summary_cache: tuple[float, dict[str, Any]] | None = None
+        self._telegram_tasks: set[asyncio.Task[None]] = set()
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         path = scope.get("path", "")
+        if scope.get("type") == "http" and path == "/api/telegram/webhook":
+            if scope.get("method", "GET").upper() != "POST":
+                await self._respond(send, 405, {"status": "method_not_allowed"})
+                return
+            code, payload = await self._telegram_webhook(scope, receive)
+            await self._respond(send, code, payload)
+            return
         if scope.get("type") == "http" and path == "/api/health":
             if scope.get("method", "GET").upper() not in {"GET", "HEAD"}:
                 await self._respond(send, 405, {"status": "method_not_allowed"})
@@ -275,6 +308,107 @@ class ProductionASGI(OrchestrationASGI):
             return
         await super().__call__(scope, receive, send)
 
+    async def _telegram_webhook(self, scope: dict[str, Any], receive: Any) -> tuple[int, dict[str, Any]]:
+        token = self.runtime.environment.get("MONATISE_TELEGRAM_BOT_TOKEN", "").strip()
+        chat_id = self.runtime.environment.get("MONATISE_TELEGRAM_CHAT_ID", "").strip()
+        if not token or not chat_id or self.runtime.telegram is None:
+            return 503, {"status": "unavailable"}
+        headers = {key.decode().casefold(): value.decode() for key, value in scope.get("headers", ())}
+        supplied = headers.get("x-telegram-bot-api-secret-token", "")
+        if not secrets.compare_digest(supplied, telegram_webhook_secret(token)):
+            return 401, {"status": "unauthorized"}
+        body = b""
+        while True:
+            message = await receive()
+            body += message.get("body", b"")
+            if len(body) > 16_384:
+                return 413, {"status": "request_too_large"}
+            if not message.get("more_body", False):
+                break
+        try:
+            update = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return 400, {"status": "invalid_update"}
+        if not isinstance(update, dict):
+            return 400, {"status": "invalid_update"}
+        message = update.get("message")
+        if not isinstance(message, dict) or str((message.get("chat") or {}).get("id", "")) != chat_id:
+            return 200, {"status": "ignored"}
+        update_id = update.get("update_id")
+        if not isinstance(update_id, int):
+            return 400, {"status": "invalid_update"}
+        if self.runtime.redis_coordination is None:
+            return 503, {"status": "unavailable"}
+        if not await self.runtime.redis_coordination.claim_nonce(f"telegram-update:{update_id}", ttl_seconds=86_400):
+            return 200, {"status": "duplicate"}
+        text = str(message.get("text") or "").strip()
+        task = asyncio.create_task(self._handle_telegram_command(text), name=f"telegram-command-{update_id}")
+        self._telegram_tasks.add(task)
+        task.add_done_callback(self._telegram_tasks.discard)
+        return 200, {"status": "accepted"}
+
+    async def _handle_telegram_command(self, text: str) -> None:
+        notifier = self.runtime.telegram
+        if notifier is None:
+            return
+        help_text = "Monatise remote analysis\nUse /analyze BTC or /analyze NVDA.\nAnalysis only; trade execution is disabled."
+        if re.fullmatch(r"/(?:start|help)(?:@[A-Za-z0-9_]+)?", text, re.IGNORECASE):
+            await notifier.command_response(help_text)
+            return
+        match = self.TELEGRAM_COMMAND_PATTERN.fullmatch(text)
+        raw_asset = (match.group(1) if match else "") or ""
+        parts = raw_asset.strip().upper().split()
+        symbol = parts[0].lstrip("$") if parts else ""
+        if not match or not self.STOCK_SYMBOL_PATTERN.fullmatch(symbol):
+            await notifier.command_response(help_text)
+            return
+        try:
+            if symbol in self.MARKET_SYMBOLS or symbol in {"ADA", "AVAX", "LINK", "SUI"}:
+                analysis = await asyncio.wait_for(
+                    self.runtime.analyse(symbol, interval="15m", source="monatise.telegram.command", notify=False), timeout=90
+                )
+                response = self._format_telegram_crypto_analysis(analysis)
+            else:
+                analysis = await asyncio.wait_for(self.runtime.analyse_stock(symbol), timeout=90)
+                response = self._format_telegram_stock_analysis(analysis)
+        except Exception as exc:
+            LOGGER.warning("Telegram command analysis failed", extra={"symbol": symbol, "error_type": type(exc).__name__})
+            response = f"Monatise NO TRADE: {symbol}\nReason: analysis is currently unavailable.\nExecution: disabled"
+        await notifier.command_response(response)
+
+    @staticmethod
+    def _format_telegram_crypto_analysis(analysis: dict[str, Any]) -> str:
+        symbol = str(analysis.get("symbol") or "UNKNOWN")
+        classification = str(analysis.get("classification") or "no_trade").upper()
+        direction = str(analysis.get("direction") or "none").upper()
+        confirmed = str(analysis.get("entry_confirmation_status") or "").casefold() == "confirmed"
+        actionable = classification not in {"NO_TRADE", "GRID", "TWO_SIDED"} and direction in {"LONG", "SHORT"} and confirmed
+        if not actionable:
+            reasons = list(analysis.get("blockers") or analysis.get("reasons") or analysis.get("price_action_reasons") or [])[:3]
+            lines = [f"Monatise NO TRADE: {symbol}", f"Timeframe: {analysis.get('interval') or '15m'}", f"Score: {int(analysis.get('score') or 0):+d}/10 | threshold: ±{int(analysis.get('score_threshold') or 7)}"]
+            if reasons:
+                lines.append("Why: " + "; ".join(map(str, reasons)))
+        else:
+            lines = [f"Monatise {direction}: {symbol}", f"Timeframe: {analysis.get('interval') or '15m'}", f"Entry: {analysis.get('entry')}", f"Stop: {analysis.get('invalidation')}", f"Target: {analysis.get('target')}", f"Score: {int(analysis.get('score') or 0):+d}/10"]
+        lines.append("Execution: disabled")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _format_telegram_stock_analysis(analysis: dict[str, Any]) -> str:
+        symbol = str(analysis.get("asset") or "UNKNOWN")
+        confirmed = analysis.get("setup_status") == "confirmed"
+        decision = str(analysis.get("decision") or "NO_TRADE")
+        actionable = confirmed and decision in {"BUY_WATCH", "SELL_WATCH"}
+        if not actionable:
+            reasons = list(analysis.get("cautions") or analysis.get("reasons") or [])[:3]
+            lines = [f"Monatise NO TRADE: {symbol}", f"Score: {int(analysis.get('score') or 0):+d}/10 | threshold: ±{int(analysis.get('score_threshold') or 3)}"]
+            if reasons:
+                lines.append("Why: " + "; ".join(map(str, reasons)))
+        else:
+            direction = "LONG" if decision == "BUY_WATCH" else "SHORT"
+            lines = [f"Monatise {direction}: {symbol}", f"Entry: {analysis.get('entry')}", f"Stop: {analysis.get('stop_loss')}", f"Target: {analysis.get('target')}", f"Score: {int(analysis.get('score') or 0):+d}/10"]
+        lines.append("Execution: disabled")
+        return "\n".join(lines)
     def _market_rate_limited(self, scope: dict[str, Any], *, maximum: int = 120) -> bool:
         client = scope.get("client") or ("unknown", 0)
         address = str(client[0])
