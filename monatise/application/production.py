@@ -28,6 +28,7 @@ from monatise.adapters.memecoins import creator_leaderboard, discover_pumpfun, i
 
 from monatise.adapters.coinglass_production import CoinGlassProductionAdapter
 from monatise.application.deployment import OrchestrationASGI, OrchestrationRuntime, TradingViewAlertDuplicate
+from monatise.application.stock_analysis import refresh_setup_validity
 from monatise.engines.market_data import MarketDataEngine, MarketDataRequest
 from monatise.core.models import Candle
 
@@ -304,6 +305,7 @@ class ProductionASGI(OrchestrationASGI):
             return 400, {"status": "invalid_request", "reason": "unsupported stock symbol"}
         try:
             analysis, cache_hit = await asyncio.wait_for(self._cached_openclaw_stock_analysis((symbol, "1h")), timeout=30)
+            analysis = refresh_setup_validity(analysis)
         except (TypeError, ValueError) as exc:
             return 400, {"status": "invalid_request", "reason": str(exc)}
         except Exception as exc:
