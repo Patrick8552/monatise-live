@@ -109,6 +109,17 @@ class TelegramNotifier:
             raise ValueError("notification message is required")
         return await self._transport.send_message(self._chat_id, f"Monatise STOCK ANALYSIS\n{message}")
 
+    async def command_response(self, message: str) -> Any:
+        if not message.strip():
+            raise ValueError("command response is required")
+        return await self._transport.send_message(self._chat_id, message)
+
+    async def register_webhook(self, url: str, secret_token: str) -> bool:
+        register = getattr(self._transport, "set_webhook", None)
+        if register is None:
+            raise RuntimeError("Telegram transport does not support webhooks")
+        return bool(await register(url, secret_token))
+
     async def _alert(self, category: str, message: str) -> Any:
         if not message.strip():
             raise ValueError("notification message is required")

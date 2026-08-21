@@ -12,7 +12,7 @@ import pytest
 
 import monatise.application.production as production_module
 from monatise.adapters.coinglass_production import CoinGlassProductionAdapter
-from monatise.application.production import ProductionASGI, ProductionRuntime
+from monatise.application.production import ProductionASGI, ProductionRuntime, telegram_webhook_secret
 from monatise.application.registry import PRODUCTION_ENGINE_ORDER
 from monatise.core.models import Candle
 
@@ -61,6 +61,11 @@ class Runtime:
         if symbol:
             alerts = [alert for alert in alerts if alert["symbol"] == symbol]
         return [enrich_tradingview_alert(alert) for alert in alerts[:limit]]
+
+
+class Telegram:
+    def __init__(self): self.messages = []
+    async def command_response(self, message): self.messages.append(message)
 
 
 def request(app, path, payload, *, token=None):
@@ -123,6 +128,61 @@ def openclaw_status(app, *, token="control-secret", query="symbol=BTC&interval=1
     }
     asyncio.run(app(scope, receive, send))
     return messages[0]["status"], json.loads(messages[1]["body"])
+
+
+def telegram_webhook(app, update, *, secret="telegram-secret"):
+    messages = []
+    async def run():
+        body = json.dumps(update, separators=(",", ":")).encode()
+        async def receive(): return {"type": "http.request", "body": body, "more_body": False}
+        async def send(message): messages.append(message)
+        scope = {
+            "type": "http", "method": "POST", "path": "/api/telegram/webhook",
+            "headers": [(b"x-telegram-bot-api-secret-token", secret.encode())],
+        }
+        await app(scope, receive, send)
+        if app._telegram_tasks:
+            await asyncio.gather(*app._telegram_tasks)
+    asyncio.run(run())
+    return messages[0]["status"], json.loads(messages[1]["body"])
+
+
+def test_telegram_webhook_is_secret_and_chat_restricted():
+    runtime = Runtime()
+    runtime.environment.update({"MONATISE_TELEGRAM_BOT_TOKEN": "bot-token", "MONATISE_TELEGRAM_CHAT_ID": "42"})
+    runtime.telegram = Telegram()
+    app = ProductionASGI(runtime)
+    update = {"update_id": 1, "message": {"chat": {"id": 42}, "text": "/analyze BTC"}}
+
+    assert telegram_webhook(app, update, secret="wrong")[0] == 401
+    update["message"]["chat"]["id"] = 99
+    assert telegram_webhook(app, update, secret=telegram_webhook_secret("bot-token")) == (200, {"status": "ignored"})
+    assert runtime.calls == []
+
+
+def test_telegram_crypto_command_runs_15m_read_only_analysis():
+    runtime = Runtime()
+    runtime.environment.update({"MONATISE_TELEGRAM_BOT_TOKEN": "bot-token", "MONATISE_TELEGRAM_CHAT_ID": "42"})
+    runtime.telegram = Telegram()
+    app = ProductionASGI(runtime)
+    update = {"update_id": 2, "message": {"chat": {"id": 42}, "text": "/analyse BTC"}}
+
+    assert telegram_webhook(app, update, secret=telegram_webhook_secret("bot-token")) == (200, {"status": "accepted"})
+    assert runtime.calls == [("BTC", {"interval": "15m", "source": "monatise.telegram.command", "notify": False})]
+    assert runtime.telegram.messages == ["Monatise NO TRADE: BTC\nTimeframe: 15m\nScore: +0/10 | threshold: ±7\nExecution: disabled"]
+
+
+def test_telegram_stock_command_returns_no_trade_when_not_confirmed():
+    runtime = Runtime()
+    runtime.environment.update({"MONATISE_TELEGRAM_BOT_TOKEN": "bot-token", "MONATISE_TELEGRAM_CHAT_ID": "42"})
+    runtime.telegram = Telegram()
+    app = ProductionASGI(runtime)
+    update = {"update_id": 3, "message": {"chat": {"id": 42}, "text": "/analyze NVDA"}}
+
+    assert telegram_webhook(app, update, secret=telegram_webhook_secret("bot-token"))[0] == 200
+    assert runtime.calls == [("NVDA", {})]
+    assert runtime.telegram.messages[0].startswith("Monatise NO TRADE: NVDA")
+    assert runtime.telegram.messages[0].endswith("Execution: disabled")
 
 
 def test_production_analysis_is_authenticated_symbol_only_and_non_executable():
