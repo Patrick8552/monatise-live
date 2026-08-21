@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import pytest
 
 import monatise.application.deployment as deployment_module
-from monatise.application.deployment import COINGLASS_PROVIDER_KEY, SCHEDULED_ANALYSIS_DEFAULT_SYMBOLS, MigrationRunner, OrchestrationASGI, OrchestrationRuntime, PaperSafetyConfiguration, RedisCoordinationStore, RedisSchedulerLeadership, TelegramNotificationTransport, register_coinglass_provider, scheduled_analysis_configuration
+from monatise.application.deployment import COINGLASS_PROVIDER_KEY, SCHEDULED_ANALYSIS_DEFAULT_SYMBOLS, MigrationRunner, OrchestrationASGI, OrchestrationRuntime, PaperSafetyConfiguration, RedisCoordinationStore, RedisSchedulerLeadership, TelegramNotificationTransport, register_coinglass_provider, scheduled_analysis_configuration, telegram_transport_enabled
 from monatise.application.registry import CANONICAL_ENGINE_ORDER
 from monatise.application.registry import PRODUCTION_ENGINE_ORDER
 from monatise.application.production_analysis import PRODUCTION_SIGNAL_SCORE_THRESHOLD, build_production_analysis_run
@@ -27,6 +27,11 @@ def test_paper_safety_defaults_are_immutable_and_disabled():
     assert config.mode == "paper"
     assert config.execution_enabled is False
     assert config.governance_kill_switch_enabled is True
+
+
+def test_telegram_inbound_transport_is_independent_of_broadcast_notifications():
+    assert telegram_transport_enabled({"MONATISE_TELEGRAM_NOTIFICATIONS_ENABLED": "false", "MONATISE_TELEGRAM_INBOUND_ENABLED": "true"}) is True
+    assert telegram_transport_enabled({"MONATISE_TELEGRAM_NOTIFICATIONS_ENABLED": "false", "MONATISE_TELEGRAM_INBOUND_ENABLED": "false"}) is False
 
 
 def test_startup_failure_records_phase_and_logs_traceback(caplog):

@@ -245,6 +245,27 @@ def test_sanitized_output_exposes_contextual_confirmation_fields():
     assert payload["execution_enabled"] is False
 
 
+def test_sanitized_output_does_not_refresh_aged_confirmation_validity():
+    assessment = request(signal(PriceActionDirection.BULLISH, index=4))
+    generated_at = datetime(2026, 8, 7, 14, 15, 10, tzinfo=timezone.utc)
+    result = SimpleNamespace(
+        run_id="run-aged", correlation_id="correlation-aged", symbol="BTC", finished_at=generated_at,
+        status=SimpleNamespace(value="completed"), blocked_by=None,
+        statistics=SimpleNamespace(completed_stages=14),
+        context=SimpleNamespace(outputs={
+            "market_data": market(flat_candles()),
+            "decision": SimpleNamespace(classification=SimpleNamespace(value="trend"), direction=SimpleNamespace(value="long"), conviction=0.8, metadata={}, reasons=(), blockers=()),
+            "price_action": assessment,
+        }),
+    )
+
+    payload = sanitized_result(result)
+
+    assert payload["price_action_signals"][0]["age_candles"] == 3
+    assert payload["remaining_validity_candles"] == 1
+    assert payload["expires_at"] == datetime(2026, 8, 7, 14, 30, tzinfo=timezone.utc).isoformat()
+
+
 def test_setup_validity_uses_four_candle_boundaries():
     generated_at = datetime(2026, 8, 7, 14, 15, 10, tzinfo=timezone.utc)
 

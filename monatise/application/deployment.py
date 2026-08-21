@@ -134,6 +134,10 @@ def _true(value: str | None) -> bool:
     return value is not None and value.strip().casefold() in {"1", "true", "yes", "on", "enabled"}
 
 
+def telegram_transport_enabled(environment: Mapping[str, str]) -> bool:
+    return _true(environment.get("MONATISE_TELEGRAM_NOTIFICATIONS_ENABLED")) or _true(environment.get("MONATISE_TELEGRAM_INBOUND_ENABLED"))
+
+
 def _compact_candle_reference(candles: Any) -> dict[str, Any]:
     """Window bounds + latest bar, not the full array.
 
@@ -466,6 +470,51 @@ return encoded
 
     async def claim_nonce(self, nonce: str, *, ttl_seconds: int = 300) -> bool:
         return bool(await self.client.set(self.key("replay-nonce", nonce), "1", nx=True, ex=ttl_seconds))
+
+    async def enqueue_telegram_command(self, update_id: int, payload: dict[str, Any], *, ttl_seconds: int = 86_400) -> bool:
+        """Atomically deduplicate and durably enqueue a Telegram command."""
+        script = """
+local claimed = redis.call('SET', KEYS[1], '1', 'NX', 'EX', ARGV[1])
+if not claimed then return 0 end
+redis.call('LPUSH', KEYS[2], ARGV[2])
+return 1
+"""
+        return bool(await self.client.eval(
+            script,
+            2,
+            self.key("telegram-update", str(update_id)),
+            self.key("telegram-command", "pending"),
+            ttl_seconds,
+            json.dumps(payload, separators=(",", ":")),
+        ))
+
+    async def dequeue_telegram_command(self, *, timeout_seconds: int = 1) -> dict[str, Any] | None:
+        value = await self.client.brpoplpush(
+            self.key("telegram-command", "pending"),
+            self.key("telegram-command", "processing"),
+            timeout=timeout_seconds,
+        )
+        return json.loads(value) if value is not None else None
+
+    async def finish_telegram_command(self, payload: dict[str, Any]) -> None:
+        encoded = json.dumps(payload, separators=(",", ":"))
+        await self.client.lrem(self.key("telegram-command", "processing"), 1, encoded)
+
+    async def retry_telegram_command(self, payload: dict[str, Any]) -> None:
+        encoded = json.dumps(payload, separators=(",", ":"))
+        processing = self.key("telegram-command", "processing")
+        async with self.client.pipeline(transaction=True) as pipeline:
+            pipeline.lrem(processing, 1, encoded)
+            pipeline.rpush(self.key("telegram-command", "pending"), encoded)
+            await pipeline.execute()
+
+    async def recover_telegram_commands(self) -> int:
+        recovered = 0
+        processing = self.key("telegram-command", "processing")
+        pending = self.key("telegram-command", "pending")
+        while await self.client.rpoplpush(processing, pending) is not None:
+            recovered += 1
+        return recovered
 
     async def notification_state_get(self, channel: str) -> dict[str, Any] | None:
         value = await self.client.get(self.key("notification-state", channel))
@@ -1180,7 +1229,7 @@ class OrchestrationRuntime:
                     "MONATISE_STOCK_SCAN_ENABLED": "false",
                     "MONATISE_FLASHALPHA_FUTURES_SCAN_ENABLED": "false",
                 }
-            if telegram_notifications_enabled and telegram_token and telegram_chat:
+            if telegram_transport_enabled(self.environment) and telegram_token and telegram_chat:
                 secrets = EnvironmentSecretBoundary(self.environment)
                 self.telegram = TelegramNotifier(TelegramNotificationTransport(lambda: secrets.get("MONATISE_TELEGRAM_BOT_TOKEN")), telegram_chat)
             x_token = self.environment.get("MONATISE_X_BEARER_TOKEN", "")
