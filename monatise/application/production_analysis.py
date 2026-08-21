@@ -279,7 +279,6 @@ def build_production_analysis_run(symbol: str, *, interval: str = "1h", correlat
     interval = interval.strip()
     if interval not in SUPPORTED_PRODUCTION_INTERVALS:
         raise ValueError("unsupported production analysis interval")
-    now = datetime.now(timezone.utc)
     interval_seconds = INTERVAL_SECONDS[interval]
     maximum_age_seconds = max(120, interval_seconds * 2)
 
@@ -349,7 +348,7 @@ def sanitized_result(result: Any) -> dict[str, Any]:
     generated_at = getattr(result, "finished_at", None) or getattr(run, "requested_at", None) or datetime.now(timezone.utc)
     validity = build_setup_validity(
         getattr(market, "interval", None),
-        generated_at, age_candles=0,
+        generated_at, age_candles=confirmation_age,
     )
     return {
         "run_id": result.run_id,

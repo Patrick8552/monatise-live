@@ -18,10 +18,30 @@ from monatise.core.models import Candle
 
 
 class Coordination:
-    def __init__(self): self.claims = set()
+    def __init__(self): self.claims, self.pending, self.processing = set(), [], []
     async def claim_nonce(self, value, **kwargs):
         if value in self.claims: return False
         self.claims.add(value); return True
+    async def enqueue_telegram_command(self, update_id, payload, **kwargs):
+        key = f"telegram:{update_id}"
+        if key in self.claims: return False
+        self.claims.add(key)
+        self.pending.append(payload)
+        return True
+    async def dequeue_telegram_command(self, **kwargs):
+        if not self.pending: return None
+        payload = self.pending.pop(0)
+        self.processing.append(payload)
+        return payload
+    async def finish_telegram_command(self, payload): self.processing.remove(payload)
+    async def retry_telegram_command(self, payload):
+        self.processing.remove(payload)
+        self.pending.append(payload)
+    async def recover_telegram_commands(self):
+        self.pending.extend(self.processing)
+        recovered = len(self.processing)
+        self.processing.clear()
+        return recovered
 
 
 class Runtime:
@@ -31,6 +51,7 @@ class Runtime:
             "MONATISE_OPENCLAW_TOKEN": "control-secret",
             "COINGLASS_API_KEY": "server-secret",
             "MONATISE_TRADINGVIEW_WEBHOOK_TOKEN": "tv-secret",
+            "MONATISE_TELEGRAM_INBOUND_ENABLED": "true",
         }
         self.coinglass = SimpleNamespace(
             candles=lambda symbol, limit, interval: [Candle("2026-08-02T12:00:00+00:00", 100, 110, 90, 105, 1000)],
@@ -141,8 +162,8 @@ def telegram_webhook(app, update, *, secret="telegram-secret"):
             "headers": [(b"x-telegram-bot-api-secret-token", secret.encode())],
         }
         await app(scope, receive, send)
-        if app._telegram_tasks:
-            await asyncio.gather(*app._telegram_tasks)
+        if messages[0]["status"] == 200 and json.loads(messages[1]["body"]).get("status") == "accepted":
+            await app._process_telegram_command_once(timeout_seconds=0)
     asyncio.run(run())
     return messages[0]["status"], json.loads(messages[1]["body"])
 
@@ -183,6 +204,63 @@ def test_telegram_stock_command_returns_no_trade_when_not_confirmed():
     assert runtime.calls == [("NVDA", {})]
     assert runtime.telegram.messages[0].startswith("Monatise NO TRADE: NVDA")
     assert runtime.telegram.messages[0].endswith("Execution: disabled")
+
+
+def test_telegram_resolves_unlisted_crypto_before_selecting_provider():
+    runtime = Runtime()
+    runtime.environment.update({"MONATISE_TELEGRAM_BOT_TOKEN": "bot-token", "MONATISE_TELEGRAM_CHAT_ID": "42"})
+    runtime.coinglass.resolve_futures_asset = lambda symbol: SimpleNamespace(base_asset=symbol)
+    runtime.telegram = Telegram()
+    app = ProductionASGI(runtime)
+    update = {"update_id": 4, "message": {"chat": {"id": 42}, "text": "/analyze PEPE"}}
+
+    assert telegram_webhook(app, update, secret=telegram_webhook_secret("bot-token"))[0] == 200
+    assert runtime.calls == [("PEPE", {"interval": "15m", "source": "monatise.telegram.command", "notify": False})]
+
+
+def test_telegram_explicit_asset_class_handles_unknown_stock_symbol():
+    runtime = Runtime()
+    runtime.environment.update({"MONATISE_TELEGRAM_BOT_TOKEN": "bot-token", "MONATISE_TELEGRAM_CHAT_ID": "42"})
+    runtime.telegram = Telegram()
+    app = ProductionASGI(runtime)
+    update = {"update_id": 5, "message": {"chat": {"id": 42}, "text": "/analyze PLTR stock"}}
+
+    assert telegram_webhook(app, update, secret=telegram_webhook_secret("bot-token"))[0] == 200
+    assert runtime.calls == [("PLTR", {})]
+
+
+def test_telegram_ambiguous_symbol_does_not_run_the_wrong_provider():
+    runtime = Runtime()
+    runtime.environment.update({"MONATISE_TELEGRAM_BOT_TOKEN": "bot-token", "MONATISE_TELEGRAM_CHAT_ID": "42"})
+    runtime.telegram = Telegram()
+    app = ProductionASGI(runtime)
+    update = {"update_id": 7, "message": {"chat": {"id": 42}, "text": "/analyze PLTR"}}
+
+    assert telegram_webhook(app, update, secret=telegram_webhook_secret("bot-token"))[0] == 200
+    assert runtime.calls == []
+    assert "asset class is ambiguous" in runtime.telegram.messages[0]
+
+
+def test_telegram_failed_delivery_stays_queued_for_retry(monkeypatch):
+    class FlakyTelegram(Telegram):
+        async def command_response(self, message):
+            if not self.messages:
+                self.messages.append("failed")
+                raise RuntimeError("temporary Telegram outage")
+            self.messages.append(message)
+
+    async def no_sleep(_seconds): return None
+    monkeypatch.setattr(production_module.asyncio, "sleep", no_sleep)
+    runtime = Runtime()
+    runtime.telegram = FlakyTelegram()
+    app = ProductionASGI(runtime)
+    asyncio.run(runtime.redis_coordination.enqueue_telegram_command(6, {"update_id": 6, "text": "/help"}))
+
+    assert asyncio.run(app._process_telegram_command_once(timeout_seconds=0)) is True
+    assert len(runtime.redis_coordination.pending) == 1
+    assert asyncio.run(app._process_telegram_command_once(timeout_seconds=0)) is True
+    assert runtime.redis_coordination.pending == []
+    assert runtime.redis_coordination.processing == []
 
 
 def test_production_analysis_is_authenticated_symbol_only_and_non_executable():

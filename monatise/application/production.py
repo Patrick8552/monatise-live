@@ -9,6 +9,7 @@ import logging
 import mimetypes
 import asyncio
 import re
+from contextlib import suppress
 from datetime import datetime, timezone
 from pathlib import Path
 import secrets
@@ -67,7 +68,8 @@ class ProductionRuntime(OrchestrationRuntime):
     async def _register_telegram_webhook(self) -> None:
         token = self.environment.get("MONATISE_TELEGRAM_BOT_TOKEN", "").strip()
         public_url = self.environment.get("MONATISE_PUBLIC_URL", "").strip().rstrip("/")
-        configured = self.telegram is not None and bool(token and public_url.startswith("https://"))
+        inbound_enabled = self.environment.get("MONATISE_TELEGRAM_INBOUND_ENABLED", "false").strip().casefold() in {"1", "true", "yes", "on", "enabled"}
+        configured = inbound_enabled and self.telegram is not None and bool(token and public_url.startswith("https://"))
         status = {"status": "ok", "enabled": configured, "execution_enabled": False}
         if not configured:
             status["registration"] = "not_configured"
@@ -120,9 +122,12 @@ class ProductionASGI(OrchestrationASGI):
         self._quiver_web_cache: dict[str, tuple[float, dict[str, Any]]] = {}
         self._quiver_web_inflight: dict[str, asyncio.Task[dict[str, Any]]] = {}
         self._market_summary_cache: tuple[float, dict[str, Any]] | None = None
-        self._telegram_tasks: set[asyncio.Task[None]] = set()
+        self._telegram_worker: asyncio.Task[None] | None = None
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+        if scope.get("type") == "lifespan":
+            await self._lifespan(receive, send)
+            return
         path = scope.get("path", "")
         if scope.get("type") == "http" and path == "/api/telegram/webhook":
             if scope.get("method", "GET").upper() != "POST":
@@ -311,7 +316,8 @@ class ProductionASGI(OrchestrationASGI):
     async def _telegram_webhook(self, scope: dict[str, Any], receive: Any) -> tuple[int, dict[str, Any]]:
         token = self.runtime.environment.get("MONATISE_TELEGRAM_BOT_TOKEN", "").strip()
         chat_id = self.runtime.environment.get("MONATISE_TELEGRAM_CHAT_ID", "").strip()
-        if not token or not chat_id or self.runtime.telegram is None:
+        inbound_enabled = self.runtime.environment.get("MONATISE_TELEGRAM_INBOUND_ENABLED", "false").strip().casefold() in {"1", "true", "yes", "on", "enabled"}
+        if not inbound_enabled or not token or not chat_id or self.runtime.telegram is None:
             return 503, {"status": "unavailable"}
         headers = {key.decode().casefold(): value.decode() for key, value in scope.get("headers", ())}
         supplied = headers.get("x-telegram-bot-api-secret-token", "")
@@ -339,19 +345,65 @@ class ProductionASGI(OrchestrationASGI):
             return 400, {"status": "invalid_update"}
         if self.runtime.redis_coordination is None:
             return 503, {"status": "unavailable"}
-        if not await self.runtime.redis_coordination.claim_nonce(f"telegram-update:{update_id}", ttl_seconds=86_400):
-            return 200, {"status": "duplicate"}
         text = str(message.get("text") or "").strip()
-        task = asyncio.create_task(self._handle_telegram_command(text), name=f"telegram-command-{update_id}")
-        self._telegram_tasks.add(task)
-        task.add_done_callback(self._telegram_tasks.discard)
+        queued = await self.runtime.redis_coordination.enqueue_telegram_command(update_id, {"update_id": update_id, "text": text}, ttl_seconds=86_400)
+        if not queued:
+            return 200, {"status": "duplicate"}
         return 200, {"status": "accepted"}
+
+    async def _lifespan(self, receive: Any, send: Any) -> None:
+        while True:
+            message = await receive()
+            if message["type"] == "lifespan.startup":
+                try:
+                    await self.runtime.start()
+                    if self.runtime.dependencies.get("telegram_inbound", {}).get("enabled"):
+                        await self.runtime.redis_coordination.recover_telegram_commands()
+                        self._telegram_worker = asyncio.create_task(self._telegram_command_worker(), name="telegram-command-worker")
+                except Exception as exc:
+                    LOGGER.exception("application lifespan startup failed", extra={"error_type": type(exc).__name__})
+                    await send({"type": "lifespan.startup.failed", "message": "startup_failed"})
+                    return
+                await send({"type": "lifespan.startup.complete"})
+            elif message["type"] == "lifespan.shutdown":
+                if self._telegram_worker is not None:
+                    self._telegram_worker.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await self._telegram_worker
+                    self._telegram_worker = None
+                await self.runtime.shutdown()
+                await send({"type": "lifespan.shutdown.complete"})
+                return
+
+    async def _telegram_command_worker(self) -> None:
+        while True:
+            processed = await self._process_telegram_command_once(timeout_seconds=1)
+            if not processed:
+                continue
+
+    async def _process_telegram_command_once(self, *, timeout_seconds: int = 1) -> bool:
+        coordination = self.runtime.redis_coordination
+        payload = await coordination.dequeue_telegram_command(timeout_seconds=timeout_seconds)
+        if payload is None:
+            return False
+        try:
+            await self._handle_telegram_command(str(payload.get("text") or ""))
+        except asyncio.CancelledError:
+            await coordination.retry_telegram_command(payload)
+            raise
+        except Exception as exc:
+            LOGGER.warning("Telegram command delivery failed; retrying", extra={"error_type": type(exc).__name__, "update_id": payload.get("update_id")})
+            await coordination.retry_telegram_command(payload)
+            await asyncio.sleep(1)
+        else:
+            await coordination.finish_telegram_command(payload)
+        return True
 
     async def _handle_telegram_command(self, text: str) -> None:
         notifier = self.runtime.telegram
         if notifier is None:
             return
-        help_text = "Monatise remote analysis\nUse /analyze BTC or /analyze NVDA.\nAnalysis only; trade execution is disabled."
+        help_text = "Monatise remote analysis\nUse /analyze BTC or /analyze NVDA. Add crypto or stock when a symbol is ambiguous.\nAnalysis only; trade execution is disabled."
         if re.fullmatch(r"/(?:start|help)(?:@[A-Za-z0-9_]+)?", text, re.IGNORECASE):
             await notifier.command_response(help_text)
             return
@@ -359,22 +411,44 @@ class ProductionASGI(OrchestrationASGI):
         raw_asset = (match.group(1) if match else "") or ""
         parts = raw_asset.strip().upper().split()
         symbol = parts[0].lstrip("$") if parts else ""
-        if not match or not self.STOCK_SYMBOL_PATTERN.fullmatch(symbol):
+        asset_class = parts[1].casefold() if len(parts) == 2 else None
+        if not match or not self.STOCK_SYMBOL_PATTERN.fullmatch(symbol) or len(parts) > 2 or asset_class not in {None, "crypto", "stock"}:
             await notifier.command_response(help_text)
             return
         try:
-            if symbol in self.MARKET_SYMBOLS or symbol in {"ADA", "AVAX", "LINK", "SUI"}:
+            resolved_class, resolved_symbol = await self._telegram_asset_classification(symbol, asset_class)
+            if resolved_class == "crypto":
                 analysis = await asyncio.wait_for(
-                    self.runtime.analyse(symbol, interval="15m", source="monatise.telegram.command", notify=False), timeout=90
+                    self.runtime.analyse(resolved_symbol, interval="15m", source="monatise.telegram.command", notify=False), timeout=90
                 )
                 response = self._format_telegram_crypto_analysis(analysis)
-            else:
-                analysis = await asyncio.wait_for(self.runtime.analyse_stock(symbol), timeout=90)
+            elif resolved_class == "stock":
+                analysis = await asyncio.wait_for(self.runtime.analyse_stock(resolved_symbol), timeout=90)
                 response = self._format_telegram_stock_analysis(analysis)
+            else:
+                response = f"Monatise NO TRADE: {symbol}\nReason: asset class is ambiguous; use /analyze {symbol} crypto or /analyze {symbol} stock.\nExecution: disabled"
         except Exception as exc:
             LOGGER.warning("Telegram command analysis failed", extra={"symbol": symbol, "error_type": type(exc).__name__})
             response = f"Monatise NO TRADE: {symbol}\nReason: analysis is currently unavailable.\nExecution: disabled"
         await notifier.command_response(response)
+
+    async def _telegram_asset_classification(self, symbol: str, requested_class: str | None) -> tuple[str, str]:
+        if requested_class is not None:
+            return requested_class, symbol
+        if symbol in self.STOCK_DIRECTORY:
+            return "stock", symbol
+        if symbol in self.MARKET_SYMBOLS or symbol in {"ADA", "AVAX", "LINK", "SUI"}:
+            return "crypto", symbol
+        provider = self.runtime.coinglass
+        resolver = getattr(provider, "resolve_futures_asset", None)
+        if resolver is None:
+            return "unknown", symbol
+        try:
+            asset = await asyncio.to_thread(resolver, symbol)
+        except Exception as exc:
+            LOGGER.info("Telegram symbol was not resolved as crypto", extra={"symbol": symbol, "error_type": type(exc).__name__})
+            return "unknown", symbol
+        return "crypto", str(getattr(asset, "base_asset", symbol)).upper()
 
     @staticmethod
     def _format_telegram_crypto_analysis(analysis: dict[str, Any]) -> str:
@@ -382,6 +456,12 @@ class ProductionASGI(OrchestrationASGI):
         classification = str(analysis.get("classification") or "no_trade").upper()
         direction = str(analysis.get("direction") or "none").upper()
         confirmed = str(analysis.get("entry_confirmation_status") or "").casefold() == "confirmed"
+        expires_at = analysis.get("expires_at")
+        if expires_at:
+            try:
+                confirmed = confirmed and datetime.fromisoformat(str(expires_at).replace("Z", "+00:00")) > datetime.now(timezone.utc)
+            except ValueError:
+                confirmed = False
         actionable = classification not in {"NO_TRADE", "GRID", "TWO_SIDED"} and direction in {"LONG", "SHORT"} and confirmed
         if not actionable:
             reasons = list(analysis.get("blockers") or analysis.get("reasons") or analysis.get("price_action_reasons") or [])[:3]
