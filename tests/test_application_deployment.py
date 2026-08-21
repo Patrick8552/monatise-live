@@ -97,6 +97,28 @@ def test_telegram_transport_returns_provider_message_id(monkeypatch):
     }
 
 
+def test_telegram_transport_bounds_messages_to_provider_limit(monkeypatch):
+    captured = {}
+
+    class Response:
+        status = 200
+        def __enter__(self): return self
+        def __exit__(self, *args): return None
+        def read(self): return b'{"ok":true,"result":{"message_id":321}}'
+
+    def open_request(request, timeout):
+        captured.update(json.loads(request.data.decode()))
+        return Response()
+
+    monkeypatch.setattr("monatise.application.deployment.urlopen", open_request)
+    transport = TelegramNotificationTransport(lambda: "test-token")
+
+    asyncio.run(transport.send_message("chat", "\U0001f680" * 5000))
+
+    assert len(captured["text"].encode("utf-16-le")) // 2 <= 4096
+    assert captured["text"].endswith("...")
+
+
 @pytest.mark.parametrize(
     "environment",
     [

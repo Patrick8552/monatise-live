@@ -9,7 +9,7 @@ import pytest
 
 from monatise.application.registry import PRODUCTION_ENGINE_ORDER
 
-from monatise.application.deployment import OrchestrationRuntime
+from monatise.application.deployment import OrchestrationRuntime, RedisCoordinationStore
 from monatise.application.persistence import PostgresDocumentStore, RedisDocumentStore, connect_postgres_store, connect_redis_store
 
 
@@ -47,6 +47,46 @@ def test_redis_document_contract_against_real_service():
             await store.delete("state", "one")
         finally:
             await client.aclose()
+    asyncio.run(scenario())
+
+
+@pytest.mark.skipif(not os.getenv("MONATISE_TEST_REDIS_URL"), reason="MONATISE_TEST_REDIS_URL is not configured")
+def test_telegram_queue_leases_retries_and_dead_letters_against_real_service():
+    async def scenario():
+        from redis.asyncio import Redis
+
+        namespace = f"monatise:test:telegram:{uuid4()}"
+        client = Redis.from_url(os.environ["MONATISE_TEST_REDIS_URL"], decode_responses=True)
+        store = RedisCoordinationStore(client, namespace=namespace)
+        try:
+            assert await store.enqueue_telegram_command(1, {"update_id": 1, "text": "/help"}) is True
+            leased = await store.dequeue_telegram_command(timeout_seconds=0)
+            assert leased["update_id"] == 1
+            assert await store.recover_telegram_commands(lease_seconds=120) == 0
+            assert await store.recover_telegram_commands(lease_seconds=0) == 1
+
+            leased = await store.dequeue_telegram_command(timeout_seconds=0)
+            assert await store.retry_telegram_command(leased, max_attempts=2) is True
+            metrics = await store.telegram_queue_metrics()
+            assert metrics["redis"] == "connected"
+            assert metrics["pending_depth"] == 1
+            assert metrics["active_lease_count"] == 0
+            assert metrics["retry_count"] == 1
+            assert metrics["oldest_queued_age_seconds"] is not None
+            leased = await store.dequeue_telegram_command(timeout_seconds=0)
+            assert await store.retry_telegram_command(leased, max_attempts=2) is False
+            assert await client.llen(store.key("telegram-command", "pending")) == 0
+            assert await client.llen(store.key("telegram-command", "processing")) == 0
+            assert await client.llen(store.key("telegram-command", "dead-letter")) == 1
+            metrics = await store.telegram_queue_metrics()
+            assert metrics["dead_letter_count"] == 1
+            assert metrics["retry_count"] == 2
+        finally:
+            keys = await client.keys(f"{namespace}:*")
+            if keys:
+                await client.delete(*keys)
+            await client.aclose()
+
     asyncio.run(scenario())
 
 

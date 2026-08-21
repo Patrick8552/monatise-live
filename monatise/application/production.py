@@ -140,7 +140,10 @@ class ProductionASGI(OrchestrationASGI):
             if scope.get("method", "GET").upper() not in {"GET", "HEAD"}:
                 await self._respond(send, 405, {"status": "method_not_allowed"})
                 return
-            await self._respond(send, 200, {"ok": True, "status": "alive", "execution_enabled": False})
+            await self._respond(send, 200, {
+                "ok": True, "status": "alive", "telegram": await self._telegram_queue_telemetry(),
+                "execution_enabled": False,
+            })
             return
         if scope.get("type") == "http" and path == "/api/x/status":
             if scope.get("method", "GET").upper() not in {"GET", "HEAD"}:
@@ -376,10 +379,28 @@ class ProductionASGI(OrchestrationASGI):
                 return
 
     async def _telegram_command_worker(self) -> None:
+        failures = 0
         while True:
-            processed = await self._process_telegram_command_once(timeout_seconds=1)
-            if not processed:
-                continue
+            try:
+                await self._process_telegram_command_once(timeout_seconds=1)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                failures += 1
+                status = self.runtime.dependencies.setdefault("telegram_inbound", {})
+                status.update({
+                    "status": "degraded", "worker": "retrying", "worker_error_type": type(exc).__name__,
+                    "worker_error_at": datetime.now(timezone.utc).isoformat(),
+                })
+                LOGGER.exception("Telegram command worker failed; retrying", extra={"error_type": type(exc).__name__})
+                await asyncio.sleep(min(30, 2 ** min(failures - 1, 5)))
+            else:
+                failures = 0
+                status = self.runtime.dependencies.setdefault("telegram_inbound", {})
+                status["worker"] = "running"
+                if status.get("registration") == "registered":
+                    status["status"] = "ok"
+                status.pop("worker_error_type", None)
 
     async def _process_telegram_command_once(self, *, timeout_seconds: int = 1) -> bool:
         coordination = self.runtime.redis_coordination
@@ -393,7 +414,9 @@ class ProductionASGI(OrchestrationASGI):
             raise
         except Exception as exc:
             LOGGER.warning("Telegram command delivery failed; retrying", extra={"error_type": type(exc).__name__, "update_id": payload.get("update_id")})
-            await coordination.retry_telegram_command(payload)
+            retrying = await coordination.retry_telegram_command(payload)
+            if not retrying:
+                LOGGER.error("Telegram command moved to dead-letter queue", extra={"update_id": payload.get("update_id")})
             await asyncio.sleep(1)
         else:
             await coordination.finish_telegram_command(payload)
@@ -576,7 +599,28 @@ class ProductionASGI(OrchestrationASGI):
                 "intervals": list(CoinGlassProductionAdapter.SUPPORTED_INTERVALS),
                 "datasets": sorted(CoinGlassProductionAdapter.DASHBOARD_PATHS),
             }},
+            "telegram": await self._telegram_queue_telemetry(),
             "execution_enabled": False,
+        }
+
+    async def _telegram_queue_telemetry(self) -> dict[str, Any]:
+        coordination = self.runtime.redis_coordination
+        if coordination is None or not hasattr(coordination, "telegram_queue_metrics"):
+            metrics = {
+                "redis": "unavailable", "pending_depth": None, "active_lease_count": None,
+                "retry_count": None, "dead_letter_count": None, "last_success_at": None,
+                "oldest_queued_age_seconds": None,
+            }
+        else:
+            metrics = await coordination.telegram_queue_metrics()
+        dependency = getattr(self.runtime, "dependencies", {}).get("telegram_inbound", {})
+        running = self._telegram_worker is not None and not self._telegram_worker.done()
+        return {
+            **metrics,
+            "worker": dependency.get("worker", "running" if running else "stopped"),
+            "worker_error_type": dependency.get("worker_error_type"),
+            "worker_error_at": dependency.get("worker_error_at"),
+            "registration": dependency.get("registration", "not_configured"),
         }
 
     async def _market_summary(self, _scope: dict[str, Any]) -> tuple[int, dict[str, Any]]:

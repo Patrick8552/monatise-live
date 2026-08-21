@@ -34,14 +34,17 @@ class Coordination:
         self.processing.append(payload)
         return payload
     async def finish_telegram_command(self, payload): self.processing.remove(payload)
-    async def retry_telegram_command(self, payload):
+    async def retry_telegram_command(self, payload, **kwargs):
         self.processing.remove(payload)
         self.pending.append(payload)
+        return True
     async def recover_telegram_commands(self):
         self.pending.extend(self.processing)
         recovered = len(self.processing)
         self.processing.clear()
         return recovered
+    async def telegram_queue_metrics(self):
+        return {"redis": "connected", "pending_depth": len(self.pending), "active_lease_count": len(self.processing), "retry_count": 0, "dead_letter_count": 0, "last_success_at": None, "oldest_queued_age_seconds": None}
 
 
 class Runtime:
@@ -261,6 +264,31 @@ def test_telegram_failed_delivery_stays_queued_for_retry(monkeypatch):
     assert asyncio.run(app._process_telegram_command_once(timeout_seconds=0)) is True
     assert runtime.redis_coordination.pending == []
     assert runtime.redis_coordination.processing == []
+
+
+def test_telegram_worker_survives_transient_dequeue_failure(monkeypatch):
+    runtime = Runtime()
+    runtime.dependencies = {"telegram_inbound": {"enabled": True}}
+    app = ProductionASGI(runtime)
+    calls = 0
+
+    async def process_once(**kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise ConnectionError("temporary Redis outage")
+        raise asyncio.CancelledError
+
+    async def no_sleep(_seconds): return None
+    monkeypatch.setattr(app, "_process_telegram_command_once", process_once)
+    monkeypatch.setattr(production_module.asyncio, "sleep", no_sleep)
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(app._telegram_command_worker())
+
+    assert calls == 2
+    assert runtime.dependencies["telegram_inbound"]["worker"] == "retrying"
+    assert runtime.dependencies["telegram_inbound"]["status"] == "degraded"
 
 
 def test_production_analysis_is_authenticated_symbol_only_and_non_executable():
@@ -841,7 +869,9 @@ def test_production_restores_public_legacy_health_contract():
     payload = json.loads(response[1]["body"])
 
     assert response[0]["status"] == 200
-    assert payload == {"ok": True, "status": "alive", "execution_enabled": False}
+    assert payload["ok"] is True and payload["status"] == "alive" and payload["execution_enabled"] is False
+    assert payload["telegram"]["redis"] == "connected"
+    assert payload["telegram"]["pending_depth"] == 0
 
 
 def test_production_frontend_does_not_shadow_api_or_allow_traversal(tmp_path):

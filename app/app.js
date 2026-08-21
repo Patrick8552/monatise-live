@@ -769,6 +769,7 @@ function compactCommit(value) {
 
 function operatorCards(status = operatorStatus, snapshot = lastBackendSnapshot) {
   const integrations = status?.integrations || {};
+  const telegram = status?.telegram || {};
   const riskCaps = status?.riskCaps || {};
   const events = Array.isArray(snapshot?.events) ? snapshot.events : [];
   const lastEvent = events[events.length - 1];
@@ -796,6 +797,13 @@ function operatorCards(status = operatorStatus, snapshot = lastBackendSnapshot) 
       label: "CoinGlass",
       ok: Boolean(integrations.coinglass?.configured),
       value: integrations.coinglass?.configured ? "configured" : "missing"
+    },
+    {
+      detail: `pending ${telegram.pending_depth ?? "?"} · leases ${telegram.active_lease_count ?? "?"} · retries ${telegram.retry_count ?? "?"} · DLQ ${telegram.dead_letter_count ?? "?"}`,
+      label: "Telegram queue",
+      ok: telegram.redis === "connected" && telegram.worker === "running" && Number(telegram.dead_letter_count || 0) === 0,
+      warn: true,
+      value: telegram.worker || "checking"
     },
     {
       detail: integrations.tradingView?.configured ? "webhook token ready" : "set MONATISE_TRADINGVIEW_WEBHOOK_TOKEN",

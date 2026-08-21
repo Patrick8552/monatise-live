@@ -13,7 +13,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from time import perf_counter
+from time import perf_counter, time
 from typing import Any, Mapping
 from uuid import uuid4
 from urllib.request import Request, urlopen
@@ -225,6 +225,11 @@ class TelegramNotificationTransport:
         token = self._token_provider()
         if not token:
             raise RuntimeError("Telegram credential is unavailable")
+        # Telegram limits messages to 4096 UTF-16 code units after entity
+        # parsing.  1800 Unicode code points is safe even when every character
+        # is represented by a surrogate pair.
+        if len(text) > 1800:
+            text = text[:1797].rstrip() + "..."
         body = json.dumps({
             "chat_id": chat_id,
             "text": _bold_telegram_labels(text),
@@ -473,6 +478,8 @@ return encoded
 
     async def enqueue_telegram_command(self, update_id: int, payload: dict[str, Any], *, ttl_seconds: int = 86_400) -> bool:
         """Atomically deduplicate and durably enqueue a Telegram command."""
+        queued_payload = dict(payload)
+        queued_payload.setdefault("queued_at", time())
         script = """
 local claimed = redis.call('SET', KEYS[1], '1', 'NX', 'EX', ARGV[1])
 if not claimed then return 0 end
@@ -485,36 +492,115 @@ return 1
             self.key("telegram-update", str(update_id)),
             self.key("telegram-command", "pending"),
             ttl_seconds,
-            json.dumps(payload, separators=(",", ":")),
+            json.dumps(queued_payload, separators=(",", ":")),
         ))
 
     async def dequeue_telegram_command(self, *, timeout_seconds: int = 1) -> dict[str, Any] | None:
-        value = await self.client.brpoplpush(
-            self.key("telegram-command", "pending"),
-            self.key("telegram-command", "processing"),
-            timeout=timeout_seconds,
-        )
-        return json.loads(value) if value is not None else None
+        deadline = time() + max(0, timeout_seconds)
+        script = """
+local value = redis.call('RPOP', KEYS[1])
+if not value then return nil end
+local receipt = cjson.encode({payload=cjson.decode(value), leased_at=tonumber(ARGV[1])})
+redis.call('LPUSH', KEYS[2], receipt)
+return receipt
+"""
+        while True:
+            value = await self.client.eval(
+                script,
+                2,
+                self.key("telegram-command", "pending"),
+                self.key("telegram-command", "processing"),
+                time(),
+            )
+            if value is not None:
+                envelope = json.loads(value)
+                payload = dict(envelope["payload"])
+                payload["__monatise_queue_receipt"] = value
+                return payload
+            if time() >= deadline:
+                return None
+            await asyncio.sleep(min(0.1, max(0, deadline - time())))
 
     async def finish_telegram_command(self, payload: dict[str, Any]) -> None:
-        encoded = json.dumps(payload, separators=(",", ":"))
-        await self.client.lrem(self.key("telegram-command", "processing"), 1, encoded)
+        receipt = payload.get("__monatise_queue_receipt")
+        if receipt is not None:
+            async with self.client.pipeline(transaction=True) as pipeline:
+                pipeline.lrem(self.key("telegram-command", "processing"), 1, receipt)
+                pipeline.set(self.key("telegram-command", "last-success-at"), str(time()))
+                await pipeline.execute()
 
-    async def retry_telegram_command(self, payload: dict[str, Any]) -> None:
-        encoded = json.dumps(payload, separators=(",", ":"))
+    async def retry_telegram_command(self, payload: dict[str, Any], *, max_attempts: int = 3) -> bool:
+        receipt = payload.get("__monatise_queue_receipt")
+        pending_payload = {key: value for key, value in payload.items() if key != "__monatise_queue_receipt"}
+        pending_payload["attempts"] = int(pending_payload.get("attempts", 0)) + 1
+        encoded = json.dumps(pending_payload, separators=(",", ":"))
         processing = self.key("telegram-command", "processing")
         async with self.client.pipeline(transaction=True) as pipeline:
-            pipeline.lrem(processing, 1, encoded)
-            pipeline.rpush(self.key("telegram-command", "pending"), encoded)
+            if receipt is not None:
+                pipeline.lrem(processing, 1, receipt)
+            if pending_payload["attempts"] < max_attempts:
+                # LPUSH keeps the retry behind commands already waiting at the
+                # right-hand (consumer) side of the FIFO queue.
+                pipeline.lpush(self.key("telegram-command", "pending"), encoded)
+            else:
+                pipeline.lpush(self.key("telegram-command", "dead-letter"), encoded)
+            pipeline.incr(self.key("telegram-command", "retry-count"))
             await pipeline.execute()
+        return pending_payload["attempts"] < max_attempts
 
-    async def recover_telegram_commands(self) -> int:
-        recovered = 0
+    async def recover_telegram_commands(self, *, lease_seconds: int = 120) -> int:
         processing = self.key("telegram-command", "processing")
         pending = self.key("telegram-command", "pending")
-        while await self.client.rpoplpush(processing, pending) is not None:
-            recovered += 1
-        return recovered
+        script = """
+local values = redis.call('LRANGE', KEYS[1], 0, -1)
+local recovered = 0
+for _, value in ipairs(values) do
+  local ok, envelope = pcall(cjson.decode, value)
+  if ok and envelope['leased_at'] and envelope['leased_at'] <= tonumber(ARGV[1]) then
+    if redis.call('LREM', KEYS[1], 1, value) == 1 then
+      redis.call('LPUSH', KEYS[2], cjson.encode(envelope['payload']))
+      recovered = recovered + 1
+    end
+  end
+end
+return recovered
+"""
+        return int(await self.client.eval(script, 2, processing, pending, time() - lease_seconds))
+
+    async def telegram_queue_metrics(self) -> dict[str, Any]:
+        """Return sanitized operational telemetry for health and operator views."""
+        started = perf_counter()
+        try:
+            pending = self.key("telegram-command", "pending")
+            processing = self.key("telegram-command", "processing")
+            async with self.client.pipeline(transaction=False) as pipeline:
+                pipeline.ping()
+                pipeline.llen(pending)
+                pipeline.llen(processing)
+                pipeline.llen(self.key("telegram-command", "dead-letter"))
+                pipeline.get(self.key("telegram-command", "retry-count"))
+                pipeline.get(self.key("telegram-command", "last-success-at"))
+                pipeline.lindex(pending, -1)
+                ping, pending_depth, active_leases, dead_letters, retries, last_success, oldest = await pipeline.execute()
+            oldest_payload = json.loads(oldest) if oldest else {}
+            queued_at = float(oldest_payload.get("queued_at", 0) or 0)
+            return {
+                "redis": "connected" if ping else "degraded",
+                "redis_latency_ms": round((perf_counter() - started) * 1000, 2),
+                "pending_depth": int(pending_depth),
+                "active_lease_count": int(active_leases),
+                "retry_count": int(retries or 0),
+                "dead_letter_count": int(dead_letters),
+                "last_success_at": datetime.fromtimestamp(float(last_success), timezone.utc).isoformat() if last_success else None,
+                "oldest_queued_age_seconds": round(max(0, time() - queued_at), 1) if queued_at else None,
+            }
+        except Exception as exc:
+            return {
+                "redis": "degraded", "redis_latency_ms": round((perf_counter() - started) * 1000, 2),
+                "error_type": type(exc).__name__, "pending_depth": None, "active_lease_count": None,
+                "retry_count": None, "dead_letter_count": None, "last_success_at": None,
+                "oldest_queued_age_seconds": None,
+            }
 
     async def notification_state_get(self, channel: str) -> dict[str, Any] | None:
         value = await self.client.get(self.key("notification-state", channel))
