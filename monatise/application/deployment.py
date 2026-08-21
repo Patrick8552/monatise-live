@@ -60,6 +60,7 @@ class TelegramCommandTransition(str, Enum):
     REQUEUED = "requeued"
     DEAD_LETTERED = "dead_lettered"
     OWNERSHIP_LOST = "ownership_lost"
+    INVARIANT_VIOLATION = "invariant_violation"
 
 
 DECISION_SNAPSHOT_SCHEMA_VERSION = 1
@@ -465,9 +466,10 @@ redis.call('SET', KEYS[1], encoded)
 return encoded
 """
 
-    def __init__(self, client: Any, *, namespace: str) -> None:
+    def __init__(self, client: Any, *, namespace: str, telegram_dlq_max_length: int = 1000) -> None:
         self.client = client
         self.namespace = namespace.strip(":")
+        self.telegram_dlq_max_length = min(max(int(telegram_dlq_max_length), 1), 100_000)
 
     def key(self, purpose: str, value: str) -> str:
         return f"{self.namespace}:{purpose}:{value}"
@@ -510,37 +512,60 @@ return 1
         deadline = time() + max(0, timeout_seconds)
         token = str(uuid4())
         script = """
+local function key_is(key, expected)
+  local kind = redis.call('TYPE', key).ok
+  return kind == 'none' or kind == expected
+end
+if not key_is(KEYS[1], 'list') or not key_is(KEYS[2], 'hash') or not key_is(KEYS[3], 'zset') or not key_is(KEYS[4], 'list') or not key_is(KEYS[5], 'string') then
+  redis.call('INCR', KEYS[6])
+  return cjson.encode({queue_status='invariant_violation'})
+end
 local value = redis.call('LINDEX', KEYS[1], -1)
 if not value then return nil end
 local redis_time = redis.call('TIME')
 local now = tonumber(redis_time[1]) + tonumber(redis_time[2]) / 1000000
 local ok, payload = pcall(cjson.decode, value)
-if not ok or type(payload) ~= 'table' then
-  redis.call('RPOP', KEYS[1])
+local attempts = ok and type(payload) == 'table' and payload['attempts'] or nil
+local valid = ok and type(payload) == 'table'
+  and type(payload['update_id']) == 'number' and payload['update_id'] >= 0 and payload['update_id'] % 1 == 0
+  and type(payload['text']) == 'string' and type(payload['queued_at']) == 'number'
+  and (attempts == nil or (type(attempts) == 'number' and attempts >= 0 and attempts % 1 == 0))
+if not valid then
   redis.call('LPUSH', KEYS[4], cjson.encode({reason='MALFORMED_PENDING_ENVELOPE', quarantined_at=now}))
+  local overflow = redis.call('LLEN', KEYS[4]) - tonumber(ARGV[3])
+  if overflow > 0 then
+    redis.call('LTRIM', KEYS[4], 0, tonumber(ARGV[3]) - 1)
+    redis.call('INCRBY', KEYS[5], overflow)
+  end
+  redis.call('RPOP', KEYS[1])
   return cjson.encode({queue_status='malformed'})
 end
-redis.call('RPOP', KEYS[1])
 local envelope = cjson.encode({payload=payload, token=ARGV[1], leased_at=now})
 redis.call('HSET', KEYS[2], ARGV[1], envelope)
 redis.call('ZADD', KEYS[3], now + tonumber(ARGV[2]), ARGV[1])
+redis.call('RPOP', KEYS[1])
 return envelope
 """
         while True:
             value = await self.client.eval(
                 script,
-                4,
+                6,
                 self.key("telegram-command", "pending"),
                 self.key("telegram-command", "processing-v2"),
                 self.key("telegram-command", "leases-v2"),
                 self.key("telegram-command", "dead-letter"),
+                self.key("telegram-command", "dlq-overflow-count"),
+                self.key("telegram-command", "invariant-violation-count"),
                 token,
                 lease_seconds,
+                self.telegram_dlq_max_length,
             )
             if value is not None:
                 envelope = json.loads(value)
                 if envelope.get("queue_status") == "malformed":
                     continue
+                if envelope.get("queue_status") == "invariant_violation":
+                    raise RuntimeError("Telegram queue key-type invariant violation")
                 payload = dict(envelope["payload"])
                 payload["__monatise_lease_token"] = envelope["token"]
                 return payload
@@ -574,6 +599,14 @@ return 1
         if not token:
             return False
         script = """
+local function key_is(key, expected)
+  local kind = redis.call('TYPE', key).ok
+  return kind == 'none' or kind == expected
+end
+if not key_is(KEYS[1], 'hash') or not key_is(KEYS[2], 'zset') or not key_is(KEYS[3], 'string') then
+  redis.call('INCR', KEYS[4])
+  return -2
+end
 if redis.call('HEXISTS', KEYS[1], ARGV[1]) == 0 then return 0 end
 redis.call('HDEL', KEYS[1], ARGV[1])
 redis.call('ZREM', KEYS[2], ARGV[1])
@@ -582,11 +615,12 @@ local now = tonumber(redis_time[1]) + tonumber(redis_time[2]) / 1000000
 redis.call('SET', KEYS[3], tostring(now))
 return 1
 """
-        return bool(await self.client.eval(
-            script, 3, self.key("telegram-command", "processing-v2"),
+        outcome = int(await self.client.eval(
+            script, 4, self.key("telegram-command", "processing-v2"),
             self.key("telegram-command", "leases-v2"), self.key("telegram-command", "last-success-at"),
-            token,
+            self.key("telegram-command", "invariant-violation-count"), token,
         ))
+        return outcome == 1
 
     async def retry_telegram_command(self, payload: dict[str, Any], *, max_attempts: int = 3) -> TelegramCommandTransition:
         token = str(payload.get("__monatise_lease_token") or "")
@@ -596,19 +630,39 @@ return 1
         pending_payload["attempts"] = int(pending_payload.get("attempts", 0)) + 1
         encoded = json.dumps(pending_payload, separators=(",", ":"))
         script = """
+local function key_is(key, expected)
+  local kind = redis.call('TYPE', key).ok
+  return kind == 'none' or kind == expected
+end
+if not key_is(KEYS[1], 'hash') or not key_is(KEYS[2], 'zset') or not key_is(KEYS[3], 'list') or not key_is(KEYS[4], 'string') or not key_is(KEYS[5], 'string') then
+  redis.call('INCR', KEYS[6])
+  return -2
+end
 if redis.call('HEXISTS', KEYS[1], ARGV[1]) == 0 then return 0 end
+redis.call('LPUSH', KEYS[3], ARGV[2])
+if ARGV[3] == '1' then
+  local overflow = redis.call('LLEN', KEYS[3]) - tonumber(ARGV[4])
+  if overflow > 0 then
+    redis.call('LTRIM', KEYS[3], 0, tonumber(ARGV[4]) - 1)
+    redis.call('INCRBY', KEYS[5], overflow)
+  end
+end
 redis.call('HDEL', KEYS[1], ARGV[1])
 redis.call('ZREM', KEYS[2], ARGV[1])
-redis.call('LPUSH', KEYS[3], ARGV[2])
 redis.call('INCR', KEYS[4])
 return 1
 """
-        destination = self.key("telegram-command", "pending" if pending_payload["attempts"] < max_attempts else "dead-letter")
-        owned = bool(await self.client.eval(
-            script, 4, self.key("telegram-command", "processing-v2"), self.key("telegram-command", "leases-v2"),
-            destination, self.key("telegram-command", "retry-count"), token, encoded,
+        requeued = pending_payload["attempts"] < max_attempts
+        destination = self.key("telegram-command", "pending" if requeued else "dead-letter")
+        outcome = int(await self.client.eval(
+            script, 6, self.key("telegram-command", "processing-v2"), self.key("telegram-command", "leases-v2"),
+            destination, self.key("telegram-command", "retry-count"), self.key("telegram-command", "dlq-overflow-count"),
+            self.key("telegram-command", "invariant-violation-count"),
+            token, encoded, "0" if requeued else "1", self.telegram_dlq_max_length,
         ))
-        if not owned:
+        if outcome == -2:
+            return TelegramCommandTransition.INVARIANT_VIOLATION
+        if outcome == 0:
             return TelegramCommandTransition.OWNERSHIP_LOST
         return TelegramCommandTransition.REQUEUED if pending_payload["attempts"] < max_attempts else TelegramCommandTransition.DEAD_LETTERED
 
@@ -620,23 +674,41 @@ return 1
         pending_payload = {key: value for key, value in payload.items() if key != "__monatise_lease_token"}
         encoded = json.dumps(pending_payload, separators=(",", ":"))
         script = """
+local function key_is(key, expected)
+  local kind = redis.call('TYPE', key).ok
+  return kind == 'none' or kind == expected
+end
+if not key_is(KEYS[1], 'hash') or not key_is(KEYS[2], 'zset') or not key_is(KEYS[3], 'list') then
+  redis.call('INCR', KEYS[4])
+  return -2
+end
 if redis.call('HEXISTS', KEYS[1], ARGV[1]) == 0 then return 0 end
+redis.call('LPUSH', KEYS[3], ARGV[2])
 redis.call('HDEL', KEYS[1], ARGV[1])
 redis.call('ZREM', KEYS[2], ARGV[1])
-redis.call('LPUSH', KEYS[3], ARGV[2])
 return 1
 """
-        owned = bool(await self.client.eval(
-            script, 3, self.key("telegram-command", "processing-v2"), self.key("telegram-command", "leases-v2"),
-            self.key("telegram-command", "pending"), token, encoded,
+        outcome = int(await self.client.eval(
+            script, 4, self.key("telegram-command", "processing-v2"), self.key("telegram-command", "leases-v2"),
+            self.key("telegram-command", "pending"), self.key("telegram-command", "invariant-violation-count"), token, encoded,
         ))
-        return TelegramCommandTransition.REQUEUED if owned else TelegramCommandTransition.OWNERSHIP_LOST
+        if outcome == -2:
+            return TelegramCommandTransition.INVARIANT_VIOLATION
+        return TelegramCommandTransition.REQUEUED if outcome == 1 else TelegramCommandTransition.OWNERSHIP_LOST
 
     async def recover_telegram_commands(self, *, batch_size: int = 100) -> int:
         processing = self.key("telegram-command", "processing-v2")
         leases = self.key("telegram-command", "leases-v2")
         pending = self.key("telegram-command", "pending")
         script = """
+local function key_is(key, expected)
+  local kind = redis.call('TYPE', key).ok
+  return kind == 'none' or kind == expected
+end
+if not key_is(KEYS[1], 'hash') or not key_is(KEYS[2], 'zset') or not key_is(KEYS[3], 'list') or not key_is(KEYS[4], 'list') or not key_is(KEYS[5], 'string') then
+  redis.call('INCR', KEYS[6])
+  return {-2, 0, 0}
+end
 local redis_time = redis.call('TIME')
 local now = tonumber(redis_time[1]) + tonumber(redis_time[2]) / 1000000
 local tokens = redis.call('ZRANGEBYSCORE', KEYS[2], '-inf', now, 'LIMIT', 0, tonumber(ARGV[1]))
@@ -646,12 +718,24 @@ for _, token in ipairs(tokens) do
   local value = redis.call('HGET', KEYS[1], token)
   if value then
     local ok, envelope = pcall(cjson.decode, value)
-    redis.call('HDEL', KEYS[1], token)
-    if ok and type(envelope) == 'table' and type(envelope['payload']) == 'table' then
+    local payload = ok and type(envelope) == 'table' and envelope['payload'] or nil
+    local attempts = type(payload) == 'table' and payload['attempts'] or nil
+    local valid = type(payload) == 'table'
+      and type(payload['update_id']) == 'number' and payload['update_id'] >= 0 and payload['update_id'] % 1 == 0
+      and type(payload['text']) == 'string' and type(payload['queued_at']) == 'number'
+      and (attempts == nil or (type(attempts) == 'number' and attempts >= 0 and attempts % 1 == 0))
+    if valid then
       redis.call('LPUSH', KEYS[3], cjson.encode(envelope['payload']))
+      redis.call('HDEL', KEYS[1], token)
       recovered = recovered + 1
     else
       redis.call('LPUSH', KEYS[4], cjson.encode({reason='malformed_lease_envelope', lease_token=token, quarantined_at=now}))
+      local overflow = redis.call('LLEN', KEYS[4]) - tonumber(ARGV[2])
+      if overflow > 0 then
+        redis.call('LTRIM', KEYS[4], 0, tonumber(ARGV[2]) - 1)
+        redis.call('INCRBY', KEYS[5], overflow)
+      end
+      redis.call('HDEL', KEYS[1], token)
       quarantined = quarantined + 1
     end
   end
@@ -663,8 +747,12 @@ return {recovered, quarantined, #tokens}
         recovered_total = 0
         while True:
             recovered, _quarantined, examined = await self.client.eval(
-                script, 4, processing, leases, pending, self.key("telegram-command", "dead-letter"), bounded_batch,
+                script, 6, processing, leases, pending, self.key("telegram-command", "dead-letter"),
+                self.key("telegram-command", "dlq-overflow-count"), self.key("telegram-command", "invariant-violation-count"),
+                bounded_batch, self.telegram_dlq_max_length,
             )
+            if int(recovered) == -2:
+                raise RuntimeError("Telegram recovery key-type invariant violation")
             recovered_total += int(recovered)
             if int(examined) < bounded_batch:
                 return recovered_total
@@ -685,7 +773,9 @@ return {recovered, quarantined, #tokens}
                 pipeline.get(self.key("telegram-command", "last-success-at"))
                 pipeline.lindex(pending, -1)
                 pipeline.time()
-                ping, pending_depth, active_leases, dead_letters, retries, last_success, oldest, redis_time = await pipeline.execute()
+                pipeline.get(self.key("telegram-command", "dlq-overflow-count"))
+                pipeline.get(self.key("telegram-command", "invariant-violation-count"))
+                ping, pending_depth, active_leases, dead_letters, retries, last_success, oldest, redis_time, dlq_overflows, invariant_violations = await pipeline.execute()
             oldest_payload = json.loads(oldest) if oldest else {}
             queued_at = float(oldest_payload.get("queued_at", 0) or 0)
             redis_now = float(redis_time[0]) + float(redis_time[1]) / 1_000_000
@@ -696,14 +786,26 @@ return {recovered, quarantined, #tokens}
                 "active_lease_count": int(active_leases),
                 "retry_count": int(retries or 0),
                 "dead_letter_count": int(dead_letters),
+                "dlq_overflow_count": int(dlq_overflows or 0),
+                "invariant_violation_count": int(invariant_violations or 0),
+                "queue_status": "degraded" if int(dlq_overflows or 0) or int(invariant_violations or 0) else "ok",
                 "last_success_at": datetime.fromtimestamp(float(last_success), timezone.utc).isoformat() if last_success else None,
                 "oldest_queued_age_seconds": round(max(0, redis_now - queued_at), 1) if queued_at else None,
             }
         except Exception as exc:
+            try:
+                dlq_overflows, invariant_violations = await self.client.mget(
+                    self.key("telegram-command", "dlq-overflow-count"),
+                    self.key("telegram-command", "invariant-violation-count"),
+                )
+            except Exception:
+                dlq_overflows, invariant_violations = None, None
             return {
                 "redis": "degraded", "redis_latency_ms": round((perf_counter() - started) * 1000, 2),
                 "error_type": type(exc).__name__, "pending_depth": None, "active_lease_count": None,
                 "retry_count": None, "dead_letter_count": None, "last_success_at": None,
+                "dlq_overflow_count": int(dlq_overflows or 0), "invariant_violation_count": int(invariant_violations or 0),
+                "queue_status": "degraded",
                 "oldest_queued_age_seconds": None,
             }
 
@@ -1440,7 +1542,9 @@ class OrchestrationRuntime:
                 self.redis, namespace=self.environment.get("MONATISE_REDIS_NAMESPACE", "monatise:production-analysis")
             )
             self.redis_coordination = RedisCoordinationStore(
-                self.redis, namespace=self.environment.get("MONATISE_REDIS_NAMESPACE", "monatise:production-analysis")
+                self.redis,
+                namespace=self.environment.get("MONATISE_REDIS_NAMESPACE", "monatise:production-analysis"),
+                telegram_dlq_max_length=int(self.environment.get("MONATISE_TELEGRAM_DLQ_MAX_LENGTH", "1000")),
             )
             startup_phase = "scheduler_leadership"
             leader = await self.leadership.acquire_or_wait(

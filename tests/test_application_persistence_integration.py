@@ -158,12 +158,31 @@ def test_telegram_queue_uses_redis_clock_and_quarantines_malformed_leases(monkey
             leases = store.key("telegram-command", "leases-v2")
             for index in range(205):
                 token = f"backlog-{index}"
-                envelope = json.dumps({"token": token, "leased_at": 0, "payload": {"update_id": 1000 + index, "text": "/help"}})
+                envelope = json.dumps({"token": token, "leased_at": 0, "payload": {"update_id": 1000 + index, "text": "/help", "queued_at": 1}})
                 await client.hset(processing, token, envelope)
                 await client.zadd(leases, {token: 0})
             assert await store.recover_telegram_commands(batch_size=50) == 205
             assert recovery_yields >= 4
             assert await client.hlen(processing) == 0
+
+            hardened_namespace = f"{namespace}:hardened"
+            hardened = RedisCoordinationStore(client, namespace=hardened_namespace, telegram_dlq_max_length=3)
+            hardened_pending = hardened.key("telegram-command", "pending")
+            for malformed_payload in ("[]", "{}", '[1,2]', '{"update_id":"bad","text":7}', "null"):
+                await client.lpush(hardened_pending, malformed_payload)
+            assert await hardened.dequeue_telegram_command(timeout_seconds=0) is None
+            assert await client.llen(hardened.key("telegram-command", "dead-letter")) == 3
+            metrics = await hardened.telegram_queue_metrics()
+            assert metrics["dlq_overflow_count"] == 2
+            assert metrics["queue_status"] == "degraded"
+
+            await hardened.enqueue_telegram_command(20, {"update_id": 20, "text": "/help"})
+            owned = await hardened.dequeue_telegram_command(timeout_seconds=0)
+            await client.set(hardened_pending, "wrong-type")
+            assert await hardened.release_telegram_command(owned) is TelegramCommandTransition.INVARIANT_VIOLATION
+            assert await client.hexists(hardened.key("telegram-command", "processing-v2"), owned["__monatise_lease_token"])
+            metrics = await hardened.telegram_queue_metrics()
+            assert metrics["invariant_violation_count"] == 1
         finally:
             keys = await client.keys(f"{namespace}:*")
             if keys:

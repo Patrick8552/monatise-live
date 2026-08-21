@@ -438,6 +438,8 @@ class ProductionASGI(OrchestrationASGI):
                 LOGGER.error("Telegram command moved to dead-letter queue", extra={"update_id": payload.get("update_id")})
             elif transition is TelegramCommandTransition.OWNERSHIP_LOST:
                 LOGGER.warning("Telegram command retry rejected after lease loss", extra={"update_id": payload.get("update_id")})
+            elif transition is TelegramCommandTransition.INVARIANT_VIOLATION:
+                LOGGER.error("Telegram command retry blocked by Redis key-type invariant violation", extra={"update_id": payload.get("update_id")})
             await asyncio.sleep(1)
         else:
             if not await coordination.finish_telegram_command(payload):
@@ -652,7 +654,8 @@ class ProductionASGI(OrchestrationASGI):
             metrics = {
                 "redis": "unavailable", "pending_depth": None, "active_lease_count": None,
                 "retry_count": None, "dead_letter_count": None, "last_success_at": None,
-                "oldest_queued_age_seconds": None,
+                "oldest_queued_age_seconds": None, "dlq_overflow_count": None,
+                "invariant_violation_count": None, "queue_status": "degraded",
             }
         else:
             metrics = await coordination.telegram_queue_metrics()
