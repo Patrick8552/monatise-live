@@ -1,6 +1,6 @@
 const state={results:[],selected:null};
 const $=(selector)=>document.querySelector(selector);
-const money=(value)=>Number.isFinite(Number(value))?`$${Number(value).toLocaleString(undefined,{maximumFractionDigits:2})}`:"—";
+const money=(value)=>value!==null&&value!==undefined&&value!==""&&Number.isFinite(Number(value))?`$${Number(value).toLocaleString(undefined,{maximumFractionDigits:2})}`:"—";
 const text=(value,fallback="—")=>value===null||value===undefined||value===""?fallback:String(value);
 const signalClass=(decision)=>decision==="BUY_WATCH"?"buy":decision==="SELL_WATCH"?"sell":"no";
 const remaining=(seconds)=>{const value=Math.max(0,Number(seconds)||0);if(value<60)return value>0?"<1 min":"Expired";return `${Math.ceil(value/60)} min`;};
