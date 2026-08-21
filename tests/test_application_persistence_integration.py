@@ -120,6 +120,8 @@ def test_telegram_queue_uses_redis_clock_and_quarantines_malformed_leases(monkey
                 assert await store.release_telegram_command(leased) is TelegramCommandTransition.REQUEUED
             raw = json.loads(await client.lindex(store.key("telegram-command", "pending"), -1))
             assert raw.get("attempts", 0) == 0
+            metrics = await store.telegram_queue_metrics()
+            assert 0 <= metrics["oldest_queued_age_seconds"] < 5
 
             valid = await store.dequeue_telegram_command(timeout_seconds=0)
             await store.enqueue_telegram_command(11, {"update_id": 11, "text": "/help"})
@@ -135,6 +137,33 @@ def test_telegram_queue_uses_redis_clock_and_quarantines_malformed_leases(monkey
             quarantined = json.loads(await client.lindex(store.key("telegram-command", "dead-letter"), 0))
             assert quarantined["reason"] == "malformed_lease_envelope"
             assert await store.retry_telegram_command(valid) is TelegramCommandTransition.OWNERSHIP_LOST
+
+            await client.delete(store.key("telegram-command", "pending"))
+            await client.rpush(store.key("telegram-command", "pending"), "not-json")
+            assert await store.dequeue_telegram_command(timeout_seconds=0) is None
+            quarantined = json.loads(await client.lindex(store.key("telegram-command", "dead-letter"), 0))
+            assert quarantined["reason"] == "MALFORMED_PENDING_ENVELOPE"
+            assert await client.llen(store.key("telegram-command", "pending")) == 0
+
+            original_sleep = deployment_module.asyncio.sleep
+            recovery_yields = 0
+
+            async def tracked_sleep(delay):
+                nonlocal recovery_yields
+                recovery_yields += 1
+                await original_sleep(delay)
+
+            monkeypatch.setattr(deployment_module.asyncio, "sleep", tracked_sleep)
+            processing = store.key("telegram-command", "processing-v2")
+            leases = store.key("telegram-command", "leases-v2")
+            for index in range(205):
+                token = f"backlog-{index}"
+                envelope = json.dumps({"token": token, "leased_at": 0, "payload": {"update_id": 1000 + index, "text": "/help"}})
+                await client.hset(processing, token, envelope)
+                await client.zadd(leases, {token: 0})
+            assert await store.recover_telegram_commands(batch_size=50) == 205
+            assert recovery_yields >= 4
+            assert await client.hlen(processing) == 0
         finally:
             keys = await client.keys(f"{namespace}:*")
             if keys:

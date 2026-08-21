@@ -487,12 +487,14 @@ return encoded
 
     async def enqueue_telegram_command(self, update_id: int, payload: dict[str, Any], *, ttl_seconds: int = 86_400) -> bool:
         """Atomically deduplicate and durably enqueue a Telegram command."""
-        queued_payload = dict(payload)
-        queued_payload.setdefault("queued_at", time())
         script = """
 local claimed = redis.call('SET', KEYS[1], '1', 'NX', 'EX', ARGV[1])
 if not claimed then return 0 end
-redis.call('LPUSH', KEYS[2], ARGV[2])
+local redis_time = redis.call('TIME')
+local now = tonumber(redis_time[1]) + tonumber(redis_time[2]) / 1000000
+local queued_payload = cjson.decode(ARGV[2])
+queued_payload['queued_at'] = now
+redis.call('LPUSH', KEYS[2], cjson.encode(queued_payload))
 return 1
 """
         return bool(await self.client.eval(
@@ -501,18 +503,25 @@ return 1
             self.key("telegram-update", str(update_id)),
             self.key("telegram-command", "pending"),
             ttl_seconds,
-            json.dumps(queued_payload, separators=(",", ":")),
+            json.dumps(payload, separators=(",", ":")),
         ))
 
     async def dequeue_telegram_command(self, *, timeout_seconds: int = 1, lease_seconds: int = 120) -> dict[str, Any] | None:
         deadline = time() + max(0, timeout_seconds)
         token = str(uuid4())
         script = """
-local value = redis.call('RPOP', KEYS[1])
+local value = redis.call('LINDEX', KEYS[1], -1)
 if not value then return nil end
 local redis_time = redis.call('TIME')
 local now = tonumber(redis_time[1]) + tonumber(redis_time[2]) / 1000000
-local envelope = cjson.encode({payload=cjson.decode(value), token=ARGV[1], leased_at=now})
+local ok, payload = pcall(cjson.decode, value)
+if not ok or type(payload) ~= 'table' then
+  redis.call('RPOP', KEYS[1])
+  redis.call('LPUSH', KEYS[4], cjson.encode({reason='MALFORMED_PENDING_ENVELOPE', quarantined_at=now}))
+  return cjson.encode({queue_status='malformed'})
+end
+redis.call('RPOP', KEYS[1])
+local envelope = cjson.encode({payload=payload, token=ARGV[1], leased_at=now})
 redis.call('HSET', KEYS[2], ARGV[1], envelope)
 redis.call('ZADD', KEYS[3], now + tonumber(ARGV[2]), ARGV[1])
 return envelope
@@ -520,15 +529,18 @@ return envelope
         while True:
             value = await self.client.eval(
                 script,
-                3,
+                4,
                 self.key("telegram-command", "pending"),
                 self.key("telegram-command", "processing-v2"),
                 self.key("telegram-command", "leases-v2"),
+                self.key("telegram-command", "dead-letter"),
                 token,
                 lease_seconds,
             )
             if value is not None:
                 envelope = json.loads(value)
+                if envelope.get("queue_status") == "malformed":
+                    continue
                 payload = dict(envelope["payload"])
                 payload["__monatise_lease_token"] = envelope["token"]
                 return payload
@@ -620,15 +632,16 @@ return 1
         ))
         return TelegramCommandTransition.REQUEUED if owned else TelegramCommandTransition.OWNERSHIP_LOST
 
-    async def recover_telegram_commands(self) -> int:
+    async def recover_telegram_commands(self, *, batch_size: int = 100) -> int:
         processing = self.key("telegram-command", "processing-v2")
         leases = self.key("telegram-command", "leases-v2")
         pending = self.key("telegram-command", "pending")
         script = """
 local redis_time = redis.call('TIME')
 local now = tonumber(redis_time[1]) + tonumber(redis_time[2]) / 1000000
-local tokens = redis.call('ZRANGEBYSCORE', KEYS[2], '-inf', now)
+local tokens = redis.call('ZRANGEBYSCORE', KEYS[2], '-inf', now, 'LIMIT', 0, tonumber(ARGV[1]))
 local recovered = 0
+local quarantined = 0
 for _, token in ipairs(tokens) do
   local value = redis.call('HGET', KEYS[1], token)
   if value then
@@ -639,15 +652,23 @@ for _, token in ipairs(tokens) do
       recovered = recovered + 1
     else
       redis.call('LPUSH', KEYS[4], cjson.encode({reason='malformed_lease_envelope', lease_token=token, quarantined_at=now}))
+      quarantined = quarantined + 1
     end
   end
   redis.call('ZREM', KEYS[2], token)
 end
-return recovered
+return {recovered, quarantined, #tokens}
 """
-        return int(await self.client.eval(
-            script, 4, processing, leases, pending, self.key("telegram-command", "dead-letter"),
-        ))
+        bounded_batch = min(max(int(batch_size), 1), 1000)
+        recovered_total = 0
+        while True:
+            recovered, _quarantined, examined = await self.client.eval(
+                script, 4, processing, leases, pending, self.key("telegram-command", "dead-letter"), bounded_batch,
+            )
+            recovered_total += int(recovered)
+            if int(examined) < bounded_batch:
+                return recovered_total
+            await asyncio.sleep(0)
 
     async def telegram_queue_metrics(self) -> dict[str, Any]:
         """Return sanitized operational telemetry for health and operator views."""
@@ -663,9 +684,11 @@ return recovered
                 pipeline.get(self.key("telegram-command", "retry-count"))
                 pipeline.get(self.key("telegram-command", "last-success-at"))
                 pipeline.lindex(pending, -1)
-                ping, pending_depth, active_leases, dead_letters, retries, last_success, oldest = await pipeline.execute()
+                pipeline.time()
+                ping, pending_depth, active_leases, dead_letters, retries, last_success, oldest, redis_time = await pipeline.execute()
             oldest_payload = json.loads(oldest) if oldest else {}
             queued_at = float(oldest_payload.get("queued_at", 0) or 0)
+            redis_now = float(redis_time[0]) + float(redis_time[1]) / 1_000_000
             return {
                 "redis": "connected" if ping else "degraded",
                 "redis_latency_ms": round((perf_counter() - started) * 1000, 2),
@@ -674,7 +697,7 @@ return recovered
                 "retry_count": int(retries or 0),
                 "dead_letter_count": int(dead_letters),
                 "last_success_at": datetime.fromtimestamp(float(last_success), timezone.utc).isoformat() if last_success else None,
-                "oldest_queued_age_seconds": round(max(0, time() - queued_at), 1) if queued_at else None,
+                "oldest_queued_age_seconds": round(max(0, redis_now - queued_at), 1) if queued_at else None,
             }
         except Exception as exc:
             return {
