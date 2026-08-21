@@ -490,16 +490,21 @@ return encoded
     async def enqueue_telegram_command(self, update_id: int, payload: dict[str, Any], *, ttl_seconds: int = 86_400) -> bool:
         """Atomically deduplicate and durably enqueue a Telegram command."""
         script = """
-local claimed = redis.call('SET', KEYS[1], '1', 'NX', 'EX', ARGV[1])
-if not claimed then return 0 end
+local pending_type = redis.call('TYPE', KEYS[2]).ok
+if pending_type ~= 'none' and pending_type ~= 'list' then return -2 end
+if redis.call('EXISTS', KEYS[1]) == 1 then return 0 end
 local redis_time = redis.call('TIME')
 local now = tonumber(redis_time[1]) + tonumber(redis_time[2]) / 1000000
 local queued_payload = cjson.decode(ARGV[2])
 queued_payload['queued_at'] = now
 redis.call('LPUSH', KEYS[2], cjson.encode(queued_payload))
+-- Deduplication is secondary metadata. If this write fails, retain the
+-- accepted command so a provider retry can at worst produce at-least-once
+-- delivery instead of suppressing a command that was never queued.
+redis.pcall('SET', KEYS[1], '1', 'NX', 'EX', ARGV[1])
 return 1
 """
-        return bool(await self.client.eval(
+        outcome = int(await self.client.eval(
             script,
             2,
             self.key("telegram-update", str(update_id)),
@@ -507,6 +512,9 @@ return 1
             ttl_seconds,
             json.dumps(payload, separators=(",", ":")),
         ))
+        if outcome == -2:
+            raise RuntimeError("Telegram pending queue key-type invariant violation")
+        return outcome == 1
 
     async def dequeue_telegram_command(self, *, timeout_seconds: int = 1, lease_seconds: int = 120) -> dict[str, Any] | None:
         deadline = time() + max(0, timeout_seconds)
@@ -516,8 +524,16 @@ local function key_is(key, expected)
   local kind = redis.call('TYPE', key).ok
   return kind == 'none' or kind == expected
 end
+local function safe_increment(key, amount)
+  local result = redis.pcall('INCRBY', key, amount)
+  if type(result) == 'table' and result['err'] then
+    redis.pcall('SET', key, tostring(amount))
+    local flagged = redis.pcall('INCR', KEYS[7])
+    if type(flagged) == 'table' and flagged['err'] then redis.pcall('SET', KEYS[7], '1') end
+  end
+end
 if not key_is(KEYS[1], 'list') or not key_is(KEYS[2], 'hash') or not key_is(KEYS[3], 'zset') or not key_is(KEYS[4], 'list') or not key_is(KEYS[5], 'string') then
-  redis.call('INCR', KEYS[6])
+  safe_increment(KEYS[6], 1)
   return cjson.encode({queue_status='invariant_violation'})
 end
 local value = redis.call('LINDEX', KEYS[1], -1)
@@ -535,7 +551,7 @@ if not valid then
   local overflow = redis.call('LLEN', KEYS[4]) - tonumber(ARGV[3])
   if overflow > 0 then
     redis.call('LTRIM', KEYS[4], 0, tonumber(ARGV[3]) - 1)
-    redis.call('INCRBY', KEYS[5], overflow)
+    safe_increment(KEYS[5], overflow)
   end
   redis.call('RPOP', KEYS[1])
   return cjson.encode({queue_status='malformed'})
@@ -549,13 +565,14 @@ return envelope
         while True:
             value = await self.client.eval(
                 script,
-                6,
+                7,
                 self.key("telegram-command", "pending"),
                 self.key("telegram-command", "processing-v2"),
                 self.key("telegram-command", "leases-v2"),
                 self.key("telegram-command", "dead-letter"),
                 self.key("telegram-command", "dlq-overflow-count"),
                 self.key("telegram-command", "invariant-violation-count"),
+                self.key("telegram-command", "counter-corruption-count"),
                 token,
                 lease_seconds,
                 self.telegram_dlq_max_length,
@@ -603,8 +620,16 @@ local function key_is(key, expected)
   local kind = redis.call('TYPE', key).ok
   return kind == 'none' or kind == expected
 end
+local function safe_increment(key, amount)
+  local result = redis.pcall('INCRBY', key, amount)
+  if type(result) == 'table' and result['err'] then
+    redis.pcall('SET', key, tostring(amount))
+    local flagged = redis.pcall('INCR', KEYS[5])
+    if type(flagged) == 'table' and flagged['err'] then redis.pcall('SET', KEYS[5], '1') end
+  end
+end
 if not key_is(KEYS[1], 'hash') or not key_is(KEYS[2], 'zset') or not key_is(KEYS[3], 'string') then
-  redis.call('INCR', KEYS[4])
+  safe_increment(KEYS[4], 1)
   return -2
 end
 if redis.call('HEXISTS', KEYS[1], ARGV[1]) == 0 then return 0 end
@@ -616,9 +641,10 @@ redis.call('SET', KEYS[3], tostring(now))
 return 1
 """
         outcome = int(await self.client.eval(
-            script, 4, self.key("telegram-command", "processing-v2"),
+            script, 5, self.key("telegram-command", "processing-v2"),
             self.key("telegram-command", "leases-v2"), self.key("telegram-command", "last-success-at"),
-            self.key("telegram-command", "invariant-violation-count"), token,
+            self.key("telegram-command", "invariant-violation-count"),
+            self.key("telegram-command", "counter-corruption-count"), token,
         ))
         return outcome == 1
 
@@ -634,8 +660,16 @@ local function key_is(key, expected)
   local kind = redis.call('TYPE', key).ok
   return kind == 'none' or kind == expected
 end
-if not key_is(KEYS[1], 'hash') or not key_is(KEYS[2], 'zset') or not key_is(KEYS[3], 'list') or not key_is(KEYS[4], 'string') or not key_is(KEYS[5], 'string') then
-  redis.call('INCR', KEYS[6])
+local function safe_increment(key, amount)
+  local result = redis.pcall('INCRBY', key, amount)
+  if type(result) == 'table' and result['err'] then
+    redis.pcall('SET', key, tostring(amount))
+    local flagged = redis.pcall('INCR', KEYS[7])
+    if type(flagged) == 'table' and flagged['err'] then redis.pcall('SET', KEYS[7], '1') end
+  end
+end
+if not key_is(KEYS[1], 'hash') or not key_is(KEYS[2], 'zset') or not key_is(KEYS[3], 'list') then
+  safe_increment(KEYS[6], 1)
   return -2
 end
 if redis.call('HEXISTS', KEYS[1], ARGV[1]) == 0 then return 0 end
@@ -644,20 +678,21 @@ if ARGV[3] == '1' then
   local overflow = redis.call('LLEN', KEYS[3]) - tonumber(ARGV[4])
   if overflow > 0 then
     redis.call('LTRIM', KEYS[3], 0, tonumber(ARGV[4]) - 1)
-    redis.call('INCRBY', KEYS[5], overflow)
+    safe_increment(KEYS[5], overflow)
   end
 end
 redis.call('HDEL', KEYS[1], ARGV[1])
 redis.call('ZREM', KEYS[2], ARGV[1])
-redis.call('INCR', KEYS[4])
+safe_increment(KEYS[4], 1)
 return 1
 """
         requeued = pending_payload["attempts"] < max_attempts
         destination = self.key("telegram-command", "pending" if requeued else "dead-letter")
         outcome = int(await self.client.eval(
-            script, 6, self.key("telegram-command", "processing-v2"), self.key("telegram-command", "leases-v2"),
+            script, 7, self.key("telegram-command", "processing-v2"), self.key("telegram-command", "leases-v2"),
             destination, self.key("telegram-command", "retry-count"), self.key("telegram-command", "dlq-overflow-count"),
             self.key("telegram-command", "invariant-violation-count"),
+            self.key("telegram-command", "counter-corruption-count"),
             token, encoded, "0" if requeued else "1", self.telegram_dlq_max_length,
         ))
         if outcome == -2:
@@ -678,8 +713,16 @@ local function key_is(key, expected)
   local kind = redis.call('TYPE', key).ok
   return kind == 'none' or kind == expected
 end
+local function safe_increment(key, amount)
+  local result = redis.pcall('INCRBY', key, amount)
+  if type(result) == 'table' and result['err'] then
+    redis.pcall('SET', key, tostring(amount))
+    local flagged = redis.pcall('INCR', KEYS[5])
+    if type(flagged) == 'table' and flagged['err'] then redis.pcall('SET', KEYS[5], '1') end
+  end
+end
 if not key_is(KEYS[1], 'hash') or not key_is(KEYS[2], 'zset') or not key_is(KEYS[3], 'list') then
-  redis.call('INCR', KEYS[4])
+  safe_increment(KEYS[4], 1)
   return -2
 end
 if redis.call('HEXISTS', KEYS[1], ARGV[1]) == 0 then return 0 end
@@ -689,8 +732,9 @@ redis.call('ZREM', KEYS[2], ARGV[1])
 return 1
 """
         outcome = int(await self.client.eval(
-            script, 4, self.key("telegram-command", "processing-v2"), self.key("telegram-command", "leases-v2"),
-            self.key("telegram-command", "pending"), self.key("telegram-command", "invariant-violation-count"), token, encoded,
+            script, 5, self.key("telegram-command", "processing-v2"), self.key("telegram-command", "leases-v2"),
+            self.key("telegram-command", "pending"), self.key("telegram-command", "invariant-violation-count"),
+            self.key("telegram-command", "counter-corruption-count"), token, encoded,
         ))
         if outcome == -2:
             return TelegramCommandTransition.INVARIANT_VIOLATION
@@ -705,8 +749,16 @@ local function key_is(key, expected)
   local kind = redis.call('TYPE', key).ok
   return kind == 'none' or kind == expected
 end
+local function safe_increment(key, amount)
+  local result = redis.pcall('INCRBY', key, amount)
+  if type(result) == 'table' and result['err'] then
+    redis.pcall('SET', key, tostring(amount))
+    local flagged = redis.pcall('INCR', KEYS[7])
+    if type(flagged) == 'table' and flagged['err'] then redis.pcall('SET', KEYS[7], '1') end
+  end
+end
 if not key_is(KEYS[1], 'hash') or not key_is(KEYS[2], 'zset') or not key_is(KEYS[3], 'list') or not key_is(KEYS[4], 'list') or not key_is(KEYS[5], 'string') then
-  redis.call('INCR', KEYS[6])
+  safe_increment(KEYS[6], 1)
   return {-2, 0, 0}
 end
 local redis_time = redis.call('TIME')
@@ -733,7 +785,7 @@ for _, token in ipairs(tokens) do
       local overflow = redis.call('LLEN', KEYS[4]) - tonumber(ARGV[2])
       if overflow > 0 then
         redis.call('LTRIM', KEYS[4], 0, tonumber(ARGV[2]) - 1)
-        redis.call('INCRBY', KEYS[5], overflow)
+        safe_increment(KEYS[5], overflow)
       end
       redis.call('HDEL', KEYS[1], token)
       quarantined = quarantined + 1
@@ -747,8 +799,9 @@ return {recovered, quarantined, #tokens}
         recovered_total = 0
         while True:
             recovered, _quarantined, examined = await self.client.eval(
-                script, 6, processing, leases, pending, self.key("telegram-command", "dead-letter"),
+                script, 7, processing, leases, pending, self.key("telegram-command", "dead-letter"),
                 self.key("telegram-command", "dlq-overflow-count"), self.key("telegram-command", "invariant-violation-count"),
+                self.key("telegram-command", "counter-corruption-count"),
                 bounded_batch, self.telegram_dlq_max_length,
             )
             if int(recovered) == -2:
@@ -760,6 +813,15 @@ return {recovered, quarantined, #tokens}
 
     async def telegram_queue_metrics(self) -> dict[str, Any]:
         """Return sanitized operational telemetry for health and operator views."""
+        def counter(value: Any) -> tuple[int, bool]:
+            if value is None:
+                return 0, False
+            try:
+                rendered = value.decode("utf-8") if isinstance(value, bytes) else str(value)
+                return int(rendered), False
+            except (UnicodeDecodeError, TypeError, ValueError):
+                return 0, True
+
         started = perf_counter()
         try:
             pending = self.key("telegram-command", "pending")
@@ -775,7 +837,13 @@ return {recovered, quarantined, #tokens}
                 pipeline.time()
                 pipeline.get(self.key("telegram-command", "dlq-overflow-count"))
                 pipeline.get(self.key("telegram-command", "invariant-violation-count"))
-                ping, pending_depth, active_leases, dead_letters, retries, last_success, oldest, redis_time, dlq_overflows, invariant_violations = await pipeline.execute()
+                pipeline.get(self.key("telegram-command", "counter-corruption-count"))
+                ping, pending_depth, active_leases, dead_letters, retries_raw, last_success, oldest, redis_time, dlq_overflows_raw, invariant_violations_raw, counter_corruptions_raw = await pipeline.execute()
+            retries, retries_corrupt = counter(retries_raw)
+            dlq_overflows, dlq_overflows_corrupt = counter(dlq_overflows_raw)
+            invariant_violations, invariant_violations_corrupt = counter(invariant_violations_raw)
+            counter_corruptions, counter_marker_corrupt = counter(counter_corruptions_raw)
+            corrupt_counters = sum((retries_corrupt, dlq_overflows_corrupt, invariant_violations_corrupt, counter_marker_corrupt))
             oldest_payload = json.loads(oldest) if oldest else {}
             queued_at = float(oldest_payload.get("queued_at", 0) or 0)
             redis_now = float(redis_time[0]) + float(redis_time[1]) / 1_000_000
@@ -784,27 +852,33 @@ return {recovered, quarantined, #tokens}
                 "redis_latency_ms": round((perf_counter() - started) * 1000, 2),
                 "pending_depth": int(pending_depth),
                 "active_lease_count": int(active_leases),
-                "retry_count": int(retries or 0),
+                "retry_count": retries,
                 "dead_letter_count": int(dead_letters),
-                "dlq_overflow_count": int(dlq_overflows or 0),
-                "invariant_violation_count": int(invariant_violations or 0),
-                "queue_status": "degraded" if int(dlq_overflows or 0) or int(invariant_violations or 0) else "ok",
+                "dlq_overflow_count": dlq_overflows,
+                "invariant_violation_count": invariant_violations,
+                "counter_corruption_count": counter_corruptions + corrupt_counters,
+                "queue_status": "degraded" if dlq_overflows or invariant_violations or counter_corruptions or corrupt_counters else "ok",
                 "last_success_at": datetime.fromtimestamp(float(last_success), timezone.utc).isoformat() if last_success else None,
                 "oldest_queued_age_seconds": round(max(0, redis_now - queued_at), 1) if queued_at else None,
             }
         except Exception as exc:
             try:
-                dlq_overflows, invariant_violations = await self.client.mget(
+                dlq_overflows_raw, invariant_violations_raw, counter_corruptions_raw = await self.client.mget(
                     self.key("telegram-command", "dlq-overflow-count"),
                     self.key("telegram-command", "invariant-violation-count"),
+                    self.key("telegram-command", "counter-corruption-count"),
                 )
             except Exception:
-                dlq_overflows, invariant_violations = None, None
+                dlq_overflows_raw, invariant_violations_raw, counter_corruptions_raw = None, None, None
+            dlq_overflows, dlq_corrupt = counter(dlq_overflows_raw)
+            invariant_violations, invariant_corrupt = counter(invariant_violations_raw)
+            counter_corruptions, marker_corrupt = counter(counter_corruptions_raw)
             return {
                 "redis": "degraded", "redis_latency_ms": round((perf_counter() - started) * 1000, 2),
                 "error_type": type(exc).__name__, "pending_depth": None, "active_lease_count": None,
                 "retry_count": None, "dead_letter_count": None, "last_success_at": None,
-                "dlq_overflow_count": int(dlq_overflows or 0), "invariant_violation_count": int(invariant_violations or 0),
+                "dlq_overflow_count": dlq_overflows, "invariant_violation_count": invariant_violations,
+                "counter_corruption_count": counter_corruptions + sum((dlq_corrupt, invariant_corrupt, marker_corrupt)),
                 "queue_status": "degraded",
                 "oldest_queued_age_seconds": None,
             }

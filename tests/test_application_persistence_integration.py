@@ -192,6 +192,56 @@ def test_telegram_queue_uses_redis_clock_and_quarantines_malformed_leases(monkey
     asyncio.run(scenario())
 
 
+@pytest.mark.skipif(not os.getenv("MONATISE_TEST_REDIS_URL"), reason="MONATISE_TEST_REDIS_URL is not configured")
+def test_telegram_queue_metadata_failures_cannot_break_message_ownership():
+    async def scenario():
+        from redis.asyncio import Redis
+
+        namespace = f"monatise:test:telegram:metadata:{uuid4()}"
+        client = Redis.from_url(os.environ["MONATISE_TEST_REDIS_URL"], decode_responses=True)
+        store = RedisCoordinationStore(client, namespace=namespace, telegram_dlq_max_length=1)
+        pending = store.key("telegram-command", "pending")
+        processing = store.key("telegram-command", "processing-v2")
+        leases = store.key("telegram-command", "leases-v2")
+        try:
+            await client.set(pending, "wrong-type")
+            with pytest.raises(RuntimeError, match="pending queue key-type invariant"):
+                await store.enqueue_telegram_command(30, {"update_id": 30, "text": "/help"})
+            assert await client.exists(store.key("telegram-update", "30")) == 0
+            await client.delete(pending)
+            assert await store.enqueue_telegram_command(30, {"update_id": 30, "text": "/help"}) is True
+
+            owned = await store.dequeue_telegram_command(timeout_seconds=0)
+            await client.set(store.key("telegram-command", "retry-count"), "corrupt")
+            assert await store.retry_telegram_command(owned) is TelegramCommandTransition.REQUEUED
+            assert await client.llen(pending) == 1
+            assert await client.hlen(processing) == 0
+            assert await client.zcard(leases) == 0
+            retried = await store.dequeue_telegram_command(timeout_seconds=0)
+            assert await store.finish_telegram_command(retried) is True
+
+            await client.lpush(store.key("telegram-command", "dead-letter"), "existing")
+            assert await store.enqueue_telegram_command(31, {"update_id": 31, "text": "/help"}) is True
+            owned = await store.dequeue_telegram_command(timeout_seconds=0)
+            owned["attempts"] = 2
+            await client.set(store.key("telegram-command", "dlq-overflow-count"), "corrupt")
+            assert await store.retry_telegram_command(owned) is TelegramCommandTransition.DEAD_LETTERED
+            assert await client.llen(store.key("telegram-command", "dead-letter")) == 1
+            assert await client.hlen(processing) == 0
+            assert await client.zcard(leases) == 0
+
+            metrics = await store.telegram_queue_metrics()
+            assert metrics["counter_corruption_count"] == 2
+            assert metrics["queue_status"] == "degraded"
+        finally:
+            keys = await client.keys(f"{namespace}:*")
+            if keys:
+                await client.delete(*keys)
+            await client.aclose()
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.skipif(
     not os.getenv("MONATISE_TEST_DATABASE_URL") or not os.getenv("MONATISE_TEST_REDIS_URL"),
     reason="PostgreSQL and Redis test URLs are not configured",

@@ -655,7 +655,8 @@ class ProductionASGI(OrchestrationASGI):
                 "redis": "unavailable", "pending_depth": None, "active_lease_count": None,
                 "retry_count": None, "dead_letter_count": None, "last_success_at": None,
                 "oldest_queued_age_seconds": None, "dlq_overflow_count": None,
-                "invariant_violation_count": None, "queue_status": "degraded",
+                "invariant_violation_count": None, "counter_corruption_count": None,
+                "queue_status": "degraded",
             }
         else:
             metrics = await coordination.telegram_queue_metrics()
