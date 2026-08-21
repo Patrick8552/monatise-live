@@ -29,6 +29,7 @@ def test_stock_workspace_uses_server_side_multi_provider_endpoints_and_lifecycle
     assert "/api/stocks/${encodeURIComponent(symbol)}/analysis" in source
     assert "/api/stocks/search?q=" in source
     assert "setup_expires_at" in source and "validity_remaining_seconds" in source
+    assert 'value!==null&&value!==undefined&&value!==""' in source
     assert "FlashAlpha" in html and "Alpaca" in html and "Quiver" in html and "Finnhub" in html
     for forbidden in ("FLASHALPHA_API_KEY", "ALPACA_API_KEY", "FINNHUB_API_KEY"):
         assert forbidden not in source + html
