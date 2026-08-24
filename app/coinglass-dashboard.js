@@ -4235,6 +4235,17 @@ async function refreshDashboard() {
     drawCanvasNotice(els.priceCanvas, "Market candles unavailable", error.message);
   }
 
+  // Market candles are the core session dependency. Do not keep the whole
+  // dashboard in a refreshing state while slower, optional intelligence
+  // providers and the production analysis pipeline finish in the background.
+  const coreReady = Number.isFinite(state.lastPrice) && state.lastPrice > 0;
+  setSessionStatus(
+    coreReady ? "good" : "bad",
+    coreReady ? "Session live · optional analysis updating" : "Core market data unavailable"
+  );
+  els.refreshButton.disabled = false;
+  els.refreshButton.textContent = "Refresh";
+
   const jobs = [
     settleCurrent(getFunding(), renderFunding, renderFundingLocked),
     settleCurrent(getOpenInterest(), renderOpenInterest, renderOpenInterestLocked),
@@ -4256,10 +4267,7 @@ async function refreshDashboard() {
   const setup = applyProductionDecision(applyMonatiseFramework());
   publishGeneratedSignal(setup);
   evaluateLiveAlerts(setup);
-  const coreReady = Number.isFinite(state.lastPrice) && state.lastPrice > 0;
   setSessionStatus(coreReady ? "good" : "bad", coreReady ? "Session live · CoinGlass production analysis" : "Core market data unavailable");
-  els.refreshButton.disabled = false;
-  els.refreshButton.textContent = "Refresh";
 }
 
 els.apiKeyInput.addEventListener("input", () => {

@@ -92,6 +92,19 @@ def test_production_analysis_has_pipeline_specific_timeout_without_changing_mark
     assert '{ cache: "no-store", timeoutMs: 90_000 }' in source
 
 
+def test_dashboard_marks_core_session_ready_before_optional_enrichment_finishes() -> None:
+    source = COINGLASS_DASHBOARD_JS.read_text(encoding="utf-8")
+    refresh = source[source.index("async function refreshDashboard()") :]
+
+    core_ready = refresh.index("const coreReady = Number.isFinite(state.lastPrice)")
+    session_live = refresh.index('"Session live · optional analysis updating"')
+    controls_ready = refresh.index('els.refreshButton.textContent = "Refresh";')
+    wait_for_optional = refresh.index("await Promise.allSettled(jobs);")
+
+    assert core_ready < session_live < wait_for_optional
+    assert controls_ready < wait_for_optional
+
+
 def test_dashboard_does_not_restore_removed_london_runtime_gate() -> None:
     source = "\n".join(path.read_text(encoding="utf-8") for path in (ROOT / "app").glob("*.js"))
     assert "londonSession(" not in source
