@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -27,6 +28,7 @@ COINGLASS_SYMBOLS = {
 }
 PREFERRED_EXCHANGES = ("Binance", "Gate", "MEXC", "Bybit", "OKX", "Hyperliquid")
 PAIR_CACHE_TTL_SECONDS = 900
+PAIR_CACHE_MAX_BYTES = 32 * 1024 * 1024
 FIAT_CURRENCIES = {"USD", "EUR", "GBP", "JPY", "CHF", "CAD", "AUD", "NZD"}
 
 
@@ -37,6 +39,7 @@ def _is_forex_symbol(symbol: str) -> bool:
 
 class CoinGlassAdapter:
     _pairs_cache: tuple[float, dict[str, list[dict[str, Any]]]] = (0.0, {})
+    _pairs_cache_lock = threading.Lock()
 
     def __init__(self, config: RuntimeConfig) -> None:
         self.config = config
@@ -149,10 +152,25 @@ class CoinGlassAdapter:
         cached_at, cached = self.__class__._pairs_cache
         if cached and now - cached_at < PAIR_CACHE_TTL_SECONDS:
             return cached
-        data = self._get("/api/futures/supported-exchange-pairs", {})
-        pairs = dict(data) if isinstance(data, dict) else {}
-        self.__class__._pairs_cache = (now, pairs)
-        return pairs
+        # A dashboard refresh issues several market requests concurrently. Use
+        # single-flight loading so those threads do not each download, decode,
+        # and retain a copy of CoinGlass's large exchange-pair universe.
+        with self.__class__._pairs_cache_lock:
+            cached_at, cached = self.__class__._pairs_cache
+            now = time.time()
+            if cached and now - cached_at < PAIR_CACHE_TTL_SECONDS:
+                return cached
+            data = self._get("/api/futures/supported-exchange-pairs", {})
+            pairs = dict(data) if isinstance(data, dict) else {}
+            encoded_size = len(json.dumps(pairs, separators=(",", ":")).encode("utf-8"))
+            if encoded_size > PAIR_CACHE_MAX_BYTES:
+                raise RuntimeError(
+                    f"CoinGlass exchange-pair payload exceeds {PAIR_CACHE_MAX_BYTES} byte cache limit"
+                )
+            # This cache is deliberately one bounded entry rather than a map
+            # that grows with callers, symbols, or query parameters.
+            self.__class__._pairs_cache = (now, pairs)
+            return pairs
 
 
 def _ordered_exchanges(primary: str, available: tuple[str, ...]) -> tuple[str, ...]:

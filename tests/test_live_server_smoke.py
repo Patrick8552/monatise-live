@@ -1,9 +1,9 @@
 """End-to-end smoke test for the standalone monatise-live runtime.
 
-monatise/live/server.py is not run by the Render deployment (which runs
-monatise.application.production:app instead), but it is still the packaged
-`monatise-live` CLI entrypoint, the command both Dockerfiles run, and the
-runtime documented as the standalone/self-hosted way to run Monatise. Nothing
+monatise/live/server.py is not run by the Render or Docker production
+deployment (which runs monatise.application.production:app instead), but it
+is still the packaged `monatise-live` CLI entrypoint and the runtime documented
+as the standalone/self-hosted way to run Monatise. Nothing
 else in CI exercises it end-to-end, so a regression here (a startup crash, an
 execution-safety flag flipping on, a shutdown that leaks a thread or a
 connection) would go unnoticed until someone tried to actually run it.
@@ -160,3 +160,11 @@ def test_packaged_cli_boots_read_only_and_shuts_down_cleanly(
         "shutting down gracefully"
     )
     assert _port_is_closed(host, port), "server port is still accepting connections after shutdown"
+
+
+def test_legacy_server_refuses_to_start_in_production(monkeypatch: pytest.MonkeyPatch) -> None:
+    from monatise.live import server
+
+    monkeypatch.setenv("MONATISE_ENVIRONMENT", "production")
+    with pytest.raises(RuntimeError, match="legacy monatise.live.server is disabled in production"):
+        server.main()

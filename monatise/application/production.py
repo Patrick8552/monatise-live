@@ -35,6 +35,8 @@ from monatise.core.models import Candle
 
 
 LOGGER = logging.getLogger("monatise.production")
+PRODUCTION_APPLICATION = "monatise.application.production:app"
+PRODUCTION_API_VERSION = "v1"
 
 
 class TelegramLeaseLost(RuntimeError):
@@ -47,6 +49,14 @@ def telegram_webhook_secret(token: str) -> str:
 
 class ProductionRuntime(OrchestrationRuntime):
     async def start(self) -> None:
+        LOGGER.info(
+            "monatise production startup application=%s mode=%s environment=%s commit=%s api_version=%s",
+            PRODUCTION_APPLICATION,
+            self.environment.get("MONATISE_MODE", "unknown"),
+            self.environment.get("MONATISE_ENVIRONMENT", "unknown"),
+            self.environment.get("RENDER_GIT_COMMIT", self.environment.get("MONATISE_GIT_COMMIT", "unknown")),
+            PRODUCTION_API_VERSION,
+        )
         LOGGER.info("validating production safety configuration")
         if self.environment.get("MONATISE_ENVIRONMENT", "").strip().casefold() != "production":
             raise ValueError("MONATISE_ENVIRONMENT must be production")

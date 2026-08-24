@@ -1224,6 +1224,11 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
 
 
 def main() -> int:
+    if os.getenv("MONATISE_ENVIRONMENT", "").strip().casefold() == "production":
+        raise RuntimeError(
+            "legacy monatise.live.server is disabled in production; "
+            "start monatise.application.production:app via scripts/start_production.sh"
+        )
     config = RuntimeConfig.from_env()
     if config.mode == "live" and config.network == "mainnet" and not encryption_key_configured():
         raise RuntimeError("MONATISE_ENCRYPTION_KEY is required for live mainnet credential storage")

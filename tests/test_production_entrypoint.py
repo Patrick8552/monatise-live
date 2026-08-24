@@ -985,7 +985,7 @@ def test_production_blueprint_is_analysis_only_and_isolated():
     text = (Path(__file__).parents[1] / "render.yaml").read_text()
     required = [
         "name: monatise-live",
-        "monatise.application.production:app",
+        "startCommand: sh scripts/start_production.sh",
         "autoDeployTrigger: checksPass",
         "healthCheckPath: /health/live",
         "MONATISE_OPENCLAW_CACHE_TTL_SECONDS",
@@ -999,6 +999,32 @@ def test_production_blueprint_is_analysis_only_and_isolated():
     assert all(value in text for value in required)
     forbidden = ["mainnet", "value: live", "BACKPACK_API_KEY"]
     assert all(value not in text for value in forbidden)
+
+
+def test_every_production_entrypoint_uses_the_single_asgi_start_script():
+    root = Path(__file__).parents[1]
+    dockerfile = (root / "Dockerfile").read_text()
+    blueprint = (root / "render.yaml").read_text()
+    start_script = (root / "scripts" / "start_production.sh").read_text()
+
+    assert 'CMD ["sh", "scripts/start_production.sh"]' in dockerfile
+    assert "startCommand: sh scripts/start_production.sh" in blueprint
+    assert "uvicorn monatise.application.production:app" in start_script
+    assert "--workers 1" in start_script
+    assert "scripts/serve_live.py" not in dockerfile
+
+
+def test_production_startup_logs_deployment_identity_before_validation(caplog):
+    runtime = ProductionRuntime(environment={"MONATISE_ENVIRONMENT": "production", "RENDER_GIT_COMMIT": "abc123"})
+
+    with caplog.at_level("INFO"), pytest.raises(ValueError, match="production safety configuration"):
+        asyncio.run(runtime.start())
+
+    message = next(record.getMessage() for record in caplog.records if "monatise production startup" in record.getMessage())
+    assert "application=monatise.application.production:app" in message
+    assert "environment=production" in message
+    assert "commit=abc123" in message
+    assert "api_version=v1" in message
 
 
 def test_tradingview_webhook_rejects_missing_token():

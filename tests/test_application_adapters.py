@@ -11,6 +11,22 @@ from monatise.application.models import AnalysisRun, PipelineContext, PipelineRe
 from monatise.application.workflows import OpenClawWorkflow, TelegramNotifier
 
 
+def test_coinglass_production_cache_is_bounded():
+    def transport(path, params, timeout):
+        return {"code": "0", "data": [{"time": params.get("start_time", "0")}]}
+
+    adapter = CoinGlassProductionAdapter(
+        lambda: "secret",
+        transport=transport,
+        requests_per_second=100000,
+        cache_maximum_entries=2,
+    )
+    for start_time in ("1", "2", "3"):
+        adapter.dashboard_query("/api/futures/price/history", {"symbol": "BTCUSDT", "start_time": start_time})
+
+    assert adapter.health().cache_entries == 2
+
+
 def test_coinglass_normalizes_six_derivatives_datasets_and_caches():
     calls = []
     values = {

@@ -112,8 +112,8 @@ class CoinGlassProductionAdapter:
         "/api/index/fear-greed-history": set(),
     }
 
-    def __init__(self, credential_provider: Callable[[], str], *, base_url: str = "https://open-api-v4.coinglass.com", timeout_seconds: float = 15.0, maximum_attempts: int = 3, requests_per_second: float = 4.0, cache_ttl_seconds: float = 30.0, transport: Callable[[str, dict[str, str], float], dict[str, Any]] | None = None, observer: Callable[[str, dict[str, Any]], None] | None = None) -> None:
-        if maximum_attempts < 1 or timeout_seconds <= 0 or requests_per_second <= 0 or cache_ttl_seconds < 0:
+    def __init__(self, credential_provider: Callable[[], str], *, base_url: str = "https://open-api-v4.coinglass.com", timeout_seconds: float = 15.0, maximum_attempts: int = 3, requests_per_second: float = 4.0, cache_ttl_seconds: float = 30.0, cache_maximum_entries: int = 128, transport: Callable[[str, dict[str, str], float], dict[str, Any]] | None = None, observer: Callable[[str, dict[str, Any]], None] | None = None) -> None:
+        if maximum_attempts < 1 or timeout_seconds <= 0 or requests_per_second <= 0 or cache_ttl_seconds < 0 or cache_maximum_entries < 1:
             raise ValueError("invalid CoinGlass resilience configuration")
         self._credential_provider = credential_provider
         self._base_url = base_url.rstrip("/")
@@ -121,6 +121,7 @@ class CoinGlassProductionAdapter:
         self._attempts = maximum_attempts
         self._minimum_interval = 1.0 / requests_per_second
         self._ttl = cache_ttl_seconds
+        self._cache_maximum_entries = cache_maximum_entries
         self._transport = transport or self._http_get
         self._observer = observer or (lambda _event, _fields: None)
         self._cache: dict[str, tuple[float, Any]] = {}
@@ -298,7 +299,7 @@ class CoinGlassProductionAdapter:
                 if not isinstance(payload, dict) or str(payload.get("code")) not in {"0", "200"}:
                     raise CoinGlassError(str(payload.get("msg") or payload.get("message") or "CoinGlass rejected request") if isinstance(payload, dict) else "CoinGlass returned an invalid response")
                 with self._lock:
-                    self._cache[cache_key] = (time.monotonic(), deepcopy(payload))
+                    self._store_cache_unlocked(cache_key, payload)
                     self._last_success = time.time()
                 self._observe("coinglass.request", {"dataset": path, "attempt": attempt, "success": True})
                 return deepcopy(payload)
@@ -463,7 +464,7 @@ class CoinGlassProductionAdapter:
                 if not isinstance(data, (dict, list)):
                     raise CoinGlassError("CoinGlass data must be an object or array")
                 with self._lock:
-                    self._cache[key] = (time.monotonic(), deepcopy(data))
+                    self._store_cache_unlocked(key, data)
                     self._last_success = time.time()
                     if dataset == "price_history":
                         self._critical_failures = 0
@@ -521,6 +522,21 @@ class CoinGlassProductionAdapter:
             if delay > 0:
                 time.sleep(delay)
             self._last_request = time.monotonic()
+
+    def _store_cache_unlocked(self, key: str, value: Any) -> None:
+        """Store a defensive copy while keeping the process cache bounded.
+
+        Callers hold ``self._lock``. Expired entries are removed first, then
+        the oldest live entry is evicted when the cap is reached.
+        """
+        now = time.monotonic()
+        expired = [stored_key for stored_key, (stored_at, _value) in self._cache.items() if now - stored_at > self._ttl]
+        for stored_key in expired:
+            self._cache.pop(stored_key, None)
+        if key not in self._cache and len(self._cache) >= self._cache_maximum_entries:
+            oldest = min(self._cache, key=lambda stored_key: self._cache[stored_key][0])
+            self._cache.pop(oldest, None)
+        self._cache[key] = (now, deepcopy(value))
 
     def _observe(self, event: str, fields: dict[str, Any]) -> None:
         try:
