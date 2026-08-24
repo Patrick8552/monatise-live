@@ -465,6 +465,7 @@ class DurableTaskScheduler:
         self._store = store
         self._scheduler = scheduler or TaskScheduler()
         self._lock = asyncio.Lock()
+        self._job_id_index: list[str] | None = None
 
     async def register(self, definition: Any) -> None:
         async with self._lock:
@@ -536,11 +537,15 @@ class DurableTaskScheduler:
         await self.save_job_state(job_id, {"state": state.value})
 
     async def save_job_definition(self, job_id: str, value: dict[str, Any]) -> None:
-        await self._store.put("scheduler", job_id, value)
-        index = await self._store.get("scheduler_indexes", "all")
-        job_ids = list(index.value.get("job_ids", ())) if index else []
-        if job_id not in job_ids:
-            await self._store.put("scheduler_indexes", "all", {"job_ids": [*job_ids, job_id]})
+        existing = await self._store.get("scheduler", job_id)
+        if existing is None or existing.value != value:
+            await self._store.put("scheduler", job_id, value)
+        if self._job_id_index is None:
+            index = await self._store.get("scheduler_indexes", "all")
+            self._job_id_index = list(index.value.get("job_ids", ())) if index else []
+        if job_id not in self._job_id_index:
+            self._job_id_index.append(job_id)
+            await self._store.put("scheduler_indexes", "all", {"job_ids": list(self._job_id_index)})
 
     async def load_job_definitions(self) -> tuple[dict[str, Any], ...]:
         index = await self._store.get("scheduler_indexes", "all")
@@ -570,7 +575,9 @@ class DurableTaskScheduler:
         await self._store.delete("scheduler_state", job_id)
         index = await self._store.get("scheduler_indexes", "all")
         if index:
-            await self._store.put("scheduler_indexes", "all", {"job_ids": [item for item in index.value.get("job_ids", ()) if item != job_id]})
+            remaining = [item for item in index.value.get("job_ids", ()) if item != job_id]
+            await self._store.put("scheduler_indexes", "all", {"job_ids": remaining})
+            self._job_id_index = remaining
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._scheduler, name)

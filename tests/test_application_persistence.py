@@ -376,6 +376,45 @@ def test_durable_scheduler_restores_definition_with_code_owned_task():
     asyncio.run(scenario())
 
 
+def test_durable_scheduler_skips_unchanged_definition_and_reuses_job_index():
+    async def scenario():
+        class CountingStore(MemoryDocumentStore):
+            def __init__(self):
+                super().__init__()
+                self.puts = []
+                self.gets = []
+
+            async def put(self, namespace, key, value, **kwargs):
+                self.puts.append((namespace, key))
+                return await super().put(namespace, key, value, **kwargs)
+
+            async def get(self, namespace, key):
+                self.gets.append((namespace, key))
+                return await super().get(namespace, key)
+
+        backend = CountingStore()
+
+        async def task(): return "ok"
+
+        definition = JobDefinition("analysis", "Analysis", task, ScheduleType.INTERVAL, interval=timedelta(minutes=5))
+        await DurableTaskScheduler(backend).register(definition)
+        first_version = backend.documents[("scheduler", "analysis")].version
+        backend.puts.clear()
+
+        restarted = DurableTaskScheduler(backend)
+        await restarted.register(definition)
+        assert backend.puts == []
+        assert backend.documents[("scheduler", "analysis")].version == first_version
+
+        changed = JobDefinition("second", "Second", task, ScheduleType.INTERVAL, interval=timedelta(minutes=10))
+        backend.gets.clear()
+        await restarted.register(changed)
+        assert backend.gets.count(("scheduler_indexes", "all")) == 0
+        assert backend.puts == [("scheduler", "second"), ("scheduler_indexes", "all")]
+
+    asyncio.run(scenario())
+
+
 def test_postgres_store_supports_installed_psycopg_parameter_style():
     class Cursor:
         def fetchone(self): return (1,)
