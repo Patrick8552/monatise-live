@@ -34,9 +34,11 @@ from monatise.adapters.quiver import QuiverAdapter, normalize_quiver_symbol
 from monatise.adapters.finnhub import FinnhubAdapter, FinnhubAdapterError
 from monatise.adapters.flashalpha import FlashAlphaAdapter, FlashAlphaAdapterError
 from monatise.application.stock_analysis import build_stock_analysis
-from monatise.application.flashalpha_analysis import FLASHALPHA_FUTURES_SYMBOLS, build_flashalpha_futures_analysis
-from monatise.application.stock_universe import StockCandidate, StockUniverseConfiguration, build_technical_stock_setup, eligible_stock_assets, rank_stock_universe
+from monatise.application.flashalpha_analysis import build_flashalpha_futures_analysis
+from monatise.application.stock_universe import StockCandidate, StockUniverseConfiguration, build_technical_stock_setup, rank_stock_universe
 from monatise.application.universe_discovery import rank_significant_futures_universe
+from monatise.application.ftmo_registry import FTMOAssetClass, FTMOInstrumentRegistry, FTMO_REGISTRY
+from monatise.application.ftmo_scanner import publication_allowed
 from monatise.analysis.tradingview import TRADINGVIEW_ALERT_LIMIT, TRADINGVIEW_FRESH_SECONDS, enrich_tradingview_alert, normalize_tradingview_alert
 from monatise.adapters.x_macro import XMacroAdapter, XMacroPost
 from monatise.live.config import RuntimeConfig
@@ -49,8 +51,10 @@ MIGRATION_LOCK_ID = 4_602_161_943_641_489_731
 FALSE_VALUES = {"0", "false", "no", "off", "disabled", ""}
 COINGLASS_PROVIDER_KEY = "coinglass.market_provider"
 SCHEDULED_ANALYSIS_JOB_PREFIX = "scheduled-analysis"
-SCHEDULED_ANALYSIS_DEFAULT_SYMBOLS = ("BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX", "LINK", "SUI")
-SCHEDULED_ANALYSIS_SUPPORTED_SYMBOLS = frozenset(SCHEDULED_ANALYSIS_DEFAULT_SYMBOLS)
+SCHEDULED_ANALYSIS_DEFAULT_SYMBOLS = ("BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX", "LINK", "LTC")
+SCHEDULED_ANALYSIS_SUPPORTED_SYMBOLS = frozenset(
+    item.underlying_symbol for item in FTMO_REGISTRY.for_asset_class(FTMOAssetClass.CRYPTO)
+)
 DIRECTIONAL_ANALYSIS_SYMBOLS_KEY = "MONATISE_DIRECTIONAL_ANALYSIS_SYMBOLS"
 # Bump whenever the snapshot payload shape changes, so a later replay can
 # tell which schema a given historical row was written under.
@@ -70,7 +74,6 @@ DECISION_SNAPSHOT_RETENTION_DAYS = 30
 # receipt, but kept longer than that so a short recent-history window
 # survives for debugging/review before the retention sweep prunes them.
 TRADINGVIEW_ALERT_RETENTION_DAYS = 3
-STOCK_SCAN_SYMBOLS = ("AAPL", "TSLA", "NVDA", "QQQ", "SPY")
 SCHEDULED_ANALYSIS_INTERVAL_SECONDS = {
     "1m": 60, "3m": 180, "5m": 300, "15m": 900, "30m": 1_800,
     "1h": 3_600, "4h": 14_400, "6h": 21_600, "8h": 28_800,
@@ -188,7 +191,13 @@ def scheduled_analysis_configuration(environment: Mapping[str, str]) -> tuple[tu
     if not symbols:
         raise ValueError("scheduled analysis requires at least one symbol")
     if unsupported:
-        raise ValueError("unsupported scheduled analysis symbols: " + ", ".join(unsupported))
+        if environment.get("MONATISE_ENVIRONMENT", "").strip().casefold() == "production" and environment.get(DIRECTIONAL_ANALYSIS_SYMBOLS_KEY) is not None:
+            symbols = tuple(symbol for symbol in symbols if symbol in SCHEDULED_ANALYSIS_SUPPORTED_SYMBOLS)
+            LOGGER.warning("ignored non-FTMO scheduled analysis symbols: %s", ",".join(unsupported))
+            if not symbols:
+                raise ValueError("scheduled analysis has no FTMO-supported symbols")
+        else:
+            raise ValueError("unsupported scheduled analysis symbols: " + ", ".join(unsupported))
     raw_intervals = environment.get("MONATISE_SCHEDULED_ANALYSIS_TIMEFRAMES", "15m")
     intervals = tuple(dict.fromkeys(part.strip() for part in raw_intervals.split(",") if part.strip()))
     unsupported_intervals = tuple(interval for interval in intervals if interval not in SCHEDULED_ANALYSIS_INTERVAL_SECONDS)
@@ -958,12 +967,17 @@ class OrchestrationRuntime:
     migrations: MigrationRunner | None = None
     coinglass: CoinGlassProductionAdapter | None = None
     backpack: BackpackAdapter | None = None
+    alpaca: AlpacaMarketDataAdapter | None = None
+    quiver: QuiverAdapter | None = None
+    finnhub: FinnhubAdapter | None = None
+    flashalpha: FlashAlphaAdapter | None = None
     telegram: TelegramNotifier | None = None
     x_macro: XMacroAdapter | None = None
     dependencies: dict[str, dict[str, Any]] = field(default_factory=dict)
     hierarchy: ShadowHierarchyCoordinator | None = None
     hierarchy_service: ShadowHierarchyService | None = None
     _telegram_signal_states: dict[tuple[str, str], dict[str, Any]] = field(default_factory=dict)
+    ftmo_registry: FTMOInstrumentRegistry = field(default_factory=lambda: FTMO_REGISTRY)
 
     def market_data_providers(self) -> dict[str, Any]:
         if self.coinglass is None:
@@ -1122,34 +1136,34 @@ class OrchestrationRuntime:
         }
         return (job_id,)
 
-    async def _register_coin_discovery_monitor(self) -> tuple[str, ...]:
-        if not _true(self.environment.get("MONATISE_COIN_DISCOVERY_ENABLED", "true")):
-            self.dependencies["coin_discovery"] = {"status": "ok", "enabled": False}
+    async def _register_ftmo_crypto_scanner(self) -> tuple[str, ...]:
+        """Scan only crypto CFDs present in the canonical FTMO registry."""
+        if not _true(self.environment.get("MONATISE_FTMO_CRYPTO_SCAN_ENABLED", "true")):
+            self.dependencies["ftmo_crypto_scan"] = {"status": "ok", "enabled": False}
             return ()
         if self.application is None or self.coinglass is None or self.telegram is None or self.redis is None:
-            self.dependencies["coin_discovery"] = {"status": "error", "enabled": True}
-            raise RuntimeError("Coin discovery monitoring dependencies are unavailable")
+            self.dependencies["ftmo_crypto_scan"] = {"status": "error", "enabled": True}
+            raise RuntimeError("FTMO crypto scanner dependencies are unavailable")
+        registry = getattr(self, "ftmo_registry", FTMO_REGISTRY)
+        ftmo_instruments = registry.for_asset_class(FTMOAssetClass.CRYPTO)
+        by_underlying = {item.underlying_symbol: item for item in ftmo_instruments}
         namespace = self.environment.get("MONATISE_REDIS_NAMESPACE", "monatise:production-analysis")
-        baseline_key = f"{namespace}:coinglass:supported-coins"
-        interval_seconds = max(60, int(self.environment.get("MONATISE_COIN_DISCOVERY_INTERVAL_SECONDS", "300")))
-        analysis_enabled = _true(self.environment.get("MONATISE_COIN_DISCOVERY_ANALYSIS_ENABLED", "true"))
-        analysis_cap = max(10, int(self.environment.get("MONATISE_COIN_DISCOVERY_ANALYSIS_CAP", "10")))
-        candidate_limit = max(1, int(self.environment.get("MONATISE_COIN_DISCOVERY_CANDIDATE_LIMIT", "20")))
-        minimum_volume = max(0.0, float(self.environment.get("MONATISE_COIN_DISCOVERY_MIN_VOLUME_USD", "5000000")))
-        minimum_open_interest = max(0.0, float(self.environment.get("MONATISE_COIN_DISCOVERY_MIN_OPEN_INTEREST_USD", "1000000")))
-        ranked_key = f"{namespace}:coinglass:ranked-universe"
+        interval_seconds = max(60, int(self.environment.get("MONATISE_FTMO_CRYPTO_SCAN_INTERVAL_SECONDS", "300")))
+        analysis_cap = max(1, min(20, int(self.environment.get("MONATISE_FTMO_CRYPTO_DEEP_ANALYSIS_LIMIT", "10"))))
+        candidate_limit = max(1, min(30, int(self.environment.get("MONATISE_FTMO_CRYPTO_CANDIDATE_LIMIT", "20"))))
+        minimum_volume = max(0.0, float(self.environment.get("MONATISE_FTMO_CRYPTO_MIN_VOLUME_USD", "5000000")))
+        minimum_open_interest = max(0.0, float(self.environment.get("MONATISE_FTMO_CRYPTO_MIN_OPEN_INTEREST_USD", "1000000")))
+        ranked_key = f"{namespace}:ftmo:crypto:ranked:v1"
 
         async def monitor() -> dict[str, Any]:
             started_at = datetime.now(timezone.utc)
-            self.dependencies["coin_discovery"].update({"last_started_at": started_at.isoformat(), "last_error": None})
+            self.dependencies["ftmo_crypto_scan"].update({"last_started_at": started_at.isoformat(), "last_error": None})
             try:
                 coins, markets, exchange_pairs = await asyncio.gather(
                     asyncio.to_thread(self.coinglass.supported_futures_coins),
                     asyncio.to_thread(self.coinglass.futures_coins_markets),
                     asyncio.to_thread(self.coinglass.supported_exchange_pairs),
                 )
-                previous_raw = await self.redis.get(baseline_key)
-                previous = set(json.loads(previous_raw)) if previous_raw else set()
                 current = set(coins)
                 verified = {
                     base for exchange, _instrument, base, quote in exchange_pairs
@@ -1168,23 +1182,33 @@ class OrchestrationRuntime:
                         continue
                     verified_ranks[base] = rank
                     verified_markets[base] = (exchange, instrument, quote)
-                eligible = current & verified
-                new_coins = sorted(current - previous) if previous else []
-                await self.redis.set(baseline_key, json.dumps(sorted(current)), ex=2_592_000)
+                # CoinGlass supplies evidence only; the FTMO registry owns the
+                # tradable universe. Unsupported movers can never enter here.
+                eligible = set(by_underlying) & current & verified
                 ranked = rank_significant_futures_universe(eligible, markets, minimum_volume_usd=minimum_volume, minimum_open_interest_usd=minimum_open_interest, limit=candidate_limit, verified_markets=verified_markets)
-                await self.redis.set(ranked_key, json.dumps([item.to_dict() for item in ranked]), ex=max(interval_seconds * 3, 900))
+                serialized_candidates = [
+                    {**item.to_dict(), "ftmo_symbol": by_underlying[item.symbol].ftmo_symbol, "asset_class": FTMOAssetClass.CRYPTO.value}
+                    for item in ranked
+                ]
+                await self.redis.set(ranked_key, json.dumps(serialized_candidates), ex=max(interval_seconds * 3, 900))
                 analyzed = 0
                 analysis_failures: list[dict[str, str]] = []
                 hierarchy_results: list[dict[str, Any]] = []
-                if analysis_enabled and self.hierarchy_service is not None:
+                if self.hierarchy_service is not None:
                     async def analyze_candidate(candidate: Any) -> dict[str, Any]:
+                        instrument = by_underlying[candidate.symbol]
                         derivatives = await asyncio.to_thread(self.coinglass.derivatives_snapshot, candidate.symbol, "15m")
                         return await self.hierarchy_service.tick(candidate.symbol, market_context={
-                            "discovery": candidate.to_dict(), "derivatives": derivatives,
+                            "discovery": {**candidate.to_dict(), "ftmo_symbol": instrument.ftmo_symbol}, "derivatives": derivatives,
+                            "ftmo_instrument": instrument.to_dict(),
                             "verified_market": f"{candidate.instrument} on {candidate.exchange} ({candidate.quote_asset}-quoted perpetual)",
                         })
 
-                    outcomes = await asyncio.gather(*(analyze_candidate(item) for item in ranked[:analysis_cap]), return_exceptions=True)
+                    semaphore = asyncio.Semaphore(4)
+                    async def bounded_analysis(candidate: Any) -> dict[str, Any]:
+                        async with semaphore:
+                            return await analyze_candidate(candidate)
+                    outcomes = await asyncio.gather(*(bounded_analysis(item) for item in ranked[:analysis_cap]), return_exceptions=True)
                     for candidate, outcome in zip(ranked[:analysis_cap], outcomes):
                         if isinstance(outcome, Exception):
                             LOGGER.warning("Significant-universe hierarchy analysis failed", extra={"symbol": candidate.symbol, "error_type": type(outcome).__name__})
@@ -1193,52 +1217,53 @@ class OrchestrationRuntime:
                         analyzed += 1
                         hierarchy_results.append(outcome)
                 result = {
-                    "supported_coins": len(current), "verified_liquid_quote_coins": len(eligible), "new_coins": len(new_coins), "ranked_candidates": len(ranked),
-                    "extended_universe_analysis_attempted": min(len(ranked), analysis_cap), "extended_universe_analyzed": analyzed,
-                    "extended_universe_analysis_failures": analysis_failures,
+                    "registry_version": ftmo_instruments[0].registry_version if ftmo_instruments else None,
+                    "ftmo_universe_size": len(ftmo_instruments), "provider_supported": len(eligible), "ranked_candidates": len(ranked),
+                    "deep_analysis_attempted": min(len(ranked), analysis_cap), "deep_analysis_completed": analyzed,
+                    "deep_analysis_failures": analysis_failures,
                     "telegram_published": sum(bool(item.get("telegram_published")) for item in hierarchy_results),
-                    "candidates": [item.to_dict() for item in ranked],
+                    "candidates": serialized_candidates, "execution_enabled": False,
                 }
-                self.dependencies["coin_discovery"].update({
+                self.dependencies["ftmo_crypto_scan"].update({
                     "last_success_at": datetime.now(timezone.utc).isoformat(), "last_result": result, "last_error": None,
                 })
                 return result
             except Exception as exc:
-                self.dependencies["coin_discovery"].update({
+                self.dependencies["ftmo_crypto_scan"].update({
                     "last_failure_at": datetime.now(timezone.utc).isoformat(), "last_error": type(exc).__name__,
                 })
                 raise
 
-        job_id = "coinglass-coin-discovery-telegram"
+        job_id = "ftmo-crypto-scanner-telegram"
         await self.application.infrastructure.scheduler.register(JobDefinition(
             job_id=job_id,
-            name="CoinGlass significant futures universe scanner",
+            name="Monatise FTMO crypto scanner",
             task=monitor,
             schedule_type=ScheduleType.INTERVAL,
             interval=timedelta(seconds=interval_seconds),
             timeout_seconds=min(max(interval_seconds - 1, 30), 180),
             retry_policy=RetryPolicy(maximum_attempts=2, delay_seconds=5, maximum_delay_seconds=15),
-            tags=("coinglass", "futures-universe", "directional", "telegram", "read-only"),
-            metadata={"notification_only": True, "execution_enabled": False, "directional_only": True},
+            tags=("ftmo", "crypto", "registry", "coinglass-intelligence", "telegram", "read-only"),
+            metadata={"notification_only": True, "execution_enabled": False, "directional_only": True, "universe_owner": "ftmo_registry"},
         ))
-        self.dependencies["coin_discovery"] = {
+        self.dependencies["ftmo_crypto_scan"] = {
             "status": "ok", "enabled": True, "job": job_id,
             "poll_interval_seconds": interval_seconds,
-            "extended_universe_analysis_enabled": analysis_enabled,
-            "extended_universe_analysis_cap": analysis_cap,
+            "universe_size": len(ftmo_instruments),
+            "deep_analysis_limit": analysis_cap,
             "candidate_limit": candidate_limit,
             "minimum_volume_usd": minimum_volume,
             "minimum_open_interest_usd": minimum_open_interest,
         }
         return (job_id,)
 
-    async def _register_stock_scan_monitor(self) -> tuple[str, ...]:
-        if not _true(self.environment.get("MONATISE_STOCK_SCAN_ENABLED", "true")):
-            self.dependencies["stock_scan"] = {"status": "ok", "enabled": False}
+    async def _register_ftmo_stock_scanner(self) -> tuple[str, ...]:
+        if not _true(self.environment.get("MONATISE_FTMO_STOCK_SCAN_ENABLED", "true")):
+            self.dependencies["ftmo_stock_scan"] = {"status": "ok", "enabled": False}
             return ()
         if self.application is None or self.telegram is None or self.redis is None:
-            self.dependencies["stock_scan"] = {"status": "error", "enabled": True}
-            raise RuntimeError("Stock scan monitoring dependencies are unavailable")
+            self.dependencies["ftmo_stock_scan"] = {"status": "error", "enabled": True}
+            raise RuntimeError("FTMO stock scanner dependencies are unavailable")
         namespace = self.environment.get("MONATISE_REDIS_NAMESPACE", "monatise:production-analysis")
         interval_seconds = max(300, int(self.environment.get("MONATISE_STOCK_SCAN_INTERVAL_SECONDS", "1800")))
         cooldown_seconds = max(300, int(self.environment.get("MONATISE_STOCK_SCAN_COOLDOWN_SECONDS", "21600")))
@@ -1255,36 +1280,38 @@ class OrchestrationRuntime:
 
         async def monitor() -> dict[str, Any]:
             started_at = datetime.now(timezone.utc)
-            self.dependencies["stock_scan"].update({"last_started_at": started_at.isoformat(), "last_error": None})
+            self.dependencies["ftmo_stock_scan"].update({"last_started_at": started_at.isoformat(), "last_error": None})
             try:
                 result = await self._run_stock_universe_scan(configuration, cooldown_seconds, namespace)
                 completed_at = datetime.now(timezone.utc)
-                self.dependencies["stock_scan"].update({
+                self.dependencies["ftmo_stock_scan"].update({
                     "last_success_at": completed_at.isoformat(),
                     "next_expected_at": (completed_at + timedelta(seconds=interval_seconds)).isoformat(),
                     "last_result": result, "last_error": None,
                 })
                 return result
             except Exception as exc:
-                self.dependencies["stock_scan"].update({
+                self.dependencies["ftmo_stock_scan"].update({
                     "last_failure_at": datetime.now(timezone.utc).isoformat(), "last_error": type(exc).__name__,
                 })
                 raise
 
-        job_id = "quiver-stock-scan-telegram"
+        job_id = "ftmo-stock-scanner-telegram"
         await self.application.infrastructure.scheduler.register(JobDefinition(
             job_id=job_id,
-            name="Monatise dynamic US stock universe scanner",
+            name="Monatise FTMO stock scanner",
             task=monitor,
             schedule_type=ScheduleType.INTERVAL,
             interval=timedelta(seconds=interval_seconds),
             timeout_seconds=min(max(interval_seconds - 1, 30), 180),
             retry_policy=RetryPolicy(maximum_attempts=2, delay_seconds=5, maximum_delay_seconds=15),
-            tags=("monatise", "stocks", "universe", "quiver", "flashalpha", "telegram", "read-only"),
-            metadata={"notification_only": True, "execution_enabled": False, "qualified_setups_only": True, "two_stage": True},
+            tags=("monatise", "ftmo", "stocks", "registry", "telegram", "read-only"),
+            metadata={"notification_only": True, "execution_enabled": False, "qualified_setups_only": True, "two_stage": True, "universe_owner": "ftmo_registry"},
         ))
-        self.dependencies["stock_scan"] = {
+        registry = getattr(self, "ftmo_registry", FTMO_REGISTRY)
+        self.dependencies["ftmo_stock_scan"] = {
             "status": "ok", "enabled": True, "job": job_id,
+            "universe_size": len(registry.for_asset_class(FTMOAssetClass.STOCK)),
             "poll_interval_seconds": interval_seconds, "cooldown_seconds": cooldown_seconds,
             "maximum_universe_size": configuration.maximum_universe_size,
             "shortlist_per_side": configuration.shortlist_per_side,
@@ -1299,21 +1326,28 @@ class OrchestrationRuntime:
         return (job_id,)
 
     async def _run_stock_universe_scan(self, configuration: StockUniverseConfiguration, cooldown_seconds: int, namespace: str) -> dict[str, Any]:
-        alpaca = AlpacaMarketDataAdapter.from_env()
-        universe_scope = str(configuration.maximum_universe_size) if configuration.maximum_universe_size > 0 else "all"
-        universe_key = f"{namespace}:stock-universe:eligible:v2:{universe_scope}:{int(configuration.include_leveraged)}"
-        raw_cached = await self.redis.get(universe_key)
+        alpaca = getattr(self, "alpaca", None) or AlpacaMarketDataAdapter.from_env()
+        self.alpaca = alpaca
+        registry = getattr(self, "ftmo_registry", FTMO_REGISTRY)
+        instruments = registry.for_asset_class(FTMOAssetClass.STOCK)
         exclusions: dict[str, int] = {}
-        if raw_cached:
-            assets = json.loads(raw_cached)
-            universe_source = "redis_cache"
-        else:
-            discovered = await asyncio.to_thread(alpaca.active_stock_assets)
-            assets, exclusions = eligible_stock_assets(discovered, configuration)
-            await self.redis.set(universe_key, json.dumps(assets, separators=(",", ":")), ex=21_600)
-            universe_source = "alpaca_assets"
+        assets = [{
+            "symbol": item.provider_symbol or item.underlying_symbol,
+            "ftmo_symbol": item.ftmo_symbol,
+            "underlying_symbol": item.underlying_symbol,
+            "name": item.display_name.removesuffix(", Spot CFD"),
+            "status": "active", "tradable": True, "exchange": item.exchange,
+            "ftmo_registry_verified": True, "market_data_provider": item.market_data_provider,
+        } for item in instruments]
+        if configuration.maximum_universe_size > 0:
+            assets = assets[:configuration.maximum_universe_size]
+        universe_source = "ftmo_registry"
 
-        snapshot_batches = [tuple(str(row["symbol"]).upper() for row in assets[index:index + 200]) for index in range(0, len(assets), 200)]
+        alpaca_assets = [row for row in assets if row.get("market_data_provider") == "alpaca"]
+        provider_unavailable = len(assets) - len(alpaca_assets)
+        if provider_unavailable:
+            exclusions["provider_unavailable_fail_closed"] = provider_unavailable
+        snapshot_batches = [tuple(str(row["symbol"]).upper() for row in alpaca_assets[index:index + 200]) for index in range(0, len(alpaca_assets), 200)]
         semaphore = asyncio.Semaphore(4)
         snapshot_failures = 0
 
@@ -1336,6 +1370,7 @@ class OrchestrationRuntime:
         )
         outcomes = await asyncio.gather(*(self._analyze_market_stock(candidate, configuration, index) for index, candidate in enumerate(shortlisted)), return_exceptions=True)
         analyzed = qualified = published = 0
+        scan_results: list[dict[str, Any]] = []
         failures: list[dict[str, str]] = []
         suppressions: dict[str, int] = {}
         provider_degraded = {"quiver": 0, "flashalpha": 0, "finnhub": 0}
@@ -1344,6 +1379,10 @@ class OrchestrationRuntime:
                 failures.append({"symbol": candidate.symbol, "error_type": type(outcome).__name__})
                 continue
             analyzed += 1
+            outcome.setdefault("ftmo_symbol", candidate.ftmo_symbol or candidate.symbol)
+            outcome.setdefault("underlying_symbol", candidate.underlying_symbol or candidate.symbol)
+            outcome.setdefault("exchange", candidate.exchange)
+            scan_results.append(outcome)
             additional = outcome.get("additional_context") or {}
             if not (additional.get("quiver") or {}).get("available"): provider_degraded["quiver"] += 1
             if (additional.get("flashalpha") or {}).get("unavailable"): provider_degraded["flashalpha"] += 1
@@ -1361,7 +1400,8 @@ class OrchestrationRuntime:
                 continue
             await self.redis.set(dedupe_key, json.dumps(alert_state, separators=(",", ":"), sort_keys=True), ex=cooldown_seconds)
             try:
-                await self.telegram.stock_analysis_notification(TelegramNotifier.format_market_stock_setup(outcome))
+                notifier = getattr(self.telegram, "ftmo_stock_notification", self.telegram.stock_analysis_notification)
+                await notifier(TelegramNotifier.format_market_stock_setup(outcome))
                 published += 1
             except Exception as exc:
                 if previous_state:
@@ -1370,7 +1410,8 @@ class OrchestrationRuntime:
                     await self.redis.delete(dedupe_key)
                 failures.append({"symbol": candidate.symbol, "error_type": type(exc).__name__})
         return {
-            "universe_source": universe_source, "universe_size": len(assets), "snapshots_received": len(snapshots),
+            "universe_source": universe_source, "registry_version": instruments[0].registry_version if instruments else None,
+            "universe_size": len(assets), "snapshots_received": len(snapshots),
             "snapshot_batch_failures": snapshot_failures, "excluded": exclusions,
             "stage_a_long_ranked": len(longs), "stage_a_short_ranked": len(shorts),
             "shortlisted_long": min(len(longs), configuration.shortlist_per_side),
@@ -1378,10 +1419,16 @@ class OrchestrationRuntime:
             "deep_analysis_attempted": len(shortlisted), "deep_analysis_completed": analyzed,
             "qualified_setups": qualified, "telegram_published": published,
             "suppressions": suppressions, "failures": failures, "provider_degraded": provider_degraded,
+            "results": scan_results, "execution_enabled": False,
         }
 
     async def _analyze_market_stock(self, candidate: StockCandidate, configuration: StockUniverseConfiguration, enrichment_index: int) -> dict[str, Any]:
-        alpaca = AlpacaMarketDataAdapter.from_env()
+        alpaca = getattr(self, "alpaca", None) or AlpacaMarketDataAdapter.from_env()
+        self.alpaca = alpaca
+        quiver = getattr(self, "quiver", None) or QuiverAdapter.from_env()
+        flashalpha = getattr(self, "flashalpha", None) or FlashAlphaAdapter.from_env()
+        finnhub = getattr(self, "finnhub", None) or FinnhubAdapter.from_env()
+        self.quiver, self.flashalpha, self.finnhub = quiver, flashalpha, finnhub
         hourly_task = asyncio.to_thread(alpaca.stock_bars, candidate.symbol, "1Hour", 220)
         daily_task = asyncio.to_thread(alpaca.stock_bars, candidate.symbol, "1Day", 120)
 
@@ -1392,148 +1439,137 @@ class OrchestrationRuntime:
                 return fallback
 
         quiver_task = optional_context(
-            lambda: QuiverAdapter.from_env().context(candidate.symbol),
+            lambda: quiver.context(candidate.symbol),
             {"source": "Quiver Quantitative", "available": False, "summary": {"score": 0, "cautions": ["provider unavailable"]}},
         ) if enrichment_index < max(0, int(self.environment.get("MONATISE_STOCK_QUIVER_CAP_PER_CYCLE", "6"))) else asyncio.sleep(0, result={"source": "Quiver Quantitative", "available": False, "summary": {"score": 0, "cautions": ["cycle quota reserved"]}})
         flashalpha_task = optional_context(
-            lambda: FlashAlphaAdapter.from_env().context(candidate.symbol),
+            lambda: flashalpha.context(candidate.symbol),
             {"source": "FlashAlpha", "unavailable": True},
         ) if enrichment_index < max(0, int(self.environment.get("MONATISE_STOCK_FLASHALPHA_CAP_PER_CYCLE", "4"))) else asyncio.sleep(0, result={"source": "FlashAlpha", "unavailable": True, "reason": "cycle quota reserved"})
         finnhub_task = optional_context(
-            lambda: FinnhubAdapter.from_env().context(candidate.symbol),
+            lambda: finnhub.context(candidate.symbol),
             {"source": "Finnhub", "unavailable": True},
         ) if enrichment_index < max(0, int(self.environment.get("MONATISE_STOCK_FINNHUB_CAP_PER_CYCLE", "6"))) else asyncio.sleep(0, result={"source": "Finnhub", "unavailable": True, "reason": "cycle quota reserved"})
         hourly, daily, quiver, flashalpha, finnhub = await asyncio.gather(hourly_task, daily_task, quiver_task, flashalpha_task, finnhub_task)
         return build_technical_stock_setup(candidate, hourly, daily, configuration=configuration, quiver=quiver, flashalpha=flashalpha, finnhub=finnhub)
 
-    async def _register_flashalpha_futures_monitor(self) -> tuple[str, ...]:
+    async def _register_ftmo_futures_scanner(self) -> tuple[str, ...]:
         api_key_configured = bool(self.environment.get("FLASHALPHA_API_KEY", "").strip())
-        default_enabled = "true" if api_key_configured else "false"
-        if not _true(self.environment.get("MONATISE_FLASHALPHA_FUTURES_SCAN_ENABLED", default_enabled)):
-            self.dependencies["flashalpha_futures_scan"] = {"status": "ok", "enabled": False}
+        if not _true(self.environment.get("MONATISE_FTMO_FUTURES_SCAN_ENABLED", "true")):
+            self.dependencies["ftmo_futures_scan"] = {"status": "ok", "enabled": False}
             return ()
         if self.application is None or self.telegram is None or self.redis is None:
-            self.dependencies["flashalpha_futures_scan"] = {"status": "error", "enabled": True}
-            raise RuntimeError("FlashAlpha futures scan dependencies are unavailable")
-        if not api_key_configured:
-            self.dependencies["flashalpha_futures_scan"] = {"status": "error", "enabled": True, "configured": False}
-            raise RuntimeError("FlashAlpha futures scan is enabled but FLASHALPHA_API_KEY is missing")
-
-        raw_symbols = self.environment.get("MONATISE_FLASHALPHA_FUTURES_SYMBOLS", ",".join(FLASHALPHA_FUTURES_SYMBOLS))
-        symbols = tuple(dict.fromkeys(part.strip().upper().removesuffix("=F") for part in raw_symbols.split(",") if part.strip()))
-        if not symbols:
-            raise ValueError("FlashAlpha futures scan requires at least one symbol")
-        interval_seconds = max(300, int(self.environment.get("MONATISE_FLASHALPHA_FUTURES_SCAN_INTERVAL_SECONDS", "900")))
-        cooldown_seconds = max(300, int(self.environment.get("MONATISE_FLASHALPHA_FUTURES_SCAN_COOLDOWN_SECONDS", "3600")))
+            self.dependencies["ftmo_futures_scan"] = {"status": "error", "enabled": True}
+            raise RuntimeError("FTMO futures scanner dependencies are unavailable")
+        registry = getattr(self, "ftmo_registry", FTMO_REGISTRY)
+        instruments = registry.for_asset_class(FTMOAssetClass.FUTURES_LINKED)
+        interval_seconds = max(300, int(self.environment.get("MONATISE_FTMO_FUTURES_SCAN_INTERVAL_SECONDS", "900")))
+        cooldown_seconds = max(300, int(self.environment.get("MONATISE_FTMO_FUTURES_SCAN_COOLDOWN_SECONDS", "3600")))
         namespace = self.environment.get("MONATISE_REDIS_NAMESPACE", "monatise:production-analysis")
 
         async def monitor() -> dict[str, Any]:
             started_at = datetime.now(timezone.utc)
-            self.dependencies["flashalpha_futures_scan"].update({"last_started_at": started_at.isoformat(), "last_error": None})
+            self.dependencies["ftmo_futures_scan"].update({"last_started_at": started_at.isoformat(), "last_error": None})
             try:
-                result = await self._analyze_flashalpha_futures(symbols, cooldown_seconds, namespace)
-                self.dependencies["flashalpha_futures_scan"].update({
+                result = await self._analyze_ftmo_futures(instruments, cooldown_seconds, namespace)
+                self.dependencies["ftmo_futures_scan"].update({
                     "last_success_at": datetime.now(timezone.utc).isoformat(), "last_result": result, "last_error": None,
                 })
                 return result
             except Exception as exc:
-                self.dependencies["flashalpha_futures_scan"].update({
+                self.dependencies["ftmo_futures_scan"].update({
                     "last_failure_at": datetime.now(timezone.utc).isoformat(), "last_error": type(exc).__name__,
                 })
                 raise
 
-        job_id = "flashalpha-cme-futures-scan-telegram"
+        job_id = "ftmo-futures-scanner-telegram"
         await self.application.infrastructure.scheduler.register(JobDefinition(
             job_id=job_id,
-            name="FlashAlpha CME futures setup scanner",
+            name="Monatise FTMO futures-linked market scanner",
             task=monitor,
             schedule_type=ScheduleType.INTERVAL,
             interval=timedelta(seconds=interval_seconds),
             timeout_seconds=min(max(interval_seconds - 1, 60), 240),
             retry_policy=RetryPolicy(maximum_attempts=2, delay_seconds=5, maximum_delay_seconds=15),
-            tags=("flashalpha", "cme", "futures-universe", "telegram", "read-only"),
-            metadata={"notification_only": True, "execution_enabled": False, "qualified_setups_only": True},
+            tags=("ftmo", "futures-linked-cfd", "registry", "telegram", "read-only"),
+            metadata={"notification_only": True, "execution_enabled": False, "qualified_setups_only": True, "universe_owner": "ftmo_registry"},
         ))
-        self.dependencies["flashalpha_futures_scan"] = {
-            "status": "ok", "enabled": True, "configured": True, "job": job_id,
-            "symbols": list(symbols), "poll_interval_seconds": interval_seconds, "cooldown_seconds": cooldown_seconds,
+        self.dependencies["ftmo_futures_scan"] = {
+            "status": "ok" if api_key_configured else "degraded", "enabled": True, "configured": api_key_configured, "job": job_id,
+            "universe_size": len(instruments), "futures_roots": sorted({item.futures_symbol for item in instruments}),
+            "poll_interval_seconds": interval_seconds, "cooldown_seconds": cooldown_seconds,
         }
         return (job_id,)
 
-    async def _analyze_flashalpha_futures(self, symbols: tuple[str, ...], cooldown_seconds: int, namespace: str) -> dict[str, Any]:
-        adapter = FlashAlphaAdapter.from_env()
-
-        async def analyze(symbol: str) -> tuple[str, dict[str, Any] | Exception]:
-            try:
-                context = await asyncio.to_thread(adapter.context, f"{symbol}=F")
-                return symbol, build_flashalpha_futures_analysis(context)
-            except Exception as exc:
-                return symbol, exc
-
-        outcomes = await asyncio.gather(*(analyze(symbol) for symbol in symbols))
-        analyzed = published = 0
+    async def _analyze_ftmo_futures(self, instruments: tuple[Any, ...], cooldown_seconds: int, namespace: str) -> dict[str, Any]:
+        adapter = getattr(self, "flashalpha", None) or FlashAlphaAdapter.from_env()
+        self.flashalpha = adapter
+        unique_roots = tuple(dict.fromkeys(item.futures_symbol for item in instruments if item.futures_symbol))
+        queue: asyncio.Queue[str] = asyncio.Queue()
+        for root in unique_roots:
+            queue.put_nowait(root)
+        contexts: dict[str, dict[str, Any]] = {}
         failures: list[dict[str, str]] = []
-        for symbol, outcome in outcomes:
-            if isinstance(outcome, Exception):
-                LOGGER.warning("FlashAlpha futures analysis failed", extra={"symbol": symbol, "error_type": type(outcome).__name__})
-                failures.append({"symbol": symbol, "error_type": type(outcome).__name__})
+
+        async def worker() -> None:
+            while True:
+                try:
+                    root = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    return
+                try:
+                    contexts[root] = await asyncio.to_thread(adapter.context, f"{root}=F")
+                except Exception as exc:
+                    failures.append({"symbol": root, "error_type": type(exc).__name__})
+                finally:
+                    queue.task_done()
+
+        workers = tuple(asyncio.create_task(worker()) for _ in range(min(4, len(unique_roots))))
+        if workers:
+            await asyncio.gather(*workers)
+        candidates: list[tuple[Any, dict[str, Any]]] = []
+        for instrument in instruments:
+            context = contexts.get(instrument.futures_symbol)
+            if context is None:
                 continue
-            analyzed += 1
-            if outcome.get("setup_status") != "confirmed":
+            analysis = build_flashalpha_futures_analysis(context)
+            analysis.update({
+                "ftmo_symbol": instrument.ftmo_symbol,
+                "underlying_market": instrument.underlying_market,
+                "futures_symbol": instrument.futures_symbol,
+                "micro_futures_symbol": instrument.micro_futures_symbol,
+                "asset_class": FTMOAssetClass.FUTURES_LINKED.value,
+            })
+            candidates.append((instrument, analysis))
+        candidates.sort(key=lambda item: (-abs(int(item[1].get("score") or 0)), item[0].ftmo_symbol))
+        deep_limit = max(1, min(20, int(self.environment.get("MONATISE_FTMO_FUTURES_DEEP_ANALYSIS_LIMIT", "10"))))
+        published = suppressed = 0
+        for instrument, analysis in candidates[:deep_limit]:
+            if not publication_allowed(analysis):
+                suppressed += 1
                 continue
-            alert_state = _setup_alert_state(outcome)
-            cooldown_key = f"{namespace}:flashalpha-futures-alert:{symbol}"
+            alert_state = _setup_alert_state(analysis)
+            cooldown_key = f"{namespace}:ftmo:futures-alert:{instrument.ftmo_symbol}"
             previous_state = await self.redis.get(cooldown_key)
             if previous_state and not _setup_materially_changed(previous_state, alert_state):
+                suppressed += 1
                 continue
             await self.redis.set(cooldown_key, json.dumps(alert_state, separators=(",", ":"), sort_keys=True), ex=cooldown_seconds)
             try:
-                await self.telegram.stock_analysis_notification(TelegramNotifier.format_flashalpha_futures_analysis(outcome))
+                notifier = getattr(self.telegram, "ftmo_futures_notification", self.telegram.stock_analysis_notification)
+                await notifier(TelegramNotifier.format_ftmo_futures_setup(analysis))
                 published += 1
             except Exception as exc:
+                failures.append({"symbol": instrument.ftmo_symbol, "error_type": type(exc).__name__})
                 if previous_state:
                     await self.redis.set(cooldown_key, previous_state, ex=cooldown_seconds)
                 else:
                     await self.redis.delete(cooldown_key)
-                LOGGER.warning("FlashAlpha futures Telegram delivery failed", extra={"symbol": symbol, "error_type": type(exc).__name__})
-        return {"symbols": len(symbols), "analyzed": analyzed, "published": published, "failures": failures}
-
-    async def _analyze_stocks(self, symbols: tuple[str, ...], cooldown_seconds: int, namespace: str) -> int:
-        """Cooldown-gated per symbol so each of the fixed Quiver stocks is
-        re-analyzed and re-notified a few times a day. This is independent of
-        the crypto hierarchy's directional-only notification policy."""
-        claimed: list[str] = []
-        for symbol in symbols:
-            cooldown_key = f"{namespace}:stock-alert:analysis:{symbol}"
-            if await self.redis.set(cooldown_key, "reserved", nx=True, ex=cooldown_seconds):
-                claimed.append(symbol)
-        if not claimed:
-            return 0
-
-        outcomes = await asyncio.gather(
-            *(self.analyse_stock(symbol) for symbol in claimed),
-            return_exceptions=True,
-        )
-        analyzed = 0
-        for symbol, outcome in zip(claimed, outcomes):
-            if isinstance(outcome, Exception):
-                LOGGER.warning(
-                    "Stock scan analysis failed",
-                    extra={"symbol": symbol, "error_type": type(outcome).__name__},
-                )
-                await self.redis.delete(f"{namespace}:stock-alert:analysis:{symbol}")
-                continue
-            try:
-                message = TelegramNotifier.format_stock_analysis(outcome)
-                await self.telegram.stock_analysis_notification(message)
-            except Exception as exc:
-                LOGGER.warning(
-                    "Stock analysis delivery failed",
-                    extra={"symbol": symbol, "error_type": type(exc).__name__},
-                )
-                continue
-            analyzed += 1
-        return analyzed
+        return {
+            "universe_size": len(instruments), "provider_roots": len(unique_roots), "provider_contexts": len(contexts),
+            "ranked_candidates": len(candidates), "deep_analysis_attempted": min(len(candidates), deep_limit),
+            "telegram_published": published, "suppressed": suppressed, "failures": failures, "execution_enabled": False,
+        }
 
     @staticmethod
     def _price_change_24h(row: Mapping[str, Any]) -> float | None:
@@ -1633,9 +1669,9 @@ class OrchestrationRuntime:
                     **self.environment,
                     "MONATISE_HIERARCHICAL_TELEGRAM_PUBLISH_ENABLED": "false",
                     "MONATISE_X_MONITOR_ENABLED": "false",
-                    "MONATISE_COIN_DISCOVERY_ENABLED": "false",
-                    "MONATISE_STOCK_SCAN_ENABLED": "false",
-                    "MONATISE_FLASHALPHA_FUTURES_SCAN_ENABLED": "false",
+                    "MONATISE_FTMO_CRYPTO_SCAN_ENABLED": "false",
+                    "MONATISE_FTMO_STOCK_SCAN_ENABLED": "false",
+                    "MONATISE_FTMO_FUTURES_SCAN_ENABLED": "false",
                 }
             if telegram_transport_enabled(self.environment) and telegram_token and telegram_chat:
                 secrets = EnvironmentSecretBoundary(self.environment)
@@ -1648,9 +1684,9 @@ class OrchestrationRuntime:
             scheduled_jobs = await self._register_scheduled_analysis()
             await self._register_hierarchy_shadow(store)
             await self._register_x_macro_monitor()
-            await self._register_coin_discovery_monitor()
-            await self._register_stock_scan_monitor()
-            await self._register_flashalpha_futures_monitor()
+            await self._register_ftmo_crypto_scanner()
+            await self._register_ftmo_stock_scanner()
+            await self._register_ftmo_futures_scanner()
             await self._register_decision_snapshot_retention()
             await self._register_tradingview_alert_retention()
             self.leadership = RedisSchedulerLeadership(
@@ -1705,7 +1741,7 @@ class OrchestrationRuntime:
                 "telegram": "disabled" if not telegram_notifications_enabled else ("configured_notification_only" if self.telegram is not None else "unavailable_optional"),
                 "openclaw": "configured_analysis_only" if self.environment.get("MONATISE_OPENCLAW_TOKEN") else "unavailable_optional",
                 "x_macro": "configured_read_only" if self.x_macro is not None else "unavailable_optional",
-                "coin_discovery": "configured_notification_only",
+                "ftmo_scanners": "configured_notification_only",
             }
             self.dependencies["audit_logging"] = {"status": "ok", "enabled": True}
             startup_phase = "audit_integrity"

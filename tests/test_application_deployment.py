@@ -152,8 +152,8 @@ def test_scheduled_analysis_configuration_is_explicit_bounded_and_crypto_only():
     }) == (SCHEDULED_ANALYSIS_DEFAULT_SYMBOLS, ("15m",))
     assert scheduled_analysis_configuration({
         "MONATISE_SCHEDULED_ANALYSIS_ENABLED": "true",
-        "MONATISE_SCHEDULED_ANALYSIS_SYMBOLS": "BNB,XRP,ADA,AVAX,LINK,SUI",
-    }) == (("BNB", "XRP", "ADA", "AVAX", "LINK", "SUI"), ("15m",))
+        "MONATISE_SCHEDULED_ANALYSIS_SYMBOLS": "BNB,XRP,ADA,AVAX,LINK,LTC",
+    }) == (("BNB", "XRP", "ADA", "AVAX", "LINK", "LTC"), ("15m",))
     assert scheduled_analysis_configuration({
         "MONATISE_ENVIRONMENT": "production",
         "MONATISE_SCHEDULED_ANALYSIS_ENABLED": "true",
@@ -165,10 +165,20 @@ def test_scheduled_analysis_configuration_is_explicit_bounded_and_crypto_only():
         "MONATISE_SCHEDULED_ANALYSIS_SYMBOLS": "BTC",
         "MONATISE_DIRECTIONAL_ANALYSIS_SYMBOLS": "BTC",
     }) == (("BTC",), ("15m",))
+    assert scheduled_analysis_configuration({
+        "MONATISE_ENVIRONMENT": "production",
+        "MONATISE_SCHEDULED_ANALYSIS_ENABLED": "true",
+        "MONATISE_DIRECTIONAL_ANALYSIS_SYMBOLS": "BTC,SUI",
+    }) == (("BTC",), ("15m",))
     with pytest.raises(ValueError, match="unsupported scheduled analysis symbols"):
         scheduled_analysis_configuration({
             "MONATISE_SCHEDULED_ANALYSIS_ENABLED": "true",
             "MONATISE_SCHEDULED_ANALYSIS_SYMBOLS": "XAUUSD",
+        })
+    with pytest.raises(ValueError, match="unsupported scheduled analysis symbols"):
+        scheduled_analysis_configuration({
+            "MONATISE_SCHEDULED_ANALYSIS_ENABLED": "true",
+            "MONATISE_SCHEDULED_ANALYSIS_SYMBOLS": "SUI",
         })
     with pytest.raises(ValueError, match="unsupported scheduled analysis timeframes"):
         scheduled_analysis_configuration({
@@ -981,7 +991,7 @@ def test_analyse_records_a_decision_snapshot_with_every_stage_output():
     assert candle_reference["latest"]["close"] == 65_000
 
 
-def test_analyse_resolves_supported_altcoin_before_directional_pipeline():
+def test_on_demand_analysis_resolves_supported_crypto_before_directional_pipeline():
     captured = []
 
     class Orchestrator:

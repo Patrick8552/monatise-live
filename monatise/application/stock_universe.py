@@ -32,6 +32,9 @@ class StockCandidate:
     spread_bps: float
     daily_dollar_volume: float
     stage_a_reasons: tuple[str, ...]
+    ftmo_symbol: str | None = None
+    underlying_symbol: str | None = None
+    exchange: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -39,6 +42,9 @@ class StockCandidate:
             "rank_score": round(self.rank_score, 4), "price": self.price,
             "spread_bps": round(self.spread_bps, 2), "daily_dollar_volume": round(self.daily_dollar_volume, 2),
             "stage_a_reasons": list(self.stage_a_reasons),
+            "ftmo_symbol": self.ftmo_symbol or self.symbol,
+            "underlying_symbol": self.underlying_symbol or self.symbol,
+            "exchange": self.exchange,
         }
 
 
@@ -88,6 +94,9 @@ def build_technical_stock_setup(
     current_time = now or datetime.now(timezone.utc)
     result: dict[str, Any] = {
         "asset": candidate.symbol, "company_name": candidate.name, "asset_class": "stock",
+        "ftmo_symbol": candidate.ftmo_symbol or candidate.symbol,
+        "underlying_symbol": candidate.underlying_symbol or candidate.symbol,
+        "exchange": candidate.exchange,
         "direction": candidate.side.upper(), "decision": "NO_TRADE", "score": 0,
         "score_threshold": configuration.minimum_score, "setup_status": "insufficient_market_data",
         "stage_a": candidate.to_dict(), "execution": {"enabled": False, "orders_placed": 0},
@@ -177,7 +186,7 @@ def build_technical_stock_setup(
 
 def _asset_exclusion(asset: dict[str, Any], configuration: StockUniverseConfiguration) -> str | None:
     if str(asset.get("status") or "").casefold() != "active" or not asset.get("tradable", False): return "inactive_or_untradable"
-    if str(asset.get("exchange") or "").upper() not in {"NASDAQ", "NYSE", "ARCA", "AMEX", "BATS"}: return "unsupported_exchange"
+    if not asset.get("ftmo_registry_verified") and str(asset.get("exchange") or "").upper() not in {"NASDAQ", "NYSE", "ARCA", "AMEX", "BATS"}: return "unsupported_exchange"
     symbol = str(asset.get("symbol") or "")
     if not symbol or len(symbol) > 12 or "/" in symbol: return "unsupported_symbol"
     if not configuration.include_leveraged and LEVERAGED_INVERSE_PATTERN.search(str(asset.get("name") or "")): return "leveraged_or_inverse"
@@ -205,7 +214,13 @@ def _rank_snapshot(asset: dict[str, Any], snapshot: dict[str, Any], configuratio
     side = "long" if change >= 0 else "short"
     score = abs(change) + min(range_pct, 10) * 0.25 + min(math.log10(max(dollar_volume, 1)) - 6, 4) * 0.2
     reasons = (f"daily change {change:+.2f}%", f"range {range_pct:.2f}%", f"dollar volume ${dollar_volume:,.0f}")
-    return StockCandidate(str(asset["symbol"]).upper(), str(asset.get("name") or asset["symbol"]), side, score, price, spread_bps, dollar_volume, reasons), None
+    return StockCandidate(
+        str(asset["symbol"]).upper(), str(asset.get("name") or asset["symbol"]), side,
+        score, price, spread_bps, dollar_volume, reasons,
+        str(asset.get("ftmo_symbol") or asset["symbol"]),
+        str(asset.get("underlying_symbol") or asset["symbol"]),
+        str(asset.get("exchange") or "") or None,
+    ), None
 
 
 def _clean_bars(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:

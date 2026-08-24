@@ -21,9 +21,7 @@ const CONFIRMATION_INTERVAL_BY_STRUCTURE = {
 };
 const DEFAULT_VIEW_INTERVAL = "1h";
 const FETCH_TIMEOUT_MS = 20_000;
-// Broad-coverage crypto futures venues to fall back through when a pair
-// isn't listed on the selected exchange. Deliberately excludes CME, which
-// only lists regulated BTC/ETH futures and would never carry altcoins.
+// Intelligence venues only. They do not define the FTMO tradable universe.
 const CRYPTO_FALLBACK_EXCHANGES = ["Binance", "OKX", "Bybit"];
 
 function cryptoAnalysisFrames() {
@@ -34,13 +32,12 @@ const MIN_CONTEXT_SIGNAL_CONFIDENCE = 50;
 const MIN_ENTRY_NOTIFICATION_CONFIDENCE = 65;
 const MIN_ENTRY_NOTIFICATION_CHECKS = 3;
 const SIGNAL_CORE_MIN_EVIDENCE = 3;
+// Canonical FTMO crypto underlyings. CoinGlass movers outside this list are
+// intentionally unable to enter selection or autonomous monitoring.
 const ASSET_DEFINITIONS = [
-  "BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "ADA", "AVAX", "LINK", "TRX", "TON", "DOT", "BCH", "LTC", "UNI", "NEAR",
-  "APT", "ICP", "ETC", "ATOM", "FIL", "ARB", "OP", "SUI", "SEI", "INJ", "TIA", "WLD", "AAVE", "MKR", "RUNE", "GRT",
-  "ALGO", "JUP", "PYTH", "JTO", "ONDO", "ENA", "WIF", "PEPE", "SHIB", "FLOKI", "BONK", "ORDI", "1000SATS", "1000RATS",
-  "FET", "RNDR", "TAO", "LDO", "STX", "IMX", "SAND", "MANA", "AXS", "GALA", "APE", "GMT", "DYDX", "BLUR", "STRK",
-  "ZK", "ZRO", "NOT", "PEOPLE", "ENS", "CRV", "COMP", "SNX", "SUSHI", "YFI", "1INCH", "KAS", "MATIC", "POL", "XLM",
-  "HBAR", "VET", "THETA", "EGLD", "XMR", "ZEC", "DASH", "KAVA", "MINA", "ROSE", "CELO", "FLOW", "CHZ", "QNT"
+  "BTC", "DASH", "ETH", "LTC", "XRP", "XMR", "NEO", "ADA", "DOT", "DOGE",
+  "SOL", "AVAX", "BCH", "ETC", "BNB", "SAND", "LINK", "NEAR", "ALGO", "ICP",
+  "AAVE", "HBAR", "GALA", "GRT", "IMX", "MANA", "VET", "XLM", "UNI", "XTZ"
 ].map((coin) => ({
   coin,
   hyper: ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE"].includes(coin) ? coin : "",
@@ -2317,8 +2314,7 @@ async function getPriceForAsset(asset, limit = "96") {
   const interval = els.intervalSelect.value || ANALYSIS_INTERVAL;
   requireCoinGlass(`${asset.coin} price history`);
   const preferred = els.exchangeSelect.value;
-  // Not every pair is listed on every venue (e.g. many memecoins aren't on
-  // CME, which only carries regulated BTC/ETH futures). Try the user's
+  // Not every FTMO crypto pair is listed on every venue. Try the user's
   // selected exchange first, then fall back through the broad-coverage
   // crypto venues rather than failing outright -- but always label which
   // exchange the data actually came from, never silently substitute.
@@ -2387,7 +2383,7 @@ function renderMonitorGrid() {
           </button>
         `;
       }).join("")
-    : `<article class="monitor-card"><span>Premium scanner idle</span><strong>Optional</strong><small>CoinGlass adds cross-exchange universe scanning; the selected Hyperliquid market remains live.</small></article>`;
+    : `<article class="monitor-card"><span>FTMO crypto scanner idle</span><strong>Optional</strong><small>CoinGlass adds intelligence only; FTMO registry controls the tradable universe.</small></article>`;
 }
 
 async function refreshAutonomousMonitor() {
@@ -2409,20 +2405,20 @@ async function refreshAutonomousMonitor() {
         }]));
         state.monitor.lastRun = Date.now();
         state.monitor.scanning = false;
-        els.monitorStatus.textContent = `Significant CoinGlass universe · ${candidates.length} ranked candidates · directional confirmation required`;
+        els.monitorStatus.textContent = `FTMO crypto universe · ${candidates.length} ranked candidates · directional confirmation required`;
         renderMonitorGrid();
         return;
       }
     }
   } catch {
-    // Fall through to the rotating-market fallback while the server scanner warms up.
+    // Fall through to the FTMO-only rotating fallback while the server scanner warms up.
   }
   const keys = monitorAssetKeys();
   const batchSize = 8;
   const start = state.monitor.cursor % keys.length;
   const batch = Array.from({ length: batchSize }, (_, index) => keys[(start + index) % keys.length]);
   state.monitor.cursor = (start + batchSize) % keys.length;
-  els.monitorStatus.textContent = `Scanning ${batch.join(", ")} · ${keys.length} CoinGlass markets in rotation`;
+  els.monitorStatus.textContent = `Scanning ${batch.join(", ")} · ${keys.length} FTMO crypto markets in rotation`;
   const settled = await Promise.allSettled(batch.map(async (coin) => {
     const asset = ASSETS[coin];
     const rows = await getPriceForAsset(asset, "32");

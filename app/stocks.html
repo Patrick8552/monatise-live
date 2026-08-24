@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#07110f" />
     <title>Monatise Stocks</title>
-    <meta name="description" content="Multi-provider US stock scanning and analysis from Monatise." />
+    <meta name="description" content="FTMO stock CFD scanning and analysis from Monatise." />
     <link rel="icon" href="./monatise-yinyang.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="./stocks.css?v=20260821-v1" />
   </head>
@@ -13,16 +13,16 @@
     <header class="topbar">
       <a class="brand" href="./"><img src="./monatise-yinyang.svg" alt="" /><span>Monatise</span></a>
       <nav aria-label="Primary navigation">
-        <a href="./coinglass-dashboard.html">Crypto</a><a class="active" href="./stocks.html">Stocks</a><a href="./memecoins.html">Memecoins</a>
+        <a href="./coinglass-dashboard.html">FTMO Crypto</a><a class="active" href="./stocks.html">FTMO Stocks</a>
       </nav>
       <span class="analysis-only">Analysis only · execution disabled</span>
     </header>
     <main>
       <section class="hero">
-        <div><p class="eyebrow">US equities intelligence</p><h1>Stocks, through one evidence stack.</h1><p>Alpaca price structure, FlashAlpha positioning, Quiver activity and Finnhub context—without invented levels.</p></div>
+        <div><p class="eyebrow">FTMO stock intelligence</p><h1>Every FTMO stock, through one evidence stack.</h1><p>The FTMO registry owns the universe; providers add evidence without adding unsupported instruments.</p></div>
         <form id="stockSearchForm" class="search-box" role="search">
-          <label for="stockSearch">Search any supported ticker</label>
-          <div><input id="stockSearch" type="search" autocomplete="off" placeholder="AAPL, NVDA, SPY…" maxlength="40" /><button type="submit">Analyse</button></div>
+          <label for="stockSearch">Search an FTMO stock symbol</label>
+          <div><input id="stockSearch" type="search" autocomplete="off" placeholder="AAPL, NVDA, ADSGn…" maxlength="40" /><button type="submit">Analyse</button></div>
           <div id="searchResults" class="search-results" aria-live="polite"></div>
         </form>
       </section>

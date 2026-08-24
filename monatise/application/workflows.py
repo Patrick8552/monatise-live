@@ -94,11 +94,6 @@ class TelegramNotifier:
             raise ValueError("notification message is required")
         return await self._transport.send_message(self._chat_id, f"Monatise X INTELLIGENCE\n{message}")
 
-    async def coin_discovery_notification(self, message: str) -> Any:
-        if not message.strip():
-            raise ValueError("notification message is required")
-        return await self._transport.send_message(self._chat_id, f"Monatise COINGLASS SCANNER\n{message}")
-
     async def dynamic_analysis_notification(self, message: str) -> Any:
         if not message.strip():
             raise ValueError("notification message is required")
@@ -108,6 +103,16 @@ class TelegramNotifier:
         if not message.strip():
             raise ValueError("notification message is required")
         return await self._transport.send_message(self._chat_id, f"Monatise STOCK ANALYSIS\n{message}")
+
+    async def ftmo_stock_notification(self, message: str) -> Any:
+        if not message.strip():
+            raise ValueError("notification message is required")
+        return await self._transport.send_message(self._chat_id, message)
+
+    async def ftmo_futures_notification(self, message: str) -> Any:
+        if not message.strip():
+            raise ValueError("notification message is required")
+        return await self._transport.send_message(self._chat_id, message)
 
     async def command_response(self, message: str) -> Any:
         if not message.strip():
@@ -385,9 +390,16 @@ class TelegramNotifier:
         direction = str(analysis.get("direction") or "NONE").upper()
         asset = str(analysis.get("asset") or "UNKNOWN")
         name = str(analysis.get("company_name") or asset)
+        ftmo_symbol = str(analysis.get("ftmo_symbol") or asset)
+        underlying = str(analysis.get("underlying_symbol") or asset)
         targets = analysis.get("targets") or [analysis.get("target")]
         lines = [
-            f"Monatise US stock setup: {asset} — {name}",
+            "MONATISE FTMO STOCK SCANNER",
+            f"Company: {name}",
+            f"FTMO Symbol: {ftmo_symbol}",
+            f"Underlying Stock: {underlying}",
+            f"Exchange: {analysis.get('exchange') or 'unavailable'}",
+            "Asset Class: STOCK",
             f"Direction: {direction}",
             f"Monatise score: {int(analysis.get('score') or 0):+d}/10 | threshold: ±{int(analysis.get('score_threshold') or 7)}",
             f"Current: {_price(analysis.get('current_price'))}",
@@ -424,6 +436,28 @@ class TelegramNotifier:
         lines.append(f"Freshness: latest hourly bar {freshness.get('latest_hourly_bar', 'n/a')}")
         lines += [
             "Sources: Monatise technical hierarchy; Alpaca market data; Quiver/Finnhub/FlashAlpha where available.",
+            "Notification only; no trade was executed.",
+        ]
+        return "\n".join(lines)
+
+    @staticmethod
+    def format_ftmo_futures_setup(analysis: dict[str, Any]) -> str:
+        direction = str(analysis.get("direction") or "NONE").upper()
+        lines = [
+            "MONATISE FTMO FUTURES SCANNER",
+            f"Market: {analysis.get('underlying_market') or 'UNKNOWN'}",
+            f"FTMO Symbol: {analysis.get('ftmo_symbol') or 'UNKNOWN'}",
+            f"Underlying Futures: {analysis.get('futures_symbol') or 'NONE'}",
+            f"Micro Futures: {analysis.get('micro_futures_symbol') or 'NONE'}",
+            "Asset Class: FUTURES-LINKED CFD",
+            "Product note: the FTMO instrument is a CFD, not an exchange-traded futures contract.",
+            f"Direction: {direction}",
+            f"Monatise score: {int(analysis.get('score') or 0):+d}/10 | threshold: ±{int(analysis.get('score_threshold') or 7)}",
+            f"Entry: {_price(analysis.get('entry'))}",
+            f"Invalidation: {_price(analysis.get('stop_loss'))}",
+            f"Target: {_price(analysis.get('target'))}",
+            f"Reward/risk: {float(analysis.get('reward_risk') or 0):.2f}",
+            f"Source: {analysis.get('data_source') or 'market intelligence provider'}",
             "Notification only; no trade was executed.",
         ]
         return "\n".join(lines)

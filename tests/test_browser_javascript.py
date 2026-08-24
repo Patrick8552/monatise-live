@@ -9,7 +9,6 @@ ROOT = Path(__file__).resolve().parents[1]
 APP_JS = ROOT / "app" / "app.js"
 INDEX_HTML = ROOT / "app" / "index.html"
 COINGLASS_DASHBOARD_JS = ROOT / "app" / "coinglass-dashboard.js"
-MEMECOINS_JS = ROOT / "app" / "memecoins.js"
 STOCKS_JS = ROOT / "app" / "stocks.js"
 
 
@@ -17,7 +16,7 @@ def test_dashboard_javascript_has_valid_syntax() -> None:
     node = shutil.which("node")
     if node is None:
         return
-    for script in (APP_JS, COINGLASS_DASHBOARD_JS, MEMECOINS_JS, STOCKS_JS):
+    for script in (APP_JS, COINGLASS_DASHBOARD_JS, STOCKS_JS):
         result = subprocess.run([node, "--check", str(script)], capture_output=True, text=True, check=False)
         assert result.returncode == 0, result.stderr
 
@@ -39,9 +38,9 @@ def test_stock_workspace_uses_server_side_multi_provider_endpoints_and_lifecycle
 
 
 def test_stock_workspace_is_visible_in_every_primary_product_navigation() -> None:
-    for page in ("index.html", "coinglass-dashboard.html", "memecoins.html", "game.html"):
+    for page in ("index.html", "coinglass-dashboard.html", "game.html"):
         html = (ROOT / "app" / page).read_text(encoding="utf-8")
-        assert 'href="./stocks.html">Stocks</a>' in html
+        assert 'href="./stocks.html">FTMO Stocks</a>' in html
 
 
 def test_coinglass_dashboard_price_history_respects_the_interval_dropdown() -> None:
@@ -50,14 +49,6 @@ def test_coinglass_dashboard_price_history_respects_the_interval_dropdown() -> N
     # except BTC/ETH/SOL, silently ignoring the INTERVAL dropdown.
     assert 'const interval = els.intervalSelect.value || ANALYSIS_INTERVAL;' in source
     assert 'const interval = ANALYSIS_INTERVAL;\n  requireCoinGlass' not in source
-
-
-def test_memecoins_creator_panel_is_read_only_and_fetches_from_production_endpoint() -> None:
-    source = MEMECOINS_JS.read_text(encoding="utf-8")
-    assert '"/api/memecoins/creators?limit=15"' in source
-    # No wallet connect, signing, or transaction submission -- research only.
-    for forbidden in ("signTransaction", "sendTransaction", "connectWallet", "Keypair"):
-        assert forbidden not in source
 
 
 def test_coinglass_dashboard_price_history_falls_back_across_exchanges() -> None:

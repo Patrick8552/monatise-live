@@ -1,6 +1,7 @@
 import asyncio
 import json
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 from monatise.application.deployment import (
     OrchestrationRuntime,
@@ -151,6 +152,14 @@ def test_runtime_scans_dynamic_universe_publishes_only_qualified_and_dedupes(mon
         def __init__(self): self.messages = []
         async def stock_analysis_notification(self, message): self.messages.append(message)
     monkeypatch.setattr("monatise.application.deployment.AlpacaMarketDataAdapter.from_env", classmethod(lambda cls: Alpaca()))
+    class Registry:
+        def for_asset_class(self, _asset_class):
+            return tuple(SimpleNamespace(
+                ftmo_symbol=symbol, underlying_symbol=symbol, provider_symbol=symbol,
+                display_name=f"{symbol} Corp, Spot CFD", exchange="NASDAQ",
+                market_data_provider="alpaca", registry_version="test-v1",
+            ) for symbol in ("LONG", "SHORT"))
+    monkeypatch.setattr("monatise.application.deployment.FTMO_REGISTRY", Registry())
     runtime = OrchestrationRuntime.__new__(OrchestrationRuntime)
     runtime.redis, runtime.telegram = Redis(), Telegram()
     async def analyze(candidate, configuration, index):
@@ -158,6 +167,7 @@ def test_runtime_scans_dynamic_universe_publishes_only_qualified_and_dedupes(mon
     runtime._analyze_market_stock = analyze
     first = asyncio.run(runtime._run_stock_universe_scan(CONFIG, 3600, "test"))
     second = asyncio.run(runtime._run_stock_universe_scan(CONFIG, 3600, "test"))
+    assert first["universe_source"] == "ftmo_registry"
     assert first["universe_size"] == 2 and first["deep_analysis_attempted"] == 2
     assert first["telegram_published"] == 2
     assert second["telegram_published"] == 0 and second["suppressions"]["duplicate_unchanged"] == 2

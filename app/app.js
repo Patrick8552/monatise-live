@@ -399,9 +399,8 @@ function applyLanguagePreference(language = selectedLanguage) {
   if (languageLabels[1]) languageLabels[1].textContent = t("language");
   const nav = document.querySelectorAll(".desk-nav a");
   if (nav[0]) nav[0].textContent = t("signalConsole");
-  if (nav[1]) nav[1].textContent = "Stocks";
-  if (nav[2]) nav[2].textContent = "Memecoins";
-  if (nav[3]) nav[3].textContent = "Crypto Trainer";
+  if (nav[1]) nav[1].textContent = "FTMO Stocks";
+  if (nav[2]) nav[2].textContent = "Crypto Trainer";
   if (els.installAppButton) els.installAppButton.textContent = t("installApp");
   const jumps = document.querySelectorAll(".desk-jump-nav a");
   [

@@ -288,8 +288,9 @@ def test_orchestration_runtime_service_backed_startup_and_shutdown():
             "MONATISE_DATABASE_URL": os.environ["MONATISE_TEST_DATABASE_URL"],
             "MONATISE_REDIS_URL": os.environ["MONATISE_TEST_REDIS_URL"],
             "MONATISE_REDIS_NAMESPACE": f"monatise:test:runtime:{uuid4()}",
-            "MONATISE_COIN_DISCOVERY_ENABLED": "false",
-            "MONATISE_STOCK_SCAN_ENABLED": "false",
+            "MONATISE_FTMO_CRYPTO_SCAN_ENABLED": "false",
+            "MONATISE_FTMO_STOCK_SCAN_ENABLED": "false",
+            "MONATISE_FTMO_FUTURES_SCAN_ENABLED": "false",
         })
         await runtime.start()
         try:

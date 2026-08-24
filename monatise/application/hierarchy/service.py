@@ -140,6 +140,7 @@ class ShadowHierarchyService:
         current = f"{current_price:,.8f}".rstrip("0").rstrip(".") if current_price is not None else "unavailable"
         context = market_context or {}
         discovery = context.get("discovery") or {}
+        ftmo = context.get("ftmo_instrument") or {}
         derivatives = context.get("derivatives") or {}
         evidence = (
             f"Discovery score {float(discovery.get('score', 0)):.2f} | confidence: confirmed hierarchy\n"
@@ -154,8 +155,12 @@ class ShadowHierarchyService:
         signal_core = ShadowHierarchyService._signal_core_evidence(evaluation)
         core_labels = ", ".join(name for name, ready in signal_core["evidence"].items() if ready) or "none"
         return (
-            f"Monatise ALTCOIN SIGNAL CORE — observation only, not a trade order\n"
-            f"{bundle.symbol} | {direction} | {context.get('verified_market', 'CoinGlass verified futures market')}\n"
+            f"MONATISE FTMO CRYPTO SCANNER\n"
+            f"Asset: {ftmo.get('display_name', bundle.symbol)}\n"
+            f"FTMO Symbol: {ftmo.get('ftmo_symbol', discovery.get('ftmo_symbol', 'UNKNOWN'))}\n"
+            f"Underlying: {ftmo.get('underlying_symbol', bundle.symbol)}\n"
+            f"Asset Class: CRYPTO\n"
+            f"Direction: {direction} | Intelligence market: {context.get('verified_market', 'CoinGlass verified futures market')}\n"
             f"Signal Core CONFIRMED {signal_core['score']}/4 | {core_labels}\n"
             f"1H direction | 15M location | 5M confirmation | 1M entry refined\n"
             f"Current CoinGlass price: {current} | source {price_source} | observed {observed}\n"

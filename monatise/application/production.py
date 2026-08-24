@@ -25,10 +25,9 @@ from monatise.analysis.fibonacci import analyze_fibonacci
 from monatise.analysis.fvg import analyze_fvg
 from monatise.analysis.liquidity_clusters import estimate_liquidation_clusters
 from monatise.analysis.tradingview import TRADINGVIEW_FRESH_SECONDS, TRADINGVIEW_SNAPSHOT_LOCK_SECONDS, normalize_alert_symbol
-from monatise.adapters.memecoins import creator_leaderboard, discover_pumpfun, inspect_memecoin, resolve_creator
-
 from monatise.adapters.coinglass_production import CoinGlassProductionAdapter
 from monatise.application.deployment import OrchestrationASGI, OrchestrationRuntime, TelegramCommandTransition, TradingViewAlertDuplicate
+from monatise.application.ftmo_registry import FTMOAssetClass, FTMO_REGISTRY
 from monatise.application.stock_analysis import refresh_setup_validity
 from monatise.engines.market_data import MarketDataEngine, MarketDataRequest
 from monatise.core.models import Candle
@@ -117,14 +116,7 @@ class ProductionASGI(OrchestrationASGI):
         "1h": 7_200, "4h": 28_800, "6h": 43_200, "8h": 57_600,
         "12h": 86_400, "1d": 172_800, "1w": 1_209_600,
     }
-    STOCK_DIRECTORY = {
-        "AAPL": "Apple", "AMD": "Advanced Micro Devices", "AMZN": "Amazon", "AVGO": "Broadcom",
-        "COIN": "Coinbase", "GOOGL": "Alphabet", "JPM": "JPMorgan Chase", "META": "Meta Platforms",
-        "MSFT": "Microsoft", "NFLX": "Netflix", "NVDA": "NVIDIA", "QQQ": "Invesco QQQ",
-        "SPY": "SPDR S&P 500 ETF", "TSLA": "Tesla", "XOM": "Exxon Mobil",
-    }
-    STOCK_SCANNER_SYMBOLS = ("AAPL", "TSLA", "NVDA", "QQQ", "SPY")
-    STOCK_SYMBOL_PATTERN = re.compile(r"^[A-Z][A-Z0-9.-]{0,9}$")
+    STOCK_SYMBOL_PATTERN = re.compile(r"^[A-Z][A-Z0-9._-]{0,11}$", re.IGNORECASE)
     TELEGRAM_COMMAND_PATTERN = re.compile(r"^/(?:analyse|analyze)(?:@[A-Za-z0-9_]+)?(?:\s+(.+))?$", re.IGNORECASE)
 
     def __init__(self, runtime: OrchestrationRuntime | None = None, static_dir: Path | None = None) -> None:
@@ -260,14 +252,11 @@ class ProductionASGI(OrchestrationASGI):
             "/api/context/radar",
             "/api/coinglass/context",
             "/api/analysis/liquidity-clusters",
-            "/api/memecoins/discover",
-            "/api/memecoins/token",
-            "/api/memecoins/creators",
         }:
             if scope.get("method", "GET").upper() != "GET":
                 await self._respond(send, 405, {"status": "method_not_allowed"})
                 return
-            if self._market_rate_limited(scope, maximum=30 if path.startswith("/api/memecoins/") else 120):
+            if self._market_rate_limited(scope, maximum=120):
                 await self._respond(send, 429, {"status": "rate_limited"})
                 return
             handlers = {
@@ -277,9 +266,6 @@ class ProductionASGI(OrchestrationASGI):
                 "/api/context/radar": self._context_radar,
                 "/api/coinglass/context": self._coinglass_context,
                 "/api/analysis/liquidity-clusters": self._liquidity_clusters,
-                "/api/memecoins/discover": self._memecoins_discover,
-                "/api/memecoins/token": self._memecoins_token,
-                "/api/memecoins/creators": self._memecoins_creators,
             }
             code, payload = await handlers[path](scope)
             await self._respond(send, code, payload)
@@ -511,22 +497,19 @@ class ProductionASGI(OrchestrationASGI):
         await self._send_owned_telegram_response(notifier, response, ownership_check)
 
     async def _telegram_asset_classification(self, symbol: str, requested_class: str | None) -> tuple[str, str]:
-        if requested_class is not None:
-            return requested_class, symbol
-        if symbol in self.STOCK_DIRECTORY:
-            return "stock", symbol
-        if symbol in self.MARKET_SYMBOLS or symbol in {"ADA", "AVAX", "LINK", "SUI"}:
-            return "crypto", symbol
-        provider = self.runtime.coinglass
-        resolver = getattr(provider, "resolve_futures_asset", None)
-        if resolver is None:
-            return "unknown", symbol
-        try:
-            asset = await asyncio.to_thread(resolver, symbol)
-        except Exception as exc:
-            LOGGER.info("Telegram symbol was not resolved as crypto", extra={"symbol": symbol, "error_type": type(exc).__name__})
-            return "unknown", symbol
-        return "crypto", str(getattr(asset, "base_asset", symbol)).upper()
+        stock = next((item for item in FTMO_REGISTRY.for_asset_class(FTMOAssetClass.STOCK)
+            if symbol.casefold() in {item.ftmo_symbol.casefold(), item.underlying_symbol.casefold(), (item.provider_symbol or "").casefold()}), None)
+        crypto = next((item for item in FTMO_REGISTRY.for_asset_class(FTMOAssetClass.CRYPTO)
+            if symbol.casefold() in {item.ftmo_symbol.casefold(), item.underlying_symbol.casefold()}), None)
+        if requested_class == "stock":
+            return ("stock", stock.underlying_symbol) if stock is not None else ("unknown", symbol)
+        if requested_class == "crypto":
+            return ("crypto", crypto.underlying_symbol) if crypto is not None else ("unknown", symbol)
+        if stock is not None and crypto is None:
+            return "stock", stock.underlying_symbol
+        if crypto is not None and stock is None:
+            return "crypto", crypto.underlying_symbol
+        return "unknown", symbol
 
     @staticmethod
     def _format_telegram_crypto_analysis(analysis: dict[str, Any]) -> str:
@@ -585,18 +568,28 @@ class ProductionASGI(OrchestrationASGI):
         term = str(query.get("q", [""])[0]).strip().upper()
         if len(term) > 40:
             return 400, {"status": "invalid_request", "reason": "search query is too long"}
-        matches = [
-            {"symbol": symbol, "name": name, "asset_class": "stock", "tradable": False}
-            for symbol, name in self.STOCK_DIRECTORY.items()
-            if not term or term in symbol or term.casefold() in name.casefold()
+        matches = [{
+            "symbol": item.ftmo_symbol, "ftmo_symbol": item.ftmo_symbol,
+            "underlying_symbol": item.underlying_symbol, "name": item.display_name,
+            "exchange": item.exchange, "asset_class": "stock", "tradable": False,
+        } for item in FTMO_REGISTRY.for_asset_class(FTMOAssetClass.STOCK)
+            if not term or term.casefold() in item.ftmo_symbol.casefold()
+            or term.casefold() in item.underlying_symbol.casefold()
+            or term.casefold() in item.display_name.casefold()
         ][:10]
         return 200, {"status": "ready", "query": term, "results": matches, "execution_enabled": False}
 
     async def _stock_analysis(self, symbol: str) -> tuple[int, dict[str, Any]]:
         if not self.STOCK_SYMBOL_PATTERN.fullmatch(symbol):
             return 400, {"status": "invalid_request", "reason": "unsupported stock symbol"}
+        instrument = next((item for item in FTMO_REGISTRY.for_asset_class(FTMOAssetClass.STOCK)
+            if symbol.casefold() in {item.ftmo_symbol.casefold(), item.underlying_symbol.casefold(), (item.provider_symbol or "").casefold()}), None)
+        if instrument is None:
+            return 400, {"status": "invalid_request", "reason": "stock is not in the FTMO registry"}
+        if instrument.market_data_provider != "alpaca" or not instrument.provider_symbol:
+            return 503, {"status": "provider_unavailable", "symbol": instrument.ftmo_symbol, "reason": "FTMO stock market-data mapping is unavailable; failed closed"}
         try:
-            analysis, cache_hit = await asyncio.wait_for(self._cached_openclaw_stock_analysis((symbol, "1h")), timeout=30)
+            analysis, cache_hit = await asyncio.wait_for(self._cached_openclaw_stock_analysis((instrument.provider_symbol, "1h")), timeout=30)
             analysis = refresh_setup_validity(analysis)
         except (TypeError, ValueError) as exc:
             return 400, {"status": "invalid_request", "reason": str(exc)}
@@ -604,21 +597,24 @@ class ProductionASGI(OrchestrationASGI):
             LOGGER.warning("stock analysis unavailable", extra={"symbol": symbol, "error_type": type(exc).__name__})
             return 503, {"status": "analysis_unavailable", "symbol": symbol, "error_type": type(exc).__name__}
         return 200, {
-            "status": "ready", "symbol": symbol, "company_name": self.STOCK_DIRECTORY.get(symbol, symbol),
+            "status": "ready", "symbol": instrument.ftmo_symbol, "ftmo_symbol": instrument.ftmo_symbol,
+            "underlying_symbol": instrument.underlying_symbol, "exchange": instrument.exchange,
+            "company_name": instrument.display_name,
             "analysis": analysis, "cache_hit": cache_hit, "execution_enabled": False,
         }
 
     async def _stocks_scanner(self) -> tuple[int, dict[str, Any]]:
-        async def analyze(symbol: str) -> dict[str, Any]:
-            code, payload = await self._stock_analysis(symbol)
-            if code != 200:
-                return {"asset": symbol, "company_name": self.STOCK_DIRECTORY.get(symbol, symbol), "decision": "NO_TRADE", "setup_state": "NO_TRADE", "reason_code": payload.get("status", "ANALYSIS_UNAVAILABLE").upper()}
-            return {"company_name": payload["company_name"], **payload["analysis"]}
-
-        results = await asyncio.gather(*(analyze(symbol) for symbol in self.STOCK_SCANNER_SYMBOLS))
+        dependency = getattr(self.runtime, "dependencies", {}).get("ftmo_stock_scan", {})
+        latest = dependency.get("last_result") or {}
+        results = latest.get("results") if isinstance(latest, dict) else []
+        if not isinstance(results, list):
+            results = []
         return 200, {
-            "status": "ready", "generated_at": datetime.now(timezone.utc).isoformat(), "refresh_seconds": 120,
+            "status": "ready" if dependency.get("last_success_at") else "warming",
+            "generated_at": dependency.get("last_success_at") or datetime.now(timezone.utc).isoformat(), "refresh_seconds": 120,
             "results": results, "providers": ["Alpaca", "FlashAlpha", "Quiver Quantitative", "Finnhub"],
+            "universe_size": len(FTMO_REGISTRY.for_asset_class(FTMOAssetClass.STOCK)),
+            "registry_version": FTMO_REGISTRY.for_asset_class(FTMOAssetClass.STOCK)[0].registry_version,
             "execution_enabled": False,
         }
 
@@ -705,7 +701,11 @@ class ProductionASGI(OrchestrationASGI):
         payload = {
             "status": "ready",
             "assets": assets,
-            "groups": {"crypto": [item["symbol"] for item in assets], "stocks": ["AAPL", "TSLA", "NVDA", "QQQ", "SPY"]},
+            "groups": {
+                "crypto": [item["symbol"] for item in assets],
+                "stocks": [item.ftmo_symbol for item in FTMO_REGISTRY.for_asset_class(FTMOAssetClass.STOCK)],
+                "futures_linked": [item.ftmo_symbol for item in FTMO_REGISTRY.for_asset_class(FTMOAssetClass.FUTURES_LINKED)],
+            },
             "source": "coinglass",
             "cache_hit": False,
             "execution_enabled": False,
@@ -717,15 +717,15 @@ class ProductionASGI(OrchestrationASGI):
         if self.runtime.redis is None:
             return 503, {"status": "unavailable", "candidates": [], "execution_enabled": False}
         namespace = self.runtime.environment.get("MONATISE_REDIS_NAMESPACE", "monatise:production-analysis")
-        raw = await self.runtime.redis.get(f"{namespace}:coinglass:ranked-universe")
+        raw = await self.runtime.redis.get(f"{namespace}:ftmo:crypto:ranked:v1")
         try:
             candidates = json.loads(raw) if raw else []
         except (TypeError, ValueError):
             candidates = []
         if not isinstance(candidates, list):
             candidates = []
-        scan_completed = bool(getattr(self.runtime, "dependencies", {}).get("coin_discovery", {}).get("last_success_at"))
-        return 200, {"status": "ready" if candidates or scan_completed else "warming", "candidates": candidates[:20], "source": "CoinGlass significant futures universe", "execution_enabled": False}
+        scan_completed = bool(getattr(self.runtime, "dependencies", {}).get("ftmo_crypto_scan", {}).get("last_success_at"))
+        return 200, {"status": "ready" if candidates or scan_completed else "warming", "candidates": candidates[:20], "source": "FTMO crypto registry with CoinGlass intelligence", "execution_enabled": False}
 
     async def _analysis_candles(self, scope: dict[str, Any], *, minimum: int) -> tuple[int, dict[str, Any] | list[Candle], str, str]:
         query = parse_qs(scope.get("query_string", b"").decode())
@@ -879,67 +879,6 @@ class ProductionASGI(OrchestrationASGI):
             "clusters": [asdict(cluster) for cluster in cluster_map.clusters],
             "execution_enabled": False,
         }
-
-    async def _memecoins_discover(self, scope: dict[str, Any]) -> tuple[int, dict[str, Any]]:
-        query = parse_qs(scope.get("query_string", b"").decode())
-        try:
-            limit = max(4, min(24, int(query.get("limit", ["12"])[0])))
-        except ValueError:
-            return 400, {"status": "invalid_request", "reason": "limit must be an integer"}
-        try:
-            payload = await asyncio.to_thread(discover_pumpfun, limit)
-        except (RuntimeError, ValueError) as exc:
-            LOGGER.warning("memecoin discovery unavailable: %s (%s: %s)", limit, type(exc).__name__, exc.__cause__ or exc)
-            return 502, {"status": "unavailable", "reason": str(exc), "error": str(exc)}
-        return 200, payload
-
-    async def _memecoins_token(self, scope: dict[str, Any]) -> tuple[int, dict[str, Any]]:
-        query = parse_qs(scope.get("query_string", b"").decode())
-        address = str(query.get("address", [""])[0]).strip()
-        rpc_url = self.runtime.environment.get("MONATISE_SOLANA_RPC_URL", "").strip() or "https://api.mainnet-beta.solana.com"
-        try:
-            payload = await asyncio.to_thread(inspect_memecoin, address, rpc_url)
-        except ValueError as exc:
-            return 400, {"status": "invalid_request", "reason": str(exc), "error": str(exc)}
-        except RuntimeError as exc:
-            LOGGER.warning("memecoin inspection unavailable: %s (%s: %s)", address, type(exc).__name__, exc.__cause__ or exc)
-            return 502, {"status": "unavailable", "reason": str(exc), "error": str(exc)}
-        return 200, payload
-
-    async def _memecoins_creators(self, scope: dict[str, Any]) -> tuple[int, dict[str, Any]]:
-        query = parse_qs(scope.get("query_string", b"").decode())
-        try:
-            limit = max(10, min(20, int(query.get("limit", ["15"])[0])))
-        except ValueError:
-            return 400, {"status": "invalid_request", "reason": "limit must be an integer"}
-        rpc_url = self.runtime.environment.get("MONATISE_SOLANA_RPC_URL", "").strip() or "https://api.mainnet-beta.solana.com"
-        try:
-            discovery = await asyncio.to_thread(discover_pumpfun, 30)
-        except (RuntimeError, ValueError) as exc:
-            LOGGER.warning("memecoin creator scan unavailable: (%s: %s)", type(exc).__name__, exc.__cause__ or exc)
-            return 502, {"status": "unavailable", "reason": str(exc), "error": str(exc)}
-        tokens = discovery.get("tokens") or []
-
-        # resolve_creator reads the pump.fun bonding-curve account directly
-        # (one getAccountInfo call per token), so every discovered token can
-        # be attempted -- still capped concurrently to stay a good citizen
-        # of the free public Solana RPC.
-        semaphore = asyncio.Semaphore(8)
-
-        async def resolve(token: dict[str, Any]) -> tuple[str, str | None]:
-            address = str(token.get("address") or "")
-            async with semaphore:
-                try:
-                    creator = await asyncio.to_thread(resolve_creator, address, rpc_url)
-                except Exception as exc:  # noqa: BLE001
-                    LOGGER.warning("creator resolution failed: %s (%s: %s)", address, type(exc).__name__, exc)
-                    creator = None
-            return address, creator
-
-        resolved = await asyncio.gather(*(resolve(token) for token in tokens))
-        creators_by_address = dict(resolved)
-        leaderboard = creator_leaderboard(tokens, creators_by_address, limit=limit)
-        return 200, leaderboard
 
     async def _market_candles(self, scope: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         query = parse_qs(scope.get("query_string", b"").decode())

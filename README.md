@@ -63,6 +63,24 @@ COINGLASS_EXCHANGE=Binance
 COINGLASS_EXCHANGE_LIST=Binance,OKX,Bybit
 ```
 
+## FTMO scanner universes
+
+Production Telegram scanning is restricted to the canonical FTMO registry in
+`monatise/application/ftmo_registry.py`. Its reviewed 24 August 2026 snapshot
+contains all 59 active FTMO stock CFDs, 34 futures-linked index/commodity/metal
+CFDs, and 30 active FTMO crypto CFDs published by FTMO's symbols API.
+
+The three scheduled jobs are `ftmo-stock-scanner-telegram`,
+`ftmo-futures-scanner-telegram`, and `ftmo-crypto-scanner-telegram`. External
+providers add evidence only; they cannot add instruments to these universes.
+Candidates pass bounded qualification and the normal confirmation/publication
+gates, and execution remains disabled. The former generalized CoinGlass
+altcoin discovery and Pump.fun/memecoin scanner are not exposed or scheduled.
+
+`FTMO_REGISTRY.refresh_report()` compares the bundled snapshot with FTMO's live
+public list and reports additions, removals, and status changes without applying
+them. Registry changes therefore require explicit review and a committed update.
+
 When CoinGlass is unavailable, select Hyperliquid's public candle snapshot feed:
 
 ```bash

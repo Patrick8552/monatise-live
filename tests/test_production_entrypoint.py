@@ -215,7 +215,7 @@ def test_telegram_stock_command_returns_no_trade_when_not_confirmed():
     assert runtime.telegram.messages[0].endswith("Execution: disabled")
 
 
-def test_telegram_resolves_unlisted_crypto_before_selecting_provider():
+def test_telegram_rejects_non_ftmo_crypto_even_if_coinglass_can_resolve_it():
     runtime = Runtime()
     runtime.environment.update({"MONATISE_TELEGRAM_BOT_TOKEN": "bot-token", "MONATISE_TELEGRAM_CHAT_ID": "42"})
     runtime.coinglass.resolve_futures_asset = lambda symbol: SimpleNamespace(base_asset=symbol)
@@ -224,10 +224,11 @@ def test_telegram_resolves_unlisted_crypto_before_selecting_provider():
     update = {"update_id": 4, "message": {"chat": {"id": 42}, "text": "/analyze PEPE"}}
 
     assert telegram_webhook(app, update, secret=telegram_webhook_secret("bot-token"))[0] == 200
-    assert runtime.calls == [("PEPE", {"interval": "15m", "source": "monatise.telegram.command", "notify": False})]
+    assert runtime.calls == []
+    assert "NO TRADE: PEPE" in runtime.telegram.messages[0]
 
 
-def test_telegram_explicit_asset_class_handles_unknown_stock_symbol():
+def test_telegram_explicit_asset_class_handles_ftmo_stock_symbol():
     runtime = Runtime()
     runtime.environment.update({"MONATISE_TELEGRAM_BOT_TOKEN": "bot-token", "MONATISE_TELEGRAM_CHAT_ID": "42"})
     runtime.telegram = Telegram()
@@ -238,7 +239,7 @@ def test_telegram_explicit_asset_class_handles_unknown_stock_symbol():
     assert runtime.calls == [("PLTR", {})]
 
 
-def test_telegram_ambiguous_symbol_does_not_run_the_wrong_provider():
+def test_telegram_ftmo_stock_symbol_selects_stock_provider_without_ambiguity():
     runtime = Runtime()
     runtime.environment.update({"MONATISE_TELEGRAM_BOT_TOKEN": "bot-token", "MONATISE_TELEGRAM_CHAT_ID": "42"})
     runtime.telegram = Telegram()
@@ -246,8 +247,8 @@ def test_telegram_ambiguous_symbol_does_not_run_the_wrong_provider():
     update = {"update_id": 7, "message": {"chat": {"id": 42}, "text": "/analyze PLTR"}}
 
     assert telegram_webhook(app, update, secret=telegram_webhook_secret("bot-token"))[0] == 200
-    assert runtime.calls == []
-    assert "asset class is ambiguous" in runtime.telegram.messages[0]
+    assert runtime.calls == [("PLTR", {})]
+    assert runtime.telegram.messages[0].startswith("Monatise NO TRADE: PLTR")
 
 
 def test_telegram_failed_delivery_stays_queued_for_retry(monkeypatch):
@@ -492,105 +493,11 @@ def test_liquidity_clusters_endpoint_fails_closed_without_coinglass():
     assert response[0]["status"] == 503
 
 
-def test_memecoins_discover_endpoint_is_wired_into_production(monkeypatch):
-    monkeypatch.setattr(
-        production_module,
-        "discover_pumpfun",
-        lambda limit: {"tokens": [{"address": "abc"}], "count": 1, "source": "DEX Screener", "methodology": "screened", "updatedAt": 1},
-    )
+def test_retired_generalized_memecoin_routes_are_not_exposed():
     app = ProductionASGI(Runtime())
-    response = get(app, "/api/memecoins/discover", query="limit=12")
-    assert response[0]["status"] == 200
-    payload = json.loads(response[1]["body"])
-    assert payload["tokens"] == [{"address": "abc"}]
-    assert payload["count"] == 1
-
-
-def test_memecoins_discover_fails_with_upstream_error_surfaced(monkeypatch):
-    def boom(limit):
-        raise RuntimeError("dex screener unavailable")
-
-    monkeypatch.setattr(production_module, "discover_pumpfun", boom)
-    app = ProductionASGI(Runtime())
-    response = get(app, "/api/memecoins/discover", query="limit=12")
-    assert response[0]["status"] == 502
-    payload = json.loads(response[1]["body"])
-    assert payload["error"] == "dex screener unavailable"
-
-
-def test_memecoins_token_endpoint_is_wired_into_production(monkeypatch):
-    monkeypatch.setattr(
-        production_module,
-        "inspect_memecoin",
-        lambda address, rpc_url: {"address": address, "source": "DEX Screener market data + Solana RPC mint inspection"},
-    )
-    app = ProductionASGI(Runtime())
-    response = get(app, "/api/memecoins/token", query="address=SomeMintAddress111111111111111111111111")
-    assert response[0]["status"] == 200
-    payload = json.loads(response[1]["body"])
-    assert payload["address"] == "SomeMintAddress111111111111111111111111"
-
-
-def test_memecoins_token_rejects_invalid_address(monkeypatch):
-    def invalid(address, rpc_url):
-        raise ValueError("enter a valid Solana token mint address")
-
-    monkeypatch.setattr(production_module, "inspect_memecoin", invalid)
-    app = ProductionASGI(Runtime())
-    response = get(app, "/api/memecoins/token", query="address=not-valid")
-    assert response[0]["status"] == 400
-
-
-def test_memecoins_creators_endpoint_ranks_repeat_launchers(monkeypatch):
-    tokens = [
-        {"address": "mintA", "symbol": "MEME1", "liquidityUsd": 5_000, "risk": {"score": 20, "label": "High risk"}, "pairCreatedAt": 3_000},
-        {"address": "mintB", "symbol": "MEME2", "liquidityUsd": 6_000, "risk": {"score": 25, "label": "High risk"}, "pairCreatedAt": 2_000},
-        {"address": "mintC", "symbol": "MEME3", "liquidityUsd": 300_000, "risk": {"score": 80, "label": "Screened"}, "pairCreatedAt": 1_000},
-    ]
-    monkeypatch.setattr(production_module, "discover_pumpfun", lambda limit: {"tokens": tokens})
-    creators = {"mintA": "serial-creator", "mintB": "serial-creator", "mintC": "one-off-creator"}
-    monkeypatch.setattr(production_module, "resolve_creator", lambda address, rpc_url: creators.get(address))
-
-    app = ProductionASGI(Runtime())
-    response = get(app, "/api/memecoins/creators", query="limit=15")
-    assert response[0]["status"] == 200
-    payload = json.loads(response[1]["body"])
-    assert payload["creators"][0]["address"] == "serial-creator"
-    assert payload["creators"][0]["launchesObserved"] == 2
-    assert payload["creators"][0]["repeatLauncher"] is True
-    assert "not an all-time history" in payload["methodology"]
-
-
-def test_memecoins_creators_endpoint_attempts_resolution_on_every_discovered_token(monkeypatch):
-    # Since resolve_creator is now a single cheap getAccountInfo call (the
-    # on-chain bonding-curve account), every discovered token is attempted
-    # rather than a filtered "youngest" subset.
-    tokens = [
-        {"address": f"mint-{i}", "symbol": "MEME", "liquidityUsd": 1_000, "risk": {"score": 50, "label": "Speculative"}, "pairCreatedAt": i}
-        for i in range(20)
-    ]
-    monkeypatch.setattr(production_module, "discover_pumpfun", lambda limit: {"tokens": tokens})
-    attempted: list[str] = []
-
-    def fake_resolve_creator(address, rpc_url):
-        attempted.append(address)
-        return f"creator-of-{address}"
-
-    monkeypatch.setattr(production_module, "resolve_creator", fake_resolve_creator)
-    app = ProductionASGI(Runtime())
-    response = get(app, "/api/memecoins/creators", query="limit=15")
-    assert response[0]["status"] == 200
-    assert len(attempted) == 20
-
-
-def test_memecoins_creators_endpoint_fails_closed_when_discovery_unavailable(monkeypatch):
-    def boom(limit):
-        raise RuntimeError("dex screener unavailable")
-
-    monkeypatch.setattr(production_module, "discover_pumpfun", boom)
-    app = ProductionASGI(Runtime())
-    response = get(app, "/api/memecoins/creators", query="limit=15")
-    assert response[0]["status"] == 502
+    for path in ("/api/memecoins/discover", "/api/memecoins/token", "/api/memecoins/creators"):
+        response = get(app, path)
+        assert response[0]["status"] == 404
 
 
 def test_web_dashboard_exposes_stock_assets_and_sanitized_quiver_context(monkeypatch):
@@ -854,13 +761,16 @@ def test_public_stock_search_and_analysis_are_read_only() -> None:
     assert analysis["execution_enabled"] is False
 
 
-def test_public_stock_scanner_uses_shared_analysis_cache() -> None:
+def test_public_stock_scanner_reads_bounded_ftmo_scheduler_results() -> None:
     runtime = Runtime()
     app = ProductionASGI(runtime)
     messages = get(app, "/api/stocks/scanner")
     payload = json.loads(messages[1]["body"])
     assert messages[0]["status"] == 200
-    assert [item["asset"] for item in payload["results"]] == ["AAPL", "TSLA", "NVDA", "QQQ", "SPY"]
+    assert payload["status"] == "warming"
+    assert payload["results"] == []
+    assert payload["universe_size"] == 59
+    assert payload["registry_version"].startswith("ftmo-official-")
     assert payload["providers"] == ["Alpaca", "FlashAlpha", "Quiver Quantitative", "Finnhub"]
     assert payload["execution_enabled"] is False
 

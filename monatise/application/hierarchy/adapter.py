@@ -51,7 +51,7 @@ class CanonicalEvidenceAdapter:
             reasons.append("evidence_expired")
         if any(context.data_quality in {DataQualityState.UNAVAILABLE, DataQualityState.REVISED} for context in contexts):
             reasons.append("data_unavailable_or_revised")
-        # The 4h regime is advisory for altcoin Signal Core publication. The
+        # The 4h regime is advisory for FTMO crypto publication. The
         # 1h structure remains directional authority and may still block.
         if bundle.strategy_1h.state is StrategicState.BLOCKED:
             reasons.append("strategic_context_blocked")

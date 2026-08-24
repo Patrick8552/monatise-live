@@ -1,10 +1,9 @@
-const CACHE_NAME = "monatise-shell-20260821-stocks-v2";
+const CACHE_NAME = "monatise-shell-20260824-ftmo-v1";
 const SHELL_ASSETS = [
   "./",
   "./cg.html",
   "./dashboard/",
   "./game.html",
-  "./memecoins.html",
   "./stocks.html",
   "./coinglass-dashboard.html?v=20260814-ui-depth-v1",
   "./styles.css?v=20260814-bugfix-v1",
@@ -13,9 +12,7 @@ const SHELL_ASSETS = [
   "./game.js?v=20260629-crypto-trainer",
   "./assets/payout-clients.svg",
   "./coinglass-dashboard.css?v=20260814-ui-depth-v1",
-  "./coinglass-dashboard.js?v=20260820-signal-core-v1",
-  "./memecoins.css?v=20260715-memecoins",
-  "./memecoins.js?v=20260814-bugfix-v1",
+  "./coinglass-dashboard.js?v=20260824-ftmo-v1",
   "./stocks.css?v=20260821-v1",
   "./stocks.js?v=20260821-v1",
   "./manifest.webmanifest?v=20260727-brand-v2",

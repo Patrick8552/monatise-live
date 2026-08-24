@@ -38,7 +38,6 @@ from monatise.analysis.tradingview import (
 )
 from monatise.adapters.coinglass import CoinGlassAdapter, CoinGlassPlanError
 from monatise.adapters.hyperliquid import HyperliquidAdapter
-from monatise.adapters.memecoins import discover_pumpfun, inspect_memecoin
 from monatise.adapters.quiver import QuiverAdapter, normalize_quiver_symbol
 from monatise.live.config import LIVE_CONFIRMATION, RuntimeConfig
 from monatise.live.emailer import EmailDeliveryError, expose_dev_reset_code, send_feedback_email, send_login_code, send_password_reset_code, send_trading_alert_email
@@ -64,8 +63,6 @@ PUBLIC_ANALYSIS_GET_PATHS = {
     "/api/candles",
     "/api/analysis/fibonacci",
     "/api/context/radar",
-    "/api/memecoins/discover",
-    "/api/memecoins/token",
 }
 PROTECTED_GET_PATHS = {
     "/api/status",
@@ -421,31 +418,6 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
                 source = "CoinGlass futures exchange pairs"
                 self._json({"assets": assets, "count": len(assets), "source": source})
             except Exception as error:  # noqa: BLE001
-                self._error(502, str(error))
-            return
-        if parsed.path == "/api/memecoins/discover":
-            if self._rate_limited("/api/memecoins"):
-                self._error(429, "memecoin radar refresh limit reached; try again shortly")
-                return
-            query = parse_qs(parsed.query)
-            try:
-                limit = max(4, min(24, int(query.get("limit", ["12"])[0])))
-                self._json(discover_pumpfun(limit))
-            except (RuntimeError, ValueError) as error:
-                self._error(502, str(error))
-            return
-        if parsed.path == "/api/memecoins/token":
-            if self._rate_limited("/api/memecoins"):
-                self._error(429, "memecoin lookup limit reached; try again shortly")
-                return
-            query = parse_qs(parsed.query)
-            address = str(query.get("address", [""])[0]).strip()
-            rpc_url = os.getenv("MONATISE_SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com").strip()
-            try:
-                self._json(inspect_memecoin(address, rpc_url))
-            except ValueError as error:
-                self._error(400, str(error))
-            except RuntimeError as error:
                 self._error(502, str(error))
             return
         if parsed.path == "/api/candles":
@@ -1186,7 +1158,6 @@ class MonatiseHandler(SimpleHTTPRequestHandler):
             "/api/stop": (12, 60),
             "/api/tradingview/webhook": (120, 60),
             "/api/coinglass/proxy": (60, 60),
-            "/api/memecoins": (30, 60),
             "/api/feedback": (8, 60),
         }
         limit, window = limits.get(path, (60, 60))

@@ -263,7 +263,7 @@ class HierarchyLayerEvaluator:
 
     @staticmethod
     def _strategy_state(layer: LayerAnalysis, regime: RegimeState) -> StrategicState:
-        # The altcoin Signal Core treats the 4h regime engine as advisory.
+        # The FTMO crypto scanner treats the 4h regime engine as advisory.
         # Fresh 1h structure is the directional authority; data freshness and
         # structural risk remain hard gates later in the pipeline.
         if layer.structure.bias is StructureBias.BULLISH:
