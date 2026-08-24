@@ -1748,7 +1748,8 @@ class OrchestrationRuntime:
             audit_errors = await infrastructure.audit.verify_integrity()
             self.dependencies["audit_integrity"] = {
                 "status": "ok" if not audit_errors else "error",
-                "verification": "verified" if not audit_errors else "failed",
+                "verification": "verified_recent_window" if not audit_errors else "failed",
+                "startup_window": getattr(infrastructure.audit, "startup_window", None),
                 "error_count": len(audit_errors),
             }
         except Exception as exc:

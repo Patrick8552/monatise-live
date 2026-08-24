@@ -30,6 +30,63 @@ class MemoryDocumentStore:
     async def delete(self, namespace, key): self.documents.pop((namespace, key), None)
     async def append(self, stream, value): self.streams.setdefault(stream, []).append(value)
     async def read_stream(self, stream): return tuple(self.streams.get(stream, ()))
+    async def read_stream_tail(self, stream, limit): return tuple(self.streams.get(stream, ())[-limit:])
+
+
+def test_durable_audit_startup_uses_bounded_tail_and_preserves_chain_head():
+    async def scenario():
+        class CountingStore(MemoryDocumentStore):
+            def __init__(self):
+                super().__init__()
+                self.full_reads = 0
+                self.tail_reads = []
+
+            async def read_stream(self, stream):
+                self.full_reads += 1
+                return await super().read_stream(stream)
+
+            async def read_stream_tail(self, stream, limit):
+                self.tail_reads.append((stream, limit))
+                return await super().read_stream_tail(stream, limit)
+
+        backend = CountingStore()
+        writer = DurableAuditRepository(backend)
+        records = []
+        for index in range(8):
+            records.append(await writer.append(
+                record_type=AuditRecordType.SYSTEM,
+                action=AuditAction.CREATED,
+                actor=AuditActor("test", "application"),
+                source="test",
+                payload={"index": index},
+            ))
+
+        backend.full_reads = 0
+        backend.tail_reads.clear()
+        restored = DurableAuditRepository(backend, startup_window=3)
+        assert await restored.verify_integrity() == ()
+        assert backend.full_reads == 0
+        assert backend.tail_reads == [("audit", 3)]
+        assert await restored.count() == 8
+        snapshot = await restored.snapshot()
+        assert [record.sequence for record in snapshot.records] == [6, 7, 8]
+        assert snapshot.metadata["base_sequence"] == 5
+
+        appended = await restored.append(
+            record_type=AuditRecordType.SYSTEM,
+            action=AuditAction.CREATED,
+            actor=AuditActor("test", "application"),
+            source="test",
+            payload={"index": 8},
+        )
+        assert appended.sequence == 9
+        assert appended.previous_hash == records[-1].integrity_hash
+        assert await restored.count() == 9
+
+        assert await restored.verify_full_integrity() == ()
+        assert backend.full_reads == 1
+
+    asyncio.run(scenario())
 
 
 def test_durable_event_store_supports_idempotency_and_replay():
@@ -342,6 +399,10 @@ def test_durable_audit_repository_recovers_once_a_transient_tie_is_extended(monk
                     self.streams["audit"] = list(right.streams["audit"])
                 return await super().read_stream(stream)
 
+            async def read_stream_tail(self, stream, limit):
+                values = await self.read_stream(stream)
+                return values[-limit:]
+
         backend = EventuallyResolvingStore()
         real_sleep = asyncio.sleep
         monkeypatch.setattr(asyncio, "sleep", lambda seconds: real_sleep(0))
@@ -432,4 +493,28 @@ def test_postgres_store_supports_installed_psycopg_parameter_style():
         query, params = connection.calls[0]
         assert "$1" not in query and query.count("%s") == 4
         assert params == ("state", "one", '{"ok":true}', None)
+    asyncio.run(scenario())
+
+
+def test_postgres_store_reads_only_the_requested_stream_tail():
+    class AsyncpgConnection:
+        def __init__(self):
+            self.calls = []
+
+        async def fetch(self, query, *args):
+            self.calls.append((query, args))
+            return [
+                {"payload": {"sequence": 8}},
+                {"payload": {"sequence": 9}},
+            ]
+
+    async def scenario():
+        connection = AsyncpgConnection()
+        values = await PostgresDocumentStore(connection).read_stream_tail("audit", 2)
+        assert values == ({"sequence": 8}, {"sequence": 9})
+        query, args = connection.calls[0]
+        assert "ORDER BY sequence DESC LIMIT $2" in query
+        assert query.endswith("ORDER BY sequence")
+        assert args == ("audit", 2)
+
     asyncio.run(scenario())

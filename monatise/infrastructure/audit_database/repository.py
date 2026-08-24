@@ -30,10 +30,23 @@ class InMemoryAuditRepository:
     Production may replace it with PostgreSQL or another durable store.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        base_sequence: int = 0,
+        base_hash: str | None = None,
+    ) -> None:
+        if base_sequence < 0:
+            raise ValueError("base_sequence cannot be negative")
+        if base_sequence == 0 and base_hash is not None:
+            raise ValueError("base_hash requires a positive base_sequence")
+        if base_sequence > 0 and not base_hash:
+            raise ValueError("base_hash is required for a positive base_sequence")
         self._records: list[AuditRecord] = []
         self._record_ids: set[str] = set()
-        self._sequence = 0
+        self._base_sequence = base_sequence
+        self._base_hash = base_hash
+        self._sequence = base_sequence
         self._lock = asyncio.Lock()
 
     async def append(
@@ -124,7 +137,7 @@ class InMemoryAuditRepository:
             previous_hash = (
                 self._records[-1].integrity_hash
                 if self._records
-                else None
+                else self._base_hash
             )
             integrity_hash = self._hash_record(
                 record_id=actual_record_id,
@@ -195,12 +208,12 @@ class InMemoryAuditRepository:
         errors: list[str] = []
 
         async with self._lock:
-            previous_hash = None
+            previous_hash = self._base_hash
             seen_ids: set[str] = set()
 
             for expected_sequence, record in enumerate(
                 self._records,
-                start=1,
+                start=self._base_sequence + 1,
             ):
                 if record.record_id in seen_ids:
                     errors.append(
@@ -252,10 +265,11 @@ class InMemoryAuditRepository:
 
                 previous_hash = record.integrity_hash
 
-            if self._sequence != len(self._records):
+            expected_repository_sequence = self._base_sequence + len(self._records)
+            if self._sequence != expected_repository_sequence:
                 errors.append(
                     f"repository sequence mismatch: expected "
-                    f"{len(self._records)}, got {self._sequence}"
+                    f"{expected_repository_sequence}, got {self._sequence}"
                 )
 
         return tuple(errors)
@@ -283,16 +297,17 @@ class InMemoryAuditRepository:
                     "append_only": True,
                     "hash_chain_enabled": True,
                     "execution_enabled": False,
+                    "base_sequence": self._base_sequence,
                 }),
             )
 
     async def count(self) -> int:
         async with self._lock:
-            return len(self._records)
+            return self._sequence
 
     async def chain_head_hash(self) -> str | None:
         async with self._lock:
-            return self._records[-1].integrity_hash if self._records else None
+            return self._records[-1].integrity_hash if self._records else self._base_hash
 
     @staticmethod
     def _matches(

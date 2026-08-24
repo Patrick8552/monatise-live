@@ -42,6 +42,7 @@ class DocumentStore(Protocol):
     async def delete(self, namespace: str, key: str) -> None: ...
     async def append(self, stream: str, value: dict[str, Any]) -> None: ...
     async def read_stream(self, stream: str) -> tuple[dict[str, Any], ...]: ...
+    async def read_stream_tail(self, stream: str, limit: int) -> tuple[dict[str, Any], ...]: ...
 
 
 def _json_value(value: Any) -> Any:
@@ -121,6 +122,23 @@ class PostgresDocumentStore:
 
     async def read_stream(self, stream: str) -> tuple[dict[str, Any], ...]:
         rows = await self._fetch("SELECT payload FROM monatise_application_streams WHERE stream=$1 ORDER BY sequence", stream)
+        values = []
+        for row in rows:
+            payload = row["payload"] if isinstance(row, dict) or hasattr(row, "keys") else row[0]
+            values.append(payload if isinstance(payload, dict) else json.loads(payload))
+        return tuple(values)
+
+    async def read_stream_tail(self, stream: str, limit: int) -> tuple[dict[str, Any], ...]:
+        if limit <= 0:
+            return ()
+        rows = await self._fetch(
+            "SELECT payload FROM ("
+            "SELECT sequence, payload FROM monatise_application_streams "
+            "WHERE stream=$1 ORDER BY sequence DESC LIMIT $2"
+            ") AS recent ORDER BY sequence",
+            stream,
+            limit,
+        )
         values = []
         for row in rows:
             payload = row["payload"] if isinstance(row, dict) or hasattr(row, "keys") else row[0]
@@ -216,6 +234,12 @@ return version
         rows = await self._call("read_stream", lambda: self._client.lrange(self._key("stream", stream), 0, -1))
         return tuple(json.loads(row.decode() if isinstance(row, bytes) else row) for row in rows)
 
+    async def read_stream_tail(self, stream: str, limit: int) -> tuple[dict[str, Any], ...]:
+        if limit <= 0:
+            return ()
+        rows = await self._call("read_stream_tail", lambda: self._client.lrange(self._key("stream", stream), -limit, -1))
+        return tuple(json.loads(row.decode() if isinstance(row, bytes) else row) for row in rows)
+
     async def _call(self, operation: str, factory: Any) -> Any:
         started = perf_counter()
         try:
@@ -248,9 +272,13 @@ class DurableAuditRepository:
 
     _LOAD_RETRY_ATTEMPTS = 6
     _LOAD_RETRY_DELAY_SECONDS = 3.0
+    _DEFAULT_STARTUP_WINDOW = 512
 
-    def __init__(self, store: DocumentStore) -> None:
+    def __init__(self, store: DocumentStore, *, startup_window: int = _DEFAULT_STARTUP_WINDOW) -> None:
+        if startup_window <= 0:
+            raise ValueError("startup_window must be positive")
         self._store = store
+        self._startup_window = startup_window
         self._repository = InMemoryAuditRepository()
         self._loaded = False
         self._load_lock = asyncio.Lock()
@@ -285,6 +313,18 @@ class DurableAuditRepository:
         await self._ensure_loaded()
         await self._repository.require_integrity()
 
+    async def verify_full_integrity(self) -> tuple[str, ...]:
+        """Verify the complete durable chain as an explicit maintenance operation.
+
+        Production startup intentionally uses a bounded recent window so audit
+        history growth cannot make deploy memory usage grow without limit.
+        """
+        values = await self._store.read_stream("audit")
+        ordered_values = self._canonical_chain(values, force_resolve=True)
+        repository = InMemoryAuditRepository()
+        await self._restore(repository, ordered_values)
+        return await repository.verify_integrity()
+
     async def snapshot(self) -> Any:
         await self._ensure_loaded()
         return await self._repository.snapshot()
@@ -297,7 +337,7 @@ class DurableAuditRepository:
                 return
             ordered_values: tuple[dict[str, Any], ...] = ()
             for attempt in range(1, self._LOAD_RETRY_ATTEMPTS + 1):
-                values = await self._store.read_stream("audit")
+                values = await self._read_startup_window()
                 try:
                     # force_resolve only on the final attempt: give a
                     # transient rolling-deploy fork every earlier attempt to
@@ -307,26 +347,96 @@ class DurableAuditRepository:
                     # exhausted -- e.g. because the losing writer already
                     # exited and nothing will ever extend either branch
                     # further, which would otherwise fail startup forever.
-                    ordered_values = self._canonical_chain(values, force_resolve=attempt == self._LOAD_RETRY_ATTEMPTS)
+                    if len(values) < self._startup_window:
+                        ordered_values = self._canonical_chain(values, force_resolve=attempt == self._LOAD_RETRY_ATTEMPTS)
+                    else:
+                        ordered_values = self._canonical_recent_chain(values, force_resolve=attempt == self._LOAD_RETRY_ATTEMPTS)
                     break
                 except AmbiguousDurableAuditChainError:
                     await asyncio.sleep(self._LOAD_RETRY_DELAY_SECONDS)
-            for value in ordered_values:
-                actor = value["actor"]
-                record = await self._repository.append(
-                    record_type=AuditRecordType(value["record_type"]), action=AuditAction(value["action"]),
-                    actor=AuditActor(actor["actor_id"], actor["actor_type"], actor.get("display_name"), actor.get("metadata", {})),
-                    source=value["source"], payload=value["payload"], correlation_id=value.get("correlation_id"),
-                    causation_id=value.get("causation_id"), symbol=value.get("symbol"), configuration_version=value.get("configuration_version"),
-                    metadata=value.get("metadata", {}), record_id=value["record_id"], created_at=datetime.fromisoformat(value["created_at"]),
-                )
-                if (
-                    record.sequence != int(value["sequence"])
-                    or record.previous_hash != value.get("previous_hash")
-                    or record.integrity_hash != value["integrity_hash"]
-                ):
-                    raise RuntimeError("durable audit integrity verification failed during restoration")
+            if ordered_values:
+                first = ordered_values[0]
+                base_sequence = int(first["sequence"]) - 1
+                base_hash = first.get("previous_hash")
+                self._repository = InMemoryAuditRepository(
+                    base_sequence=base_sequence,
+                    base_hash=base_hash,
+                ) if base_sequence else InMemoryAuditRepository()
+            await self._restore(self._repository, ordered_values)
             self._loaded = True
+
+    async def _read_startup_window(self) -> tuple[dict[str, Any], ...]:
+        reader = getattr(self._store, "read_stream_tail", None)
+        if callable(reader):
+            return await reader("audit", self._startup_window)
+        # Compatibility for third-party/local DocumentStore implementations.
+        values = await self._store.read_stream("audit")
+        return values[-self._startup_window:]
+
+    @staticmethod
+    async def _restore(repository: InMemoryAuditRepository, ordered_values: tuple[dict[str, Any], ...]) -> None:
+        for value in ordered_values:
+            actor = value["actor"]
+            record = await repository.append(
+                record_type=AuditRecordType(value["record_type"]), action=AuditAction(value["action"]),
+                actor=AuditActor(actor["actor_id"], actor["actor_type"], actor.get("display_name"), actor.get("metadata", {})),
+                source=value["source"], payload=value["payload"], correlation_id=value.get("correlation_id"),
+                causation_id=value.get("causation_id"), symbol=value.get("symbol"), configuration_version=value.get("configuration_version"),
+                metadata=value.get("metadata", {}), record_id=value["record_id"], created_at=datetime.fromisoformat(value["created_at"]),
+            )
+            if (
+                record.sequence != int(value["sequence"])
+                or record.previous_hash != value.get("previous_hash")
+                or record.integrity_hash != value["integrity_hash"]
+            ):
+                raise RuntimeError("durable audit integrity verification failed during restoration")
+
+    @staticmethod
+    def _canonical_recent_chain(values: tuple[dict[str, Any], ...], *, force_resolve: bool = False) -> tuple[dict[str, Any], ...]:
+        """Choose the strongest internally-linked chain from a bounded tail."""
+        if not values:
+            return ()
+        try:
+            by_hash = {value["integrity_hash"]: value for value in values}
+            if len(by_hash) != len(values):
+                raise RuntimeError("durable audit hash is duplicated during restoration")
+            for value in values:
+                int(value["sequence"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RuntimeError("durable audit sequence is invalid during restoration") from exc
+
+        referenced = {value.get("previous_hash") for value in values if value.get("previous_hash") is not None}
+        endpoints = [value for value in values if value["integrity_hash"] not in referenced]
+        chains: list[tuple[dict[str, Any], ...]] = []
+        for endpoint in endpoints:
+            reverse_chain: list[dict[str, Any]] = []
+            current: dict[str, Any] | None = endpoint
+            expected = int(endpoint["sequence"])
+            seen: set[str] = set()
+            while current is not None:
+                integrity_hash = current["integrity_hash"]
+                if integrity_hash in seen or int(current["sequence"]) != expected:
+                    reverse_chain = []
+                    break
+                seen.add(integrity_hash)
+                reverse_chain.append(current)
+                previous_hash = current.get("previous_hash")
+                current = by_hash.get(previous_hash) if previous_hash is not None else None
+                expected -= 1
+            if reverse_chain:
+                chains.append(tuple(reversed(reverse_chain)))
+
+        if not chains:
+            raise RuntimeError("durable audit sequence is incomplete during restoration")
+        longest = max(len(chain) for chain in chains)
+        chains = [chain for chain in chains if len(chain) == longest]
+        maximum = max(int(chain[-1]["sequence"]) for chain in chains)
+        chains = [chain for chain in chains if int(chain[-1]["sequence"]) == maximum]
+        if len(chains) != 1:
+            if not force_resolve:
+                raise AmbiguousDurableAuditChainError("durable audit sequence is ambiguous during restoration")
+            chains.sort(key=lambda chain: chain[-1]["integrity_hash"])
+        return chains[0]
 
     @staticmethod
     def _canonical_chain(values: tuple[dict[str, Any], ...], *, force_resolve: bool = False) -> tuple[dict[str, Any], ...]:
@@ -404,6 +514,14 @@ class DurableAuditRepository:
     @property
     def execution_enabled(self) -> bool:
         return False
+
+    @property
+    def verification_scope(self) -> str:
+        return "recent_window"
+
+    @property
+    def startup_window(self) -> int:
+        return self._startup_window
 
 
 class DurableEventStore:
