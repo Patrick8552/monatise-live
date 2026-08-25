@@ -1,0 +1,513 @@
+#property copyright "Monatise"
+#property version   "1.00"
+#property strict
+#property description "Account-bound FTMO bridge. Telegram never talks directly to the broker."
+
+#include <Trade/Trade.mqh>
+
+input string InpControlPlaneUrl        = "https://monatise-live.onrender.com";
+input string InpBridgeSecret           = "";       // Set in MT5; never commit the value.
+input string InpExpectedAccount        = "";
+input string InpExpectedServer         = "FTMO-Server";
+input string InpExpectedCurrency       = "USD";
+input string InpSymbols                = "XAUUSD";
+input bool   InpExecutionEnabled       = false;    // Independent local gate.
+input bool   InpMasterAccountApproved  = false;    // Independent local gate.
+input double InpMaximumRiskAmount      = 100.0;
+input double InpRiskFraction           = 0.01;
+input double InpDailyLossLimit         = 500.0;
+input double InpTotalLossLimit         = 1000.0;
+input double InpInitialAccountBalance  = 10000.0;
+input int    InpHeartbeatSeconds       = 5;
+input int    InpHttpTimeoutMs          = 10000;
+input int    InpMaximumSpreadTicks     = 80;
+input long   InpMagicNumber            = 26082501;
+
+string EA_VERSION = "1.00";
+string JOURNAL_FILE = "monatise-ftmo-command-journal.csv";
+CTrade Trade;
+
+string IsoTime(datetime value)
+{
+   MqlDateTime parts;
+   TimeToStruct(value, parts);
+   return StringFormat("%04d-%02d-%02dT%02d:%02d:%02d+00:00", parts.year, parts.mon, parts.day, parts.hour, parts.min, parts.sec);
+}
+
+string JsonEscape(string value)
+{
+   StringReplace(value, "\\", "\\\\");
+   StringReplace(value, "\"", "\\\"");
+   StringReplace(value, "\r", "\\r");
+   StringReplace(value, "\n", "\\n");
+   return value;
+}
+
+string BytesToHex(const uchar &data[])
+{
+   string result = "";
+   for(int index = 0; index < ArraySize(data); index++)
+      result += StringFormat("%02x", data[index]);
+   return result;
+}
+
+bool Sha256Bytes(const uchar &data[], uchar &digest[])
+{
+   uchar key[];
+   ArrayResize(key, 0);
+   ResetLastError();
+   return CryptEncode(CRYPT_HASH_SHA256, data, key, digest) > 0;
+}
+
+string Sha256Hex(string value)
+{
+   uchar data[], digest[];
+   StringToCharArray(value, data, 0, WHOLE_ARRAY, CP_UTF8);
+   if(ArraySize(data) > 0 && data[ArraySize(data) - 1] == 0)
+      ArrayResize(data, ArraySize(data) - 1);
+   if(!Sha256Bytes(data, digest))
+      return "";
+   return BytesToHex(digest);
+}
+
+string HmacSha256(string secret, string message)
+{
+   uchar key[], inner[], outer[], data[], digest[], result[];
+   StringToCharArray(secret, key, 0, WHOLE_ARRAY, CP_UTF8);
+   if(ArraySize(key) > 0 && key[ArraySize(key) - 1] == 0)
+      ArrayResize(key, ArraySize(key) - 1);
+   if(ArraySize(key) > 64)
+   {
+      if(!Sha256Bytes(key, digest)) return "";
+      ArrayCopy(key, digest);
+      ArrayResize(key, ArraySize(digest));
+   }
+   int key_size = ArraySize(key);
+   ArrayResize(key, 64);
+   for(int index = key_size; index < 64; index++) key[index] = 0;
+   ArrayResize(inner, 64);
+   ArrayResize(outer, 64);
+   for(int index = 0; index < 64; index++)
+   {
+      inner[index] = (uchar)(key[index] ^ 0x36);
+      outer[index] = (uchar)(key[index] ^ 0x5c);
+   }
+   StringToCharArray(message, data, 0, WHOLE_ARRAY, CP_UTF8);
+   if(ArraySize(data) > 0 && data[ArraySize(data) - 1] == 0)
+      ArrayResize(data, ArraySize(data) - 1);
+   ArrayCopy(inner, data, 64, 0, WHOLE_ARRAY);
+   if(!Sha256Bytes(inner, digest)) return "";
+   ArrayCopy(outer, digest, 64, 0, WHOLE_ARRAY);
+   if(!Sha256Bytes(outer, result)) return "";
+   return BytesToHex(result);
+}
+
+string RequestNonce()
+{
+   return StringFormat("%I64x%08x%08x", (long)TimeGMT(), (uint)GetTickCount(), (uint)MathRand());
+}
+
+bool SignedRequest(string method, string path, string body, string &response, int &status)
+{
+   if(StringLen(InpBridgeSecret) < 32)
+   {
+      Print("Monatise bridge blocked: bridge secret is absent or too short");
+      return false;
+   }
+   string timestamp = IntegerToString((long)TimeGMT());
+   string nonce = RequestNonce();
+   string canonical = method + "\n" + path + "\n" + timestamp + "\n" + nonce + "\n" + Sha256Hex(body);
+   string signature = HmacSha256(InpBridgeSecret, canonical);
+   if(signature == "") return false;
+   string headers = "Content-Type: application/json\r\n"
+                  + "X-Monatise-Timestamp: " + timestamp + "\r\n"
+                  + "X-Monatise-Nonce: " + nonce + "\r\n"
+                  + "X-Monatise-Signature: " + signature + "\r\n";
+   char request[], received[];
+   StringToCharArray(body, request, 0, WHOLE_ARRAY, CP_UTF8);
+   if(ArraySize(request) > 0 && request[ArraySize(request) - 1] == 0)
+      ArrayResize(request, ArraySize(request) - 1);
+   string response_headers;
+   ResetLastError();
+   status = WebRequest(method, InpControlPlaneUrl + path, headers, InpHttpTimeoutMs, request, received, response_headers);
+   if(status == -1)
+   {
+      PrintFormat("Monatise WebRequest failed error=%d. Add the HTTPS URL to MT5 allowed URLs.", GetLastError());
+      return false;
+   }
+   response = CharArrayToString(received, 0, WHOLE_ARRAY, CP_UTF8);
+   return true;
+}
+
+bool IdentityMatches()
+{
+   string login = IntegerToString((long)AccountInfoInteger(ACCOUNT_LOGIN));
+   string server = AccountInfoString(ACCOUNT_SERVER);
+   string currency = AccountInfoString(ACCOUNT_CURRENCY);
+   return InpExpectedAccount != "" && login == InpExpectedAccount
+       && StringCompare(server, InpExpectedServer, false) == 0
+       && StringCompare(currency, InpExpectedCurrency, false) == 0;
+}
+
+bool TradingPermission()
+{
+   return TerminalInfoInteger(TERMINAL_CONNECTED)
+       && TerminalInfoInteger(TERMINAL_TRADE_ALLOWED)
+       && MQLInfoInteger(MQL_TRADE_ALLOWED)
+       && AccountInfoInteger(ACCOUNT_TRADE_ALLOWED)
+       && AccountInfoInteger(ACCOUNT_TRADE_EXPERT);
+}
+
+string QuoteJson(string symbol)
+{
+   MqlTick tick;
+   if(!SymbolSelect(symbol, true) || !SymbolInfoTick(symbol, tick) || tick.bid <= 0 || tick.ask <= 0)
+      return "";
+   int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+   double tick_size = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
+   double tick_value = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE_LOSS);
+   if(tick_value <= 0) tick_value = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
+   return "\"" + JsonEscape(symbol) + "\":{"
+      + "\"bid\":\"" + DoubleToString(tick.bid, digits) + "\","
+      + "\"ask\":\"" + DoubleToString(tick.ask, digits) + "\","
+      + "\"timestamp\":\"" + IsoTime((datetime)(tick.time_msc / 1000)) + "\","
+      + "\"digits\":" + IntegerToString(digits) + ","
+      + "\"tick_size\":\"" + DoubleToString(tick_size, digits) + "\","
+      + "\"tick_value\":\"" + DoubleToString(tick_value, 8) + "\","
+      + "\"volume_min\":\"" + DoubleToString(SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN), 8) + "\","
+      + "\"volume_max\":\"" + DoubleToString(SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX), 8) + "\","
+      + "\"volume_step\":\"" + DoubleToString(SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP), 8) + "\","
+      + "\"stops_level\":\"" + IntegerToString((int)SymbolInfoInteger(symbol, SYMBOL_TRADE_STOPS_LEVEL)) + "\"}";
+}
+
+string PositionsJson()
+{
+   string result = "[";
+   for(int index = 0; index < PositionsTotal(); index++)
+   {
+      ulong ticket = PositionGetTicket(index);
+      if(ticket == 0) continue;
+      if(result != "[") result += ",";
+      result += "{\"ticket\":\"" + IntegerToString((long)ticket) + "\",\"symbol\":\"" + JsonEscape(PositionGetString(POSITION_SYMBOL))
+             + "\",\"magic\":\"" + IntegerToString(PositionGetInteger(POSITION_MAGIC))
+             + "\",\"type\":" + IntegerToString((int)PositionGetInteger(POSITION_TYPE))
+             + ",\"volume\":\"" + DoubleToString(PositionGetDouble(POSITION_VOLUME), 8)
+             + "\",\"price_open\":\"" + DoubleToString(PositionGetDouble(POSITION_PRICE_OPEN), 8)
+             + "\",\"sl\":\"" + DoubleToString(PositionGetDouble(POSITION_SL), 8)
+             + "\",\"tp\":\"" + DoubleToString(PositionGetDouble(POSITION_TP), 8) + "\"}";
+   }
+   return result + "]";
+}
+
+string OrdersJson()
+{
+   string result = "[";
+   for(int index = 0; index < OrdersTotal(); index++)
+   {
+      ulong ticket = OrderGetTicket(index);
+      if(ticket == 0) continue;
+      if(result != "[") result += ",";
+      result += "{\"ticket\":\"" + IntegerToString((long)ticket) + "\",\"symbol\":\"" + JsonEscape(OrderGetString(ORDER_SYMBOL))
+             + "\",\"magic\":\"" + IntegerToString(OrderGetInteger(ORDER_MAGIC))
+             + "\",\"type\":" + IntegerToString((int)OrderGetInteger(ORDER_TYPE))
+             + ",\"volume\":\"" + DoubleToString(OrderGetDouble(ORDER_VOLUME_CURRENT), 8)
+             + "\",\"price_open\":\"" + DoubleToString(OrderGetDouble(ORDER_PRICE_OPEN), 8) + "\"}";
+   }
+   return result + "]";
+}
+
+double DailyStartEquity()
+{
+   MqlDateTime parts;
+   TimeToStruct(TimeGMT(), parts);
+   string key = StringFormat("MNT.DAILY.%I64d.%04d%02d%02d", AccountInfoInteger(ACCOUNT_LOGIN), parts.year, parts.mon, parts.day);
+   if(!GlobalVariableCheck(key))
+      GlobalVariableSet(key, AccountInfoDouble(ACCOUNT_EQUITY));
+   return GlobalVariableGet(key);
+}
+
+bool CurrentOpenRisk(double &risk, string &reason)
+{
+   risk = 0.0;
+   for(int index = 0; index < PositionsTotal(); index++)
+   {
+      ulong ticket = PositionGetTicket(index);
+      if(ticket == 0) continue;
+      string symbol = PositionGetString(POSITION_SYMBOL);
+      double stop = PositionGetDouble(POSITION_SL);
+      if(stop <= 0) { reason = "an open position has no protective stop"; return false; }
+      double tick_size = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
+      double tick_value = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE_LOSS);
+      if(tick_value <= 0) tick_value = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
+      if(tick_size <= 0 || tick_value <= 0) { reason = "open-position symbol risk cannot be calculated"; return false; }
+      risk += MathAbs(PositionGetDouble(POSITION_PRICE_OPEN) - stop) / tick_size
+            * tick_value * PositionGetDouble(POSITION_VOLUME);
+   }
+   return true;
+}
+
+string BuildHeartbeat()
+{
+   string quotes = "{";
+   string symbols[];
+   int count = StringSplit(InpSymbols, ',', symbols);
+   for(int index = 0; index < count; index++)
+   {
+      StringTrimLeft(symbols[index]); StringTrimRight(symbols[index]);
+      string quote = QuoteJson(symbols[index]);
+      if(quote == "") continue;
+      if(quotes != "{") quotes += ",";
+      quotes += quote;
+   }
+   quotes += "}";
+   return "{"
+      + "\"account_id\":\"" + IntegerToString((long)AccountInfoInteger(ACCOUNT_LOGIN)) + "\","
+      + "\"server\":\"" + JsonEscape(AccountInfoString(ACCOUNT_SERVER)) + "\","
+      + "\"currency\":\"" + JsonEscape(AccountInfoString(ACCOUNT_CURRENCY)) + "\","
+      + "\"balance\":\"" + DoubleToString(AccountInfoDouble(ACCOUNT_BALANCE), 2) + "\","
+      + "\"equity\":\"" + DoubleToString(AccountInfoDouble(ACCOUNT_EQUITY), 2) + "\","
+      + "\"daily_start_equity\":\"" + DoubleToString(DailyStartEquity(), 2) + "\","
+      + "\"initial_balance\":\"" + DoubleToString(InpInitialAccountBalance, 2) + "\","
+      + "\"daily_loss_limit\":\"" + DoubleToString(InpDailyLossLimit, 2) + "\","
+      + "\"total_loss_limit\":\"" + DoubleToString(InpTotalLossLimit, 2) + "\","
+      + "\"terminal_connected\":" + (TerminalInfoInteger(TERMINAL_CONNECTED) ? "true" : "false") + ","
+      + "\"trade_allowed\":" + (TradingPermission() ? "true" : "false") + ","
+      + "\"ea_attached\":true,"
+      + "\"terminal_build\":\"" + IntegerToString((int)TerminalInfoInteger(TERMINAL_BUILD)) + "\","
+      + "\"ea_version\":\"" + EA_VERSION + "\","
+      + "\"positions\":" + PositionsJson() + ","
+      + "\"orders\":" + OrdersJson() + ","
+      + "\"quotes\":" + quotes + "}";
+}
+
+string JsonString(string json, string key)
+{
+   string marker = "\"" + key + "\":\"";
+   int start = StringFind(json, marker);
+   if(start < 0) return "";
+   start += StringLen(marker);
+   string value = "";
+   bool escaped = false;
+   for(int index = start; index < StringLen(json); index++)
+   {
+      ushort character = StringGetCharacter(json, index);
+      if(escaped) { value += ShortToString(character); escaped = false; continue; }
+      if(character == '\\') { escaped = true; continue; }
+      if(character == '"') break;
+      value += ShortToString(character);
+   }
+   return value;
+}
+
+bool DecodeBase64(string encoded, string &decoded)
+{
+   uchar source[], key[], result[];
+   StringToCharArray(encoded, source, 0, WHOLE_ARRAY, CP_UTF8);
+   if(ArraySize(source) > 0 && source[ArraySize(source) - 1] == 0) ArrayResize(source, ArraySize(source) - 1);
+   ArrayResize(key, 0);
+   if(CryptDecode(CRYPT_BASE64, source, key, result) <= 0) return false;
+   decoded = CharArrayToString(result, 0, WHOLE_ARRAY, CP_UTF8);
+   return true;
+}
+
+bool JournalLookup(string command_id, string &status, string &ticket)
+{
+   int handle = FileOpen(JOURNAL_FILE, FILE_READ|FILE_CSV|FILE_ANSI|FILE_COMMON, ',');
+   if(handle == INVALID_HANDLE) return false;
+   bool found = false;
+   while(!FileIsEnding(handle))
+   {
+      string stored_id = FileReadString(handle);
+      string stored_status = FileReadString(handle);
+      string stored_ticket = FileReadString(handle);
+      FileReadString(handle);
+      if(stored_id == command_id) { status = stored_status; ticket = stored_ticket; found = true; }
+   }
+   FileClose(handle);
+   return found;
+}
+
+void JournalAppend(string command_id, string status, string ticket, string message)
+{
+   int handle = FileOpen(JOURNAL_FILE, FILE_READ|FILE_WRITE|FILE_CSV|FILE_ANSI|FILE_COMMON, ',');
+   if(handle == INVALID_HANDLE) { PrintFormat("Monatise journal unavailable error=%d", GetLastError()); return; }
+   FileSeek(handle, 0, SEEK_END);
+   FileWrite(handle, command_id, status, ticket, message, TimeToString(TimeGMT(), TIME_DATE|TIME_SECONDS));
+   FileFlush(handle);
+   FileClose(handle);
+}
+
+void Acknowledge(string command_id, string status, string ticket, string message)
+{
+   string body = "{\"status\":\"" + JsonEscape(status) + "\",\"broker_ticket\":\"" + JsonEscape(ticket)
+               + "\",\"broker_retcode\":\"" + IntegerToString((long)Trade.ResultRetcode())
+               + "\",\"message\":\"" + JsonEscape(message) + "\",\"broker_observed_at\":\""
+               + IsoTime(TimeGMT()) + "\"}";
+   string response; int http_status;
+   SignedRequest("POST", "/api/ftmo/bridge/commands/" + command_id + "/ack", body, response, http_status);
+}
+
+bool FinalOrderValidation(string payload, string &reason)
+{
+   if(!InpExecutionEnabled || !InpMasterAccountApproved) { reason = "local execution gates are disabled"; return false; }
+   if(!IdentityMatches()) { reason = "account/server/currency mismatch"; return false; }
+   if(!TradingPermission()) { reason = "MT5 trading permission is unavailable"; return false; }
+   string operation = JsonString(payload, "operation");
+   string target_text = JsonString(payload, "target_id");
+   ulong target_id = (ulong)StringToInteger(target_text);
+   if(operation != "open")
+   {
+      if(target_id == 0) { reason = "management target is invalid"; return false; }
+      if(operation == "cancel")
+      {
+         if(!OrderSelect(target_id) || OrderGetInteger(ORDER_MAGIC) != InpMagicNumber) { reason = "order is absent or not owned by Monatise"; return false; }
+      }
+      else
+      {
+         if(!PositionSelectByTicket(target_id) || PositionGetInteger(POSITION_MAGIC) != InpMagicNumber) { reason = "position is absent or not owned by Monatise"; return false; }
+      }
+      return true;
+   }
+   string symbol = JsonString(payload, "symbol");
+   string side = JsonString(payload, "side");
+   string order_type = JsonString(payload, "order_type");
+   double volume = StringToDouble(JsonString(payload, "volume"));
+   double stop = StringToDouble(JsonString(payload, "stop_loss"));
+   double target = StringToDouble(JsonString(payload, "take_profit"));
+   MqlTick tick;
+   if(symbol == "" || !SymbolInfoTick(symbol, tick) || (TimeGMT() - tick.time) > 5) { reason = "FTMO quote is stale"; return false; }
+   double tick_size = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
+   double tick_value = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE_LOSS);
+   if(tick_value <= 0) tick_value = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
+   double entry = order_type == "market" ? ((side == "buy") ? tick.ask : tick.bid) : StringToDouble(JsonString(payload, "entry"));
+   if(tick_size <= 0 || tick_value <= 0 || volume <= 0) { reason = "symbol specification is invalid"; return false; }
+   if((tick.ask - tick.bid) / tick_size > InpMaximumSpreadTicks) { reason = "spread exceeds policy"; return false; }
+   if(order_type == "limit" && ((side == "buy" && entry >= tick.ask) || (side == "sell" && entry <= tick.bid))) { reason = "pending limit price crossed the market"; return false; }
+   if(order_type == "stop" && ((side == "buy" && entry <= tick.ask) || (side == "sell" && entry >= tick.bid))) { reason = "pending stop price crossed the market"; return false; }
+   if((side == "buy" && !(stop < entry && entry < target)) || (side == "sell" && !(target < entry && entry < stop))) { reason = "SL/TP geometry is invalid at final quote"; return false; }
+   double actual_risk = (MathAbs(entry - stop) / tick_size) * tick_value * volume;
+   double risk_limit = MathMin(AccountInfoDouble(ACCOUNT_EQUITY) * MathMin(InpRiskFraction, 0.01), InpMaximumRiskAmount);
+   if(actual_risk > risk_limit + 0.01) { reason = "final risk exceeds configured limit"; return false; }
+   double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   double open_risk = 0.0;
+   if(!CurrentOpenRisk(open_risk, reason)) return false;
+   double daily_remaining = InpDailyLossLimit - MathMax(0.0, DailyStartEquity() - equity);
+   double total_remaining = InpTotalLossLimit - MathMax(0.0, InpInitialAccountBalance - equity);
+   if(open_risk + actual_risk > equity * 0.03 + 0.01) { reason = "final total open risk exceeds 3%"; return false; }
+   if(open_risk + actual_risk > MathMin(daily_remaining, total_remaining) + 0.01) { reason = "final FTMO loss capacity is insufficient"; return false; }
+   return true;
+}
+
+void ExecuteCommand(string payload)
+{
+   string command_id = JsonString(payload, "command_id");
+   string operation = JsonString(payload, "operation");
+   string previous_status, previous_ticket;
+   if(command_id == "") return;
+   if(JournalLookup(command_id, previous_status, previous_ticket))
+   {
+      Acknowledge(command_id, previous_status, previous_ticket, "duplicate delivery reconciled from EA journal");
+      return;
+   }
+   string reason;
+   if(!FinalOrderValidation(payload, reason))
+   {
+      JournalAppend(command_id, "rejected", "", reason);
+      Acknowledge(command_id, "rejected", "", reason);
+      return;
+   }
+   string symbol = JsonString(payload, "symbol");
+   string side = JsonString(payload, "side");
+   string order_type = JsonString(payload, "order_type");
+   double entry = StringToDouble(JsonString(payload, "entry"));
+   double stop = StringToDouble(JsonString(payload, "stop_loss"));
+   double target = StringToDouble(JsonString(payload, "take_profit"));
+   double volume = StringToDouble(JsonString(payload, "volume"));
+   ulong target_id = (ulong)StringToInteger(JsonString(payload, "target_id"));
+   string comment = "MNT:" + StringSubstr(command_id, 0, 16);
+   JournalAppend(command_id, "broker_uncertain", "", "submission began; reconcile before any retry");
+   Trade.SetExpertMagicNumber(InpMagicNumber);
+   Trade.SetAsyncMode(false);
+   bool ok = false;
+   if(operation == "open")
+   {
+      if(order_type == "market") ok = side == "buy" ? Trade.Buy(volume, symbol, 0, stop, target, comment) : Trade.Sell(volume, symbol, 0, stop, target, comment);
+      else if(order_type == "limit") ok = side == "buy" ? Trade.BuyLimit(volume, entry, symbol, stop, target, ORDER_TIME_GTC, 0, comment) : Trade.SellLimit(volume, entry, symbol, stop, target, ORDER_TIME_GTC, 0, comment);
+      else if(order_type == "stop") ok = side == "buy" ? Trade.BuyStop(volume, entry, symbol, stop, target, ORDER_TIME_GTC, 0, comment) : Trade.SellStop(volume, entry, symbol, stop, target, ORDER_TIME_GTC, 0, comment);
+   }
+   else if(operation == "close") ok = Trade.PositionClose(target_id);
+   else if(operation == "cancel") ok = Trade.OrderDelete(target_id);
+   else if(operation == "sl" || operation == "tp" || operation == "breakeven")
+   {
+      if(PositionSelectByTicket(target_id))
+      {
+         double current_sl = PositionGetDouble(POSITION_SL), current_tp = PositionGetDouble(POSITION_TP);
+         double value = StringToDouble(JsonString(payload, "value"));
+         if(operation == "sl") current_sl = value;
+         if(operation == "tp") current_tp = value;
+         if(operation == "breakeven") current_sl = PositionGetDouble(POSITION_PRICE_OPEN);
+         ok = Trade.PositionModify(target_id, current_sl, current_tp);
+      }
+   }
+   string ticket = IntegerToString((long)(Trade.ResultOrder() > 0 ? Trade.ResultOrder() : Trade.ResultDeal()));
+   string result_status = ok ? "reconciled" : "rejected";
+   string message = Trade.ResultRetcodeDescription();
+   JournalAppend(command_id, result_status, ticket, message);
+   Acknowledge(command_id, result_status, ticket, message);
+}
+
+void PollCommands()
+{
+   if(!InpExecutionEnabled || !InpMasterAccountApproved || !IdentityMatches()) return;
+   string response; int status;
+   if(!SignedRequest("GET", "/api/ftmo/bridge/commands", "", response, status) || status != 200) return;
+   int cursor = 0;
+   while(true)
+   {
+      int marker = StringFind(response, "\"payload_base64\":\"", cursor);
+      if(marker < 0) break;
+      string tail = StringSubstr(response, marker);
+      string encoded = JsonString(tail, "payload_base64");
+      string signature = JsonString(tail, "signature");
+      string payload;
+      if(DecodeBase64(encoded, payload) && HmacSha256(InpBridgeSecret, payload) == signature)
+         ExecuteCommand(payload);
+      else
+         Print("Monatise command signature verification failed; command rejected");
+      cursor = marker + 24 + StringLen(encoded);
+   }
+}
+
+void SendHeartbeat()
+{
+   string response; int status;
+   string body = BuildHeartbeat();
+   if(!SignedRequest("POST", "/api/ftmo/bridge/heartbeat", body, response, status)) return;
+   if(status != 200) PrintFormat("Monatise heartbeat rejected HTTP %d: %s", status, response);
+}
+
+int OnInit()
+{
+   MathSrand((int)GetTickCount());
+   Trade.SetExpertMagicNumber(InpMagicNumber);
+   if(!IdentityMatches())
+   {
+      Print("Monatise bridge blocked: configured account/server/currency does not match MT5");
+      return INIT_FAILED;
+   }
+   EventSetTimer(MathMax(1, InpHeartbeatSeconds));
+   PrintFormat("Monatise FTMO bridge %s started. Execution gate=%s master-approved=%s", EA_VERSION,
+               InpExecutionEnabled ? "on" : "off", InpMasterAccountApproved ? "yes" : "no");
+   return INIT_SUCCEEDED;
+}
+
+void OnDeinit(const int reason)
+{
+   EventKillTimer();
+}
+
+void OnTimer()
+{
+   SendHeartbeat();
+   PollCommands();
+}

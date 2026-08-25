@@ -108,8 +108,8 @@ def test_shadow_intent_uses_ftmo_ask_and_limits_actual_risk_to_one_percent():
     assert intent.entry == Decimal("2500.20")
     assert intent.stop_loss == Decimal("2490.19")
     assert intent.targets == (Decimal("2520.20"),)
-    assert intent.volume == Decimal("0.99")
-    assert intent.risk_amount == Decimal("990.99")
+    assert intent.volume == Decimal("0.09")
+    assert intent.risk_amount == Decimal("90.09")
     assert intent.risk_fraction < Decimal("0.01")
     assert intent.status is FTMOIntentStatus.SHADOW_VALIDATED
     assert intent.execution_enabled is False
@@ -176,7 +176,7 @@ def test_stop_distance_daily_loss_and_total_exposure_guards_fail_closed():
     with pytest.raises(FTMOValidationError, match="total open risk"):
         authority.build_shadow_intent(
             setup(), quote(), specification(), account(),
-            existing_open_risk=Decimal("2500"), now=NOW,
+            existing_open_risk=Decimal("2950"), now=NOW,
         )
 
 

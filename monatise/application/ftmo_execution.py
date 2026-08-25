@@ -252,6 +252,7 @@ class UnavailableFTMOAdapter:
 @dataclass(frozen=True)
 class FTMORiskPolicy:
     risk_fraction: Decimal = Decimal("0.01")
+    maximum_risk_amount: Decimal = Decimal("100")
     maximum_total_open_risk_fraction: Decimal = Decimal("0.03")
     daily_loss_safety_buffer_fraction: Decimal = Decimal("0.10")
     maximum_quote_age_seconds: Decimal = Decimal("5")
@@ -260,7 +261,7 @@ class FTMORiskPolicy:
 
     def __post_init__(self) -> None:
         for name in (
-            "risk_fraction", "maximum_total_open_risk_fraction",
+            "risk_fraction", "maximum_risk_amount", "maximum_total_open_risk_fraction",
             "maximum_quote_age_seconds", "maximum_spread_ticks",
             "maximum_reference_deviation_fraction",
         ):
@@ -419,7 +420,7 @@ class FTMONativePriceAuthority:
         if stop_distance < specification.minimum_stop_distance:
             raise FTMOValidationError("FTMO stop distance is below the symbol minimum")
 
-        risk_budget = account.equity * self.policy.risk_fraction
+        risk_budget = min(account.equity * self.policy.risk_fraction, self.policy.maximum_risk_amount)
         loss_today = max(ZERO, account.daily_start_equity - account.equity)
         daily_buffer = account.daily_loss_limit * self.policy.daily_loss_safety_buffer_fraction
         remaining_daily_capacity = account.daily_loss_limit - loss_today - daily_buffer

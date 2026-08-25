@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import base64
 import json
 import logging
 import mimetypes
@@ -28,6 +29,12 @@ from monatise.analysis.tradingview import TRADINGVIEW_FRESH_SECONDS, TRADINGVIEW
 from monatise.adapters.coinglass_production import CoinGlassProductionAdapter
 from monatise.application.deployment import OrchestrationASGI, OrchestrationRuntime, TelegramCommandTransition, TradingViewAlertDuplicate
 from monatise.application.ftmo_registry import FTMOAssetClass, FTMO_REGISTRY
+from monatise.application.ftmo_master import (
+    FTMOBridgeAuthenticator,
+    FTMOMasterError,
+    format_proposal,
+    format_status as format_ftmo_master_status,
+)
 from monatise.application.stock_analysis import refresh_setup_validity
 from monatise.engines.market_data import MarketDataEngine, MarketDataRequest
 from monatise.core.models import Candle
@@ -142,6 +149,10 @@ class ProductionASGI(OrchestrationASGI):
                 await self._respond(send, 405, {"status": "method_not_allowed"})
                 return
             code, payload = await self._telegram_webhook(scope, receive)
+            await self._respond(send, code, payload)
+            return
+        if scope.get("type") == "http" and path.startswith("/api/ftmo/bridge/"):
+            code, payload = await self._ftmo_bridge_request(scope, receive)
             await self._respond(send, code, payload)
             return
         if scope.get("type") == "http" and path == "/api/health":
@@ -351,7 +362,14 @@ class ProductionASGI(OrchestrationASGI):
         if self.runtime.redis_coordination is None:
             return 503, {"status": "unavailable"}
         text = str(message.get("text") or "").strip()
-        queued = await self.runtime.redis_coordination.enqueue_telegram_command(update_id, {"update_id": update_id, "text": text}, ttl_seconds=86_400)
+        sender = message.get("from") if isinstance(message.get("from"), dict) else {}
+        chat = message.get("chat") if isinstance(message.get("chat"), dict) else {}
+        queued = await self.runtime.redis_coordination.enqueue_telegram_command(update_id, {
+            "update_id": update_id,
+            "text": text,
+            "user_id": str(sender.get("id", "")),
+            "chat_type": str(chat.get("type", "")),
+        }, ttl_seconds=86_400)
         if not queued:
             return 200, {"status": "duplicate"}
         return 200, {"status": "accepted"}
@@ -412,6 +430,11 @@ class ProductionASGI(OrchestrationASGI):
         if payload is None:
             return False
         heartbeat = asyncio.create_task(self._telegram_lease_heartbeat(coordination, payload), name="telegram-lease-heartbeat")
+        previous_context = getattr(self, "_telegram_command_context", None)
+        self._telegram_command_context = {
+            "user_id": str(payload.get("user_id") or ""),
+            "chat_type": str(payload.get("chat_type") or ""),
+        }
         try:
             await self._handle_telegram_command(
                 str(payload.get("text") or ""),
@@ -441,6 +464,7 @@ class ProductionASGI(OrchestrationASGI):
             if not await coordination.finish_telegram_command(payload):
                 LOGGER.warning("Telegram command completion rejected after lease loss", extra={"update_id": payload.get("update_id")})
         finally:
+            self._telegram_command_context = previous_context
             heartbeat.cancel()
             with suppress(asyncio.CancelledError):
                 await heartbeat
@@ -467,9 +491,20 @@ class ProductionASGI(OrchestrationASGI):
         notifier = self.runtime.telegram
         if notifier is None:
             return
-        help_text = "Monatise remote analysis\nUse /analyze BTC or /analyze NVDA. Add crypto or stock when a symbol is ambiguous.\nAnalysis only; trade execution is disabled."
+        help_text = (
+            "Monatise commands\n"
+            "Analysis: /analyze BTC or /analyze NVDA\n"
+            "FTMO: /status /bridge /account /positions /orders\n"
+            "Trade preview: /trade XAUUSD buy market sl=LEVEL tp=LEVEL\n"
+            "Control: /approve ID /reject ID /arm [seconds] /disarm /kill\n"
+            "Management previews: /close ID /cancel ID /sl ID LEVEL /tp ID LEVEL /breakeven ID"
+        )
         if re.fullmatch(r"/(?:start|help)(?:@[A-Za-z0-9_]+)?", text, re.IGNORECASE):
             await self._send_owned_telegram_response(notifier, help_text, ownership_check)
+            return
+        if re.match(r"^/(?:status|bridge|account|positions|orders|trade|close|cancel|sl|tp|breakeven|approve|reject|arm|disarm|kill)(?:@|\s|$)", text, re.IGNORECASE):
+            response = await self._handle_ftmo_telegram_command(text)
+            await self._send_owned_telegram_response(notifier, response, ownership_check)
             return
         match = self.TELEGRAM_COMMAND_PATTERN.fullmatch(text)
         raw_asset = (match.group(1) if match else "") or ""
@@ -495,6 +530,133 @@ class ProductionASGI(OrchestrationASGI):
             LOGGER.warning("Telegram command analysis failed", extra={"symbol": symbol, "error_type": type(exc).__name__})
             response = f"Monatise NO TRADE: {symbol}\nReason: analysis is currently unavailable.\nExecution: disabled"
         await self._send_owned_telegram_response(notifier, response, ownership_check)
+
+    async def _handle_ftmo_telegram_command(self, text: str) -> str:
+        service = getattr(self.runtime, "ftmo_master", None)
+        context = getattr(self, "_telegram_command_context", None) or {}
+        user_id = str(context.get("user_id") or "")
+        chat_type = str(context.get("chat_type") or "")
+        if service is None:
+            return "Monatise FTMO control is unavailable. Execution is blocked."
+        if not service.authorized(user_id, chat_type):
+            LOGGER.warning("Rejected unauthorized FTMO Telegram command", extra={"chat_type": chat_type})
+            return "Unauthorized FTMO control command. Execution is blocked."
+        command_text = re.sub(r"^(/\w+)@[A-Za-z0-9_]+", r"\1", text.strip())
+        parts = command_text.split()
+        command = parts[0].casefold()
+        try:
+            if command in {"/status", "/bridge"}:
+                return format_ftmo_master_status(await service.status())
+            if command == "/account":
+                bridge = await service.repository.bridge()
+                if not bridge:
+                    raise FTMOMasterError("FTMO bridge has never connected")
+                return "\n".join((
+                    "MONATISE FTMO ACCOUNT",
+                    f"Account: {'*' * max(0, len(bridge['account_id']) - 4)}{bridge['account_id'][-4:]}",
+                    f"Server: {bridge['server']} | Currency: {bridge['currency']}",
+                    f"Balance: {bridge['balance']} | Equity: {bridge['equity']}",
+                    f"Identity match: {bool(bridge['identity_match'])}",
+                ))
+            if command in {"/positions", "/orders"}:
+                bridge = await service.repository.bridge()
+                if not bridge:
+                    raise FTMOMasterError("FTMO bridge has never connected")
+                key = "positions" if command == "/positions" else "orders"
+                values = bridge.get(key) or []
+                if not values:
+                    return f"MONATISE FTMO {key.upper()}\nNone reported by the current MT5 heartbeat."
+                rows = [f"MONATISE FTMO {key.upper()}"]
+                rows.extend(json.dumps(item, sort_keys=True, separators=(",", ":"))[:400] for item in values[:20])
+                return "\n".join(rows)
+            if command == "/trade":
+                if len(parts) < 6:
+                    raise FTMOMasterError("use /trade SYMBOL buy|sell market|limit|stop [entry=LEVEL] sl=LEVEL tp=LEVEL")
+                symbol, side, order_type = parts[1:4]
+                parameters = dict(item.split("=", 1) for item in parts[4:] if "=" in item)
+                if "sl" not in parameters or "tp" not in parameters:
+                    raise FTMOMasterError("trade preview requires sl=LEVEL and tp=LEVEL")
+                proposal = await service.create_trade_proposal(
+                    actor=user_id, symbol=symbol, side=side, order_type=order_type,
+                    entry=parameters.get("entry"), stop_loss=parameters["sl"], take_profit=parameters["tp"],
+                )
+                return format_proposal(proposal)
+            if command in {"/close", "/cancel", "/breakeven"}:
+                if len(parts) != 2:
+                    raise FTMOMasterError(f"use {command} TICKET")
+                return format_proposal(await service.create_management_proposal(actor=user_id, operation=command[1:], target_id=parts[1]))
+            if command in {"/sl", "/tp"}:
+                if len(parts) != 3:
+                    raise FTMOMasterError(f"use {command} TICKET LEVEL")
+                return format_proposal(await service.create_management_proposal(actor=user_id, operation=command[1:], target_id=parts[1], value=parts[2]))
+            if command == "/approve":
+                if len(parts) != 2:
+                    raise FTMOMasterError("use /approve PROPOSAL_ID")
+                result = await service.approve(parts[1], user_id)
+                return f"FTMO command {result['command_id'][:12]} approved and queued for the account-bound MT5 EA."
+            if command == "/reject":
+                if len(parts) != 2:
+                    raise FTMOMasterError("use /reject PROPOSAL_ID")
+                await service.reject(parts[1], user_id)
+                return f"FTMO proposal {parts[1]} rejected. No order was sent."
+            if command == "/arm":
+                seconds = int(parts[1]) if len(parts) == 2 else None
+                return format_ftmo_master_status(await service.arm(user_id, seconds))
+            if command == "/disarm":
+                return format_ftmo_master_status(await service.disarm(user_id))
+            if command == "/kill":
+                return format_ftmo_master_status(await service.kill(user_id))
+        except (FTMOMasterError, ValueError, RuntimeError) as exc:
+            return f"Monatise FTMO BLOCKED\nReason: {exc}\nNo order was sent."
+        return "Unknown FTMO command. Use /help."
+
+    async def _ftmo_bridge_request(self, scope: dict[str, Any], receive: Any) -> tuple[int, dict[str, Any]]:
+        service = getattr(self.runtime, "ftmo_master", None)
+        if service is None or not service.configuration.bridge_secret:
+            return 503, {"status": "unavailable", "reason": "FTMO bridge is not configured"}
+        method = scope.get("method", "GET").upper()
+        path = scope.get("path", "")
+        body = b""
+        while True:
+            message = await receive()
+            body += message.get("body", b"")
+            if len(body) > 1_048_576:
+                return 413, {"status": "request_too_large"}
+            if not message.get("more_body", False):
+                break
+        headers = {key.decode().casefold(): value.decode() for key, value in scope.get("headers", ())}
+        timestamp = headers.get("x-monatise-timestamp", "")
+        nonce = headers.get("x-monatise-nonce", "")
+        signature = headers.get("x-monatise-signature", "")
+        try:
+            FTMOBridgeAuthenticator.verify(service.configuration.bridge_secret, method, path, timestamp, nonce, body, signature)
+            if not await service.repository.claim_nonce(nonce):
+                raise FTMOMasterError("bridge nonce was already used")
+            parsed = json.loads(body.decode()) if body else {}
+            if not isinstance(parsed, dict):
+                raise FTMOMasterError("bridge request must contain a JSON object")
+            if path == "/api/ftmo/bridge/heartbeat" and method == "POST":
+                return 200, await service.accept_bridge_heartbeat(parsed)
+            if path == "/api/ftmo/bridge/commands" and method == "GET":
+                commands = await service.commands_for_bridge(limit=5)
+                signed = []
+                for command in commands:
+                    canonical = json.dumps(command, sort_keys=True, separators=(",", ":"))
+                    signed.append({
+                        "payload_base64": base64.b64encode(canonical.encode()).decode(),
+                        "signature": hmac.new(service.configuration.bridge_secret.encode(), canonical.encode(), hashlib.sha256).hexdigest(),
+                    })
+                return 200, {"status": "ready", "commands": signed, "count": len(signed)}
+            match = re.fullmatch(r"/api/ftmo/bridge/commands/([a-f0-9]{64})/ack", path)
+            if match and method == "POST":
+                result = await service.acknowledge(match.group(1), parsed)
+                return 200, {"status": "accepted", "command_status": result["status"]}
+            return 404, {"status": "not_found"}
+        except FTMOMasterError as exc:
+            LOGGER.warning("FTMO bridge request rejected", extra={"path": path, "reason": str(exc)})
+            return 401, {"status": "rejected", "reason": str(exc)}
+        except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
+            return 400, {"status": "invalid_request", "reason": str(exc)}
 
     async def _telegram_asset_classification(self, symbol: str, requested_class: str | None) -> tuple[str, str]:
         stock = next((item for item in FTMO_REGISTRY.for_asset_class(FTMOAssetClass.STOCK)

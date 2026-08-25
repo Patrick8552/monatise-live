@@ -65,6 +65,34 @@ services:
         value: disabled
       - key: MONATISE_FTMO_EXECUTION_ENABLED
         value: false
+      # FTMO master control is an independently gated subsystem. These safe
+      # defaults deploy the full Telegram/EA path without activating orders.
+      - key: FTMO_EXECUTION_ENABLED
+        value: false
+      - key: FTMO_EXECUTION_ENVIRONMENT
+        value: demo
+      - key: FTMO_MASTER_ACCOUNT_APPROVED
+        value: false
+      - key: FTMO_TELEGRAM_EXECUTION_ARMED
+        value: false
+      - key: FTMO_AUTONOMOUS_EXECUTION
+        value: false
+      - key: FTMO_TELEGRAM_CONFIRMATION_REQUIRED
+        value: true
+      - key: FTMO_RISK_FRACTION
+        value: 0.01
+      - key: FTMO_MAXIMUM_RISK_AMOUNT
+        value: 100
+      - key: FTMO_ACCOUNT_ID
+        sync: false
+      - key: FTMO_SERVER
+        sync: false
+      - key: FTMO_ACCOUNT_CURRENCY
+        value: USD
+      - key: FTMO_TELEGRAM_AUTHORIZED_USER_IDS
+        sync: false
+      - key: FTMO_BRIDGE_SECRET
+        sync: false
       - key: MONATISE_HIERARCHICAL_INTERVAL_SECONDS
         value: 900
       - key: MONATISE_HIERARCHICAL_ALWAYS_COLLECT_5M

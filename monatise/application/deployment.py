@@ -40,6 +40,7 @@ from monatise.application.universe_discovery import rank_significant_futures_uni
 from monatise.application.ftmo_registry import FTMOAssetClass, FTMOInstrumentRegistry, FTMO_REGISTRY
 from monatise.application.ftmo_scanner import publication_allowed
 from monatise.application.ftmo_execution import FTMOExecutionConfiguration
+from monatise.application.ftmo_master import FTMOMasterConfiguration, FTMOMasterControlService, FTMOMasterRepository, FTMOMasterError, format_proposal
 from monatise.analysis.tradingview import TRADINGVIEW_ALERT_LIMIT, TRADINGVIEW_FRESH_SECONDS, enrich_tradingview_alert, normalize_tradingview_alert
 from monatise.adapters.x_macro import XMacroAdapter, XMacroPost
 from monatise.live.config import RuntimeConfig
@@ -1025,6 +1026,9 @@ class OrchestrationRuntime:
     _telegram_signal_states: dict[tuple[str, str], dict[str, Any]] = field(default_factory=dict)
     ftmo_registry: FTMOInstrumentRegistry = field(default_factory=lambda: FTMO_REGISTRY)
     ftmo_execution_configuration: FTMOExecutionConfiguration | None = None
+    ftmo_master_configuration: FTMOMasterConfiguration | None = None
+    ftmo_master: FTMOMasterControlService | None = None
+    document_store: PostgresDocumentStore | None = None
 
     def market_data_providers(self) -> dict[str, Any]:
         if self.coinglass is None:
@@ -1079,7 +1083,13 @@ class OrchestrationRuntime:
             configuration=configuration,
             provenance=Provenance("coinglass", "binance", "dynamic-crypto-usdt", "v4", "hierarchy-candle-v1"),
         )
-        publisher = self.telegram.hierarchy_shadow_notification if self.telegram is not None else None
+        async def publisher(message: str) -> Any:
+            if self.telegram is None:
+                raise RuntimeError("Telegram publisher is unavailable")
+            result = await self.telegram.hierarchy_shadow_notification(message)
+            await self._publish_ftmo_signal_from_message(message, source="monatise.crypto.hierarchy")
+            return result
+        publisher = publisher if self.telegram is not None else None
         current_price_provider = getattr(self.coinglass, "latest_current_price", None)
         self.hierarchy_service = ShadowHierarchyService(self.hierarchy, HierarchyLayerEvaluator(configuration=configuration), repository, publisher=publisher, current_price_provider=current_price_provider)
         scheduler = self.application.infrastructure.scheduler
@@ -1138,6 +1148,27 @@ class OrchestrationRuntime:
             "execution_enabled": False,
         }
         return tuple(job_ids)
+
+    async def _register_ftmo_master_retention(self) -> str | None:
+        if self.application is None or self.ftmo_master is None:
+            return None
+        job_id = "ftmo-master-control-retention"
+
+        async def task() -> dict[str, int]:
+            return await self.ftmo_master.repository.retention_sweep()
+
+        await self.application.infrastructure.scheduler.register(JobDefinition(
+            job_id=job_id,
+            name="FTMO master control retention",
+            task=task,
+            schedule_type=ScheduleType.INTERVAL,
+            interval=timedelta(hours=1),
+            timeout_seconds=120.0,
+            retry_policy=RetryPolicy(maximum_attempts=2, delay_seconds=10.0, maximum_delay_seconds=60.0),
+            tags=("maintenance", "retention", "ftmo-master"),
+            metadata={"nonce_retention_hours": 1, "control_record_retention_days": 90},
+        ))
+        return job_id
 
     async def _register_x_macro_monitor(self) -> tuple[str, ...]:
         if not _true(self.environment.get("MONATISE_X_MONITOR_ENABLED")):
@@ -1448,7 +1479,9 @@ class OrchestrationRuntime:
             await self.redis.set(dedupe_key, json.dumps(alert_state, separators=(",", ":"), sort_keys=True), ex=cooldown_seconds)
             try:
                 notifier = getattr(self.telegram, "ftmo_stock_notification", self.telegram.stock_analysis_notification)
-                await notifier(TelegramNotifier.format_market_stock_setup(outcome))
+                message = TelegramNotifier.format_market_stock_setup(outcome)
+                await notifier(message)
+                await self._publish_ftmo_signal_proposal(outcome, source="monatise.stock.scanner")
                 published += 1
             except Exception as exc:
                 if previous_state:
@@ -1604,7 +1637,9 @@ class OrchestrationRuntime:
             await self.redis.set(cooldown_key, json.dumps(alert_state, separators=(",", ":"), sort_keys=True), ex=cooldown_seconds)
             try:
                 notifier = getattr(self.telegram, "ftmo_futures_notification", self.telegram.stock_analysis_notification)
-                await notifier(TelegramNotifier.format_ftmo_futures_setup(analysis))
+                message = TelegramNotifier.format_ftmo_futures_setup(analysis)
+                await notifier(message)
+                await self._publish_ftmo_signal_proposal(analysis, source="monatise.futures.scanner")
                 published += 1
             except Exception as exc:
                 failures.append({"symbol": instrument.ftmo_symbol, "error_type": type(exc).__name__})
@@ -1617,6 +1652,49 @@ class OrchestrationRuntime:
             "ranked_candidates": len(candidates), "deep_analysis_attempted": min(len(candidates), deep_limit),
             "telegram_published": published, "suppressed": suppressed, "failures": failures, "execution_enabled": False,
         }
+
+    async def _publish_ftmo_signal_proposal(self, analysis: Mapping[str, Any], *, source: str) -> bool:
+        """Publish a second, FTMO-native preview when the bridge can price it."""
+        if self.ftmo_master is None or self.telegram is None:
+            return False
+        direction = str(analysis.get("direction") or "")
+        symbol = str(analysis.get("ftmo_symbol") or analysis.get("asset") or "")
+        entry, stop, target = analysis.get("entry"), analysis.get("stop_loss"), analysis.get("target")
+        if not symbol or direction.casefold() not in {"long", "short", "buy", "sell"} or any(value is None for value in (entry, stop, target)):
+            return False
+        signal_id = str(
+            analysis.get("publication_id") or analysis.get("setup_id") or analysis.get("valid_until")
+            or hashlib.sha256(json.dumps({
+                "symbol": symbol, "direction": direction, "entry": entry, "stop": stop, "target": target, "source": source,
+            }, sort_keys=True, default=str).encode()).hexdigest()
+        )
+        try:
+            proposal = await self.ftmo_master.create_signal_proposal(
+                signal_id=signal_id, symbol=symbol, direction=direction,
+                analysis_entry=entry, analysis_stop=stop, analysis_target=target, source=source,
+            )
+            await self.telegram.command_response(format_proposal(proposal))
+            return True
+        except FTMOMasterError as exc:
+            LOGGER.info("FTMO-native scanner proposal withheld", extra={"symbol": symbol, "reason": str(exc)})
+            return False
+
+    async def _publish_ftmo_signal_from_message(self, message: str, *, source: str) -> bool:
+        fields = {}
+        for label in ("FTMO Symbol", "Direction"):
+            match = re.search(rf"^{re.escape(label)}:\s*([^|\n]+)", message, re.MULTILINE)
+            if match:
+                fields[label] = match.group(1).strip()
+        levels = re.search(r"^Entry\s+([0-9.eE+-]+)\s*\|\s*Stop\s+([0-9.eE+-]+)\s*\|\s*Target\s+([0-9.eE+-]+)", message, re.MULTILINE)
+        publication = re.search(r"Publication\s+([A-Za-z0-9_-]+)", message)
+        if not levels or "FTMO Symbol" not in fields or "Direction" not in fields:
+            return False
+        return await self._publish_ftmo_signal_proposal({
+            "publication_id": publication.group(1) if publication else None,
+            "ftmo_symbol": fields["FTMO Symbol"],
+            "direction": fields["Direction"].split()[0],
+            "entry": levels.group(1), "stop_loss": levels.group(2), "target": levels.group(3),
+        }, source=source)
 
     @staticmethod
     def _price_change_24h(row: Mapping[str, Any]) -> float | None:
@@ -1647,6 +1725,7 @@ class OrchestrationRuntime:
         self.dependencies["configuration"] = {"status": "ok", "frozen": True}
         startup_phase = "ftmo_execution_configuration"
         self.ftmo_execution_configuration = FTMOExecutionConfiguration.from_environment(self.environment)
+        self.ftmo_master_configuration = FTMOMasterConfiguration.from_environment(self.environment)
         self.dependencies["ftmo_execution"] = {
             "status": "ok",
             "platform": self.ftmo_execution_configuration.platform.value if self.ftmo_execution_configuration.platform else None,
@@ -1655,6 +1734,7 @@ class OrchestrationRuntime:
             "mode": self.ftmo_execution_configuration.mode.value,
             "execution_enabled": self.ftmo_execution_configuration.order_submission_allowed,
             "price_authority": "ftmo_platform_required",
+            "master_control": self.ftmo_master_configuration.public_status(),
         }
         database_url = self.environment.get("MONATISE_DATABASE_URL") or self.environment.get("DATABASE_URL")
         redis_url = self.environment.get("MONATISE_REDIS_URL") or self.environment.get("REDIS_URL")
@@ -1703,6 +1783,11 @@ class OrchestrationRuntime:
             }
             startup_phase = "application_composition"
             store = PostgresDocumentStore(self.postgres)
+            self.document_store = store
+            self.ftmo_master = FTMOMasterControlService(
+                self.ftmo_master_configuration,
+                FTMOMasterRepository(store),
+            )
             infrastructure = create_durable_infrastructure(store)
             self.coinglass = register_coinglass_provider(
                 infrastructure.container,
@@ -1753,6 +1838,7 @@ class OrchestrationRuntime:
             await self._register_ftmo_futures_scanner()
             await self._register_decision_snapshot_retention()
             await self._register_tradingview_alert_retention()
+            await self._register_ftmo_master_retention()
             self.leadership = RedisSchedulerLeadership(
                 self.redis, namespace=self.environment.get("MONATISE_REDIS_NAMESPACE", "monatise:production-analysis")
             )
