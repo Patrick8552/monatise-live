@@ -34,6 +34,64 @@ def test_telegram_inbound_transport_is_independent_of_broadcast_notifications():
     assert telegram_transport_enabled({"MONATISE_TELEGRAM_NOTIFICATIONS_ENABLED": "false", "MONATISE_TELEGRAM_INBOUND_ENABLED": "false"}) is False
 
 
+def test_pooled_postgres_connection_borrows_per_operation_and_supports_store_queries():
+    class Cursor:
+        def __init__(self, rows=(), rowcount=0):
+            self.rows = rows
+            self.rowcount = rowcount
+            self.description = object() if rows else None
+
+        async def fetchall(self):
+            return self.rows
+
+    class Connection:
+        def __init__(self, identifier):
+            self.identifier = identifier
+            self.calls = []
+
+        async def execute(self, query, parameters):
+            self.calls.append((query, parameters))
+            if query.startswith("SELECT"):
+                return Cursor(({"connection": self.identifier},), 1)
+            return Cursor(rowcount=1)
+
+    class Lease:
+        def __init__(self, pool):
+            self.pool = pool
+
+        async def __aenter__(self):
+            connection = Connection(len(self.pool.connections) + 1)
+            self.pool.connections.append(connection)
+            return connection
+
+        async def __aexit__(self, *_args):
+            return False
+
+    class Pool:
+        def __init__(self):
+            self.connections = []
+            self.timeouts = []
+
+        def connection(self, *, timeout):
+            self.timeouts.append(timeout)
+            return Lease(self)
+
+    async def scenario():
+        pool = Pool()
+        connection = deployment_module._PooledPostgresConnection(pool)
+        row = await connection.fetchrow("SELECT value FROM docs WHERE key=$1", "one")
+        result = await connection.execute("INSERT INTO docs(value) VALUES (%s)", ("two",))
+
+        assert row == {"connection": 1}
+        assert result.rowcount == 1
+        assert len(pool.connections) == 2
+        assert pool.timeouts == [10.0, 10.0]
+        assert pool.connections[0].calls == [("SELECT value FROM docs WHERE key=%s", ("one",))]
+        assert pool.connections[1].calls == [("INSERT INTO docs(value) VALUES (%s)", ("two",))]
+
+    asyncio.run(scenario())
+
+
 def test_startup_failure_records_phase_and_logs_traceback(caplog):
     runtime = OrchestrationRuntime(environment={})
 

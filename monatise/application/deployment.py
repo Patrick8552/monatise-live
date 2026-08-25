@@ -82,6 +82,51 @@ SCHEDULED_ANALYSIS_INTERVAL_SECONDS = {
 SETUP_MATERIAL_CHANGE_BPS = 50.0
 
 
+@dataclass(frozen=True)
+class _PooledPostgresResult:
+    rowcount: int | None
+    rows: tuple[Any, ...] = ()
+
+    async def fetchone(self) -> Any | None:
+        return self.rows[0] if self.rows else None
+
+    async def fetchall(self) -> tuple[Any, ...]:
+        return self.rows
+
+
+class _PooledPostgresConnection:
+    """Small psycopg-compatible facade that borrows a healthy connection per call."""
+
+    def __init__(self, pool: Any, *, timeout_seconds: float = 10.0) -> None:
+        self.pool = pool
+        self.timeout_seconds = timeout_seconds
+
+    @staticmethod
+    def _query(query: str) -> str:
+        return re.sub(r"\$\d+", "%s", query)
+
+    @staticmethod
+    def _parameters(args: tuple[Any, ...]) -> tuple[Any, ...]:
+        if len(args) == 1 and isinstance(args[0], (tuple, list)):
+            return tuple(args[0])
+        return args
+
+    async def execute(self, query: str, *args: Any) -> _PooledPostgresResult:
+        parameters = self._parameters(args)
+        async with self.pool.connection(timeout=self.timeout_seconds) as connection:
+            cursor = await connection.execute(self._query(query), parameters)
+            rows: tuple[Any, ...] = ()
+            if getattr(cursor, "description", None) is not None:
+                rows = tuple(await cursor.fetchall())
+            return _PooledPostgresResult(getattr(cursor, "rowcount", None), rows)
+
+    async def fetchrow(self, query: str, *args: Any) -> Any | None:
+        return await (await self.execute(query, *args)).fetchone()
+
+    async def fetch(self, query: str, *args: Any) -> tuple[Any, ...]:
+        return await (await self.execute(query, *args)).fetchall()
+
+
 def _interleave_stock_candidates(longs: list[StockCandidate], shorts: list[StockCandidate]) -> tuple[StockCandidate, ...]:
     balanced: list[StockCandidate] = []
     for index in range(max(len(longs), len(shorts))):
@@ -1619,12 +1664,18 @@ class OrchestrationRuntime:
             started = perf_counter()
             self.postgres_pool = AsyncConnectionPool(database_url, min_size=1, max_size=4, open=False, kwargs={"autocommit": True})
             await self.postgres_pool.open(wait=True, timeout=15)
-            self.postgres = await self.postgres_pool.getconn(timeout=10)
-            await self.postgres.execute("SELECT 1")
-            self.dependencies["postgresql"] = {"status": "ok", "latency_ms": round((perf_counter() - started) * 1000, 2)}
-            startup_phase = "database_migrations"
-            self.migrations = MigrationRunner(self.postgres, self.migration_directory)
-            await self.migrations.run()
+            async with self.postgres_pool.connection(timeout=10) as migration_connection:
+                await migration_connection.execute("SELECT 1")
+                self.dependencies["postgresql"] = {"status": "ok", "latency_ms": round((perf_counter() - started) * 1000, 2)}
+                startup_phase = "database_migrations"
+                self.migrations = MigrationRunner(migration_connection, self.migration_directory)
+                await self.migrations.run()
+            # Never pin one database connection for the service lifetime. A
+            # checked-out connection can go stale after network/DB idle limits
+            # and also serializes every concurrent hierarchy job. Borrowing
+            # from the managed pool per operation lets psycopg replace broken
+            # connections and gives parallel scanner work independent leases.
+            self.postgres = _PooledPostgresConnection(self.postgres_pool)
             self.dependencies["migrations"] = {"status": "ok", "version": self.migrations.version}
             started = perf_counter()
             startup_phase = "redis_connection"
@@ -1782,13 +1833,10 @@ class OrchestrationRuntime:
             await self.leadership.release()
         if self.redis is not None:
             await self.redis.aclose()
-        if self.postgres is not None:
-            if self.postgres_pool is not None:
-                await self.postgres_pool.putconn(self.postgres)
-            else:
-                await self.postgres.close()
         if self.postgres_pool is not None:
             await self.postgres_pool.close()
+        elif self.postgres is not None:
+            await self.postgres.close()
 
     def readiness(self) -> tuple[bool, dict[str, Any]]:
         if self.leadership is not None and "scheduler" in self.dependencies:
