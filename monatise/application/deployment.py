@@ -39,6 +39,7 @@ from monatise.application.stock_universe import StockCandidate, StockUniverseCon
 from monatise.application.universe_discovery import rank_significant_futures_universe
 from monatise.application.ftmo_registry import FTMOAssetClass, FTMOInstrumentRegistry, FTMO_REGISTRY
 from monatise.application.ftmo_scanner import publication_allowed
+from monatise.application.ftmo_execution import FTMOExecutionConfiguration
 from monatise.analysis.tradingview import TRADINGVIEW_ALERT_LIMIT, TRADINGVIEW_FRESH_SECONDS, enrich_tradingview_alert, normalize_tradingview_alert
 from monatise.adapters.x_macro import XMacroAdapter, XMacroPost
 from monatise.live.config import RuntimeConfig
@@ -1023,6 +1024,7 @@ class OrchestrationRuntime:
     hierarchy_service: ShadowHierarchyService | None = None
     _telegram_signal_states: dict[tuple[str, str], dict[str, Any]] = field(default_factory=dict)
     ftmo_registry: FTMOInstrumentRegistry = field(default_factory=lambda: FTMO_REGISTRY)
+    ftmo_execution_configuration: FTMOExecutionConfiguration | None = None
 
     def market_data_providers(self) -> dict[str, Any]:
         if self.coinglass is None:
@@ -1643,6 +1645,17 @@ class OrchestrationRuntime:
         LOGGER.info("validating paper-only orchestration configuration")
         self.safety = PaperSafetyConfiguration.from_environment(self.environment)
         self.dependencies["configuration"] = {"status": "ok", "frozen": True}
+        startup_phase = "ftmo_execution_configuration"
+        self.ftmo_execution_configuration = FTMOExecutionConfiguration.from_environment(self.environment)
+        self.dependencies["ftmo_execution"] = {
+            "status": "ok",
+            "platform": self.ftmo_execution_configuration.platform.value if self.ftmo_execution_configuration.platform else None,
+            "account_identity_configured": self.ftmo_execution_configuration.connected_identity_configured,
+            "account_environment": self.ftmo_execution_configuration.account_environment.value,
+            "mode": self.ftmo_execution_configuration.mode.value,
+            "execution_enabled": self.ftmo_execution_configuration.order_submission_allowed,
+            "price_authority": "ftmo_platform_required",
+        }
         database_url = self.environment.get("MONATISE_DATABASE_URL") or self.environment.get("DATABASE_URL")
         redis_url = self.environment.get("MONATISE_REDIS_URL") or self.environment.get("REDIS_URL")
         deployment_environment = self.environment.get("MONATISE_ENVIRONMENT", "production").strip().casefold()

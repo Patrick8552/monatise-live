@@ -77,6 +77,10 @@ def test_required_ftmo_futures_mappings_are_explicit_and_cfds_are_not_conflated(
     assert "Underlying Futures: NQ" in message
     assert "Asset Class: FUTURES-LINKED CFD" in message
     assert "not an exchange-traded futures contract" in message
+    assert "FTMO executable entry/stop/target: WITHHELD" in message
+    assert "Entry: 20,000" not in message
+    assert "Invalidation: 19,900" not in message
+    assert "Target: 20,200" not in message
 
 
 @pytest.mark.parametrize("overrides", [
@@ -187,4 +191,3 @@ def test_three_ftmo_scanner_jobs_replace_legacy_scheduler_jobs():
     }
     assert not any("coin-discovery" in job_id or "altcoin" in job_id for job_id in job_ids)
     assert all(job.metadata["execution_enabled"] is False for job in scheduler.jobs)
-

@@ -81,6 +81,19 @@ altcoin discovery and Pump.fun/memecoin scanner are not exposed or scheduled.
 public list and reports additions, removals, and status changes without applying
 them. Registry changes therefore require explicit review and a committed update.
 
+### FTMO execution-price boundary
+
+Futures, CoinGlass, TradingView, and other providers are context-only. They may
+not define an executable FTMO entry, stop, target, volume, or validation price.
+`monatise.application.ftmo_execution` provides the normalized FTMO Bid/Ask,
+symbol-specification, 1%-maximum risk, shadow-intent, idempotency, and
+reconciliation boundary. It is disabled by default and fails closed until the
+actual FTMO platform and account identity are configured.
+
+The current XAU/USD mismatch investigation is recorded in
+`docs/ftmo-xauusd-root-cause.md`. External COMEX `GC` levels are no longer
+presented in Telegram as executable FTMO XAU/USD levels.
+
 When CoinGlass is unavailable, select Hyperliquid's public candle snapshot feed:
 
 ```bash

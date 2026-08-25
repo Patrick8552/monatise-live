@@ -59,6 +59,12 @@ services:
         value: true
       - key: MONATISE_TELEGRAM_INBOUND_ENABLED
         value: true
+      - key: MONATISE_FTMO_ACCOUNT_ENVIRONMENT
+        value: demo
+      - key: MONATISE_FTMO_EXECUTION_MODE
+        value: disabled
+      - key: MONATISE_FTMO_EXECUTION_ENABLED
+        value: false
       - key: MONATISE_HIERARCHICAL_INTERVAL_SECONDS
         value: 900
       - key: MONATISE_HIERARCHICAL_ALWAYS_COLLECT_5M

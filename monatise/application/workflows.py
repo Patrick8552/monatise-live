@@ -453,12 +453,11 @@ class TelegramNotifier:
             "Product note: the FTMO instrument is a CFD, not an exchange-traded futures contract.",
             f"Direction: {direction}",
             f"Monatise score: {int(analysis.get('score') or 0):+d}/10 | threshold: ±{int(analysis.get('score_threshold') or 7)}",
-            f"Entry: {_price(analysis.get('entry'))}",
-            f"Invalidation: {_price(analysis.get('stop_loss'))}",
-            f"Target: {_price(analysis.get('target'))}",
-            f"Reward/risk: {float(analysis.get('reward_risk') or 0):.2f}",
-            f"Source: {analysis.get('data_source') or 'market intelligence provider'}",
-            "Notification only; no trade was executed.",
+            f"External context market: {analysis.get('api_symbol') or analysis.get('futures_symbol') or 'UNKNOWN'}",
+            f"External context source: {analysis.get('data_source') or 'market intelligence provider'}",
+            "FTMO executable entry/stop/target: WITHHELD — a fresh FTMO platform quote is required.",
+            "Status: CONTEXT ONLY — NO EXECUTABLE SIGNAL.",
+            "No trade was executed.",
         ]
         return "\n".join(lines)
 
