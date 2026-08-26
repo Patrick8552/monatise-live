@@ -1,5 +1,5 @@
 #property copyright "Monatise"
-#property version   "1.00"
+#property version   "1.01"
 #property strict
 #property description "Account-bound FTMO bridge. Telegram never talks directly to the broker."
 
@@ -13,17 +13,19 @@ input string InpExpectedCurrency       = "USD";
 input string InpSymbols                = "XAUUSD";
 input bool   InpExecutionEnabled       = false;    // Independent local gate.
 input bool   InpMasterAccountApproved  = false;    // Independent local gate.
-input double InpMaximumRiskAmount      = 100.0;
-input double InpRiskFraction           = 0.01;
+input double InpMaximumRiskAmount      = 5.0;
+input double InpRiskFraction           = 0.0005;
 input double InpDailyLossLimit         = 500.0;
+input double InpMaximumDailyLossAmount = 10.0;     // Controlled live-validation ceiling.
 input double InpTotalLossLimit         = 1000.0;
 input double InpInitialAccountBalance  = 10000.0;
+input int    InpMaximumOpenExposures   = 1;        // Positions plus pending orders.
 input int    InpHeartbeatSeconds       = 5;
 input int    InpHttpTimeoutMs          = 10000;
 input int    InpMaximumSpreadTicks     = 80;
 input long   InpMagicNumber            = 26082501;
 
-string EA_VERSION = "1.00";
+string EA_VERSION = "1.01";
 string JOURNAL_FILE = "monatise-ftmo-command-journal.csv";
 CTrade Trade;
 
@@ -368,6 +370,11 @@ bool FinalOrderValidation(string payload, string &reason)
       }
       return true;
    }
+   if(PositionsTotal() + OrdersTotal() >= MathMax(1, InpMaximumOpenExposures))
+   {
+      reason = "maximum open position/pending-order exposure limit is reached";
+      return false;
+   }
    string symbol = JsonString(payload, "symbol");
    string side = JsonString(payload, "side");
    string order_type = JsonString(payload, "order_type");
@@ -391,7 +398,8 @@ bool FinalOrderValidation(string payload, string &reason)
    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
    double open_risk = 0.0;
    if(!CurrentOpenRisk(open_risk, reason)) return false;
-   double daily_remaining = InpDailyLossLimit - MathMax(0.0, DailyStartEquity() - equity);
+   double daily_remaining = MathMin(InpDailyLossLimit, InpMaximumDailyLossAmount)
+                          - MathMax(0.0, DailyStartEquity() - equity);
    double total_remaining = InpTotalLossLimit - MathMax(0.0, InpInitialAccountBalance - equity);
    if(open_risk + actual_risk > equity * 0.03 + 0.01) { reason = "final total open risk exceeds 3%"; return false; }
    if(open_risk + actual_risk > MathMin(daily_remaining, total_remaining) + 0.01) { reason = "final FTMO loss capacity is insufficient"; return false; }
