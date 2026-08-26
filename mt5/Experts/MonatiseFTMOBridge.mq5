@@ -1,5 +1,5 @@
 #property copyright "Monatise"
-#property version   "1.01"
+#property version   "1.02"
 #property strict
 #property description "Account-bound FTMO bridge. Telegram never talks directly to the broker."
 
@@ -25,7 +25,7 @@ input int    InpHttpTimeoutMs          = 10000;
 input int    InpMaximumSpreadTicks     = 80;
 input long   InpMagicNumber            = 26082501;
 
-string EA_VERSION = "1.01";
+string EA_VERSION = "1.02";
 string JOURNAL_FILE = "monatise-ftmo-command-journal.csv";
 CTrade Trade;
 
@@ -63,6 +63,11 @@ bool Sha256Bytes(const uchar &data[], uchar &digest[])
 
 string Sha256Hex(string value)
 {
+   // MT5 CryptEncode can fail on a zero-length input array. GET command
+   // polling signs an empty body, so use the standard SHA-256 digest of an
+   // empty byte string instead of producing an invalid canonical signature.
+   if(value == "")
+      return "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
    uchar data[], digest[];
    StringToCharArray(value, data, 0, WHOLE_ARRAY, CP_UTF8);
    if(ArraySize(data) > 0 && data[ArraySize(data) - 1] == 0)
