@@ -96,6 +96,8 @@ class FTMOMasterConfiguration:
     authorized_user_ids: frozenset[str]
     maximum_risk_amount: Decimal = Decimal("100")
     risk_fraction: Decimal = Decimal("0.01")
+    maximum_daily_loss_amount: Decimal = Decimal("500")
+    maximum_open_exposures: int = 1
     arm_max_seconds: int = 900
     heartbeat_max_age_seconds: int = 30
     quote_max_age_seconds: int = 5
@@ -118,6 +120,12 @@ class FTMOMasterConfiguration:
             authorized_user_ids=users,
             maximum_risk_amount=_decimal(_env(environment, "FTMO_MAXIMUM_RISK_AMOUNT", "100"), "maximum risk amount", positive=True),
             risk_fraction=_decimal(_env(environment, "FTMO_RISK_FRACTION", "0.01"), "risk fraction", positive=True),
+            maximum_daily_loss_amount=_decimal(
+                _env(environment, "FTMO_MAXIMUM_DAILY_LOSS_AMOUNT", "500"),
+                "maximum daily loss amount",
+                positive=True,
+            ),
+            maximum_open_exposures=int(_env(environment, "FTMO_MAXIMUM_OPEN_EXPOSURES", "1")),
             arm_max_seconds=max(60, min(3600, int(_env(environment, "FTMO_ARM_MAX_SECONDS", "900")))),
             heartbeat_max_age_seconds=max(5, min(120, int(_env(environment, "FTMO_HEARTBEAT_MAX_AGE_SECONDS", "30")))),
             quote_max_age_seconds=max(1, min(30, int(_env(environment, "FTMO_QUOTE_MAX_AGE_SECONDS", "5")))),
@@ -125,6 +133,8 @@ class FTMOMasterConfiguration:
         )
         if configuration.risk_fraction > Decimal("0.01"):
             raise ValueError("FTMO risk fraction cannot exceed 1%")
+        if configuration.maximum_open_exposures < 1:
+            raise ValueError("FTMO maximum open exposures must be at least one")
         if configuration.execution_environment not in {"demo", "master"}:
             raise ValueError("FTMO execution environment must be demo or master")
         if configuration.autonomous_execution:
@@ -166,6 +176,8 @@ class FTMOMasterConfiguration:
             "activation_configured": self.activation_configured,
             "risk_fraction": str(self.risk_fraction),
             "maximum_risk_amount": str(self.maximum_risk_amount),
+            "maximum_daily_loss_amount": str(self.maximum_daily_loss_amount),
+            "maximum_open_exposures": self.maximum_open_exposures,
         }
 
 
@@ -519,9 +531,18 @@ class FTMOMasterControlService:
             raise FTMOMasterError("stop distance is below the FTMO symbol minimum")
         equity = Decimal(bridge["equity"])
         loss_today = max(ZERO, Decimal(bridge["daily_start_equity"]) - equity)
-        daily_remaining = Decimal(bridge["daily_loss_limit"]) - loss_today
+        daily_remaining = min(
+            Decimal(bridge["daily_loss_limit"]),
+            self.configuration.maximum_daily_loss_amount,
+        ) - loss_today
         total_loss = max(ZERO, Decimal(bridge["initial_balance"]) - equity)
         total_remaining = Decimal(bridge["total_loss_limit"]) - total_loss
+        open_exposures = sum(
+            1 for item in (*tuple(bridge.get("positions") or ()), *tuple(bridge.get("orders") or ()))
+            if isinstance(item, Mapping)
+        )
+        if open_exposures >= self.configuration.maximum_open_exposures:
+            raise FTMOMasterError("maximum open position/pending-order exposure limit is reached")
         existing_open_risk = ZERO
         for position in bridge.get("positions") or []:
             if not isinstance(position, Mapping):
@@ -703,6 +724,22 @@ class FTMOMasterControlService:
             quote = (bridge.get("quotes") or {}).get(proposal["symbol"])
             if not quote or (observed - datetime.fromisoformat(quote["timestamp"])).total_seconds() > self.configuration.quote_max_age_seconds:
                 raise FTMOMasterError("FTMO quote is stale at approval")
+            open_exposures = sum(
+                1 for item in (*tuple(bridge.get("positions") or ()), *tuple(bridge.get("orders") or ()))
+                if isinstance(item, Mapping)
+            )
+            if open_exposures >= self.configuration.maximum_open_exposures:
+                raise FTMOMasterError("maximum open position/pending-order exposure limit is reached at approval")
+            equity = Decimal(bridge["equity"])
+            loss_today = max(ZERO, Decimal(bridge["daily_start_equity"]) - equity)
+            daily_remaining = min(
+                Decimal(bridge["daily_loss_limit"]),
+                self.configuration.maximum_daily_loss_amount,
+            ) - loss_today
+            total_loss = max(ZERO, Decimal(bridge["initial_balance"]) - equity)
+            total_remaining = Decimal(bridge["total_loss_limit"]) - total_loss
+            if Decimal(proposal["risk_amount"]) > min(daily_remaining, total_remaining):
+                raise FTMOMasterError("configured daily/total loss capacity is insufficient at approval")
         command_id = hashlib.sha256(f"{proposal_id}:{proposal['kind']}:{proposal.get('operation', 'open')}".encode()).hexdigest()
         command = {
             "command_id": command_id,
