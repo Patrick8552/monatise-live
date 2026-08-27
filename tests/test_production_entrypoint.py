@@ -12,7 +12,12 @@ import pytest
 
 import monatise.application.production as production_module
 from monatise.adapters.coinglass_production import CoinGlassProductionAdapter
-from monatise.application.production import ProductionASGI, ProductionRuntime, telegram_webhook_secret
+from monatise.application.production import (
+    ProductionASGI,
+    ProductionRuntime,
+    configured_telegram_webhook_secret,
+    telegram_webhook_secret,
+)
 from monatise.application.deployment import TelegramCommandTransition
 from monatise.application.registry import PRODUCTION_ENGINE_ORDER
 from monatise.core.models import Candle
@@ -61,6 +66,7 @@ class Runtime:
             "COINGLASS_API_KEY": "server-secret",
             "MONATISE_TRADINGVIEW_WEBHOOK_TOKEN": "tv-secret",
             "MONATISE_TELEGRAM_INBOUND_ENABLED": "true",
+            "MONATISE_TELEGRAM_BOT_DELIVERY_MODE": "dedicated_render_webhook",
         }
         self.coinglass = SimpleNamespace(
             candles=lambda symbol, limit, interval: [Candle("2026-08-02T12:00:00+00:00", 100, 110, 90, 105, 1000)],
@@ -189,6 +195,80 @@ def test_telegram_webhook_is_secret_and_chat_restricted():
     update["message"]["chat"]["id"] = 99
     assert telegram_webhook(app, update, secret=telegram_webhook_secret("bot-token")) == (200, {"status": "ignored"})
     assert runtime.calls == []
+
+
+def test_dedicated_monatise_bot_configuration_is_isolated_from_openclaw_and_legacy_bot_names():
+    environment = {
+        "TELEGRAM_BOT_TOKEN": "donpbot-token",
+        "OPENCLAW_TELEGRAM_BOT_TOKEN": "donpbot-token",
+        "MONATISE_OPENCLAW_TOKEN": "openclaw-control-token",
+    }
+    assert configured_telegram_webhook_secret(environment) == ""
+
+    runtime = Runtime()
+    runtime.environment.update(environment)
+    runtime.environment.pop("MONATISE_TELEGRAM_BOT_DELIVERY_MODE")
+    runtime.environment["MONATISE_TELEGRAM_BOT_TOKEN"] = "existing-donpbot-token"
+    runtime.environment["MONATISE_TELEGRAM_CHAT_ID"] = "42"
+    runtime.telegram = Telegram()
+    app = ProductionASGI(runtime)
+    update = {"update_id": 40, "message": {"chat": {"id": 42}, "from": {"id": 42}, "text": "/analyze gold"}}
+    assert telegram_webhook(app, update, secret="anything") == (503, {"status": "unavailable"})
+    assert environment["OPENCLAW_TELEGRAM_BOT_TOKEN"] == "donpbot-token"
+
+
+def test_explicit_dedicated_webhook_secret_is_used_and_validated():
+    environment = {
+        "MONATISE_TELEGRAM_BOT_TOKEN": "monatise-bot-token",
+        "MONATISE_TELEGRAM_BOT_DELIVERY_MODE": "dedicated_render_webhook",
+        "MONATISE_TELEGRAM_WEBHOOK_SECRET": "render_webhook_secret-42",
+    }
+    assert configured_telegram_webhook_secret(environment) == "render_webhook_secret-42"
+    with pytest.raises(ValueError, match="invalid format"):
+        configured_telegram_webhook_secret({**environment, "MONATISE_TELEGRAM_WEBHOOK_SECRET": "not valid!"})
+
+    runtime = Runtime()
+    runtime.environment.update({
+        **environment,
+        "MONATISE_TELEGRAM_CHAT_ID": "42",
+        "MONATISE_TELEGRAM_ALLOWED_USER_IDS": "42",
+    })
+    runtime.telegram = Telegram()
+    app = ProductionASGI(runtime)
+    update = {"update_id": 41, "message": {"chat": {"id": 42}, "from": {"id": 42}, "text": "/help"}}
+    assert telegram_webhook(app, update, secret="render_webhook_secret-42") == (200, {"status": "accepted"})
+
+
+def test_webhook_ownership_monitor_detects_owned_and_lost_routes():
+    class OwnershipTelegram(Telegram):
+        def __init__(self, url):
+            super().__init__()
+            self.url = url
+
+        async def webhook_info(self):
+            return {
+                "url": self.url,
+                "pending_update_count": 0,
+                "last_error_date": None,
+                "last_error_message": None,
+            }
+
+    async def scenario():
+        runtime = Runtime()
+        runtime.environment["MONATISE_PUBLIC_URL"] = "https://monatise-live.onrender.com"
+        runtime.dependencies = {"telegram_inbound": {"enabled": True}}
+        runtime.telegram = OwnershipTelegram("https://monatise-live.onrender.com/api/telegram/webhook")
+        app = ProductionASGI(runtime)
+        assert await app._verify_telegram_webhook_ownership() is True
+        assert runtime.dependencies["telegram_inbound"]["webhook_owner_verified"] is True
+        assert runtime.dependencies["telegram_inbound"]["registration"] == "registered"
+
+        runtime.telegram.url = ""
+        assert await app._verify_telegram_webhook_ownership() is False
+        assert runtime.dependencies["telegram_inbound"]["webhook_owner_verified"] is False
+        assert runtime.dependencies["telegram_inbound"]["registration"] == "lost"
+
+    asyncio.run(scenario())
 
 
 def test_telegram_callback_approval_is_private_authorized_and_replay_safe():

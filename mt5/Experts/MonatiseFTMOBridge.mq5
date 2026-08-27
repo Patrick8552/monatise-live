@@ -1,5 +1,5 @@
 #property copyright "Monatise"
-#property version   "1.05"
+#property version   "1.06"
 #property strict
 #property description "Account-bound FTMO bridge. Telegram never talks directly to the broker."
 
@@ -24,7 +24,7 @@ input int    InpMaximumSpreadTicks     = 80;
 input int    InpMaximumDeviationPoints = 20;
 input long   InpMagicNumber            = 26082501;
 
-string EA_VERSION = "1.05";
+string EA_VERSION = "1.06";
 string JOURNAL_FILE = "monatise-ftmo-command-journal.csv";
 CTrade Trade;
 
@@ -33,6 +33,23 @@ string IsoTime(datetime value)
    MqlDateTime parts;
    TimeToStruct(value, parts);
    return StringFormat("%04d-%02d-%02dT%02d:%02d:%02d+00:00", parts.year, parts.mon, parts.day, parts.hour, parts.min, parts.sec);
+}
+
+string BrokerTime(datetime value)
+{
+   MqlDateTime parts;
+   TimeToStruct(value, parts);
+   return StringFormat("%04d-%02d-%02dT%02d:%02d:%02d", parts.year, parts.mon, parts.day, parts.hour, parts.min, parts.sec);
+}
+
+long BrokerUtcOffsetSeconds()
+{
+   return (long)TimeTradeServer() - (long)TimeGMT();
+}
+
+datetime BrokerTimeToUtc(datetime value)
+{
+   return (datetime)((long)value - BrokerUtcOffsetSeconds());
 }
 
 string JsonEscape(string value)
@@ -169,6 +186,13 @@ string QuoteJson(string symbol)
    MqlTick tick;
    if(!SymbolSelect(symbol, true) || !SymbolInfoTick(symbol, tick) || tick.bid <= 0 || tick.ask <= 0)
       return "";
+   datetime observed_utc = TimeGMT();
+   datetime broker_time = (datetime)(tick.time_msc / 1000);
+   long broker_offset_seconds = BrokerUtcOffsetSeconds();
+   datetime broker_time_utc = (datetime)((long)broker_time - broker_offset_seconds);
+   long quote_age_seconds = (long)observed_utc - (long)broker_time_utc;
+   if(quote_age_seconds < -1 || quote_age_seconds > 5)
+      return "";
    int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
    double tick_size = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
    double tick_value = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE_LOSS);
@@ -178,7 +202,13 @@ string QuoteJson(string symbol)
    return "\"" + JsonEscape(symbol) + "\":{"
       + "\"bid\":\"" + DoubleToString(tick.bid, digits) + "\","
       + "\"ask\":\"" + DoubleToString(tick.ask, digits) + "\","
-      + "\"timestamp\":\"" + IsoTime((datetime)(tick.time_msc / 1000)) + "\","
+      + "\"timestamp\":\"" + IsoTime(observed_utc) + "\","
+      + "\"observed_at_utc\":\"" + IsoTime(observed_utc) + "\","
+      + "\"quote_observed_at_utc\":\"" + IsoTime(observed_utc) + "\","
+      + "\"broker_time\":\"" + BrokerTime(broker_time) + "\","
+      + "\"broker_time_offset\":" + IntegerToString((int)broker_offset_seconds) + ","
+      + "\"broker_time_offset_seconds\":" + IntegerToString((int)broker_offset_seconds) + ","
+      + "\"terminal_local_time\":\"" + BrokerTime(TimeLocal()) + "\","
       + "\"digits\":" + IntegerToString(digits) + ","
       + "\"point\":\"" + DoubleToString(point, digits) + "\","
       + "\"tick_size\":\"" + DoubleToString(tick_size, digits) + "\","
@@ -266,6 +296,7 @@ bool CurrentOpenRisk(double &risk, string &reason)
 
 string BuildHeartbeat()
 {
+   datetime observed_utc = TimeGMT();
    string quotes = "{";
    string symbols[];
    int count = StringSplit(InpSymbols, ',', symbols);
@@ -294,6 +325,10 @@ string BuildHeartbeat()
       + "\"ea_attached\":true,"
       + "\"terminal_build\":\"" + IntegerToString((int)TerminalInfoInteger(TERMINAL_BUILD)) + "\","
       + "\"ea_version\":\"" + EA_VERSION + "\","
+      + "\"observed_at_utc\":\"" + IsoTime(observed_utc) + "\","
+      + "\"broker_time\":\"" + BrokerTime(TimeTradeServer()) + "\","
+      + "\"broker_time_offset\":" + IntegerToString((int)BrokerUtcOffsetSeconds()) + ","
+      + "\"terminal_local_time\":\"" + BrokerTime(TimeLocal()) + "\","
       + "\"positions\":" + PositionsJson() + ","
       + "\"orders\":" + OrdersJson() + ","
       + "\"quotes\":" + quotes + "}";
@@ -414,7 +449,10 @@ bool FinalOrderValidation(string payload, string &reason)
    double stop = StringToDouble(JsonString(payload, "stop_loss"));
    double target = StringToDouble(JsonString(payload, "take_profit"));
    MqlTick tick;
-   if(symbol == "" || !SymbolInfoTick(symbol, tick) || (TimeGMT() - tick.time) > 5) { reason = "FTMO quote is stale"; return false; }
+   if(symbol == "" || !SymbolInfoTick(symbol, tick)) { reason = "FTMO quote is unavailable"; return false; }
+   datetime command_quote_utc = BrokerTimeToUtc(tick.time);
+   long command_quote_age = (long)TimeGMT() - (long)command_quote_utc;
+   if(command_quote_age < -1 || command_quote_age > 5) { reason = "FTMO quote is stale or clock skew was detected"; return false; }
    double tick_size = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
    double tick_value = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE_LOSS);
    if(tick_value <= 0) tick_value = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);

@@ -301,6 +301,9 @@ class TelegramNotificationTransport:
     async def set_webhook(self, url: str, secret_token: str) -> bool:
         return await asyncio.to_thread(self._set_webhook, url, secret_token)
 
+    async def webhook_info(self) -> dict[str, Any]:
+        return await asyncio.to_thread(self._webhook_info)
+
     def _send(self, chat_id: str, text: str, reply_markup: Mapping[str, Any] | None = None) -> int:
         token = self._token_provider()
         if not token:
@@ -365,6 +368,27 @@ class TelegramNotificationTransport:
                 return response.status < 300 and payload.get("ok") is True
         except Exception as exc:
             raise RuntimeError("Telegram webhook registration failed") from exc
+
+    def _webhook_info(self) -> dict[str, Any]:
+        token = self._token_provider()
+        if not token:
+            raise RuntimeError("Telegram credential is unavailable")
+        request = Request(f"https://api.telegram.org/bot{token}/getWebhookInfo", method="GET")
+        try:
+            with urlopen(request, timeout=15) as response:  # noqa: S310
+                payload = json.loads(response.read().decode())
+                result = payload.get("result") if payload.get("ok") is True else None
+                if response.status >= 300 or not isinstance(result, dict):
+                    raise RuntimeError("Telegram webhook inspection was rejected")
+                return {
+                    "url": str(result.get("url") or ""),
+                    "pending_update_count": int(result.get("pending_update_count") or 0),
+                    "last_error_date": result.get("last_error_date"),
+                    "last_error_message": str(result.get("last_error_message") or "") or None,
+                    "allowed_updates": list(result.get("allowed_updates") or []),
+                }
+        except Exception as exc:
+            raise RuntimeError("Telegram webhook inspection failed") from exc
 
 
 _TELEGRAM_LABEL = re.compile(r"(^|\|\s*)([^|:\n]+):(?=\s)", re.MULTILINE)

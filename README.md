@@ -93,6 +93,12 @@ actual FTMO platform and account identity are configured.
 
 ### Telegram on-demand analysis
 
+Render must use a dedicated Monatise bot token. Donpbot remains owned by
+OpenClaw polling; its token must never be registered to the Render webhook.
+Inbound delivery is enabled only when
+`MONATISE_TELEGRAM_BOT_DELIVERY_MODE=dedicated_render_webhook` is explicitly
+set, preventing an existing shared token from being claimed accidentally.
+
 An authorized private Telegram user can request a fresh analysis with
 `/analyze XAUUSD`, `/analyze BTC`, `/analyze ETH`, `/analyze US100.cash`, or
 `/analyze AAPL`. `/analysis XAUUSD`, `/gold`, `/btc`, and `/eth` are aliases.
@@ -107,6 +113,11 @@ requires the kill switch to permit execution, a temporary armed session, all
 manual/master gates, and another fresh price/session/risk revalidation. The
 recommended risk is conviction-scaled below the 3% ceiling. Autonomous
 execution remains unsupported and OFF.
+
+The MT5 EA reports broker-server time, terminal-local time, and UTC observation
+time as separate fields. Render measures quote freshness from
+`quote_observed_at_utc`; quotes more than five seconds old or more than one
+second in the future fail closed. Broker time is retained only as provenance.
 
 The current XAU/USD mismatch investigation is recorded in
 `docs/ftmo-xauusd-root-cause.md`. External COMEX `GC` levels are no longer

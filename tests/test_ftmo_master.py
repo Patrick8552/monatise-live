@@ -115,6 +115,16 @@ def test_configuration_requires_independent_master_gates_and_forbids_autonomy():
         FTMOMasterConfiguration.from_environment(active_environment(FTMO_BRIDGE_SECRET=""))
 
 
+def test_dedicated_monatise_telegram_allowlist_is_preferred_with_legacy_fallback():
+    dedicated = FTMOMasterConfiguration.from_environment(active_environment(
+        MONATISE_TELEGRAM_ALLOWED_USER_IDS="84, 85",
+        FTMO_TELEGRAM_AUTHORIZED_USER_IDS="42",
+    ))
+    assert dedicated.authorized_user_ids == frozenset({"84", "85"})
+    legacy = FTMOMasterConfiguration.from_environment(active_environment())
+    assert legacy.authorized_user_ids == frozenset({"42"})
+
+
 def test_bridge_hmac_rejects_tampering_staleness_and_replay_nonce():
     secret = "secret"
     body = b'{"ok":true}'
@@ -236,6 +246,80 @@ def test_wrong_pending_order_side_stale_quote_and_spread_fail_closed():
             await control.create_trade_proposal(
                 actor="42", symbol="XAUUSD", side="buy", order_type="market",
                 stop_loss="2480", take_profit="2520", now=NOW,
+            )
+
+    asyncio.run(scenario())
+
+
+def test_quote_clock_contract_preserves_broker_provenance_and_fails_closed_for_future_time():
+    async def scenario():
+        control, _ = service()
+        payload = heartbeat()
+        payload["observed_at_utc"] = NOW.isoformat()
+        payload["broker_time"] = "2026-08-25T15:00:00"
+        payload["broker_time_offset"] = 10_800
+        payload["terminal_local_time"] = "2026-08-25T13:00:00"
+        payload["quotes"]["XAUUSD"].update({
+            "quote_observed_at_utc": (NOW + timedelta(seconds=2)).isoformat(),
+            "broker_time": "2026-08-25T15:00:00",
+            "broker_time_offset": 10_800,
+            "terminal_local_time": "2026-08-25T13:00:00",
+        })
+        await control.accept_bridge_heartbeat(payload, now=NOW)
+        bridge = await control.repository.bridge()
+        quote = bridge["quotes"]["XAUUSD"]
+        assert quote["broker_time"] == "2026-08-25T15:00:00"
+        assert quote["broker_time_offset_seconds"] == 10_800
+        assert quote["quote_observed_at_utc"] == (NOW + timedelta(seconds=2)).isoformat()
+        assert quote["render_received_at_utc"] == NOW.isoformat()
+        assert quote["computed_quote_age_ms"] == -2_000
+        assert quote["clock_skew_ms"] == 2_000
+        assert quote["quote_freshness_state"] == "CLOCK_SKEW_DETECTED"
+        status = await control.status(now=NOW)
+        assert status["quote_clock_skew_detected"] is True
+        assert status["quote_freshness"]["XAUUSD"]["quote_freshness_state"] == "CLOCK_SKEW_DETECTED"
+        with pytest.raises(FTMOMasterError, match="CLOCK_SKEW_DETECTED"):
+            await control.create_trade_proposal(
+                actor="42", symbol="XAUUSD", side="buy", order_type="market",
+                stop_loss="2490", take_profit="2520", now=NOW,
+            )
+
+    asyncio.run(scenario())
+
+
+def test_small_future_clock_skew_is_tolerated_but_quotes_older_than_five_seconds_are_not():
+    async def scenario():
+        control, _ = service()
+        permitted = heartbeat()
+        permitted["quotes"]["XAUUSD"]["quote_observed_at_utc"] = (NOW + timedelta(milliseconds=500)).isoformat()
+        await control.accept_bridge_heartbeat(permitted, now=NOW)
+        proposal = await control.create_trade_proposal(
+            actor="42", symbol="XAUUSD", side="buy", order_type="market",
+            stop_loss="2490", take_profit="2520", now=NOW,
+        )
+        assert proposal["quote_age_ms"] == "-500"
+        assert proposal["quote_freshness_state"] == "FRESH"
+
+        stale = heartbeat()
+        stale["quotes"]["XAUUSD"]["quote_observed_at_utc"] = (NOW - timedelta(seconds=6)).isoformat()
+        await control.accept_bridge_heartbeat(stale, now=NOW)
+        with pytest.raises(FTMOMasterError, match="quote is stale"):
+            await control.create_trade_proposal(
+                actor="42", symbol="XAUUSD", side="sell", order_type="market",
+                stop_loss="2510", take_profit="2480", now=NOW,
+            )
+
+    asyncio.run(scenario())
+
+
+def test_heartbeat_older_than_thirty_seconds_blocks_each_new_proposal():
+    async def scenario():
+        control, _ = service()
+        await control.accept_bridge_heartbeat(heartbeat(), now=NOW)
+        with pytest.raises(FTMOMasterError, match="heartbeat is stale"):
+            await control.create_trade_proposal(
+                actor="42", symbol="XAUUSD", side="buy", order_type="market",
+                stop_loss="2490", take_profit="2520", now=NOW + timedelta(seconds=31),
             )
 
     asyncio.run(scenario())

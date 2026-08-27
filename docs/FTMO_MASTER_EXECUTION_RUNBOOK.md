@@ -98,6 +98,12 @@ Primary references:
 The repository deploys safe defaults. The first VPS heartbeat requires these secrets/settings:
 
 ```text
+MONATISE_TELEGRAM_BOT_TOKEN=<dedicated Monatise bot; never Donpbot>
+MONATISE_TELEGRAM_BOT_DELIVERY_MODE=dedicated_render_webhook
+MONATISE_TELEGRAM_WEBHOOK_SECRET=<random Telegram-compatible secret>
+MONATISE_TELEGRAM_CHAT_ID=<private chat ID>
+MONATISE_TELEGRAM_ALLOWED_USER_IDS=<numeric Telegram user ID>
+
 FTMO_ACCOUNT_ID=<exact login>
 FTMO_SERVER=<exact server>
 FTMO_ACCOUNT_CURRENCY=USD
@@ -114,7 +120,13 @@ FTMO_RISK_FRACTION=0.03
 FTMO_MAXIMUM_OPEN_EXPOSURES=1
 FTMO_MAXIMUM_ENTRY_DEVIATION_BPS=50
 FTMO_MINIMUM_REWARD_RISK=1
+FTMO_QUOTE_FUTURE_TOLERANCE_SECONDS=1
 ```
+
+Donpbot remains on OpenClaw `getUpdates`. The dedicated Monatise bot is the
+only bot registered at
+`https://monatise-live.onrender.com/api/telegram/webhook`; never configure both
+polling and webhook delivery for the same token.
 
 Never send the FTMO password to Render, Telegram, OpenClaw, or the repository. It stays inside desktop MT5's credential store on the Windows VPS.
 

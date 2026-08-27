@@ -54,6 +54,7 @@ from monatise.core.models import Candle
 LOGGER = logging.getLogger("monatise.production")
 PRODUCTION_APPLICATION = "monatise.application.production:app"
 PRODUCTION_API_VERSION = "v1"
+DEDICATED_TELEGRAM_DELIVERY_MODE = "dedicated_render_webhook"
 
 
 class TelegramLeaseLost(RuntimeError):
@@ -62,6 +63,32 @@ class TelegramLeaseLost(RuntimeError):
 
 def telegram_webhook_secret(token: str) -> str:
     return hashlib.sha256(f"monatise-telegram-webhook:{token}".encode()).hexdigest()
+
+
+def configured_telegram_webhook_secret(environment: Mapping[str, str]) -> str:
+    """Return the dedicated Render bot webhook secret without exposing it."""
+    explicit = str(environment.get("MONATISE_TELEGRAM_WEBHOOK_SECRET", "")).strip()
+    if explicit:
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,256}", explicit):
+            raise ValueError("MONATISE_TELEGRAM_WEBHOOK_SECRET has an invalid format")
+        return explicit
+    token = str(environment.get("MONATISE_TELEGRAM_BOT_TOKEN", "")).strip()
+    return telegram_webhook_secret(token) if token else ""
+
+
+def quote_preview_failure_state(reason: str) -> str:
+    normalized = reason.casefold()
+    if "identity mismatch" in normalized or "account/server/currency mismatch" in normalized:
+        return "FTMO_IDENTITY_MISMATCH"
+    if "never connected" in normalized or "disconnected" in normalized or "heartbeat is stale" in normalized:
+        return "WAITING_FOR_FTMO_HEARTBEAT"
+    if "clock_skew" in normalized or "materially in the future" in normalized:
+        return "FTMO_QUOTE_INVALID"
+    if "quote is stale" in normalized:
+        return "FTMO_QUOTE_STALE"
+    if "execution symbol" in normalized or "no current quote" in normalized or "no unique verified" in normalized:
+        return "FTMO_SYMBOL_UNAVAILABLE"
+    return "FTMO_QUOTE_UNAVAILABLE"
 
 
 class ProductionRuntime(OrchestrationRuntime):
@@ -100,13 +127,15 @@ class ProductionRuntime(OrchestrationRuntime):
         token = self.environment.get("MONATISE_TELEGRAM_BOT_TOKEN", "").strip()
         public_url = self.environment.get("MONATISE_PUBLIC_URL", "").strip().rstrip("/")
         inbound_enabled = self.environment.get("MONATISE_TELEGRAM_INBOUND_ENABLED", "false").strip().casefold() in {"1", "true", "yes", "on", "enabled"}
-        configured = inbound_enabled and self.telegram is not None and bool(token and public_url.startswith("https://"))
+        dedicated = self.environment.get("MONATISE_TELEGRAM_BOT_DELIVERY_MODE", "").strip().casefold() == DEDICATED_TELEGRAM_DELIVERY_MODE
+        configured = inbound_enabled and dedicated and self.telegram is not None and bool(token and public_url.startswith("https://"))
         status = {"status": "ok", "enabled": configured, "execution_enabled": False}
         if not configured:
             status["registration"] = "not_configured"
+            status["dedicated_bot_confirmed"] = dedicated
             self.dependencies["telegram_inbound"] = status
             return
-        secret_token = telegram_webhook_secret(token)
+        secret_token = configured_telegram_webhook_secret(self.environment)
         try:
             registered = await self.telegram.register_webhook(f"{public_url}/api/telegram/webhook", secret_token)
         except Exception as exc:
@@ -127,6 +156,7 @@ class ProductionRuntime(OrchestrationRuntime):
 class ProductionASGI(OrchestrationASGI):
     TELEGRAM_LEASE_SECONDS = 120
     TELEGRAM_HEARTBEAT_SECONDS = 30
+    TELEGRAM_WEBHOOK_VERIFY_SECONDS = 60
     MARKET_SYMBOLS = {"BTC", "ETH", "SOL", "XRP", "DOGE", "BNB"}
     MARKET_INTERVALS = set(CoinGlassProductionAdapter.SUPPORTED_INTERVALS)
     INTERVAL_MAX_AGE_SECONDS = {
@@ -150,6 +180,7 @@ class ProductionASGI(OrchestrationASGI):
         self._quiver_web_inflight: dict[str, asyncio.Task[dict[str, Any]]] = {}
         self._market_summary_cache: tuple[float, dict[str, Any]] | None = None
         self._telegram_worker: asyncio.Task[None] | None = None
+        self._telegram_webhook_monitor: asyncio.Task[None] | None = None
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         if scope.get("type") == "lifespan":
@@ -345,11 +376,13 @@ class ProductionASGI(OrchestrationASGI):
         token = self.runtime.environment.get("MONATISE_TELEGRAM_BOT_TOKEN", "").strip()
         chat_id = self.runtime.environment.get("MONATISE_TELEGRAM_CHAT_ID", "").strip()
         inbound_enabled = self.runtime.environment.get("MONATISE_TELEGRAM_INBOUND_ENABLED", "false").strip().casefold() in {"1", "true", "yes", "on", "enabled"}
-        if not inbound_enabled or not token or not chat_id or self.runtime.telegram is None:
+        dedicated = self.runtime.environment.get("MONATISE_TELEGRAM_BOT_DELIVERY_MODE", "").strip().casefold() == DEDICATED_TELEGRAM_DELIVERY_MODE
+        if not inbound_enabled or not dedicated or not token or not chat_id or self.runtime.telegram is None:
             return 503, {"status": "unavailable"}
         headers = {key.decode().casefold(): value.decode() for key, value in scope.get("headers", ())}
         supplied = headers.get("x-telegram-bot-api-secret-token", "")
-        if not secrets.compare_digest(supplied, telegram_webhook_secret(token)):
+        expected_secret = configured_telegram_webhook_secret(self.runtime.environment)
+        if not expected_secret or not secrets.compare_digest(supplied, expected_secret):
             return 401, {"status": "unauthorized"}
         body = b""
         while True:
@@ -409,6 +442,9 @@ class ProductionASGI(OrchestrationASGI):
                     if self.runtime.dependencies.get("telegram_inbound", {}).get("enabled"):
                         await self.runtime.redis_coordination.recover_telegram_commands()
                         self._telegram_worker = asyncio.create_task(self._telegram_command_worker(), name="telegram-command-worker")
+                        self._telegram_webhook_monitor = asyncio.create_task(
+                            self._telegram_webhook_monitor_loop(), name="telegram-webhook-owner-monitor",
+                        )
                 except Exception as exc:
                     LOGGER.exception("application lifespan startup failed", extra={"error_type": type(exc).__name__})
                     await send({"type": "lifespan.startup.failed", "message": "startup_failed"})
@@ -420,9 +456,50 @@ class ProductionASGI(OrchestrationASGI):
                     with suppress(asyncio.CancelledError):
                         await self._telegram_worker
                     self._telegram_worker = None
+                if self._telegram_webhook_monitor is not None:
+                    self._telegram_webhook_monitor.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await self._telegram_webhook_monitor
+                    self._telegram_webhook_monitor = None
                 await self.runtime.shutdown()
                 await send({"type": "lifespan.shutdown.complete"})
                 return
+
+    async def _telegram_webhook_monitor_loop(self) -> None:
+        while True:
+            await self._verify_telegram_webhook_ownership()
+            await asyncio.sleep(self.TELEGRAM_WEBHOOK_VERIFY_SECONDS)
+
+    async def _verify_telegram_webhook_ownership(self) -> bool:
+        status = self.runtime.dependencies.setdefault("telegram_inbound", {})
+        notifier = self.runtime.telegram
+        inspect_webhook = getattr(notifier, "webhook_info", None)
+        if inspect_webhook is None:
+            return False
+        expected = self.runtime.environment.get("MONATISE_PUBLIC_URL", "").strip().rstrip("/") + "/api/telegram/webhook"
+        try:
+            info = await inspect_webhook()
+        except Exception as exc:
+            status.update({
+                "status": "degraded", "webhook_owner_verified": False,
+                "webhook_verification_error_type": type(exc).__name__,
+                "webhook_verified_at": datetime.now(timezone.utc).isoformat(),
+            })
+            return False
+        actual = str((info or {}).get("url") or "")
+        owned = bool(expected.startswith("https://") and actual == expected)
+        status.update({
+            "status": "ok" if owned else "degraded",
+            "registration": "registered" if owned else "lost",
+            "webhook_owner_verified": owned,
+            "webhook_url": actual or None,
+            "pending_update_count": int((info or {}).get("pending_update_count") or 0),
+            "last_error_date": (info or {}).get("last_error_date"),
+            "last_error_message": (info or {}).get("last_error_message"),
+            "webhook_verified_at": datetime.now(timezone.utc).isoformat(),
+        })
+        status.pop("webhook_verification_error_type", None)
+        return owned
 
     async def _telegram_command_worker(self) -> None:
         failures = 0
@@ -516,16 +593,16 @@ class ProductionASGI(OrchestrationASGI):
                 return
 
     @staticmethod
-    async def _send_owned_telegram_response(notifier: Any, response: str, ownership_check: Any | None) -> None:
+    async def _send_owned_telegram_response(notifier: Any, response: str, ownership_check: Any | None) -> Any:
         if ownership_check is not None and not await ownership_check():
             raise TelegramLeaseLost("Telegram command lease is no longer owned")
-        await notifier.command_response(response)
+        return await notifier.command_response(response)
 
     @staticmethod
-    async def _send_owned_trade_proposal(notifier: Any, response: str, proposal_id: str, ownership_check: Any | None) -> None:
+    async def _send_owned_trade_proposal(notifier: Any, response: str, proposal_id: str, ownership_check: Any | None) -> Any:
         if ownership_check is not None and not await ownership_check():
             raise TelegramLeaseLost("Telegram command lease is no longer owned")
-        await notifier.trade_proposal(response, proposal_id)
+        return await notifier.trade_proposal(response, proposal_id)
 
     async def _handle_telegram_command(self, text: str, *, ownership_check: Any | None = None) -> None:
         notifier = self.runtime.telegram
@@ -698,16 +775,27 @@ class ProductionASGI(OrchestrationASGI):
                 requested_at=requested_at, started_at=analysis_started_at,
                 completed_at=analysis_completed_at, session=session,
             )
+            signal_id = signal_identity(request_id, analysis_id, analysis) if analysis["executable"] else None
+            if signal_id is not None:
+                analysis["signal_id"] = signal_id
             if repository is not None and hasattr(repository, "save_telegram_analysis"):
                 if not await repository.save_telegram_analysis(analysis):
                     raise RuntimeError("analysis identity was already persisted")
             analysis_message = format_analysis(analysis)
             proposal = None
             proposal_error = None
+            proposal_state = "NO_TRADE" if not analysis["qualified"] else "CONTEXT_ONLY"
             if analysis["executable"] and service is not None:
+                proposal_state = "FETCHING_FTMO_QUOTE"
+                if repository is not None and hasattr(repository, "finish_telegram_analysis_request"):
+                    await repository.finish_telegram_analysis_request(request_id, {
+                        "signal_id": signal_id,
+                        "proposal_state": proposal_state,
+                        "latest_quote_request_at": analysis_completed_at.isoformat(),
+                        "requested_symbol": resolved.execution_registry_symbol,
+                    })
                 try:
                     execution_symbol = await service.execution_symbol_for(resolved.instrument, now=analysis_completed_at)
-                    signal_id = signal_identity(request_id, analysis_id, analysis)
                     expiry = datetime.fromisoformat(str(analysis["expires_at"]).replace("Z", "+00:00"))
                     zone = analysis.get("entry_zone") or {}
                     proposal = await service.create_signal_proposal(
@@ -744,8 +832,10 @@ class ProductionASGI(OrchestrationASGI):
                         },
                         now=analysis_completed_at,
                     )
+                    proposal_state = "TRADE_PREVIEW_READY"
                 except FTMOMasterError as exc:
                     proposal_error = str(exc)
+                    proposal_state = quote_preview_failure_state(proposal_error)
             proposal_message = format_proposal(proposal) if proposal is not None else None
             if analysis["qualified"] and proposal is None:
                 analysis_message += "\nTRADE PROPOSAL WITHHELD\nReason: " + (
@@ -757,8 +847,15 @@ class ProductionASGI(OrchestrationASGI):
                     "analysis_completed_at": analysis_completed_at.isoformat(),
                     "analysis_message": analysis_message,
                     "proposal_id": proposal.get("proposal_id") if proposal else None,
-                    "signal_id": proposal.get("signal_id") if proposal else None,
+                    "signal_id": signal_id,
                     "proposal_message": proposal_message,
+                    "proposal_state": proposal_state,
+                    "latest_quote_success_at": analysis_completed_at.isoformat() if proposal else None,
+                    "latest_quote_failure_at": analysis_completed_at.isoformat() if proposal_error else None,
+                    "latest_quote_error": proposal_error,
+                    "resolved_mt5_symbol": proposal.get("symbol") if proposal else None,
+                    "quote_observed_at_utc": proposal.get("quote_observed_at_utc") if proposal else None,
+                    "quote_age_ms": proposal.get("quote_age_ms") if proposal else None,
                 })
         except Exception as exc:
             LOGGER.warning("Telegram command analysis failed", extra={"symbol": requested_symbol, "error_type": type(exc).__name__})
@@ -774,9 +871,26 @@ class ProductionASGI(OrchestrationASGI):
                     "status": "completed", "analysis_completed_at": datetime.now(timezone.utc).isoformat(),
                     "analysis_message": analysis_message, "error_type": type(exc).__name__,
                 })
-        await self._send_owned_telegram_response(notifier, analysis_message, ownership_check)
+        analysis_delivery = await self._send_owned_telegram_response(notifier, analysis_message, ownership_check)
+        proposal_delivery = None
         if proposal is not None and proposal_message is not None:
-            await self._send_owned_trade_proposal(notifier, proposal_message, proposal["proposal_id"], ownership_check)
+            proposal_delivery = await self._send_owned_trade_proposal(notifier, proposal_message, proposal["proposal_id"], ownership_check)
+        if repository is not None and hasattr(repository, "finish_telegram_analysis_request"):
+            publication = {
+                "analysis_telegram_message_id": analysis_delivery if isinstance(analysis_delivery, int) and not isinstance(analysis_delivery, bool) else None,
+                "proposal_telegram_message_id": proposal_delivery if isinstance(proposal_delivery, int) and not isinstance(proposal_delivery, bool) else None,
+                "telegram_message_id": (
+                    proposal_delivery if isinstance(proposal_delivery, int) and not isinstance(proposal_delivery, bool)
+                    else analysis_delivery if isinstance(analysis_delivery, int) and not isinstance(analysis_delivery, bool)
+                    else None
+                ),
+                "telegram_publish_at": datetime.now(timezone.utc).isoformat(),
+            }
+            await repository.finish_telegram_analysis_request(request_id, publication)
+            if proposal is not None and isinstance(proposal_delivery, int) and not isinstance(proposal_delivery, bool):
+                attach = getattr(repository, "attach_proposal_telegram_message", None)
+                if attach is not None:
+                    await attach(proposal["proposal_id"], proposal_delivery)
 
     async def _handle_ftmo_telegram_command(self, text: str) -> str:
         service = getattr(self.runtime, "ftmo_master", None)

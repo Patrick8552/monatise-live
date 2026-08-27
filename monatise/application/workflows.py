@@ -139,6 +139,13 @@ class TelegramNotifier:
             raise RuntimeError("Telegram transport does not support webhooks")
         return bool(await register(url, secret_token))
 
+    async def webhook_info(self) -> dict[str, Any]:
+        inspect_webhook = getattr(self._transport, "webhook_info", None)
+        if inspect_webhook is None:
+            raise RuntimeError("Telegram transport does not expose webhook ownership")
+        value = await inspect_webhook()
+        return dict(value) if isinstance(value, dict) else {}
+
     async def _alert(self, category: str, message: str) -> Any:
         if not message.strip():
             raise ValueError("notification message is required")

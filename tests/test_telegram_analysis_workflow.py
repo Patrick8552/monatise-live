@@ -58,6 +58,10 @@ class Repository:
     async def bridge(self):
         return self.bridge_value
 
+    async def attach_proposal_telegram_message(self, proposal_id, message_id):
+        self.proposal_telegram_message = (proposal_id, message_id)
+        return {"proposal_id": proposal_id, "telegram_message_id": message_id}
+
 
 class Master:
     def __init__(self):
@@ -112,9 +116,11 @@ class Telegram:
 
     async def command_response(self, message):
         self.messages.append(message)
+        return 100 + len(self.messages)
 
     async def trade_proposal(self, message, proposal_id):
         self.proposals.append((proposal_id, message))
+        return 200 + len(self.proposals)
 
 
 def qualified_crypto(symbol="BTC"):
@@ -227,6 +233,15 @@ def test_analyze_btc_runs_fresh_coinglass_analysis_and_creates_linked_proposal()
     assert proposal["telegram_request_id"] == analysis["request_id"]
     assert runtime.telegram.proposals[0][0] == "a1b2c3d4e5f6"
     assert "MONATISE ANALYSIS" in runtime.telegram.messages[-1]
+    request = next(iter(runtime.ftmo_master.repository.requests.values()))
+    assert request["request_id"] == analysis["request_id"]
+    assert request["analysis_id"] == analysis["analysis_id"]
+    assert request["signal_id"] == proposal["signal_id"]
+    assert request["proposal_id"] == "a1b2c3d4e5f6"
+    assert request["analysis_telegram_message_id"] == 102
+    assert request["proposal_telegram_message_id"] == 201
+    assert request["telegram_message_id"] == 201
+    assert runtime.ftmo_master.repository.proposal_telegram_message == ("a1b2c3d4e5f6", 201)
 
 
 def test_gold_alias_runs_fresh_futures_provider_path():
@@ -252,6 +267,10 @@ def test_no_trade_returns_full_analysis_without_approval_action():
     assert runtime.telegram.proposals == []
     assert "Decision: NO_TRADE" in runtime.telegram.messages[-1]
     assert "CVD conflicts" in runtime.telegram.messages[-1]
+    request = next(iter(runtime.ftmo_master.repository.requests.values()))
+    assert request["proposal_state"] == "NO_TRADE"
+    assert request["proposal_id"] is None
+    assert request["telegram_message_id"] == 102
 
 
 def test_waiting_for_entry_zone_does_not_create_market_proposal():
@@ -261,6 +280,9 @@ def test_waiting_for_entry_zone_does_not_create_market_proposal():
     run_request(runtime, "/btc", update_id=24)
     assert runtime.ftmo_master.proposals == []
     assert "WAITING FOR ENTRY ZONE" in runtime.telegram.messages[-1]
+    request = next(iter(runtime.ftmo_master.repository.requests.values()))
+    assert request["proposal_state"] == "CONTEXT_ONLY"
+    assert request["proposal_id"] is None
 
 
 def test_unknown_user_cannot_start_analysis():
@@ -318,4 +340,3 @@ def test_crypto_analysis_and_ftmo_execution_symbols_remain_separate():
     assert resolved.analysis_instrument == "BTCUSDT"
     assert resolved.execution_registry_symbol == "BTCUSD"
     assert resolved.asset_class is FTMOAssetClass.CRYPTO
-

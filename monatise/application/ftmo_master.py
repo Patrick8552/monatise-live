@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -25,6 +26,7 @@ from monatise.application.risk_policy import MAX_RISK_FRACTION_PER_TRADE, MAX_RI
 
 
 ZERO = Decimal("0")
+LOGGER = logging.getLogger("monatise.ftmo_master")
 
 
 def _true(value: Any) -> bool:
@@ -53,6 +55,16 @@ def _decimal(value: Any, name: str, *, positive: bool = False) -> Decimal:
     if not result.is_finite() or (positive and result <= ZERO):
         raise ValueError(f"{name} must be positive" if positive else f"{name} must be finite")
     return result
+
+
+def _timestamp(value: Any, name: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an ISO-8601 timestamp") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError(f"{name} must include an explicit UTC offset")
+    return parsed.astimezone(timezone.utc)
 
 
 def _mask_account(value: str | None) -> str | None:
@@ -106,13 +118,18 @@ class FTMOMasterConfiguration:
     arm_max_seconds: int = 900
     heartbeat_max_age_seconds: int = 30
     quote_max_age_seconds: int = 5
+    quote_future_tolerance_seconds: Decimal = Decimal("1")
     maximum_spread_ticks: Decimal = Decimal("80")
     maximum_entry_deviation_bps: Decimal = Decimal("50")
     minimum_reward_risk: Decimal = Decimal("1")
 
     @classmethod
     def from_environment(cls, environment: Mapping[str, str]) -> "FTMOMasterConfiguration":
-        users = frozenset(part.strip() for part in _env(environment, "FTMO_TELEGRAM_AUTHORIZED_USER_IDS").split(",") if part.strip())
+        raw_users = (
+            _env(environment, "TELEGRAM_ALLOWED_USER_IDS")
+            or _env(environment, "FTMO_TELEGRAM_AUTHORIZED_USER_IDS")
+        )
+        users = frozenset(part.strip() for part in raw_users.split(",") if part.strip())
         configuration = cls(
             account_id=_env(environment, "FTMO_ACCOUNT_ID") or None,
             server=_env(environment, "FTMO_SERVER") or None,
@@ -130,6 +147,10 @@ class FTMOMasterConfiguration:
             arm_max_seconds=max(60, min(3600, int(_env(environment, "FTMO_ARM_MAX_SECONDS", "900")))),
             heartbeat_max_age_seconds=max(5, min(120, int(_env(environment, "FTMO_HEARTBEAT_MAX_AGE_SECONDS", "30")))),
             quote_max_age_seconds=max(1, min(30, int(_env(environment, "FTMO_QUOTE_MAX_AGE_SECONDS", "5")))),
+            quote_future_tolerance_seconds=min(
+                Decimal("5"),
+                max(ZERO, _decimal(_env(environment, "FTMO_QUOTE_FUTURE_TOLERANCE_SECONDS", "1"), "quote future tolerance")),
+            ),
             maximum_spread_ticks=_decimal(_env(environment, "FTMO_MAXIMUM_SPREAD_TICKS", "80"), "maximum spread ticks", positive=True),
             maximum_entry_deviation_bps=_decimal(
                 _env(environment, "FTMO_MAXIMUM_ENTRY_DEVIATION_BPS", "50"),
@@ -311,6 +332,26 @@ class FTMOMasterRepository:
     async def update_proposal(self, proposal_id: str, value: dict[str, Any], version: int) -> None:
         await self._put(self.PROPOSALS, proposal_id, value, expected_version=version)
 
+    async def attach_proposal_telegram_message(self, proposal_id: str, message_id: int) -> dict[str, Any]:
+        if not isinstance(message_id, int) or isinstance(message_id, bool) or message_id <= 0:
+            raise ValueError("Telegram message identity must be a positive integer")
+        stored = await self.proposal(proposal_id)
+        if stored is None:
+            raise KeyError("unknown FTMO proposal")
+        value, version = stored
+        previous = value.get("telegram_message_id")
+        if previous is not None and previous != message_id:
+            raise RuntimeError("FTMO proposal Telegram identity is already immutable")
+        value["telegram_message_id"] = message_id
+        value["telegram_published_at"] = _utc().isoformat()
+        await self.update_proposal(proposal_id, value, version)
+        await self.audit("telegram_proposal_published", proposal_id, {
+            "telegram_message_id": message_id,
+            "analysis_id": value.get("analysis_id"),
+            "signal_id": value.get("signal_id"),
+        })
+        return value
+
     async def save_command(self, command: dict[str, Any]) -> bool:
         try:
             await self._put(self.COMMANDS, command["command_id"], command, expected_version=0)
@@ -485,6 +526,13 @@ class FTMOMasterControlService:
             "ftmo_ask": str(quote["ask"]),
             "spread": str(Decimal(str(quote["ask"])) - Decimal(str(quote["bid"]))),
             "quote_timestamp": str(quote["timestamp"]),
+            "quote_observed_at_utc": str(quote.get("quote_observed_at_utc") or quote["timestamp"]),
+            "broker_time": quote.get("broker_time"),
+            "broker_time_offset_seconds": int(quote.get("broker_time_offset_seconds", 0) or 0),
+            "render_received_at_utc": quote.get("render_received_at_utc") or bridge.get("observed_at"),
+            "computed_quote_age_ms": quote.get("computed_quote_age_ms"),
+            "clock_skew_ms": quote.get("clock_skew_ms"),
+            "quote_freshness_state": quote.get("quote_freshness_state"),
             "digits": int(quote.get("digits", 0)),
             "point": str(quote.get("point", quote["tick_size"])),
             "tick_size": str(quote["tick_size"]),
@@ -529,8 +577,11 @@ class FTMOMasterControlService:
         quote = (bridge.get("quotes") or {}).get(symbol)
         if quote is None:
             raise FTMOMasterError("FTMO bridge has no current quote for that symbol")
-        quote_at = datetime.fromisoformat(str(quote["timestamp"]))
-        if (now - quote_at).total_seconds() > self.configuration.quote_max_age_seconds:
+        quote_at = _timestamp(quote.get("quote_observed_at_utc") or quote.get("timestamp"), "FTMO quote timestamp")
+        quote_age = (now - quote_at).total_seconds()
+        if quote_age < -float(self.configuration.quote_future_tolerance_seconds):
+            raise FTMOMasterError("FTMO quote timestamp is materially in the future (CLOCK_SKEW_DETECTED)")
+        if quote_age > self.configuration.quote_max_age_seconds:
             raise FTMOMasterError("FTMO quote is stale")
         if str(quote.get("trade_mode", "full")).strip().casefold() not in {"full", "4", "symbol_trade_mode_full"}:
             raise FTMOMasterError("FTMO symbol is not fully enabled for trading")
@@ -622,6 +673,9 @@ class FTMOMasterControlService:
             "quote_bid": str(bid),
             "quote_ask": str(ask),
             "quote_timestamp": str(quote["timestamp"]),
+            "quote_observed_at_utc": str(quote.get("quote_observed_at_utc") or quote["timestamp"]),
+            "quote_age_ms": str(int(round(quote_age * 1000))),
+            "quote_freshness_state": "FRESH",
             "spread_ticks": str(spread_ticks),
             "reward_risk": str(reward_distance / stop_distance),
             "execution_snapshot": self._execution_snapshot(symbol, quote, bridge),
@@ -652,9 +706,30 @@ class FTMOMasterControlService:
             ask = _decimal(raw_quote.get("ask"), "ask", positive=True)
             if ask < bid:
                 raise FTMOMasterError("bridge ask cannot be below bid")
-            quote_at = datetime.fromisoformat(str(raw_quote.get("timestamp") or "").replace("Z", "+00:00"))
+            quote_at = _timestamp(
+                raw_quote.get("quote_observed_at_utc") or raw_quote.get("observed_at_utc") or raw_quote.get("timestamp"),
+                "bridge quote observation timestamp",
+            )
+            quote_age_ms = int(round((observed - quote_at).total_seconds() * 1000))
+            if quote_age_ms < -int(self.configuration.quote_future_tolerance_seconds * 1000):
+                freshness_state = "CLOCK_SKEW_DETECTED"
+            elif quote_age_ms > self.configuration.quote_max_age_seconds * 1000:
+                freshness_state = "STALE"
+            else:
+                freshness_state = "FRESH"
             normalized_quotes[symbol] = {
-                "bid": str(bid), "ask": str(ask), "timestamp": _utc(quote_at).isoformat(),
+                "bid": str(bid), "ask": str(ask),
+                "timestamp": quote_at.isoformat(),
+                "quote_observed_at_utc": quote_at.isoformat(),
+                "broker_time": str(raw_quote.get("broker_time") or "") or None,
+                "broker_time_offset_seconds": int(
+                    raw_quote.get("broker_time_offset_seconds", raw_quote.get("broker_time_offset", 0)) or 0
+                ),
+                "terminal_local_time": str(raw_quote.get("terminal_local_time") or "") or None,
+                "render_received_at_utc": observed.isoformat(),
+                "computed_quote_age_ms": quote_age_ms,
+                "clock_skew_ms": max(0, -quote_age_ms),
+                "quote_freshness_state": freshness_state,
                 "digits": int(raw_quote.get("digits", 0)),
                 "point": str(_decimal(raw_quote.get("point", raw_quote.get("tick_size")), "point size", positive=True)),
                 "tick_size": str(_decimal(raw_quote.get("tick_size"), "tick size", positive=True)),
@@ -689,15 +764,32 @@ class FTMOMasterControlService:
             "positions": list(payload.get("positions") or [])[:256],
             "orders": list(payload.get("orders") or [])[:256],
             "quotes": normalized_quotes,
+            "ea_observed_at_utc": str(payload.get("observed_at_utc") or "") or None,
+            "broker_time": str(payload.get("broker_time") or "") or None,
+            "broker_time_offset_seconds": int(payload.get("broker_time_offset", 0) or 0),
+            "terminal_local_time": str(payload.get("terminal_local_time") or "") or None,
             "observed_at": observed.isoformat(),
         }
         await self.repository.save_bridge(snapshot)
+        skewed_symbols = sorted(
+            symbol for symbol, quote in normalized_quotes.items()
+            if quote.get("quote_freshness_state") == "CLOCK_SKEW_DETECTED"
+        )
+        if skewed_symbols:
+            LOGGER.warning(
+                "FTMO bridge quote clock skew detected; execution will fail closed",
+                extra={"symbol_count": len(skewed_symbols), "symbols": skewed_symbols},
+            )
         lifecycle_events: tuple[dict[str, Any], ...] = ()
         if identity_match:
             lifecycle_events = await self._reconcile_proposals_from_heartbeat(snapshot, observed)
         await self.repository.audit("bridge_heartbeat", _mask_account(account_id) or "unknown", {
             "identity_match": identity_match, "terminal_connected": snapshot["terminal_connected"],
             "trade_allowed": snapshot["trade_allowed"], "quote_count": len(normalized_quotes),
+            "clock_skew_quote_count": sum(
+                quote.get("quote_freshness_state") == "CLOCK_SKEW_DETECTED"
+                for quote in normalized_quotes.values()
+            ),
         })
         if not identity_match:
             raise FTMOMasterError("FTMO bridge account/server/currency mismatch")
@@ -784,12 +876,27 @@ class FTMOMasterControlService:
             except ValueError:
                 armed = False
         kill_switch = bool(control.get("kill_switch", True))
+        quote_freshness = {
+            symbol: {
+                "quote_observed_at_utc": quote.get("quote_observed_at_utc"),
+                "render_received_at_utc": quote.get("render_received_at_utc"),
+                "computed_quote_age_ms": quote.get("computed_quote_age_ms"),
+                "clock_skew_ms": quote.get("clock_skew_ms"),
+                "quote_freshness_state": quote.get("quote_freshness_state"),
+            }
+            for symbol, quote in ((bridge or {}).get("quotes") or {}).items()
+        }
+        quote_clock_skew_detected = any(
+            item.get("quote_freshness_state") == "CLOCK_SKEW_DETECTED"
+            for item in quote_freshness.values()
+        )
         execution_ready = bool(
             self.configuration.activation_configured
             and bridge_healthy
             and bridge and bridge.get("trade_allowed")
             and armed
             and not kill_switch
+            and not quote_clock_skew_detected
         )
         return {
             **self.configuration.public_status(),
@@ -799,6 +906,8 @@ class FTMOMasterControlService:
             "trade_allowed": bool(bridge and bridge.get("trade_allowed")),
             "ea_attached": bool(bridge and bridge.get("ea_attached")),
             "quote_symbols": sorted((bridge or {}).get("quotes", {})),
+            "quote_freshness": quote_freshness,
+            "quote_clock_skew_detected": quote_clock_skew_detected,
             "armed": armed,
             "armed_until": armed_until if armed else None,
             "execution_session_armed": armed,
@@ -1103,6 +1212,7 @@ class FTMOMasterControlService:
                 ("MT5 trade permission", not readiness["trade_allowed"]),
                 ("temporary arm", not readiness["armed"]),
                 ("kill switch", readiness["kill_switch"]),
+                ("quote clock skew", readiness.get("quote_clock_skew_detected", False)),
             ) if blocked]
             await self.repository.audit("approval_blocked", proposal_id, {"actor": actor, "blockers": blockers})
             raise FTMOMasterError("execution is blocked by: " + ", ".join(blockers))
@@ -1237,6 +1347,16 @@ class FTMOMasterControlService:
             "actor": actor, "approval_id": approval_id, "command_id": command_id,
             "execution_id": execution_id, "risk_amount": proposal.get("risk_amount"),
         })
+        telegram_request_id = proposal.get("telegram_request_id")
+        telegram_request = await self.repository.telegram_analysis_request(telegram_request_id) if telegram_request_id else None
+        if telegram_request is not None:
+            await self.repository.finish_telegram_analysis_request(telegram_request_id, {
+                "approval_status": "approved",
+                "approval_id": approval_id,
+                "command_id": command_id,
+                "execution_id": execution_id,
+                "approved_at": observed.isoformat(),
+            })
         return command
 
     async def reject(self, proposal_id: str, actor: str) -> dict[str, Any]:
@@ -1254,6 +1374,13 @@ class FTMOMasterControlService:
         })
         await self.repository.update_proposal(proposal_id, proposal, version)
         await self.repository.audit("proposal_rejected", proposal_id, {"actor": actor})
+        telegram_request_id = proposal.get("telegram_request_id")
+        telegram_request = await self.repository.telegram_analysis_request(telegram_request_id) if telegram_request_id else None
+        if telegram_request is not None:
+            await self.repository.finish_telegram_analysis_request(telegram_request_id, {
+                "approval_status": "rejected",
+                "rejected_at": proposal["rejected_at"],
+            })
         return proposal
 
     async def commands_for_bridge(self, *, now: datetime | None = None, limit: int = 5) -> tuple[dict[str, Any], ...]:
@@ -1372,6 +1499,7 @@ def format_proposal(proposal: Mapping[str, Any]) -> str:
             f"Preview calculated risk: {Decimal(str(proposal['risk_fraction'])) * 100:.2f}%",
             f"Estimated risk: ${proposal['risk_amount']} | Estimated volume: {proposal.get('volume') or 'RECALCULATE AT APPROVAL'} lots",
             f"FTMO preview Bid/Ask: {proposal['quote_bid']} / {proposal['quote_ask']}",
+            f"FTMO quote observed UTC: {proposal.get('quote_observed_at_utc') or proposal.get('quote_timestamp') or 'UNKNOWN'} | Age: {proposal.get('quote_age_ms') or 'UNKNOWN'} ms",
             f"Signal expires: {proposal['expires_at']}",
             *((f"Conviction: {proposal['conviction']}",) if proposal.get("conviction") is not None else ()),
             "Status: AWAITING APPROVAL",
