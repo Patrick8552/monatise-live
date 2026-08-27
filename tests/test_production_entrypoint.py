@@ -94,8 +94,9 @@ class Runtime:
 
 
 class Telegram:
-    def __init__(self): self.messages = []
+    def __init__(self): self.messages, self.callback_answers = [], []
     async def command_response(self, message): self.messages.append(message)
+    async def answer_callback_query(self, callback_query_id): self.callback_answers.append(callback_query_id)
 
 
 def request(app, path, payload, *, token=None):
@@ -188,6 +189,66 @@ def test_telegram_webhook_is_secret_and_chat_restricted():
     update["message"]["chat"]["id"] = 99
     assert telegram_webhook(app, update, secret=telegram_webhook_secret("bot-token")) == (200, {"status": "ignored"})
     assert runtime.calls == []
+
+
+def test_telegram_callback_approval_is_private_authorized_and_replay_safe():
+    class FTMO:
+        def __init__(self): self.approvals = []
+        def authorized(self, user_id, chat_type): return user_id == "42" and chat_type == "private"
+        async def approve(self, proposal_id, user_id):
+            self.approvals.append((proposal_id, user_id))
+            return {"command_id": "c" * 64}
+
+    runtime = Runtime()
+    runtime.environment.update({"MONATISE_TELEGRAM_BOT_TOKEN": "bot-token", "MONATISE_TELEGRAM_CHAT_ID": "42"})
+    runtime.telegram = Telegram()
+    runtime.ftmo_master = FTMO()
+    app = ProductionASGI(runtime)
+    update = {
+        "update_id": 101,
+        "callback_query": {
+            "id": "callback-101", "from": {"id": 42}, "data": "ftmo:approve:a1b2c3d4e5f6",
+            "message": {"chat": {"id": 42, "type": "private"}},
+        },
+    }
+    secret = telegram_webhook_secret("bot-token")
+
+    assert telegram_webhook(app, update, secret=secret) == (200, {"status": "accepted"})
+    assert telegram_webhook(app, update, secret=secret) == (200, {"status": "duplicate"})
+    assert runtime.ftmo_master.approvals == [("a1b2c3d4e5f6", "42")]
+    assert runtime.telegram.callback_answers == ["callback-101"]
+    assert runtime.telegram.messages == ["FTMO command cccccccccccc approved and queued for the account-bound MT5 EA."]
+
+    update["update_id"] = 102
+    update["callback_query"]["data"] = "ftmo:approve:../../unsafe"
+    assert telegram_webhook(app, update, secret=secret) == (200, {"status": "ignored"})
+
+
+def test_ftmo_broker_and_position_lifecycle_are_reported_to_telegram():
+    async def scenario():
+        runtime = Runtime()
+        runtime.telegram = Telegram()
+        app = ProductionASGI(runtime)
+        await app._notify_ftmo_command_result({
+            "status": "reconciled", "lifecycle_state": "BROKER_ACCEPTED",
+            "broker_ticket": "12345678", "broker_retcode": "10009",
+            "requested_price": "63128.40", "fill_price": "63128.50", "executed_volume": "0.01",
+            "executed_stop_loss": "62980", "executed_take_profit": "63450",
+            "payload": {"symbol": "BTCUSD", "side": "buy", "entry": "63128.40", "volume": "0.01"},
+            "analysis_provenance": {"analysis_provider": "coinglass"},
+        })
+        await app._notify_ftmo_lifecycle({
+            "lifecycle_state": "POSITION_OPEN", "symbol": "BTCUSD", "side": "buy",
+            "entry": "63128.50", "volume": "0.01", "stop_loss": "62980", "take_profit": "63450",
+            "broker_ticket": "12345678", "unrealized_profit": "1.20", "analysis_provider": "coinglass",
+        })
+
+        assert runtime.telegram.messages[0].startswith("FTMO EXECUTION CONFIRMATION\nInstrument: BTCUSD | Direction: BUY")
+        assert "Execution source: FTMO MT5 | Analysis source: coinglass + Monatise" in runtime.telegram.messages[0]
+        assert runtime.telegram.messages[1].startswith("FTMO POSITION OPEN\nInstrument: BTCUSD | Direction: BUY")
+        assert "Unrealized P/L: 1.20" in runtime.telegram.messages[1]
+
+    asyncio.run(scenario())
 
 
 def test_telegram_crypto_command_runs_15m_read_only_analysis():

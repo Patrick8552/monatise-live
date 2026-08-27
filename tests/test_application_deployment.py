@@ -155,6 +155,86 @@ def test_telegram_transport_returns_provider_message_id(monkeypatch):
     }
 
 
+def test_telegram_trade_proposal_uses_bounded_callback_data_and_registers_callbacks(monkeypatch):
+    requests = []
+
+    class Response:
+        status = 200
+        def __init__(self, body): self.body = body
+        def __enter__(self): return self
+        def __exit__(self, *args): return None
+        def read(self): return self.body
+
+    def open_request(request, timeout):
+        payload = json.loads(request.data.decode())
+        requests.append((request.full_url.rsplit("/", 1)[-1], payload, timeout))
+        if request.full_url.endswith("/sendMessage"):
+            return Response(b'{"ok":true,"result":{"message_id":654}}')
+        return Response(b'{"ok":true,"result":true}')
+
+    monkeypatch.setattr("monatise.application.deployment.urlopen", open_request)
+    transport = TelegramNotificationTransport(lambda: "test-token")
+    proposal_id = "a1b2c3d4e5f6"
+
+    assert asyncio.run(transport.send_trade_proposal("42", "Proposal: ready", proposal_id)) == 654
+    assert asyncio.run(transport.set_webhook("https://example.test/api/telegram/webhook", "secret")) is True
+    assert requests[0][1]["reply_markup"] == {"inline_keyboard": [[
+        {"text": "APPROVE TRADE", "callback_data": f"ftmo:approve:{proposal_id}"},
+        {"text": "REJECT TRADE", "callback_data": f"ftmo:reject:{proposal_id}"},
+    ]]}
+    assert requests[1][1]["allowed_updates"] == ["message", "callback_query"]
+    with pytest.raises(ValueError, match="proposal identity"):
+        asyncio.run(transport.send_trade_proposal("42", "unsafe", "../../approve"))
+
+
+def test_confirmed_monatise_signal_becomes_actionable_telegram_proposal_only_once_qualified():
+    class FTMO:
+        def __init__(self): self.calls = []
+        async def create_signal_proposal(self, **kwargs):
+            self.calls.append(kwargs)
+            if kwargs["confirmation_status"] != "confirmed":
+                from monatise.application.ftmo_master import FTMOMasterError
+                raise FTMOMasterError("Monatise signal is not fully confirmed")
+            return {
+                "kind": "open_trade", "proposal_id": "a1b2c3d4e5f6", "symbol": kwargs["symbol"],
+                "side": "buy", "order_type": "market", "strategy": kwargs["strategy"],
+                "analysis_price": str(kwargs["analysis_entry"]), "entry": "63128.40",
+                "stop_loss": "62980", "take_profit": "63450", "risk_amount": "4.72",
+                "risk_fraction": "0.000472", "quote_bid": "63112.80", "quote_ask": "63128.40",
+                "expires_at": "2026-08-27T14:45:00+00:00", "conviction": kwargs["conviction"],
+            }
+
+    class Telegram:
+        def __init__(self): self.proposals = []
+        async def trade_proposal(self, message, proposal_id): self.proposals.append((message, proposal_id))
+
+    async def scenario():
+        runtime = OrchestrationRuntime(environment={})
+        runtime.ftmo_master, runtime.telegram = FTMO(), Telegram()
+        qualified = {
+            "asset": "BTC", "ftmo_symbol": "BTCUSD", "direction": "long",
+            "entry": "63124.50", "stop_loss": "62980", "target": "63450",
+            "asset_class": "crypto", "entry_confirmation_status": "confirmed",
+            "analysis_instrument": "BTCUSDT", "exchange": "Binance", "score": 8,
+            "interval": "15m", "publication_id": "signal-qualified",
+        }
+
+        assert await runtime._publish_ftmo_signal_proposal(qualified, source="monatise.crypto.scanner") is True
+        assert runtime.ftmo_master.calls[0]["analysis_provider"] == "coinglass"
+        assert runtime.ftmo_master.calls[0]["analysis_state"] == "LONG"
+        assert runtime.ftmo_master.calls[0]["confirmation_status"] == "confirmed"
+        assert runtime.telegram.proposals[0][1] == "a1b2c3d4e5f6"
+        assert runtime.telegram.proposals[0][0].startswith("MONATISE TRADE PROPOSAL")
+
+        unconfirmed = {**qualified, "publication_id": "signal-pending", "entry_confirmation_status": "pending"}
+        assert await runtime._publish_ftmo_signal_proposal(unconfirmed, source="monatise.crypto.scanner") is False
+        # The publisher passes the real state through without upgrading it.
+        assert runtime.ftmo_master.calls[1]["confirmation_status"] == "pending"
+        assert len(runtime.telegram.proposals) == 1
+
+    asyncio.run(scenario())
+
+
 def test_telegram_transport_bounds_messages_to_provider_limit(monkeypatch):
     captured = {}
 
