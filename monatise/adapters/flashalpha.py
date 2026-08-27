@@ -155,20 +155,28 @@ class FlashAlphaAdapter:
         try:
             with urlopen(request, timeout=self.timeout) as response:  # noqa: S310
                 rate_limit = _rate_limit_headers(getattr(response, "headers", {}))
-                self.telemetry.update(rate_limit)
+                self.telemetry.update({
+                    "status": "healthy",
+                    "last_http_status": int(getattr(response, "status", 200)),
+                    "last_checked_at": datetime.now(timezone.utc).isoformat(),
+                    **rate_limit,
+                })
                 return json.loads(response.read().decode("utf-8")), {
                     "http_status": int(getattr(response, "status", 200)),
                     "rate_limit": rate_limit,
                 }
         except HTTPError as error:
             rate_limit = _rate_limit_headers(getattr(error, "headers", {}))
-            self.telemetry.update(rate_limit)
             code = {
                 401: "auth_failed",
                 403: "tier_restricted",
                 404: "provider_unsupported",
                 429: "rate_limited",
             }.get(error.code, "provider_down" if error.code >= 500 else "provider_unavailable")
+            self.telemetry.update({
+                "status": code, "last_http_status": error.code,
+                "last_checked_at": datetime.now(timezone.utc).isoformat(), **rate_limit,
+            })
             raise FlashAlphaAdapterError(
                 f"FlashAlpha HTTP {error.code}", code=code, status_code=error.code, rate_limit=rate_limit,
             ) from error
