@@ -16,9 +16,8 @@ from monatise.adapters.alpaca import AlpacaMarketDataAdapter
 from monatise.adapters.finnhub import FinnhubAdapter
 from monatise.adapters.flashalpha import FlashAlphaAdapter
 from monatise.adapters.quiver import QuiverAdapter, normalize_quiver_symbol
-from monatise.application.flashalpha_analysis import build_flashalpha_futures_analysis
+from monatise.application.flashalpha_analysis import build_flashalpha_futures_analysis, build_flashalpha_stock_analysis
 from monatise.application.ftmo_registry import FTMOAssetClass, FTMOInstrument
-from monatise.application.stock_analysis import build_stock_analysis
 
 
 FAILURE_CODES = {
@@ -145,10 +144,13 @@ def validate_flashalpha_context(
         raise ValueError("provider_incomplete: future provider timestamp")
     if now - as_of > maximum_age:
         raise ValueError("provider_stale: futures intelligence is stale")
-    for key in ("underlying_price", "gamma_flip"):
+    for key in ("underlying_price", "gamma_flip", "call_wall", "put_wall"):
         value = context.get(key)
         if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(float(value)) or float(value) <= 0:
             raise ValueError(f"provider_incomplete: invalid {key}")
+    net_gex = context.get("net_gex")
+    if not isinstance(net_gex, (int, float)) or isinstance(net_gex, bool) or not math.isfinite(float(net_gex)):
+        raise ValueError("provider_incomplete: invalid net_gex")
     return as_of
 
 
@@ -186,8 +188,29 @@ def _insufficient(
     }
 
 
+def _stock_technical_bias(hourly: list[dict[str, Any]], trigger: list[dict[str, Any]]) -> str:
+    if len(hourly) < 50 or len(trigger) < 20:
+        return "NONE"
+
+    def ema(values: list[float], period: int) -> float:
+        value, alpha = values[0], 2 / (period + 1)
+        for item in values[1:]:
+            value = item * alpha + value * (1 - alpha)
+        return value
+
+    hourly_closes = [float(row["c"]) for row in hourly]
+    trigger_closes = [float(row["c"]) for row in trigger]
+    fast, slow = ema(hourly_closes, 20), ema(hourly_closes, 50)
+    trigger_fast = ema(trigger_closes, 20)
+    if fast > slow and hourly_closes[-1] > fast and trigger_closes[-1] > trigger_fast:
+        return "LONG"
+    if fast < slow and hourly_closes[-1] < fast and trigger_closes[-1] < trigger_fast:
+        return "SHORT"
+    return "NONE"
+
+
 class StockMarketIntelligenceCoordinator:
-    """Coordinate verified stock providers without inventing a candle fallback."""
+    """Coordinate FlashAlpha-led stock analysis with non-blocking support."""
 
     def __init__(
         self,
@@ -216,34 +239,51 @@ class StockMarketIntelligenceCoordinator:
         sources: list[dict[str, Any]] = []
         if instrument is not None and (
             instrument.asset_class is not FTMOAssetClass.STOCK
-            or instrument.market_data_provider != "alpaca"
+            or instrument.market_data_provider != "flashalpha"
         ):
             sources.extend([
-                _source("alpaca", "required_market_data", "not_applicable", ticker, requested=False, failure_reason="provider_unsupported"),
-                _source("quiver", "directional_intelligence", "not_requested", ticker, requested=False),
+                _source("flashalpha", "primary_analysis", "not_applicable", ticker, requested=False, failure_reason="provider_unsupported"),
+                _source("alpaca", "technical_confirmation", "not_requested", ticker, requested=False),
                 _source("finnhub", "supplemental_intelligence", "not_requested", ticker, requested=False),
-                _source("flashalpha", "confirmation", "not_requested", ticker, requested=False),
+                _source("quiver", "supplemental_intelligence", "not_requested", ticker, requested=False),
                 _source("ftmo_mt5", "execution_pricing", "not_requested", instrument.ftmo_symbol, requested=False, failure_reason="analysis_not_qualified"),
             ])
             result = _insufficient(ticker, "stock", sources, "provider_unsupported", now=observed)
-            result.update({"analysis_provider": "none", "analysis_instrument": ticker})
+            result.update({"analysis_provider": "flashalpha", "analysis_instrument": ticker})
             return result
 
-        hourly_result, trigger_result, snapshot_result, quiver_result, finnhub_result, flashalpha_result = await asyncio.gather(
+        flashalpha_result, hourly_result, trigger_result, snapshot_result, quiver_result, finnhub_result = await asyncio.gather(
+            _optional_call(lambda: self.flashalpha.context(ticker)),
             _optional_call(lambda: self.alpaca.stock_bars(ticker, "1Hour", 240)),
             _optional_call(lambda: self.alpaca.stock_bars(ticker, "15Min", 240)),
             _optional_call(lambda: self.alpaca.stock_snapshot(ticker)),
             _optional_call(lambda: self.quiver.context(normalize_quiver_symbol(ticker))),
             _optional_call(lambda: self.finnhub.context(ticker)),
-            _optional_call(lambda: self.flashalpha.context(normalize_quiver_symbol(ticker))),
         )
+        flashalpha, primary_error = flashalpha_result
+        primary_as_of = None
+        if primary_error is None:
+            try:
+                primary_as_of = validate_flashalpha_context(
+                    flashalpha, provider_symbol=ticker, now=observed,
+                    maximum_age=timedelta(minutes=max(5, int(self.environment.get("MONATISE_FLASHALPHA_MAX_AGE_MINUTES", "60")))),
+                )
+            except ValueError as validation_error:
+                primary_error = "provider_stale" if str(validation_error).startswith("provider_stale") else "provider_incomplete"
+        sources.append(_source(
+            "flashalpha", "primary_analysis", "used" if primary_error is None else "failed", ticker,
+            evidence=["gamma exposure", "gamma flip", "call/put walls", "positioning direction"] if primary_error is None else [],
+            affected_score=primary_error is None, failure_reason=primary_error,
+            timeframes={"snapshot": {"latest_timestamp": primary_as_of.isoformat() if primary_as_of else None, "quality": "valid" if primary_error is None else "rejected"}},
+        ))
+
         hourly, hourly_error = hourly_result
         trigger, trigger_error = trigger_result
         snapshot, snapshot_error = snapshot_result
-
         quality: dict[str, Any] = {}
-        market_failure = hourly_error or trigger_error or snapshot_error
-        if market_failure is None:
+        alpaca_error = hourly_error or trigger_error or snapshot_error
+        technical_bias = "NONE"
+        if alpaca_error is None:
             try:
                 hourly, quality["1h"] = validate_candles(
                     hourly, provider="alpaca", symbol=ticker, timeframe="1h", now=observed,
@@ -257,19 +297,21 @@ class StockMarketIntelligenceCoordinator:
                     raise ValueError("provider_incomplete: malformed snapshot")
             except ValueError as error:
                 detail = str(error)
-                market_failure = "provider_stale" if detail.startswith("provider_stale") else "provider_incomplete"
+                alpaca_error = "provider_stale" if detail.startswith("provider_stale") else "provider_incomplete"
+        if alpaca_error is None:
+            technical_bias = _stock_technical_bias(hourly, trigger)
         sources.append(_source(
-            "alpaca", "required_market_data", "used" if market_failure is None else "failed", ticker,
-            evidence=["1h OHLC", "15m OHLC", "stock snapshot"] if market_failure is None else [],
-            failure_reason=market_failure, timeframes=quality,
+            "alpaca", "technical_confirmation", "used" if alpaca_error is None else "degraded", ticker,
+            evidence=["1h/15m trend", "volatility", "stock snapshot"] if alpaca_error is None else [],
+            affected_score=False, failure_reason=alpaca_error, timeframes=quality,
         ))
 
         quiver, quiver_error = quiver_result
         quiver_available = isinstance(quiver, dict) and bool(quiver.get("available"))
         sources.append(_source(
-            "quiver", "directional_intelligence", "used" if quiver_available else "degraded", ticker,
+            "quiver", "supplemental_intelligence", "used" if quiver_available else "degraded", ticker,
             evidence=["Congress activity", "insider activity", "alternative-data context"] if quiver_available else [],
-            affected_score=quiver_available,
+            affected_score=False,
             failure_reason=quiver_error or ("provider_incomplete" if not quiver_available else None),
         ))
 
@@ -280,50 +322,45 @@ class StockMarketIntelligenceCoordinator:
             evidence=["company quote", "news", "recommendations", "earnings calendar"] if finnhub_available else [],
             affected_score=False, failure_reason=finnhub_error,
         ))
-
-        flashalpha, flashalpha_error = flashalpha_result
-        flashalpha_available = isinstance(flashalpha, dict) and flashalpha.get("net_gex") is not None
-        sources.append(_source(
-            "flashalpha", "confirmation", "used" if flashalpha_available else "degraded", ticker,
-            evidence=["options gamma exposure", "gamma flip", "call/put walls"] if flashalpha_available else [],
-            affected_score=flashalpha_available, failure_reason=flashalpha_error,
-        ))
         ftmo_source = _source("ftmo_mt5", "execution_pricing", "not_requested", instrument.ftmo_symbol if instrument else ticker, requested=False, failure_reason="analysis_not_qualified")
         sources.append(ftmo_source)
 
-        if market_failure is not None:
-            result = _insufficient(ticker, "stock", sources, market_failure, now=observed)
+        if primary_error is not None:
+            result = _insufficient(ticker, "stock", sources, primary_error, now=observed)
             result.update({
-                "analysis_provider": "alpaca", "analysis_instrument": ticker,
-                "data_quality": quality,
-                "supplemental_intelligence": {"quiver": quiver or {}, "finnhub": finnhub or {}, "flashalpha": flashalpha or {}},
+                "analysis_provider": "flashalpha", "analysis_instrument": ticker,
+                "data_quality": {"flashalpha_snapshot": {"latest_timestamp": None, "quality": "rejected"}, "alpaca": quality},
+                "supplemental_intelligence": {"alpaca_technical_bias": technical_bias, "quiver": quiver or {}, "finnhub": finnhub or {}},
             })
             return result
 
         validity_minutes = max(15, int(self.environment.get("MONATISE_STOCK_15M_VALIDITY_MINUTES", "60")))
-        analysis = build_stock_analysis(
-            quiver or {"symbol": ticker, "available": False, "summary": {}},
-            bars=hourly, trigger_bars=trigger, snapshot=snapshot or {},
-            finnhub=finnhub or {"source": "Finnhub", "unavailable": True},
-            flashalpha=flashalpha or {"source": "FlashAlpha", "unavailable": True},
-            now=observed, validity_minutes=validity_minutes,
-        )
-        if analysis.get("reason_code") == "FLASHALPHA_POSITIONING_CONFLICT":
-            consensus = "CONFLICT"
-        elif not quiver_available:
-            consensus = "INSUFFICIENT"
-        elif flashalpha_available:
-            consensus = "CONFIRMED"
-        else:
-            consensus = "PARTIAL"
+        analysis = build_flashalpha_stock_analysis(flashalpha)
+        direction = str(analysis.get("direction") or "NONE").upper()
+        quiver_score = int((((quiver or {}).get("summary") or {}).get("score") or 0))
+        alpaca_conflict = technical_bias in {"LONG", "SHORT"} and direction in {"LONG", "SHORT"} and technical_bias != direction
+        quiver_conflict = (direction == "LONG" and quiver_score <= -2) or (direction == "SHORT" and quiver_score >= 2)
+        supporting_confirmation = technical_bias == direction and direction in {"LONG", "SHORT"}
+        consensus = "CONFLICT" if alpaca_conflict or quiver_conflict else "CONFIRMED" if supporting_confirmation else "PARTIAL"
+        reasons = list(analysis.get("reasons") or [])
+        reasons.append(f"FlashAlpha positioning bias: {direction}")
+        if alpaca_error is not None:
+            reasons.append(f"Alpaca supporting confirmation degraded: {alpaca_error}")
+        elif technical_bias != "NONE":
+            reasons.append(f"Alpaca technical confirmation: {technical_bias}")
         analysis.update({
-            "analysis_provider": "alpaca+quiver",
+            "analysis_provider": "flashalpha",
             "analysis_instrument": ticker,
             "analysis_sources": sources,
             "provider_consensus": consensus,
-            "fallback_status": "not_available_no_verified_fallback",
-            "data_quality": quality,
-            "supplemental_intelligence": {"quiver": quiver or {}, "finnhub": finnhub or {}, "flashalpha": flashalpha or {}},
+            "fallback_status": "not_applicable_primary_required",
+            "data_quality": {"flashalpha_snapshot": {"latest_timestamp": primary_as_of.isoformat(), "quality": "valid"}, "alpaca": quality},
+            "supplemental_intelligence": {"alpaca_technical_bias": technical_bias, "quiver": quiver or {}, "finnhub": finnhub or {}},
+            "reasons": reasons,
+            "generated_at": observed.isoformat(),
+            "expires_at": (observed + timedelta(minutes=validity_minutes)).isoformat(),
+            "freshness": "fresh",
+            "publication_valid": analysis.get("setup_status") == "confirmed",
             "ftmo_execution_quote": {"provider": "ftmo_mt5", "status": "not_requested", "reason": "awaiting_qualification" if analysis.get("setup_status") == "confirmed" else "analysis_not_qualified"},
         })
         return analysis

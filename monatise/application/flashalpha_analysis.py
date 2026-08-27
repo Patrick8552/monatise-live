@@ -75,6 +75,22 @@ def build_flashalpha_futures_analysis(context: dict[str, Any], *, minimum_reward
     return result
 
 
+def build_flashalpha_stock_analysis(context: dict[str, Any], *, minimum_reward_risk: float = 1.5) -> dict[str, Any]:
+    """Build a FlashAlpha-led stock setup using the same positioning contract.
+
+    FlashAlpha supplies the directional price/flip/wall geometry. Other stock
+    providers may confirm or contradict it, but they do not replace these
+    required primary fields.
+    """
+    result = build_flashalpha_futures_analysis(context, minimum_reward_risk=minimum_reward_risk)
+    result.update({
+        "asset_class": "stock",
+        "direction_authority": "FlashAlpha options positioning and directional levels",
+        "data_source": context.get("source") or "FlashAlpha",
+    })
+    return result
+
+
 def _number(value: Any) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None

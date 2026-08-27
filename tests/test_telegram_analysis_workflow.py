@@ -167,13 +167,14 @@ class Runtime:
             "setup_status": "confirmed", "entry": 200, "stop_loss": 195, "target": 210,
             "score": 8, "score_threshold": 7, "current_price": 200,
             "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat(),
-            "analysis_provider": "alpaca+quiver", "analysis_instrument": symbol,
+            "analysis_provider": "flashalpha", "analysis_instrument": symbol,
             "analysis_sources": [
-                {"provider": "alpaca", "status": "used", "role": "required_market_data"},
-                {"provider": "quiver", "status": "used", "role": "directional_intelligence"},
+                {"provider": "flashalpha", "status": "used", "role": "primary_analysis"},
+                {"provider": "alpaca", "status": "used", "role": "technical_confirmation"},
+                {"provider": "quiver", "status": "used", "role": "supplemental_intelligence"},
                 {"provider": "ftmo_mt5", "status": "not_requested", "role": "execution_pricing"},
             ],
-            "provider_consensus": "PARTIAL", "fallback_status": "not_available_no_verified_fallback",
+            "provider_consensus": "PARTIAL", "fallback_status": "not_applicable_primary_required",
         }
 
     async def analyse_ftmo_futures_instrument(self, instrument):
@@ -260,7 +261,7 @@ def test_analysis_alias_runs_stock_provider_path():
 def test_no_trade_returns_full_analysis_without_approval_action():
     runtime = Runtime()
     async def no_trade(symbol, **_kwargs):
-        return {"asset": symbol, "decision": "NO_TRADE", "direction": "NONE", "setup_status": "suppressed", "score": 4, "score_threshold": 7, "reasons": ["Stock structure is inconclusive"], "analysis_provider": "alpaca+quiver", "analysis_instrument": symbol}
+        return {"asset": symbol, "decision": "NO_TRADE", "direction": "NONE", "setup_status": "suppressed", "score": 4, "score_threshold": 7, "reasons": ["Stock structure is inconclusive"], "analysis_provider": "flashalpha", "analysis_instrument": symbol}
     runtime.analyse_stock = no_trade
     run_request(runtime, "/analyze AAPL", update_id=23)
     assert runtime.ftmo_master.proposals == []
@@ -318,7 +319,7 @@ def test_analysis_records_session_provenance_and_autonomy_off():
     runtime = Runtime()
     run_request(runtime, "/analyze AAPL", update_id=28)
     analysis = next(iter(runtime.ftmo_master.repository.analyses.values()))
-    assert analysis["market_data_provenance"]["provider"] == "alpaca+quiver"
+    assert analysis["market_data_provenance"]["provider"] == "flashalpha"
     assert analysis["session"]["session_source"]
     assert analysis["autonomous_execution"] is False
 

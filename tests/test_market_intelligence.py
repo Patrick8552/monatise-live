@@ -67,18 +67,23 @@ class Finnhub:
 
 
 class FlashAlpha:
-    def __init__(self, *, failure: Exception | None = None, bullish=True):
-        self.failure, self.bullish = failure, bullish
+    def __init__(self, *, failure: Exception | None = None, bullish=True, mutation: str | None = None):
+        self.failure, self.bullish, self.mutation = failure, bullish, mutation
 
     def context(self, symbol):
         if self.failure:
             raise self.failure
         price, flip = (108, 106) if self.bullish else (104, 106)
-        return {
+        result = {
             "source": "FlashAlpha", "symbol": symbol, "as_of": (NOW - timedelta(minutes=5)).isoformat(),
             "underlying_price": price, "gamma_flip": flip, "call_wall": 115,
             "put_wall": 95, "net_gex": 1, "net_gex_label": "positive",
         }
+        if self.mutation == "stale":
+            result["as_of"] = (NOW - timedelta(hours=2)).isoformat()
+        elif self.mutation == "missing_wall":
+            result.pop("call_wall")
+        return result
 
 
 def test_stock_coordinator_uses_verified_roles_and_never_yahoo():
@@ -86,18 +91,48 @@ def test_stock_coordinator_uses_verified_roles_and_never_yahoo():
     result = asyncio.run(coordinator.analyse("AAPL", instrument=FTMO_REGISTRY.resolve("AAPL"), now=NOW))
     providers = {item["provider"]: item for item in result["analysis_sources"]}
     assert providers["alpaca"]["status"] == "used"
-    assert providers["quiver"]["affected_score"] is True
+    assert providers["quiver"]["affected_score"] is False
     assert providers["finnhub"]["role"] == "supplemental_intelligence"
-    assert providers["flashalpha"]["role"] == "confirmation"
+    assert providers["flashalpha"]["role"] == "primary_analysis"
+    assert providers["flashalpha"]["affected_score"] is True
+    assert providers["alpaca"]["role"] == "technical_confirmation"
+    assert providers["alpaca"]["affected_score"] is False
     assert providers["ftmo_mt5"]["status"] == "not_requested"
     assert "yahoo" not in str(result).casefold()
-    assert result["analysis_provider"] == "alpaca+quiver"
-    assert result["data_quality"]["1h"]["candle_count"] == 80
+    assert result["analysis_provider"] == "flashalpha"
+    assert result["data_quality"]["alpaca"]["1h"]["candle_count"] == 80
 
 
-def test_required_stock_market_data_failure_is_explicit_and_has_no_fallback():
+def test_alpaca_failure_degrades_support_when_flashalpha_is_valid():
     coordinator = StockMarketIntelligenceCoordinator(
         Alpaca(failure=RuntimeError("Alpaca HTTP 429")), Quiver(), Finnhub(), FlashAlpha(), environment={},
+    )
+    result = asyncio.run(coordinator.analyse("AAPL", instrument=FTMO_REGISTRY.resolve("AAPL"), now=NOW))
+    providers = {item["provider"]: item for item in result["analysis_sources"]}
+    assert result["decision"] != "INSUFFICIENT_MARKET_DATA"
+    assert result["analysis_provider"] == "flashalpha"
+    assert providers["alpaca"]["status"] == "degraded"
+    assert providers["alpaca"]["failure_reason"] == "provider_rate_limited"
+    assert result["ftmo_execution_quote"]["status"] == "not_requested"
+
+
+def test_supporting_failure_degrades_without_replacing_flashalpha_primary_data():
+    coordinator = StockMarketIntelligenceCoordinator(
+        Alpaca(failure=TimeoutError()), Quiver(available=False), Finnhub(failure=TimeoutError()), FlashAlpha(), environment={},
+    )
+    result = asyncio.run(coordinator.analyse("AAPL", instrument=FTMO_REGISTRY.resolve("AAPL"), now=NOW))
+    providers = {item["provider"]: item for item in result["analysis_sources"]}
+    assert result["decision"] != "INSUFFICIENT_MARKET_DATA"
+    assert providers["alpaca"]["status"] == "degraded"
+    assert providers["quiver"]["status"] == "degraded"
+    assert providers["finnhub"]["status"] == "degraded"
+    assert providers["flashalpha"]["status"] == "used"
+    assert result["provider_consensus"] == "PARTIAL"
+
+
+def test_flashalpha_failure_is_the_only_primary_stock_data_gate():
+    coordinator = StockMarketIntelligenceCoordinator(
+        Alpaca(), Quiver(), Finnhub(), FlashAlpha(failure=RuntimeError("FlashAlpha HTTP 429")), environment={},
     )
     result = asyncio.run(coordinator.analyse("AAPL", instrument=FTMO_REGISTRY.resolve("AAPL"), now=NOW))
     assert result["decision"] == "INSUFFICIENT_MARKET_DATA"
@@ -106,19 +141,21 @@ def test_required_stock_market_data_failure_is_explicit_and_has_no_fallback():
     assert result["ftmo_execution_quote"]["status"] == "not_requested"
 
 
-def test_supplemental_failure_degrades_without_contaminating_stock_candles():
+@pytest.mark.parametrize(
+    ("mutation", "reason_code"),
+    [("stale", "provider_stale"), ("missing_wall", "provider_incomplete")],
+)
+def test_invalid_flashalpha_primary_payload_fails_stock_analysis_closed(mutation, reason_code):
     coordinator = StockMarketIntelligenceCoordinator(
-        Alpaca(), Quiver(), Finnhub(failure=TimeoutError()), FlashAlpha(failure=RuntimeError("unavailable")), environment={},
+        Alpaca(), Quiver(), Finnhub(), FlashAlpha(mutation=mutation), environment={},
     )
     result = asyncio.run(coordinator.analyse("AAPL", instrument=FTMO_REGISTRY.resolve("AAPL"), now=NOW))
-    providers = {item["provider"]: item for item in result["analysis_sources"]}
-    assert result["decision"] != "INSUFFICIENT_MARKET_DATA"
-    assert providers["finnhub"]["status"] == "degraded"
-    assert providers["flashalpha"]["status"] == "degraded"
-    assert result["provider_consensus"] == "PARTIAL"
+    assert result["decision"] == "INSUFFICIENT_MARKET_DATA"
+    assert result["reason_code"] == reason_code
+    assert result["analysis_provider"] == "flashalpha"
 
 
-def test_non_alpaca_stock_is_rejected_without_calling_alpaca():
+def test_non_flashalpha_stock_is_rejected_without_calling_supporting_providers():
     alpaca = Alpaca()
     coordinator = StockMarketIntelligenceCoordinator(alpaca, Quiver(), Finnhub(), FlashAlpha(), environment={})
     result = asyncio.run(coordinator.analyse("ADS.DE", instrument=FTMO_REGISTRY.resolve("ADSGn"), now=NOW))

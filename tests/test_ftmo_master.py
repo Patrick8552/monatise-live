@@ -530,9 +530,10 @@ def test_production_telegram_analysis_publishes_waiting_then_durable_ftmo_propos
                 "score": 8, "score_threshold": 7, "conviction": 0.8,
                 "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat(),
                 "current_price": 200.00, "market_state": "trend_up",
-                "analysis_provider": "alpaca+quiver", "analysis_instrument": "AAPL",
+                "analysis_provider": "flashalpha", "analysis_instrument": "AAPL",
                 "analysis_sources": [
-                    {"provider": "alpaca", "role": "required_market_data", "status": "used"},
+                    {"provider": "flashalpha", "role": "primary_analysis", "status": "used"},
+                    {"provider": "alpaca", "role": "technical_confirmation", "status": "used"},
                     {"provider": "quiver", "role": "directional_intelligence", "status": "used"},
                     {"provider": "ftmo_mt5", "role": "execution_pricing", "status": "not_requested"},
                 ],

@@ -1,6 +1,7 @@
 import json
 
 import monatise.adapters.flashalpha as flashalpha_module
+import pytest
 from monatise.adapters.flashalpha import FlashAlphaAdapter, FlashAlphaAdapterError
 
 
@@ -45,3 +46,23 @@ def test_flashalpha_context_raises_when_not_configured():
     except FlashAlphaAdapterError:
         return
     raise AssertionError("expected FlashAlphaAdapterError when unconfigured")
+
+
+def test_flashalpha_context_maps_quota_payload_to_explicit_failure(monkeypatch):
+    monkeypatch.setattr(
+        flashalpha_module,
+        "urlopen",
+        lambda request, timeout=10: Response({"detail": "Daily API quota limit exceeded"}),
+    )
+    with pytest.raises(FlashAlphaAdapterError, match="rate limit"):
+        FlashAlphaAdapter("token").context("AAPL")
+
+
+def test_flashalpha_context_maps_tier_payload_to_unsupported_failure(monkeypatch):
+    monkeypatch.setattr(
+        flashalpha_module,
+        "urlopen",
+        lambda request, timeout=10: Response({"message": "Upgrade your plan to access this symbol"}),
+    )
+    with pytest.raises(FlashAlphaAdapterError, match="current account tier"):
+        FlashAlphaAdapter("token").context("ES=F")

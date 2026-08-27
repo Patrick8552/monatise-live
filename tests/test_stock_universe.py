@@ -157,7 +157,7 @@ def test_runtime_scans_dynamic_universe_publishes_only_qualified_and_dedupes(mon
             return tuple(SimpleNamespace(
                 ftmo_symbol=symbol, underlying_symbol=symbol, provider_symbol=symbol,
                 display_name=f"{symbol} Corp, Spot CFD", exchange="NASDAQ",
-                market_data_provider="alpaca", registry_version="test-v1",
+                    market_data_provider="flashalpha", registry_version="test-v1",
             ) for symbol in ("LONG", "SHORT"))
     monkeypatch.setattr("monatise.application.deployment.FTMO_REGISTRY", Registry())
     runtime = OrchestrationRuntime.__new__(OrchestrationRuntime)

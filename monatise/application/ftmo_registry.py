@@ -292,7 +292,7 @@ def _builtins() -> tuple[FTMOInstrument, ...]:
             stocks.append(_stock(symbol, name, symbol, "Private market / FTMO CFD", currency, "unavailable", None))
         else:
             exchange = "NASDAQ" if symbol in _US_NASDAQ else "NYSE"
-            stocks.append(_stock(symbol, name, symbol, exchange, currency, "alpaca", symbol))
+            stocks.append(_stock(symbol, name, symbol, exchange, currency, "flashalpha", symbol))
     crypto = [_crypto(*row) for row in _CRYPTO_ROWS]
     forex = [_forex(*row) for row in _FOREX_ROWS]
     futures = [_future(*row) for row in _FUTURES_ROWS]

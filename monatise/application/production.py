@@ -1325,7 +1325,7 @@ class ProductionASGI(OrchestrationASGI):
             if symbol.casefold() in {item.ftmo_symbol.casefold(), item.underlying_symbol.casefold(), (item.provider_symbol or "").casefold()}), None)
         if instrument is None:
             return 400, {"status": "invalid_request", "reason": "stock is not in the FTMO registry"}
-        if instrument.market_data_provider != "alpaca" or not instrument.provider_symbol:
+        if instrument.market_data_provider != "flashalpha" or not instrument.provider_symbol:
             return 503, {"status": "provider_unavailable", "symbol": instrument.ftmo_symbol, "reason": "FTMO stock market-data mapping is unavailable; failed closed"}
         try:
             analysis, cache_hit = await asyncio.wait_for(self._cached_openclaw_stock_analysis((instrument.provider_symbol, "1h")), timeout=30)
