@@ -19,6 +19,8 @@ from decimal import Decimal, ROUND_FLOOR
 from enum import StrEnum
 from typing import Any, Mapping
 
+from monatise.application.ftmo_registry import FTMOAssetClass, FTMOInstrument, FTMO_REGISTRY
+
 
 ZERO = Decimal("0")
 
@@ -69,6 +71,9 @@ class ProposalStatus(StrEnum):
     COMMAND_CREATED = "command_created"
     RECONCILIATION_REQUIRED = "reconciliation_required"
     RECONCILED = "reconciled"
+    INVALIDATED = "invalidated"
+    CANCELLED = "cancelled"
+    EXECUTION_FAILED = "execution_failed"
 
 
 class CommandStatus(StrEnum):
@@ -102,6 +107,8 @@ class FTMOMasterConfiguration:
     heartbeat_max_age_seconds: int = 30
     quote_max_age_seconds: int = 5
     maximum_spread_ticks: Decimal = Decimal("80")
+    maximum_entry_deviation_bps: Decimal = Decimal("50")
+    minimum_reward_risk: Decimal = Decimal("1")
 
     @classmethod
     def from_environment(cls, environment: Mapping[str, str]) -> "FTMOMasterConfiguration":
@@ -130,6 +137,16 @@ class FTMOMasterConfiguration:
             heartbeat_max_age_seconds=max(5, min(120, int(_env(environment, "FTMO_HEARTBEAT_MAX_AGE_SECONDS", "30")))),
             quote_max_age_seconds=max(1, min(30, int(_env(environment, "FTMO_QUOTE_MAX_AGE_SECONDS", "5")))),
             maximum_spread_ticks=_decimal(_env(environment, "FTMO_MAXIMUM_SPREAD_TICKS", "80"), "maximum spread ticks", positive=True),
+            maximum_entry_deviation_bps=_decimal(
+                _env(environment, "FTMO_MAXIMUM_ENTRY_DEVIATION_BPS", "50"),
+                "maximum entry deviation bps",
+                positive=True,
+            ),
+            minimum_reward_risk=_decimal(
+                _env(environment, "FTMO_MINIMUM_REWARD_RISK", "1"),
+                "minimum reward/risk",
+                positive=True,
+            ),
         )
         if configuration.risk_fraction > Decimal("0.01"):
             raise ValueError("FTMO risk fraction cannot exceed 1%")
@@ -178,6 +195,8 @@ class FTMOMasterConfiguration:
             "maximum_risk_amount": str(self.maximum_risk_amount),
             "maximum_daily_loss_amount": str(self.maximum_daily_loss_amount),
             "maximum_open_exposures": self.maximum_open_exposures,
+            "maximum_entry_deviation_bps": str(self.maximum_entry_deviation_bps),
+            "minimum_reward_risk": str(self.minimum_reward_risk),
         }
 
 
@@ -281,6 +300,12 @@ class FTMOMasterRepository:
         record = await self.store.get(self.PROPOSALS, proposal_id)
         return (dict(record.value), record.version) if record else None
 
+    async def proposals(self) -> tuple[dict[str, Any], ...]:
+        records = await self.store.list_namespace(self.PROPOSALS)
+        values = [dict(record.value) for record in records]
+        values.sort(key=lambda item: (item.get("created_at", ""), item.get("proposal_id", "")))
+        return tuple(values)
+
     async def update_proposal(self, proposal_id: str, value: dict[str, Any], version: int) -> None:
         await self._put(self.PROPOSALS, proposal_id, value, expected_version=version)
 
@@ -307,6 +332,10 @@ class FTMOMasterRepository:
         value["updated_at"] = _utc().isoformat()
         await self._put(self.COMMANDS, command_id, value, expected_version=record.version)
         return value
+
+    async def command(self, command_id: str) -> tuple[dict[str, Any], int] | None:
+        record = await self.store.get(self.COMMANDS, command_id)
+        return (dict(record.value), record.version) if record else None
 
     async def audit(self, event: str, subject: str, fields: dict[str, Any]) -> None:
         await self.store.append(self.AUDIT, {
@@ -348,6 +377,186 @@ class FTMOMasterControlService:
     def authorized(self, user_id: str | None, chat_type: str | None) -> bool:
         return bool(user_id and chat_type == "private" and user_id in self.configuration.authorized_user_ids)
 
+    @staticmethod
+    def _symbol_key(value: str) -> str:
+        return "".join(character for character in value.upper() if character.isalnum())
+
+    def _verified_instrument_mapping(
+        self,
+        symbol: str,
+        *,
+        analysis_provider: str | None = None,
+        analysis_instrument: str | None = None,
+    ) -> FTMOInstrument:
+        requested = self._symbol_key(symbol)
+        candidates = [
+            item for item in FTMO_REGISTRY.all(enabled_only=True)
+            if self._symbol_key(item.ftmo_symbol) == requested
+        ]
+        if not candidates:
+            candidates = [
+                item for item in FTMO_REGISTRY.all(enabled_only=True)
+                if self._symbol_key(item.underlying_symbol) == requested
+            ]
+        if len(candidates) != 1:
+            raise FTMOMasterError("no unique verified FTMO symbol mapping exists")
+        instrument = candidates[0]
+        provider = str(analysis_provider or "").strip().casefold()
+        provider_instrument = self._symbol_key(str(analysis_instrument or ""))
+        if provider == "coinglass":
+            if instrument.asset_class is not FTMOAssetClass.CRYPTO or instrument.market_data_provider.casefold() != "coinglass":
+                raise FTMOMasterError("CoinGlass analysis is not mapped to an FTMO crypto instrument")
+            base = self._symbol_key(instrument.provider_symbol or instrument.underlying_symbol)
+            accepted = {base, f"{base}USDT", f"{base}USD"}
+            if provider_instrument and provider_instrument not in accepted:
+                raise FTMOMasterError("CoinGlass instrument does not match the verified FTMO mapping")
+        return instrument
+
+    @staticmethod
+    def _execution_snapshot(symbol: str, quote: Mapping[str, Any], bridge: Mapping[str, Any]) -> dict[str, Any]:
+        return {
+            "execution_broker": "FTMO",
+            "execution_symbol": symbol,
+            "ftmo_bid": str(quote["bid"]),
+            "ftmo_ask": str(quote["ask"]),
+            "spread": str(Decimal(str(quote["ask"])) - Decimal(str(quote["bid"]))),
+            "quote_timestamp": str(quote["timestamp"]),
+            "digits": int(quote.get("digits", 0)),
+            "point": str(quote.get("point", quote["tick_size"])),
+            "tick_size": str(quote["tick_size"]),
+            "tick_value": str(quote["tick_value"]),
+            "tick_value_loss": str(quote.get("tick_value_loss", quote["tick_value"])),
+            "tick_value_profit": str(quote.get("tick_value_profit", quote["tick_value"])),
+            "contract_size": str(quote.get("contract_size", "1")),
+            "minimum_volume": str(quote["volume_min"]),
+            "maximum_volume": str(quote["volume_max"]),
+            "volume_step": str(quote["volume_step"]),
+            "stop_level": str(quote.get("stops_level", "0")),
+            "freeze_level": str(quote.get("freeze_level", "0")),
+            "trading_status": str(quote.get("trade_mode", "full")),
+            "account_equity": str(bridge["equity"]),
+            "account_balance": str(bridge["balance"]),
+            "free_margin": str(bridge.get("free_margin", bridge["equity"])),
+            "existing_positions": len(bridge.get("positions") or ()),
+            "existing_orders": len(bridge.get("orders") or ()),
+        }
+
+    async def _validated_open_fields(
+        self,
+        *,
+        symbol: str,
+        side: str,
+        order_type: str,
+        stop_loss: Any,
+        take_profit: Any,
+        entry: Any | None,
+        now: datetime,
+        reference_entry: Any | None = None,
+        entry_zone_low: Any | None = None,
+        entry_zone_high: Any | None = None,
+    ) -> dict[str, Any]:
+        symbol = symbol.strip().upper()
+        side = side.strip().casefold()
+        order_type = order_type.strip().casefold()
+        if side not in {"buy", "sell"} or order_type not in {"market", "limit", "stop"}:
+            raise FTMOMasterError("trade side/type must be buy|sell and market|limit|stop")
+        bridge = await self._healthy_bridge(now)
+        quote = (bridge.get("quotes") or {}).get(symbol)
+        if quote is None:
+            raise FTMOMasterError("FTMO bridge has no current quote for that symbol")
+        quote_at = datetime.fromisoformat(str(quote["timestamp"]))
+        if (now - quote_at).total_seconds() > self.configuration.quote_max_age_seconds:
+            raise FTMOMasterError("FTMO quote is stale")
+        if str(quote.get("trade_mode", "full")).strip().casefold() not in {"full", "4", "symbol_trade_mode_full"}:
+            raise FTMOMasterError("FTMO symbol is not fully enabled for trading")
+        bid, ask = Decimal(str(quote["bid"])), Decimal(str(quote["ask"]))
+        tick_size = Decimal(str(quote["tick_size"]))
+        tick_value = Decimal(str(quote.get("tick_value_loss", quote["tick_value"])))
+        spread_ticks = (ask - bid) / tick_size
+        if spread_ticks > self.configuration.maximum_spread_ticks:
+            raise FTMOMasterError("FTMO spread exceeds policy")
+        requested_entry = (ask if side == "buy" else bid) if order_type == "market" else _decimal(entry, "entry", positive=True)
+        if reference_entry is not None:
+            reference = _decimal(reference_entry, "reference entry", positive=True)
+            deviation_bps = abs(requested_entry - reference) / reference * Decimal("10000")
+            if deviation_bps > self.configuration.maximum_entry_deviation_bps:
+                raise FTMOMasterError("price moved outside the approved Monatise entry tolerance")
+        if entry_zone_low is not None and requested_entry < _decimal(entry_zone_low, "entry zone low", positive=True):
+            raise FTMOMasterError("price moved below the approved Monatise entry zone")
+        if entry_zone_high is not None and requested_entry > _decimal(entry_zone_high, "entry zone high", positive=True):
+            raise FTMOMasterError("price moved above the approved Monatise entry zone")
+        stop = _decimal(stop_loss, "stop loss", positive=True)
+        target = _decimal(take_profit, "take profit", positive=True)
+        if side == "buy" and not stop < requested_entry < target:
+            raise FTMOMasterError("buy levels require stop < entry < target")
+        if side == "sell" and not target < requested_entry < stop:
+            raise FTMOMasterError("sell levels require target < entry < stop")
+        if order_type == "limit" and ((side == "buy" and requested_entry >= ask) or (side == "sell" and requested_entry <= bid)):
+            raise FTMOMasterError("limit entry is on the wrong side of the FTMO market")
+        if order_type == "stop" and ((side == "buy" and requested_entry <= ask) or (side == "sell" and requested_entry >= bid)):
+            raise FTMOMasterError("stop entry is on the wrong side of the FTMO market")
+        minimum_stop = max(Decimal(str(quote.get("stops_level", 0))), Decimal(str(quote.get("freeze_level", 0)))) * tick_size
+        stop_distance = abs(requested_entry - stop)
+        if stop_distance < minimum_stop:
+            raise FTMOMasterError("stop distance is below the FTMO symbol minimum")
+        reward_distance = abs(target - requested_entry)
+        if reward_distance / stop_distance < self.configuration.minimum_reward_risk:
+            raise FTMOMasterError("reward/risk is below execution policy")
+        equity = Decimal(str(bridge["equity"]))
+        loss_today = max(ZERO, Decimal(str(bridge["daily_start_equity"])) - equity)
+        daily_remaining = min(Decimal(str(bridge["daily_loss_limit"])), self.configuration.maximum_daily_loss_amount) - loss_today
+        total_loss = max(ZERO, Decimal(str(bridge["initial_balance"])) - equity)
+        total_remaining = Decimal(str(bridge["total_loss_limit"])) - total_loss
+        exposures = tuple(item for item in (*tuple(bridge.get("positions") or ()), *tuple(bridge.get("orders") or ())) if isinstance(item, Mapping))
+        if len(exposures) >= self.configuration.maximum_open_exposures:
+            raise FTMOMasterError("maximum open position/pending-order exposure limit is reached")
+        if any(str(item.get("symbol") or "").upper() == symbol for item in exposures):
+            raise FTMOMasterError("a conflicting FTMO exposure already exists for the symbol")
+        existing_open_risk = ZERO
+        for position in bridge.get("positions") or []:
+            if not isinstance(position, Mapping):
+                continue
+            position_symbol = str(position.get("symbol") or "").upper()
+            position_quote = (bridge.get("quotes") or {}).get(position_symbol)
+            position_stop = _decimal(position.get("sl", 0), "position stop")
+            if position_stop <= ZERO:
+                raise FTMOMasterError("an open position has no protective stop; new risk is blocked")
+            if position_quote is None:
+                raise FTMOMasterError("open-position risk cannot be priced from the FTMO heartbeat")
+            position_entry = _decimal(position.get("price_open"), "position entry", positive=True)
+            position_volume = _decimal(position.get("volume"), "position volume", positive=True)
+            existing_open_risk += abs(position_entry - position_stop) / Decimal(str(position_quote["tick_size"])) * Decimal(str(position_quote.get("tick_value_loss", position_quote["tick_value"]))) * position_volume
+        available_loss_capacity = min(daily_remaining, total_remaining) - existing_open_risk
+        risk_budget = min(equity * self.configuration.risk_fraction, self.configuration.maximum_risk_amount, available_loss_capacity)
+        if risk_budget <= ZERO:
+            raise FTMOMasterError("FTMO daily/total loss capacity is exhausted")
+        loss_per_lot = (stop_distance / tick_size) * tick_value
+        step = Decimal(str(quote["volume_step"]))
+        volume = ((risk_budget / loss_per_lot) / step).to_integral_value(rounding=ROUND_FLOOR) * step
+        volume = min(volume, Decimal(str(quote["volume_max"])))
+        if volume < Decimal(str(quote["volume_min"])):
+            raise FTMOMasterError("minimum FTMO volume would exceed the permitted risk")
+        actual_risk = loss_per_lot * volume
+        if existing_open_risk + actual_risk > equity * Decimal("0.03"):
+            raise FTMOMasterError("FTMO total open risk limit would be exceeded")
+        return {
+            "symbol": symbol,
+            "side": side,
+            "order_type": order_type,
+            "entry": str(requested_entry),
+            "stop_loss": str(stop),
+            "take_profit": str(target),
+            "volume": str(volume),
+            "risk_amount": str(actual_risk),
+            "risk_fraction": str(actual_risk / equity),
+            "quote_bid": str(bid),
+            "quote_ask": str(ask),
+            "quote_timestamp": str(quote["timestamp"]),
+            "spread_ticks": str(spread_ticks),
+            "reward_risk": str(reward_distance / stop_distance),
+            "execution_snapshot": self._execution_snapshot(symbol, quote, bridge),
+        }
+
     async def accept_bridge_heartbeat(self, payload: Mapping[str, Any], *, now: datetime | None = None) -> dict[str, Any]:
         observed = _utc(now)
         account_id = str(payload.get("account_id") or "").strip()
@@ -377,12 +586,18 @@ class FTMOMasterControlService:
             normalized_quotes[symbol] = {
                 "bid": str(bid), "ask": str(ask), "timestamp": _utc(quote_at).isoformat(),
                 "digits": int(raw_quote.get("digits", 0)),
+                "point": str(_decimal(raw_quote.get("point", raw_quote.get("tick_size")), "point size", positive=True)),
                 "tick_size": str(_decimal(raw_quote.get("tick_size"), "tick size", positive=True)),
                 "tick_value": str(_decimal(raw_quote.get("tick_value"), "tick value", positive=True)),
+                "tick_value_loss": str(_decimal(raw_quote.get("tick_value_loss", raw_quote.get("tick_value")), "loss tick value", positive=True)),
+                "tick_value_profit": str(_decimal(raw_quote.get("tick_value_profit", raw_quote.get("tick_value")), "profit tick value", positive=True)),
+                "contract_size": str(_decimal(raw_quote.get("contract_size", 1), "contract size", positive=True)),
                 "volume_min": str(_decimal(raw_quote.get("volume_min"), "minimum volume", positive=True)),
                 "volume_max": str(_decimal(raw_quote.get("volume_max"), "maximum volume", positive=True)),
                 "volume_step": str(_decimal(raw_quote.get("volume_step"), "volume step", positive=True)),
                 "stops_level": str(_decimal(raw_quote.get("stops_level", 0), "stops level")),
+                "freeze_level": str(_decimal(raw_quote.get("freeze_level", 0), "freeze level")),
+                "trade_mode": str(raw_quote.get("trade_mode", "full")),
             }
         snapshot = {
             "account_id": account_id,
@@ -390,6 +605,7 @@ class FTMOMasterControlService:
             "currency": currency,
             "balance": str(_decimal(payload.get("balance"), "balance", positive=True)),
             "equity": str(_decimal(payload.get("equity"), "equity", positive=True)),
+            "free_margin": str(_decimal(payload.get("free_margin", payload.get("equity")), "free margin")),
             "initial_balance": str(_decimal(payload.get("initial_balance", payload.get("balance")), "initial balance", positive=True)),
             "daily_start_equity": str(_decimal(payload.get("daily_start_equity", payload.get("equity")), "daily start equity", positive=True)),
             "daily_loss_limit": str(_decimal(payload.get("daily_loss_limit"), "daily loss limit", positive=True)),
@@ -406,13 +622,75 @@ class FTMOMasterControlService:
             "observed_at": observed.isoformat(),
         }
         await self.repository.save_bridge(snapshot)
+        lifecycle_events: tuple[dict[str, Any], ...] = ()
+        if identity_match:
+            lifecycle_events = await self._reconcile_proposals_from_heartbeat(snapshot, observed)
         await self.repository.audit("bridge_heartbeat", _mask_account(account_id) or "unknown", {
             "identity_match": identity_match, "terminal_connected": snapshot["terminal_connected"],
             "trade_allowed": snapshot["trade_allowed"], "quote_count": len(normalized_quotes),
         })
         if not identity_match:
             raise FTMOMasterError("FTMO bridge account/server/currency mismatch")
-        return {"status": "accepted", "identity_match": True, "execution_enabled": self.configuration.activation_configured}
+        return {
+            "status": "accepted", "identity_match": True,
+            "execution_enabled": self.configuration.activation_configured,
+            "lifecycle_events": list(lifecycle_events),
+        }
+
+    async def _reconcile_proposals_from_heartbeat(
+        self, snapshot: Mapping[str, Any], observed: datetime,
+    ) -> tuple[dict[str, Any], ...]:
+        positions = tuple(item for item in snapshot.get("positions") or () if isinstance(item, Mapping))
+        orders = tuple(item for item in snapshot.get("orders") or () if isinstance(item, Mapping))
+        events: list[dict[str, Any]] = []
+        for proposal in await self.repository.proposals():
+            command_id = str(proposal.get("command_id") or "")
+            broker_ticket = str(proposal.get("broker_ticket") or "")
+            if not command_id and not broker_ticket:
+                continue
+            command_prefix = command_id[:16]
+
+            def matches(item: Mapping[str, Any]) -> bool:
+                ticket = str(item.get("ticket") or "")
+                comment = str(item.get("comment") or "")
+                return bool((broker_ticket and ticket == broker_ticket) or (command_prefix and command_prefix in comment))
+
+            position = next((item for item in positions if matches(item)), None)
+            order = next((item for item in orders if matches(item)), None)
+            lifecycle = str(proposal.get("lifecycle_state") or "")
+            next_state = "POSITION_OPEN" if position is not None else "BROKER_ACCEPTED" if order is not None else None
+            if next_state is None and lifecycle in {"POSITION_OPEN", "PARTIAL_CLOSE"}:
+                next_state = "POSITION_CLOSED"
+            if next_state is None or next_state == lifecycle:
+                continue
+            stored = await self.repository.proposal(str(proposal["proposal_id"]))
+            if stored is None:
+                continue
+            value, version = stored
+            value["lifecycle_state"] = next_state
+            value["position_observed_at"] = observed.isoformat()
+            if position is not None:
+                value["position_snapshot"] = dict(position)
+            if order is not None:
+                value["order_snapshot"] = dict(order)
+            if next_state == "POSITION_CLOSED":
+                value["status"] = ProposalStatus.RECONCILED.value
+                value["position_closed_at"] = observed.isoformat()
+            await self.repository.update_proposal(value["proposal_id"], value, version)
+            await self.repository.audit("position_lifecycle", value["proposal_id"], {"state": next_state})
+            evidence = dict(position or order or value.get("position_snapshot") or value.get("order_snapshot") or {})
+            events.append({
+                "proposal_id": value["proposal_id"], "command_id": command_id,
+                "lifecycle_state": next_state, "symbol": value.get("symbol"), "side": value.get("side"),
+                "entry": evidence.get("price_open", value.get("entry")),
+                "volume": evidence.get("volume", value.get("volume")),
+                "stop_loss": evidence.get("sl", value.get("stop_loss")),
+                "take_profit": evidence.get("tp", value.get("take_profit")),
+                "broker_ticket": evidence.get("ticket", broker_ticket),
+                "unrealized_profit": evidence.get("profit"),
+                "analysis_provider": value.get("analysis_provider"),
+            })
+        return tuple(events)
 
     async def status(self, *, now: datetime | None = None) -> dict[str, Any]:
         observed = _utc(now)
@@ -493,110 +771,36 @@ class FTMOMasterControlService:
         entry: Any | None = None,
         now: datetime | None = None,
         _proposal_id: str | None = None,
+        metadata: Mapping[str, Any] | None = None,
+        expires_at: datetime | None = None,
     ) -> dict[str, Any]:
         observed = _utc(now)
         if actor not in self.configuration.authorized_user_ids and actor != "monatise-scanner":
             raise FTMOMasterError("Telegram user is not authorized")
-        symbol = symbol.strip().upper()
-        side = side.strip().casefold()
-        order_type = order_type.strip().casefold()
-        if side not in {"buy", "sell"} or order_type not in {"market", "limit", "stop"}:
-            raise FTMOMasterError("trade side/type must be buy|sell and market|limit|stop")
-        bridge = await self._healthy_bridge(observed)
-        quote = (bridge.get("quotes") or {}).get(symbol)
-        if quote is None:
-            raise FTMOMasterError("FTMO bridge has no current quote for that symbol")
-        quote_at = datetime.fromisoformat(quote["timestamp"])
-        if (observed - quote_at).total_seconds() > self.configuration.quote_max_age_seconds:
-            raise FTMOMasterError("FTMO quote is stale")
-        bid, ask = Decimal(quote["bid"]), Decimal(quote["ask"])
-        tick_size, tick_value = Decimal(quote["tick_size"]), Decimal(quote["tick_value"])
-        spread_ticks = (ask - bid) / tick_size
-        if spread_ticks > self.configuration.maximum_spread_ticks:
-            raise FTMOMasterError("FTMO spread exceeds policy")
-        requested_entry = (ask if side == "buy" else bid) if order_type == "market" else _decimal(entry, "entry", positive=True)
-        stop = _decimal(stop_loss, "stop loss", positive=True)
-        target = _decimal(take_profit, "take profit", positive=True)
-        if side == "buy" and not stop < requested_entry < target:
-            raise FTMOMasterError("buy levels require stop < entry < target")
-        if side == "sell" and not target < requested_entry < stop:
-            raise FTMOMasterError("sell levels require target < entry < stop")
-        if order_type == "limit" and ((side == "buy" and requested_entry >= ask) or (side == "sell" and requested_entry <= bid)):
-            raise FTMOMasterError("limit entry is on the wrong side of the FTMO market")
-        if order_type == "stop" and ((side == "buy" and requested_entry <= ask) or (side == "sell" and requested_entry >= bid)):
-            raise FTMOMasterError("stop entry is on the wrong side of the FTMO market")
-        minimum_stop = Decimal(quote["stops_level"]) * tick_size
-        stop_distance = abs(requested_entry - stop)
-        if stop_distance < minimum_stop:
-            raise FTMOMasterError("stop distance is below the FTMO symbol minimum")
-        equity = Decimal(bridge["equity"])
-        loss_today = max(ZERO, Decimal(bridge["daily_start_equity"]) - equity)
-        daily_remaining = min(
-            Decimal(bridge["daily_loss_limit"]),
-            self.configuration.maximum_daily_loss_amount,
-        ) - loss_today
-        total_loss = max(ZERO, Decimal(bridge["initial_balance"]) - equity)
-        total_remaining = Decimal(bridge["total_loss_limit"]) - total_loss
-        open_exposures = sum(
-            1 for item in (*tuple(bridge.get("positions") or ()), *tuple(bridge.get("orders") or ()))
-            if isinstance(item, Mapping)
+        fields = await self._validated_open_fields(
+            symbol=symbol, side=side, order_type=order_type, stop_loss=stop_loss,
+            take_profit=take_profit, entry=entry, now=observed,
         )
-        if open_exposures >= self.configuration.maximum_open_exposures:
-            raise FTMOMasterError("maximum open position/pending-order exposure limit is reached")
-        existing_open_risk = ZERO
-        for position in bridge.get("positions") or []:
-            if not isinstance(position, Mapping):
-                continue
-            position_symbol = str(position.get("symbol") or "").upper()
-            position_quote = (bridge.get("quotes") or {}).get(position_symbol)
-            position_stop = _decimal(position.get("sl", 0), "position stop")
-            if position_stop <= ZERO:
-                raise FTMOMasterError("an open position has no protective stop; new risk is blocked")
-            if position_quote is None:
-                raise FTMOMasterError("open-position risk cannot be priced from the FTMO heartbeat")
-            position_entry = _decimal(position.get("price_open"), "position entry", positive=True)
-            position_volume = _decimal(position.get("volume"), "position volume", positive=True)
-            existing_open_risk += (
-                abs(position_entry - position_stop)
-                / Decimal(position_quote["tick_size"])
-                * Decimal(position_quote["tick_value"])
-                * position_volume
-            )
-        available_loss_capacity = min(daily_remaining, total_remaining) - existing_open_risk
-        risk_budget = min(equity * self.configuration.risk_fraction, self.configuration.maximum_risk_amount, available_loss_capacity)
-        if risk_budget <= ZERO:
-            raise FTMOMasterError("FTMO daily/total loss capacity is exhausted")
-        loss_per_lot = (stop_distance / tick_size) * tick_value
-        step = Decimal(quote["volume_step"])
-        volume = ((risk_budget / loss_per_lot) / step).to_integral_value(rounding=ROUND_FLOOR) * step
-        volume = min(volume, Decimal(quote["volume_max"]))
-        if volume < Decimal(quote["volume_min"]):
-            raise FTMOMasterError("calculated FTMO volume is below the symbol minimum")
-        actual_risk = loss_per_lot * volume
-        if existing_open_risk + actual_risk > equity * Decimal("0.03"):
-            raise FTMOMasterError("FTMO total open risk limit would be exceeded")
         proposal_id = _proposal_id or secrets.token_hex(6)
-        expires_at = observed + timedelta(minutes=5)
+        proposal_expiry = _utc(expires_at) if expires_at is not None else observed + timedelta(minutes=5)
+        if proposal_expiry <= observed:
+            raise FTMOMasterError("signal has already expired")
+        details = dict(metadata or {})
         proposal = {
             "proposal_id": proposal_id,
             "kind": "open_trade",
             "status": ProposalStatus.PENDING.value,
+            "lifecycle_state": "AWAITING_APPROVAL",
             "actor": actor,
-            "symbol": symbol,
-            "side": side,
-            "order_type": order_type,
-            "entry": str(requested_entry),
-            "stop_loss": str(stop),
-            "take_profit": str(target),
-            "volume": str(volume),
-            "risk_amount": str(actual_risk),
-            "risk_fraction": str(actual_risk / equity),
-            "quote_bid": str(bid),
-            "quote_ask": str(ask),
-            "quote_timestamp": quote["timestamp"],
+            **fields,
+            **details,
             "created_at": observed.isoformat(),
-            "expires_at": expires_at.isoformat(),
+            "expires_at": proposal_expiry.isoformat(),
             "confirmation_required": True,
+            "approval_id": None,
+            "command_id": None,
+            "execution_id": None,
+            "broker_ticket": None,
         }
         if not await self.repository.save_proposal(proposal):
             raise FTMOMasterError("proposal identity collision")
@@ -612,7 +816,23 @@ class FTMOMasterControlService:
         analysis_stop: Any,
         analysis_target: Any,
         source: str,
+        analysis_state: str | None = None,
+        confirmation_status: str | None = None,
         now: datetime | None = None,
+        analysis_id: str | None = None,
+        analysis_provider: str | None = None,
+        analysis_instrument: str | None = None,
+        analysis_exchange: str | None = None,
+        analysis_observed_at: datetime | None = None,
+        signal_expires_at: datetime | None = None,
+        entry_zone_low: Any | None = None,
+        entry_zone_high: Any | None = None,
+        order_type: str = "market",
+        strategy: str | None = None,
+        timeframe: str | None = None,
+        conviction: Any | None = None,
+        evidence_bundle: Mapping[str, Any] | None = None,
+        supersedes_signal_id: str | None = None,
     ) -> dict[str, Any]:
         """Translate external structure into FTMO-native levels.
 
@@ -633,9 +853,23 @@ class FTMOMasterControlService:
                 raise FTMOMasterError("external short signal levels are invalid")
         else:
             raise FTMOMasterError("external signal direction is invalid")
+        normalized_state = str(analysis_state or "").strip().upper()
+        expected_state = "LONG" if side == "buy" else "SHORT"
+        if normalized_state != expected_state:
+            raise FTMOMasterError("Monatise signal state is not executable or conflicts with direction")
+        if str(confirmation_status or "").strip().casefold() != "confirmed":
+            raise FTMOMasterError("Monatise signal is not fully confirmed")
         observed = _utc(now)
+        if not str(signal_id).strip():
+            raise FTMOMasterError("signal identity is required")
+        instrument = self._verified_instrument_mapping(
+            symbol,
+            analysis_provider=analysis_provider,
+            analysis_instrument=analysis_instrument,
+        )
+        execution_symbol = symbol.strip().upper()
         bridge = await self._healthy_bridge(observed)
-        quote = (bridge.get("quotes") or {}).get(symbol.strip().upper())
+        quote = (bridge.get("quotes") or {}).get(execution_symbol)
         if quote is None:
             raise FTMOMasterError("FTMO bridge has no current quote for the signal symbol")
         ftmo_entry = Decimal(quote["ask"] if side == "buy" else quote["bid"])
@@ -650,23 +884,72 @@ class FTMOMasterControlService:
         tick = Decimal(quote["tick_size"])
         ftmo_stop = (ftmo_stop / tick).to_integral_value(rounding=ROUND_FLOOR) * tick
         ftmo_target = (ftmo_target / tick).to_integral_value(rounding=ROUND_FLOOR) * tick
-        proposal_id = hashlib.sha256(f"{signal_id}:{symbol}:{side}:{quote['timestamp']}".encode()).hexdigest()[:12]
-        proposal = await self.create_trade_proposal(
-            actor="monatise-scanner", symbol=symbol, side=side, order_type="market",
-            stop_loss=ftmo_stop, take_profit=ftmo_target, now=observed, _proposal_id=proposal_id,
-        )
-        proposal.update({
-            "signal_id": signal_id,
+        ftmo_zone_low = None if entry_zone_low is None else ftmo_entry * (_decimal(entry_zone_low, "entry zone low", positive=True) / entry)
+        ftmo_zone_high = None if entry_zone_high is None else ftmo_entry * (_decimal(entry_zone_high, "entry zone high", positive=True) / entry)
+        if ftmo_zone_low is not None and ftmo_zone_high is not None and ftmo_zone_low > ftmo_zone_high:
+            raise FTMOMasterError("analysis entry zone is inverted")
+        proposal_id = hashlib.sha256(f"signal:{signal_id}".encode()).hexdigest()[:12]
+        if supersedes_signal_id:
+            for previous in await self.repository.proposals():
+                if previous.get("signal_id") != supersedes_signal_id or previous.get("status") != ProposalStatus.PENDING.value:
+                    continue
+                stored_previous = await self.repository.proposal(previous["proposal_id"])
+                if stored_previous is None:
+                    continue
+                previous_value, previous_version = stored_previous
+                previous_value.update({
+                    "status": ProposalStatus.INVALIDATED.value,
+                    "lifecycle_state": "INVALIDATED",
+                    "invalidated_at": observed.isoformat(),
+                    "superseded_by_signal_id": signal_id,
+                })
+                await self.repository.update_proposal(previous["proposal_id"], previous_value, previous_version)
+                await self.repository.audit("proposal_superseded", previous["proposal_id"], {"superseded_by_signal_id": signal_id})
+        provider = str(analysis_provider or instrument.market_data_provider or source).strip().casefold()
+        provider_instrument = str(analysis_instrument or instrument.provider_symbol or instrument.underlying_symbol)
+        metadata = {
+            "analysis_id": str(analysis_id or signal_id),
+            "signal_id": str(signal_id),
             "analysis_source": source,
+            "analysis_state": normalized_state,
+            "confirmation_status": "confirmed",
+            "analysis_provider": provider,
+            "analysis_instrument": provider_instrument,
+            "analysis_exchange": str(analysis_exchange or instrument.exchange),
+            "analysis_price": str(entry),
             "analysis_entry": str(entry),
             "analysis_stop": str(stop),
             "analysis_target": str(target),
+            "analysis_risk_fraction": str(risk_fraction),
+            "analysis_reward_fraction": str(reward_fraction),
+            "analysis_observed_at": _utc(analysis_observed_at or observed).isoformat(),
+            "strategy": strategy or "Monatise confirmed setup",
+            "timeframe": timeframe or "unknown",
+            "conviction": conviction,
+            "evidence_bundle": dict(evidence_bundle or {}),
+            "mapping": {
+                "canonical_instrument": instrument.underlying_symbol,
+                "analysis_provider": provider,
+                "analysis_instrument": provider_instrument,
+                "ftmo_registry_symbol": instrument.ftmo_symbol,
+                "ftmo_execution_symbol": execution_symbol,
+                "asset_class": instrument.asset_class.value,
+                "registry_version": instrument.registry_version,
+                "registry_verified_at": instrument.last_verified_at.isoformat(),
+                "execution_available": instrument.enabled,
+            },
+            "entry_zone_low": str(ftmo_zone_low) if ftmo_zone_low is not None else None,
+            "entry_zone_high": str(ftmo_zone_high) if ftmo_zone_high is not None else None,
             "level_conversion": "external_relative_structure_to_ftmo_bid_ask",
-        })
-        stored = await self.repository.proposal(proposal_id)
-        if stored is not None:
-            _, version = stored
-            await self.repository.update_proposal(proposal_id, proposal, version)
+            "approval_level_conversion": "analysis_relative_structure_to_current_ftmo_bid_ask",
+        }
+        proposal = await self.create_trade_proposal(
+            actor="monatise-scanner", symbol=execution_symbol, side=side, order_type=order_type,
+            entry=ftmo_entry if order_type != "market" else None,
+            stop_loss=ftmo_stop, take_profit=ftmo_target, now=observed, _proposal_id=proposal_id,
+            metadata=metadata,
+            expires_at=signal_expires_at,
+        )
         return proposal
 
     async def create_management_proposal(self, *, actor: str, operation: str, target_id: str, value: str | None = None) -> dict[str, Any]:
@@ -718,59 +1001,126 @@ class FTMOMasterControlService:
             ) if blocked]
             await self.repository.audit("approval_blocked", proposal_id, {"actor": actor, "blockers": blockers})
             raise FTMOMasterError("execution is blocked by: " + ", ".join(blockers))
-        # Revalidate the bridge and quote immediately before command creation.
+        # Approval authorizes a fresh attempt, never the stale preview price.
         bridge = await self._healthy_bridge(observed)
         if proposal["kind"] == "open_trade":
             quote = (bridge.get("quotes") or {}).get(proposal["symbol"])
             if not quote or (observed - datetime.fromisoformat(quote["timestamp"])).total_seconds() > self.configuration.quote_max_age_seconds:
                 raise FTMOMasterError("FTMO quote is stale at approval")
-            open_exposures = sum(
-                1 for item in (*tuple(bridge.get("positions") or ()), *tuple(bridge.get("orders") or ()))
-                if isinstance(item, Mapping)
-            )
-            if open_exposures >= self.configuration.maximum_open_exposures:
-                raise FTMOMasterError("maximum open position/pending-order exposure limit is reached at approval")
-            equity = Decimal(bridge["equity"])
-            loss_today = max(ZERO, Decimal(bridge["daily_start_equity"]) - equity)
-            daily_remaining = min(
-                Decimal(bridge["daily_loss_limit"]),
-                self.configuration.maximum_daily_loss_amount,
-            ) - loss_today
-            total_loss = max(ZERO, Decimal(bridge["initial_balance"]) - equity)
-            total_remaining = Decimal(bridge["total_loss_limit"]) - total_loss
-            if Decimal(proposal["risk_amount"]) > min(daily_remaining, total_remaining):
-                raise FTMOMasterError("configured daily/total loss capacity is insufficient at approval")
+            stop_loss, take_profit = proposal["stop_loss"], proposal["take_profit"]
+            if proposal.get("analysis_risk_fraction") and proposal.get("analysis_reward_fraction") and proposal.get("order_type") == "market":
+                live_entry = Decimal(str(quote["ask"] if proposal["side"] == "buy" else quote["bid"]))
+                risk_fraction = Decimal(str(proposal["analysis_risk_fraction"]))
+                reward_fraction = Decimal(str(proposal["analysis_reward_fraction"]))
+                if proposal["side"] == "buy":
+                    stop_loss = live_entry * (Decimal("1") - risk_fraction)
+                    take_profit = live_entry * (Decimal("1") + reward_fraction)
+                else:
+                    stop_loss = live_entry * (Decimal("1") + risk_fraction)
+                    take_profit = live_entry * (Decimal("1") - reward_fraction)
+                tick = Decimal(str(quote["tick_size"]))
+                stop_loss = (stop_loss / tick).to_integral_value(rounding=ROUND_FLOOR) * tick
+                take_profit = (take_profit / tick).to_integral_value(rounding=ROUND_FLOOR) * tick
+            await self.repository.audit("proposal_revalidating", proposal_id, {
+                "actor": actor, "ftmo_bid": str(quote["bid"]), "ftmo_ask": str(quote["ask"]),
+                "quote_timestamp": str(quote["timestamp"]),
+            })
+            try:
+                refreshed = await self._validated_open_fields(
+                    symbol=proposal["symbol"], side=proposal["side"], order_type=proposal["order_type"],
+                    stop_loss=stop_loss, take_profit=take_profit,
+                    entry=proposal.get("entry") if proposal["order_type"] != "market" else None,
+                    now=observed,
+                    reference_entry=proposal.get("entry") if proposal["order_type"] == "market" else None,
+                    entry_zone_low=proposal.get("entry_zone_low"), entry_zone_high=proposal.get("entry_zone_high"),
+                )
+            except FTMOMasterError as exc:
+                reason = str(exc)
+                if any(fragment in reason for fragment in ("price moved", "reward/risk", "levels require")):
+                    proposal.update({
+                        "status": ProposalStatus.INVALIDATED.value, "lifecycle_state": "INVALIDATED",
+                        "invalidated_at": observed.isoformat(), "invalidation_reason": reason,
+                    })
+                    await self.repository.update_proposal(proposal_id, proposal, version)
+                    await self.repository.audit("proposal_invalidated", proposal_id, {"actor": actor, "reason": reason})
+                if "exposure limit" in reason:
+                    raise FTMOMasterError(reason + " at approval") from exc
+                raise
+            proposal.update(refreshed)
+            proposal["approval_execution_snapshot"] = refreshed["execution_snapshot"]
+
+        approval_id = hashlib.sha256(f"approval:{proposal_id}:{actor}:{observed.isoformat()}".encode()).hexdigest()
         command_id = hashlib.sha256(f"{proposal_id}:{proposal['kind']}:{proposal.get('operation', 'open')}".encode()).hexdigest()
+        execution_id = hashlib.sha256(f"execution:{command_id}".encode()).hexdigest()
         command = {
             "command_id": command_id,
             "proposal_id": proposal_id,
+            "analysis_id": proposal.get("analysis_id"),
+            "signal_id": proposal.get("signal_id"),
+            "approval_id": approval_id,
+            "execution_id": execution_id,
             "operation": proposal.get("operation", "open"),
             "payload": {key: proposal.get(key) for key in (
-                "symbol", "side", "order_type", "entry", "stop_loss", "take_profit", "volume", "target_id", "value"
+                "symbol", "side", "order_type", "entry", "stop_loss", "take_profit", "volume", "target_id", "value",
+                "analysis_id", "signal_id",
             ) if proposal.get(key) is not None},
             "expected_account_id": self.configuration.account_id,
             "expected_server": self.configuration.server,
             "expected_currency": self.configuration.currency,
             "status": CommandStatus.READY.value,
+            "lifecycle_state": "EXECUTION_QUEUED",
             "created_at": observed.isoformat(),
             "expires_at": min(datetime.fromisoformat(proposal["expires_at"]), observed + timedelta(seconds=30)).isoformat(),
             "automatic_resend": "same_command_id_only",
+            "approval": {"approved_by": actor, "approved_at": observed.isoformat(), "approval_id": approval_id},
+            "analysis_provenance": {key: proposal.get(key) for key in (
+                "analysis_id", "signal_id", "analysis_source", "analysis_provider", "analysis_instrument",
+                "analysis_exchange", "analysis_price", "analysis_observed_at", "analysis_state",
+                "confirmation_status", "strategy", "timeframe",
+                "conviction", "evidence_bundle", "mapping",
+            ) if proposal.get(key) is not None},
+            "execution_snapshot": proposal.get("approval_execution_snapshot"),
+            "risk_policy": {
+                "maximum_risk_amount": str(self.configuration.maximum_risk_amount),
+                "risk_fraction": str(self.configuration.risk_fraction),
+                "maximum_daily_loss_amount": str(self.configuration.maximum_daily_loss_amount),
+                "maximum_open_exposures": self.configuration.maximum_open_exposures,
+                "actual_risk_amount": proposal.get("risk_amount"),
+                "actual_risk_fraction": proposal.get("risk_fraction"),
+            },
         }
+        command["payload"].update({
+            "approval_id": approval_id,
+            "execution_id": execution_id,
+            "expires_epoch": str(int(min(datetime.fromisoformat(proposal["expires_at"]), observed + timedelta(seconds=30)).timestamp())),
+        })
         if not await self.repository.save_command(command):
             raise FTMOMasterError("duplicate execution command")
-        proposal.update({"status": ProposalStatus.COMMAND_CREATED.value, "approved_by": actor, "approved_at": observed.isoformat(), "command_id": command_id})
+        proposal.update({
+            "status": ProposalStatus.COMMAND_CREATED.value, "lifecycle_state": "EXECUTION_QUEUED",
+            "approved_by": actor, "approved_at": observed.isoformat(), "approval_id": approval_id,
+            "command_id": command_id, "execution_id": execution_id,
+        })
         await self.repository.update_proposal(proposal_id, proposal, version)
-        await self.repository.audit("proposal_approved", proposal_id, {"actor": actor, "command_id": command_id})
+        await self.repository.audit("proposal_approved", proposal_id, {
+            "actor": actor, "approval_id": approval_id, "command_id": command_id,
+            "execution_id": execution_id, "risk_amount": proposal.get("risk_amount"),
+        })
         return command
 
     async def reject(self, proposal_id: str, actor: str) -> dict[str, Any]:
+        if actor not in self.configuration.authorized_user_ids:
+            raise FTMOMasterError("Telegram user is not authorized")
         stored = await self.repository.proposal(proposal_id)
         if stored is None:
             raise FTMOMasterError("unknown proposal")
         proposal, version = stored
         if proposal.get("status") != ProposalStatus.PENDING.value:
             raise FTMOMasterError(f"proposal is already {proposal.get('status')}")
-        proposal.update({"status": ProposalStatus.REJECTED.value, "rejected_by": actor, "rejected_at": _utc().isoformat()})
+        proposal.update({
+            "status": ProposalStatus.REJECTED.value, "lifecycle_state": "REJECTED",
+            "rejected_by": actor, "rejected_at": _utc().isoformat(),
+        })
         await self.repository.update_proposal(proposal_id, proposal, version)
         await self.repository.audit("proposal_rejected", proposal_id, {"actor": actor})
         return proposal
@@ -790,6 +1140,7 @@ class FTMOMasterControlService:
                 continue
             delivered = await self.repository.update_command(command["command_id"], {
                 "status": CommandStatus.DELIVERED.value,
+                "lifecycle_state": "EXECUTION_QUEUED",
                 "last_delivered_at": observed.isoformat(),
                 "delivery_count": int(command.get("delivery_count", 0)) + 1,
             })
@@ -807,11 +1158,56 @@ class FTMOMasterControlService:
             "broker_retcode": str(payload.get("broker_retcode") or "") or None,
             "message": str(payload.get("message") or "")[:500],
             "broker_observed_at": str(payload.get("broker_observed_at") or _utc().isoformat()),
+            "requested_price": str(payload.get("requested_price") or "") or None,
+            "fill_price": str(payload.get("fill_price") or "") or None,
+            "slippage": str(payload.get("slippage") or "") or None,
+            "executed_volume": str(payload.get("executed_volume") or "") or None,
+            "executed_stop_loss": str(payload.get("executed_stop_loss") or "") or None,
+            "executed_take_profit": str(payload.get("executed_take_profit") or "") or None,
         }
         if raw_status == CommandStatus.BROKER_UNCERTAIN.value:
             changes["automatic_resend"] = False
+        lifecycle = {
+            CommandStatus.ACCEPTED.value: "BROKER_ACCEPTED",
+            CommandStatus.RECONCILED.value: "BROKER_ACCEPTED",
+            CommandStatus.REJECTED.value: "EXECUTION_FAILED",
+            CommandStatus.BROKER_UNCERTAIN.value: "EXECUTION_FAILED",
+            CommandStatus.SUBMITTING.value: "MT5_RECEIVED",
+        }.get(raw_status, "MT5_RECEIVED")
+        changes["lifecycle_state"] = lifecycle
+        previous_record = await self.repository.command(command_id)
+        if previous_record is None:
+            raise FTMOMasterError("unknown bridge command")
+        previous = previous_record[0]
+        evidence_keys = (
+            "status", "lifecycle_state", "broker_ticket", "broker_retcode",
+            "requested_price", "fill_price", "slippage", "executed_volume",
+            "executed_stop_loss", "executed_take_profit",
+        )
+        notification_required = any(previous.get(key) != changes.get(key) for key in evidence_keys)
         command = await self.repository.update_command(command_id, changes)
-        await self.repository.audit("bridge_acknowledgement", command_id, {"status": raw_status, "broker_ticket": changes["broker_ticket"]})
+        stored_proposal = await self.repository.proposal(str(command.get("proposal_id") or ""))
+        if stored_proposal is not None:
+            proposal, version = stored_proposal
+            proposal_status = {
+                CommandStatus.REJECTED.value: ProposalStatus.EXECUTION_FAILED.value,
+                CommandStatus.BROKER_UNCERTAIN.value: ProposalStatus.RECONCILIATION_REQUIRED.value,
+                CommandStatus.RECONCILED.value: ProposalStatus.RECONCILED.value,
+            }.get(raw_status, proposal.get("status"))
+            proposal.update({
+                "status": proposal_status,
+                "lifecycle_state": lifecycle,
+                "broker_ticket": changes["broker_ticket"],
+                "broker_retcode": changes["broker_retcode"],
+                "broker_observed_at": changes["broker_observed_at"],
+                "execution_result": {key: value for key, value in changes.items() if value is not None},
+            })
+            await self.repository.update_proposal(proposal["proposal_id"], proposal, version)
+        await self.repository.audit("bridge_acknowledgement", command_id, {
+            "status": raw_status, "lifecycle_state": lifecycle, "broker_ticket": changes["broker_ticket"],
+            "broker_retcode": changes["broker_retcode"], "fill_price": changes["fill_price"],
+        })
+        command["notification_required"] = notification_required
         return command
 
     async def _healthy_bridge(self, now: datetime) -> dict[str, Any]:
@@ -830,14 +1226,20 @@ class FTMOMasterControlService:
 def format_proposal(proposal: Mapping[str, Any]) -> str:
     if proposal.get("kind") == "open_trade":
         return "\n".join((
-            "MONATISE FTMO TRADE PREVIEW",
+            "MONATISE TRADE PROPOSAL",
             f"ID: {proposal['proposal_id']}",
-            f"{str(proposal['side']).upper()} {proposal['symbol']} · {str(proposal['order_type']).upper()}",
-            f"Entry: {proposal['entry']} | SL: {proposal['stop_loss']} | TP: {proposal['take_profit']}",
-            f"Volume: {proposal['volume']} | Risk: ${proposal['risk_amount']} ({Decimal(str(proposal['risk_fraction'])) * 100:.2f}%)",
-            f"FTMO Bid/Ask: {proposal['quote_bid']} / {proposal['quote_ask']}",
-            f"Expires: {proposal['expires_at']}",
+            f"Instrument: {proposal['symbol']}",
+            f"Direction: {str(proposal['side']).upper()} | Type: {str(proposal['order_type']).upper()}",
+            f"Strategy: {proposal.get('strategy') or 'Operator preview'}",
+            f"Analysis reference price: {proposal.get('analysis_price') or proposal['entry']}",
+            f"Proposed SL: {proposal['stop_loss']} | Proposed TP: {proposal['take_profit']}",
+            f"Maximum risk: ${proposal['risk_amount']} | Risk limit: {Decimal(str(proposal['risk_fraction'])) * 100:.2f}%",
+            f"FTMO preview Bid/Ask: {proposal['quote_bid']} / {proposal['quote_ask']}",
+            f"Signal expires: {proposal['expires_at']}",
+            *((f"Conviction: {proposal['conviction']}",) if proposal.get("conviction") is not None else ()),
+            "Status: AWAITING APPROVAL",
             f"Approve: /approve {proposal['proposal_id']} | Reject: /reject {proposal['proposal_id']}",
+            "Approval authorizes revalidation at the current FTMO Bid/Ask; it does not authorize this preview price.",
             "No order has been sent.",
         ))
     return "\n".join((

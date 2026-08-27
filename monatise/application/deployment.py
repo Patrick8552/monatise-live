@@ -284,10 +284,24 @@ class TelegramNotificationTransport:
     async def send_message(self, chat_id: str, text: str) -> int:
         return await asyncio.to_thread(self._send, chat_id, text)
 
+    async def send_trade_proposal(self, chat_id: str, text: str, proposal_id: str) -> int:
+        if not re.fullmatch(r"[a-f0-9]{12}", proposal_id):
+            raise ValueError("invalid FTMO proposal identity")
+        reply_markup = {
+            "inline_keyboard": [[
+                {"text": "APPROVE TRADE", "callback_data": f"ftmo:approve:{proposal_id}"},
+                {"text": "REJECT TRADE", "callback_data": f"ftmo:reject:{proposal_id}"},
+            ]]
+        }
+        return await asyncio.to_thread(self._send, chat_id, text, reply_markup)
+
+    async def answer_callback_query(self, callback_query_id: str, text: str) -> bool:
+        return await asyncio.to_thread(self._answer_callback_query, callback_query_id, text)
+
     async def set_webhook(self, url: str, secret_token: str) -> bool:
         return await asyncio.to_thread(self._set_webhook, url, secret_token)
 
-    def _send(self, chat_id: str, text: str) -> int:
+    def _send(self, chat_id: str, text: str, reply_markup: Mapping[str, Any] | None = None) -> int:
         token = self._token_provider()
         if not token:
             raise RuntimeError("Telegram credential is unavailable")
@@ -296,11 +310,14 @@ class TelegramNotificationTransport:
         # is represented by a surrogate pair.
         if len(text) > 1800:
             text = text[:1797].rstrip() + "..."
-        body = json.dumps({
+        payload = {
             "chat_id": chat_id,
             "text": _bold_telegram_labels(text),
             "parse_mode": "HTML",
-        }, separators=(",", ":")).encode()
+        }
+        if reply_markup is not None:
+            payload["reply_markup"] = dict(reply_markup)
+        body = json.dumps(payload, separators=(",", ":")).encode()
         request = Request(f"https://api.telegram.org/bot{token}/sendMessage", data=body, headers={"content-type": "application/json"}, method="POST")
         try:
             with urlopen(request, timeout=15) as response:  # noqa: S310
@@ -314,6 +331,23 @@ class TelegramNotificationTransport:
         except Exception as exc:
             raise RuntimeError("Telegram notification delivery failed") from exc
 
+    def _answer_callback_query(self, callback_query_id: str, text: str) -> bool:
+        token = self._token_provider()
+        if not token or not callback_query_id:
+            raise RuntimeError("Telegram callback acknowledgement is unavailable")
+        body = json.dumps({
+            "callback_query_id": callback_query_id,
+            "text": str(text)[:160],
+            "show_alert": False,
+        }, separators=(",", ":")).encode()
+        request = Request(f"https://api.telegram.org/bot{token}/answerCallbackQuery", data=body, headers={"content-type": "application/json"}, method="POST")
+        try:
+            with urlopen(request, timeout=15) as response:  # noqa: S310
+                payload = json.loads(response.read().decode())
+                return bool(response.status < 300 and payload.get("ok") is True)
+        except Exception as exc:
+            raise RuntimeError("Telegram callback acknowledgement failed") from exc
+
     def _set_webhook(self, url: str, secret_token: str) -> bool:
         token = self._token_provider()
         if not token:
@@ -321,7 +355,7 @@ class TelegramNotificationTransport:
         body = json.dumps({
             "url": url,
             "secret_token": secret_token,
-            "allowed_updates": ["message"],
+            "allowed_updates": ["message", "callback_query"],
             "drop_pending_updates": False,
         }, separators=(",", ":")).encode()
         request = Request(f"https://api.telegram.org/bot{token}/setWebhook", data=body, headers={"content-type": "application/json"}, method="POST")
@@ -1668,12 +1702,54 @@ class OrchestrationRuntime:
                 "symbol": symbol, "direction": direction, "entry": entry, "stop": stop, "target": target, "source": source,
             }, sort_keys=True, default=str).encode()).hexdigest()
         )
+        asset_class = str(analysis.get("asset_class") or "").casefold()
+        provider = "coinglass" if asset_class == FTMOAssetClass.CRYPTO.value or "crypto" in source.casefold() else str(analysis.get("analysis_provider") or source)
+        provider_instrument = str(
+            analysis.get("analysis_instrument") or analysis.get("coinglass_instrument")
+            or (f"{analysis.get('asset')}USDT" if provider == "coinglass" and analysis.get("asset") else symbol)
+        )
+        analysis_state = str(analysis.get("analysis_state") or ("LONG" if direction.casefold() in {"long", "buy"} else "SHORT"))
+        confirmation_status = str(analysis.get("setup_status") or analysis.get("entry_confirmation_status") or analysis.get("confirmation_status") or "")
+
+        def timestamp(value: Any) -> datetime | None:
+            if isinstance(value, datetime):
+                return value
+            if isinstance(value, str) and value.strip():
+                try:
+                    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+                except ValueError:
+                    return None
+            return None
+
+        evidence = {key: analysis.get(key) for key in (
+            "market_regime", "liquidity", "liquidity_sweep", "market_structure", "supply_demand",
+            "fibonacci", "order_flow", "trigger", "open_interest", "funding_rate", "liquidations",
+            "cvd", "long_short_ratio", "provider_observed_at",
+        ) if analysis.get(key) is not None}
         try:
             proposal = await self.ftmo_master.create_signal_proposal(
                 signal_id=signal_id, symbol=symbol, direction=direction,
                 analysis_entry=entry, analysis_stop=stop, analysis_target=target, source=source,
+                analysis_state=analysis_state, confirmation_status=confirmation_status,
+                analysis_id=str(analysis.get("analysis_id") or analysis.get("run_id") or signal_id),
+                analysis_provider=provider,
+                analysis_instrument=provider_instrument,
+                analysis_exchange=str(analysis.get("analysis_exchange") or analysis.get("exchange") or ""),
+                analysis_observed_at=timestamp(analysis.get("analysis_observed_at") or analysis.get("observed_at")),
+                signal_expires_at=timestamp(analysis.get("valid_until") or analysis.get("expires_at")),
+                entry_zone_low=analysis.get("entry_zone_low"), entry_zone_high=analysis.get("entry_zone_high"),
+                order_type=str(analysis.get("order_type") or "market"),
+                strategy=str(analysis.get("strategy") or analysis.get("setup_type") or "Monatise confirmed setup"),
+                timeframe=str(analysis.get("timeframe") or analysis.get("interval") or "unknown"),
+                conviction=analysis.get("conviction") or analysis.get("score"),
+                evidence_bundle=evidence,
+                supersedes_signal_id=str(analysis.get("supersedes_signal_id") or "") or None,
             )
-            await self.telegram.command_response(format_proposal(proposal))
+            publish = getattr(self.telegram, "trade_proposal", None)
+            if publish is None:
+                await self.telegram.command_response(format_proposal(proposal))
+            else:
+                await publish(format_proposal(proposal), proposal["proposal_id"])
             return True
         except FTMOMasterError as exc:
             LOGGER.info("FTMO-native scanner proposal withheld", extra={"symbol": symbol, "reason": str(exc)})
@@ -1693,6 +1769,8 @@ class OrchestrationRuntime:
             "publication_id": publication.group(1) if publication else None,
             "ftmo_symbol": fields["FTMO Symbol"],
             "direction": fields["Direction"].split()[0],
+            "analysis_state": fields["Direction"].split()[0].upper(),
+            "confirmation_status": "confirmed",
             "entry": levels.group(1), "stop_loss": levels.group(2), "target": levels.group(3),
         }, source=source)
 

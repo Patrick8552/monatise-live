@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import secrets
 from time import monotonic, time
-from typing import Any
+from typing import Any, Mapping
 from urllib.parse import parse_qs
 
 from dataclasses import asdict
@@ -353,7 +353,22 @@ class ProductionASGI(OrchestrationASGI):
             return 400, {"status": "invalid_update"}
         if not isinstance(update, dict):
             return 400, {"status": "invalid_update"}
-        message = update.get("message")
+        callback = update.get("callback_query") if isinstance(update.get("callback_query"), dict) else None
+        message = update.get("message") if isinstance(update.get("message"), dict) else None
+        if callback is not None:
+            callback_message = callback.get("message") if isinstance(callback.get("message"), dict) else None
+            callback_data = str(callback.get("data") or "")
+            callback_match = re.fullmatch(r"ftmo:(approve|reject):([a-f0-9]{12})", callback_data)
+            if callback_message is None or callback_match is None:
+                return 200, {"status": "ignored"}
+            message = callback_message
+            text = f"/{callback_match.group(1)} {callback_match.group(2)}"
+            sender = callback.get("from") if isinstance(callback.get("from"), dict) else {}
+            callback_query_id = str(callback.get("id") or "")
+        else:
+            text = str((message or {}).get("text") or "").strip()
+            sender = message.get("from") if isinstance(message, dict) and isinstance(message.get("from"), dict) else {}
+            callback_query_id = ""
         if not isinstance(message, dict) or str((message.get("chat") or {}).get("id", "")) != chat_id:
             return 200, {"status": "ignored"}
         update_id = update.get("update_id")
@@ -361,14 +376,13 @@ class ProductionASGI(OrchestrationASGI):
             return 400, {"status": "invalid_update"}
         if self.runtime.redis_coordination is None:
             return 503, {"status": "unavailable"}
-        text = str(message.get("text") or "").strip()
-        sender = message.get("from") if isinstance(message.get("from"), dict) else {}
         chat = message.get("chat") if isinstance(message.get("chat"), dict) else {}
         queued = await self.runtime.redis_coordination.enqueue_telegram_command(update_id, {
             "update_id": update_id,
             "text": text,
             "user_id": str(sender.get("id", "")),
             "chat_type": str(chat.get("type", "")),
+            "callback_query_id": callback_query_id,
         }, ttl_seconds=86_400)
         if not queued:
             return 200, {"status": "duplicate"}
@@ -434,6 +448,7 @@ class ProductionASGI(OrchestrationASGI):
         self._telegram_command_context = {
             "user_id": str(payload.get("user_id") or ""),
             "chat_type": str(payload.get("chat_type") or ""),
+            "callback_query_id": str(payload.get("callback_query_id") or ""),
         }
         try:
             await self._handle_telegram_command(
@@ -463,6 +478,12 @@ class ProductionASGI(OrchestrationASGI):
         else:
             if not await coordination.finish_telegram_command(payload):
                 LOGGER.warning("Telegram command completion rejected after lease loss", extra={"update_id": payload.get("update_id")})
+            callback_query_id = str(payload.get("callback_query_id") or "")
+            if callback_query_id and self.runtime.telegram is not None:
+                try:
+                    await self.runtime.telegram.answer_callback_query(callback_query_id)
+                except Exception as exc:
+                    LOGGER.warning("Telegram callback acknowledgement failed", extra={"error_type": type(exc).__name__})
         finally:
             self._telegram_command_context = previous_context
             heartbeat.cancel()
@@ -636,7 +657,10 @@ class ProductionASGI(OrchestrationASGI):
             if not isinstance(parsed, dict):
                 raise FTMOMasterError("bridge request must contain a JSON object")
             if path == "/api/ftmo/bridge/heartbeat" and method == "POST":
-                return 200, await service.accept_bridge_heartbeat(parsed)
+                result = await service.accept_bridge_heartbeat(parsed)
+                for event in result.get("lifecycle_events") or ():
+                    await self._notify_ftmo_lifecycle(event)
+                return 200, result
             if path == "/api/ftmo/bridge/commands" and method == "GET":
                 commands = await service.commands_for_bridge(limit=5)
                 signed = []
@@ -650,6 +674,8 @@ class ProductionASGI(OrchestrationASGI):
             match = re.fullmatch(r"/api/ftmo/bridge/commands/([a-f0-9]{64})/ack", path)
             if match and method == "POST":
                 result = await service.acknowledge(match.group(1), parsed)
+                if result.get("notification_required", True):
+                    await self._notify_ftmo_command_result(result)
                 return 200, {"status": "accepted", "command_status": result["status"]}
             return 404, {"status": "not_found"}
         except FTMOMasterError as exc:
@@ -657,6 +683,45 @@ class ProductionASGI(OrchestrationASGI):
             return 401, {"status": "rejected", "reason": str(exc)}
         except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
             return 400, {"status": "invalid_request", "reason": str(exc)}
+
+    async def _send_ftmo_notification(self, lines: list[str]) -> None:
+        notifier = getattr(self.runtime, "telegram", None)
+        if notifier is None:
+            return
+        try:
+            await notifier.command_response("\n".join(lines))
+        except Exception as exc:
+            # Broker acknowledgement must never be retried merely because a
+            # secondary notification transport is unavailable.
+            LOGGER.warning("FTMO Telegram lifecycle notification failed", extra={"error_type": type(exc).__name__})
+
+    async def _notify_ftmo_command_result(self, command: Mapping[str, Any]) -> None:
+        status = str(command.get("lifecycle_state") or command.get("status") or "MT5_RECEIVED").upper()
+        payload = command.get("payload") if isinstance(command.get("payload"), Mapping) else {}
+        provenance = command.get("analysis_provenance") if isinstance(command.get("analysis_provenance"), Mapping) else {}
+        title = "FTMO EXECUTION FAILED" if status in {"EXECUTION_FAILED", "REJECTED", "BROKER_UNCERTAIN"} else "FTMO EXECUTION CONFIRMATION"
+        lines = [
+            title,
+            f"Instrument: {payload.get('symbol') or 'unknown'} | Direction: {str(payload.get('side') or 'unknown').upper()}",
+            f"Status: {status}",
+            f"Requested: {command.get('requested_price') or payload.get('entry') or 'unknown'} | Fill: {command.get('fill_price') or 'pending'}",
+            f"Volume: {command.get('executed_volume') or payload.get('volume') or 'unknown'} | SL: {command.get('executed_stop_loss') or payload.get('stop_loss') or 'unknown'} | TP: {command.get('executed_take_profit') or payload.get('take_profit') or 'unknown'}",
+            f"Ticket: {command.get('broker_ticket') or 'pending'} | Retcode: {command.get('broker_retcode') or 'pending'}",
+            f"Execution source: FTMO MT5 | Analysis source: {provenance.get('analysis_provider') or 'Monatise'} + Monatise",
+        ]
+        await self._send_ftmo_notification(lines)
+
+    async def _notify_ftmo_lifecycle(self, event: Mapping[str, Any]) -> None:
+        state = str(event.get("lifecycle_state") or "UNKNOWN").upper()
+        lines = [
+            f"FTMO {state.replace('_', ' ')}",
+            f"Instrument: {event.get('symbol') or 'unknown'} | Direction: {str(event.get('side') or 'unknown').upper()}",
+            f"Entry: {event.get('entry') or 'unknown'} | Volume: {event.get('volume') or 'unknown'}",
+            f"SL: {event.get('stop_loss') or 'unknown'} | TP: {event.get('take_profit') or 'unknown'}",
+            f"Ticket: {event.get('broker_ticket') or 'unknown'} | Unrealized P/L: {event.get('unrealized_profit') if event.get('unrealized_profit') is not None else 'n/a'}",
+            f"Analysis source: {event.get('analysis_provider') or 'Monatise'} + Monatise | Status: {state}",
+        ]
+        await self._send_ftmo_notification(lines)
 
     async def _telegram_asset_classification(self, symbol: str, requested_class: str | None) -> tuple[str, str]:
         stock = next((item for item in FTMO_REGISTRY.for_asset_class(FTMOAssetClass.STOCK)

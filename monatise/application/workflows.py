@@ -119,6 +119,20 @@ class TelegramNotifier:
             raise ValueError("command response is required")
         return await self._transport.send_message(self._chat_id, message)
 
+    async def trade_proposal(self, message: str, proposal_id: str) -> Any:
+        if not message.strip() or not proposal_id.strip():
+            raise ValueError("trade proposal and identity are required")
+        send = getattr(self._transport, "send_trade_proposal", None)
+        if send is None:
+            return await self._transport.send_message(self._chat_id, message)
+        return await send(self._chat_id, message, proposal_id)
+
+    async def answer_callback_query(self, callback_query_id: str, message: str = "Processed securely") -> Any:
+        answer = getattr(self._transport, "answer_callback_query", None)
+        if answer is None:
+            return None
+        return await answer(callback_query_id, message)
+
     async def register_webhook(self, url: str, secret_token: str) -> bool:
         register = getattr(self._transport, "set_webhook", None)
         if register is None:
