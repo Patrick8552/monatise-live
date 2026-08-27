@@ -346,6 +346,38 @@ def sanitized_result(result: Any) -> dict[str, Any]:
     confirmation_age = int(getattr(confirmation_signal, "age_candles", 0) or 0)
     run = getattr(getattr(result, "context", None), "run", None)
     generated_at = getattr(result, "finished_at", None) or getattr(run, "requested_at", None) or datetime.now(timezone.utc)
+    outputs = result.context.outputs
+    regime = outputs.get("regime")
+    liquidity = outputs.get("liquidity")
+    sweep = outputs.get("liquidity_sweep")
+    structure = outputs.get("market_structure")
+    zones = outputs.get("supply_demand")
+    fibonacci = outputs.get("fibonacci_liquidity")
+    order_flow = outputs.get("order_flow")
+
+    def enum_value(value: Any) -> Any:
+        return getattr(value, "value", value)
+
+    def level(value: Any) -> dict[str, Any] | None:
+        if value is None:
+            return None
+        return {
+            "price": getattr(value, "price", None),
+            "side": enum_value(getattr(value, "side", None)),
+            "type": enum_value(getattr(value, "level_type", None)),
+            "strength": enum_value(getattr(value, "strength", None)),
+        }
+
+    def zone(value: Any) -> dict[str, Any] | None:
+        if value is None:
+            return None
+        return {
+            "type": enum_value(getattr(value, "zone_type", None)),
+            "low": getattr(value, "lower_bound", None),
+            "high": getattr(value, "upper_bound", None),
+            "strength": enum_value(getattr(value, "strength", None)),
+            "freshness": enum_value(getattr(value, "freshness", None)),
+        }
     validity = build_setup_validity(
         getattr(market, "interval", None),
         generated_at, age_candles=confirmation_age,
@@ -398,6 +430,42 @@ def sanitized_result(result: Any) -> dict[str, Any]:
         "remaining_validity_candles": validity["remaining_candles"] if validity else None,
         "validity_seconds": validity["validity_seconds"] if validity else None,
         "data_source": getattr(getattr(market, "quality", None), "source", None),
+        "current_reference_price": price,
+        "market_observed_at": (
+            getattr(getattr(market, "quality", None), "latest_candle_at", None).isoformat()
+            if getattr(getattr(market, "quality", None), "latest_candle_at", None) else None
+        ),
+        "derivatives": dict(getattr(market, "derivatives", {}) or {}),
+        "market_state": enum_value(getattr(regime, "state", None)),
+        "liquidity": {
+            "nearest_buy_side": level(getattr(liquidity, "nearest_buy_side", None)),
+            "nearest_sell_side": level(getattr(liquidity, "nearest_sell_side", None)),
+            "sweep": enum_value(getattr(getattr(sweep, "strongest_event", None), "status", None)),
+            "reasons": list(getattr(liquidity, "reasons", ()) or ())[:3],
+        },
+        "market_structure": {
+            "bias": enum_value(getattr(structure, "bias", None)),
+            "state": enum_value(getattr(structure, "state", None)),
+            "latest_break": enum_value(getattr(getattr(structure, "latest_event", None), "break_type", None)),
+            "confidence": getattr(structure, "confidence", None),
+        },
+        "supply_demand": {
+            "nearest_demand": zone(getattr(zones, "nearest_demand", None)),
+            "nearest_supply": zone(getattr(zones, "nearest_supply", None)),
+        },
+        "fibonacci": {
+            "direction": enum_value(getattr(fibonacci, "direction", None)),
+            "nearest_retracement": getattr(getattr(fibonacci, "nearest_retracement", None), "price", None),
+            "nearest_extension": getattr(getattr(fibonacci, "nearest_extension", None), "price", None),
+            "active_zone": enum_value(getattr(getattr(fibonacci, "active_zone", None), "zone_type", None)),
+        },
+        "order_flow": {
+            "bias": enum_value(getattr(order_flow, "bias", None)),
+            "participation": enum_value(getattr(order_flow, "participation", None)),
+            "health": enum_value(getattr(order_flow, "health", None)),
+            "confidence": enum_value(getattr(order_flow, "confidence", None)),
+            "inputs": dict(getattr(order_flow, "normalized_inputs", {}) or {}),
+        },
         "reasons": list(getattr(decision, "reasons", ()) or ()),
         "blockers": list(getattr(decision, "blockers", ()) or ()),
         "blocked_by": result.blocked_by,

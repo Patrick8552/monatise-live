@@ -19,6 +19,7 @@ from typing import Any, Mapping
 from urllib.parse import parse_qs
 
 from dataclasses import asdict
+from decimal import Decimal
 
 from monatise.adapters.quiver import QuiverAdapter, normalize_quiver_symbol
 from monatise.analysis.context import context_assets, grid_instruction, indicator_snapshot
@@ -36,6 +37,16 @@ from monatise.application.ftmo_master import (
     format_status as format_ftmo_master_status,
 )
 from monatise.application.stock_analysis import refresh_setup_validity
+from monatise.application.market_session import classify_market_session
+from monatise.application.telegram_analysis import (
+    TelegramAnalysisError,
+    format_analysis,
+    normalize_analysis,
+    request_identity,
+    resolve_telegram_instrument,
+    signal_identity,
+    symbol_key,
+)
 from monatise.engines.market_data import MarketDataEngine, MarketDataRequest
 from monatise.core.models import Candle
 
@@ -124,7 +135,8 @@ class ProductionASGI(OrchestrationASGI):
         "12h": 86_400, "1d": 172_800, "1w": 1_209_600,
     }
     STOCK_SYMBOL_PATTERN = re.compile(r"^[A-Z][A-Z0-9._-]{0,11}$", re.IGNORECASE)
-    TELEGRAM_COMMAND_PATTERN = re.compile(r"^/(?:analyse|analyze)(?:@[A-Za-z0-9_]+)?(?:\s+(.+))?$", re.IGNORECASE)
+    TELEGRAM_COMMAND_PATTERN = re.compile(r"^/(?:analyse|analyze|analysis)(?:@[A-Za-z0-9_]+)?(?:\s+(.+))?$", re.IGNORECASE)
+    TELEGRAM_ALIAS_PATTERN = re.compile(r"^/(gold|btc|eth)(?:@[A-Za-z0-9_]+)?$", re.IGNORECASE)
 
     def __init__(self, runtime: OrchestrationRuntime | None = None, static_dir: Path | None = None) -> None:
         super().__init__(runtime or ProductionRuntime())
@@ -446,6 +458,7 @@ class ProductionASGI(OrchestrationASGI):
         heartbeat = asyncio.create_task(self._telegram_lease_heartbeat(coordination, payload), name="telegram-lease-heartbeat")
         previous_context = getattr(self, "_telegram_command_context", None)
         self._telegram_command_context = {
+            "update_id": payload.get("update_id"),
             "user_id": str(payload.get("user_id") or ""),
             "chat_type": str(payload.get("chat_type") or ""),
             "callback_query_id": str(payload.get("callback_query_id") or ""),
@@ -508,13 +521,20 @@ class ProductionASGI(OrchestrationASGI):
             raise TelegramLeaseLost("Telegram command lease is no longer owned")
         await notifier.command_response(response)
 
+    @staticmethod
+    async def _send_owned_trade_proposal(notifier: Any, response: str, proposal_id: str, ownership_check: Any | None) -> None:
+        if ownership_check is not None and not await ownership_check():
+            raise TelegramLeaseLost("Telegram command lease is no longer owned")
+        await notifier.trade_proposal(response, proposal_id)
+
     async def _handle_telegram_command(self, text: str, *, ownership_check: Any | None = None) -> None:
         notifier = self.runtime.telegram
         if notifier is None:
             return
         help_text = (
             "Monatise commands\n"
-            "Analysis: /analyze BTC or /analyze NVDA\n"
+            "Fresh analysis: /analyze XAUUSD | BTC | ETH | US100.cash | AAPL\n"
+            "Aliases: /gold /btc /eth /analysis XAUUSD\n"
             "FTMO: /status /bridge /account /positions /orders\n"
             "Trade preview: /trade XAUUSD buy market sl=LEVEL tp=LEVEL\n"
             "Control: /approve ID /reject ID /arm [seconds] /disarm /kill\n"
@@ -524,33 +544,239 @@ class ProductionASGI(OrchestrationASGI):
             await self._send_owned_telegram_response(notifier, help_text, ownership_check)
             return
         if re.match(r"^/(?:status|bridge|account|positions|orders|trade|close|cancel|sl|tp|breakeven|approve|reject|arm|disarm|kill)(?:@|\s|$)", text, re.IGNORECASE):
+            if re.match(r"^/approve(?:@|\s|$)", text, re.IGNORECASE):
+                service = getattr(self.runtime, "ftmo_master", None)
+                context = getattr(self, "_telegram_command_context", None) or {}
+                if service is not None and hasattr(service, "repository") and service.authorized(str(context.get("user_id") or ""), str(context.get("chat_type") or "")):
+                    await self._send_owned_telegram_response(
+                        notifier,
+                        "APPROVAL RECEIVED\nChecking current FTMO market, identity, session, risk, and execution gates...",
+                        ownership_check,
+                    )
             response = await self._handle_ftmo_telegram_command(text)
             await self._send_owned_telegram_response(notifier, response, ownership_check)
             return
         match = self.TELEGRAM_COMMAND_PATTERN.fullmatch(text)
-        raw_asset = (match.group(1) if match else "") or ""
+        alias = self.TELEGRAM_ALIAS_PATTERN.fullmatch(text)
+        raw_asset = ((match.group(1) if match else None) or (alias.group(1) if alias else None) or "")
         parts = raw_asset.strip().upper().split()
         symbol = parts[0].lstrip("$") if parts else ""
-        asset_class = parts[1].casefold() if len(parts) == 2 else None
-        if not match or not self.STOCK_SYMBOL_PATTERN.fullmatch(symbol) or len(parts) > 2 or asset_class not in {None, "crypto", "stock"}:
+        requested_class = parts[1].casefold() if len(parts) == 2 else None
+        if not (match or alias) or not self.STOCK_SYMBOL_PATTERN.fullmatch(symbol) or len(parts) > 2 or requested_class not in {None, "crypto", "stock"}:
             await self._send_owned_telegram_response(notifier, help_text, ownership_check)
             return
-        try:
-            resolved_class, resolved_symbol = await self._telegram_asset_classification(symbol, asset_class)
+        await self._handle_telegram_analysis_request(symbol, requested_class=requested_class, ownership_check=ownership_check)
+
+    async def _handle_telegram_analysis_request(self, requested_symbol: str, *, requested_class: str | None = None, ownership_check: Any | None = None) -> None:
+        notifier = self.runtime.telegram
+        service = getattr(self.runtime, "ftmo_master", None)
+        context = getattr(self, "_telegram_command_context", None) or {}
+        user_id = str(context.get("user_id") or "")
+        chat_type = str(context.get("chat_type") or "")
+        if notifier is None:
+            return
+        # Lightweight runtimes used by read-only integrations predate the FTMO
+        # control plane. Keep their analysis-only behavior; production always
+        # constructs the durable FTMO service before Telegram starts.
+        if service is None:
+            resolved_class, resolved_symbol = await self._telegram_asset_classification(requested_symbol, requested_class)
             if resolved_class == "crypto":
-                analysis = await asyncio.wait_for(
-                    self.runtime.analyse(resolved_symbol, interval="15m", source="monatise.telegram.command", notify=False), timeout=90
+                raw = await asyncio.wait_for(
+                    self.runtime.analyse(resolved_symbol, interval="15m", source="monatise.telegram.command", notify=False), timeout=90,
                 )
-                response = self._format_telegram_crypto_analysis(analysis)
+                response = self._format_telegram_crypto_analysis(raw)
             elif resolved_class == "stock":
-                analysis = await asyncio.wait_for(self.runtime.analyse_stock(resolved_symbol), timeout=90)
-                response = self._format_telegram_stock_analysis(analysis)
+                response = self._format_telegram_stock_analysis(await asyncio.wait_for(self.runtime.analyse_stock(resolved_symbol), timeout=90))
             else:
-                response = f"Monatise NO TRADE: {symbol}\nReason: asset class is ambiguous; use /analyze {symbol} crypto or /analyze {symbol} stock.\nExecution: disabled"
+                response = f"Monatise NO TRADE: {requested_symbol}\nReason: asset class is ambiguous or unsupported.\nExecution: disabled"
+            await self._send_owned_telegram_response(notifier, response, ownership_check)
+            return
+        if service is not None and not service.authorized(user_id, chat_type):
+            LOGGER.warning("Rejected unauthorized Telegram analysis request", extra={"chat_type": chat_type})
+            await self._send_owned_telegram_response(
+                notifier, "ANALYSIS NOT STARTED\nReason: Telegram user is not authorized.", ownership_check,
+            )
+            return
+
+        update_id = context.get("update_id")
+        chat_id = self.runtime.environment.get("MONATISE_TELEGRAM_CHAT_ID", "")
+        request_id, analysis_id = request_identity(chat_id, update_id)
+        repository = getattr(service, "repository", None)
+        requested_at = datetime.now(timezone.utc)
+        request_record = {
+            "request_id": request_id,
+            "analysis_id": analysis_id,
+            "telegram_user": user_id,
+            "requested_instrument": requested_symbol,
+            "requested_at": requested_at.isoformat(),
+            "status": "processing",
+            "autonomous_execution": False,
+        }
+        if repository is not None and hasattr(repository, "claim_telegram_analysis_request"):
+            claimed = await repository.claim_telegram_analysis_request(request_record)
+            if not claimed:
+                previous = await repository.telegram_analysis_request(request_id)
+                cached = previous[0] if previous else {}
+                if cached.get("status") == "completed":
+                    if cached.get("analysis_message"):
+                        await self._send_owned_telegram_response(notifier, cached["analysis_message"], ownership_check)
+                    if cached.get("proposal_message") and cached.get("proposal_id"):
+                        await self._send_owned_trade_proposal(notifier, cached["proposal_message"], cached["proposal_id"], ownership_check)
+                    return
+                persisted = await repository.telegram_analysis(analysis_id) if hasattr(repository, "telegram_analysis") else None
+                if persisted is not None:
+                    analysis_message = format_analysis(persisted)
+                    matching = next((item for item in await repository.proposals() if item.get("analysis_id") == analysis_id), None)
+                    proposal_message = format_proposal(matching) if matching is not None else None
+                    await repository.finish_telegram_analysis_request(request_id, {
+                        "status": "completed", "analysis_message": analysis_message,
+                        "proposal_id": matching.get("proposal_id") if matching else None,
+                        "signal_id": matching.get("signal_id") if matching else None,
+                        "proposal_message": proposal_message,
+                    })
+                    await self._send_owned_telegram_response(notifier, analysis_message, ownership_check)
+                    if matching is not None:
+                        await self._send_owned_trade_proposal(notifier, proposal_message, matching["proposal_id"], ownership_check)
+                    return
+                interrupted = (
+                    f"ANALYSIS FAILED\nRequest: {request_id}\n"
+                    "Reason: The previous attempt was interrupted before a durable analysis completed.\n"
+                    "Run a fresh analysis request. No trade proposal was created."
+                )
+                await repository.finish_telegram_analysis_request(request_id, {
+                    "status": "completed", "analysis_message": interrupted, "error_type": "InterruptedAnalysis",
+                })
+                await self._send_owned_telegram_response(notifier, interrupted, ownership_check)
+                return
+
+        try:
+            resolved = resolve_telegram_instrument(requested_symbol, getattr(self.runtime, "ftmo_registry", FTMO_REGISTRY))
+            if requested_class == "crypto" and resolved.asset_class is not FTMOAssetClass.CRYPTO:
+                raise TelegramAnalysisError("Instrument mapping could not be verified for crypto.")
+            if requested_class == "stock" and resolved.asset_class is not FTMOAssetClass.STOCK:
+                raise TelegramAnalysisError("Instrument mapping could not be verified for stocks.")
+        except (TelegramAnalysisError, KeyError, ValueError) as exc:
+            response = f"ANALYSIS NOT STARTED\nInstrument: {requested_symbol}\nReason: {exc}"
+            if repository is not None and hasattr(repository, "finish_telegram_analysis_request"):
+                await repository.finish_telegram_analysis_request(request_id, {"status": "completed", "analysis_message": response})
+            await self._send_owned_telegram_response(notifier, response, ownership_check)
+            return
+
+        await self._send_owned_telegram_response(
+            notifier,
+            f"Running fresh Monatise analysis for {resolved.canonical}...\nRequest: {request_id}",
+            ownership_check,
+        )
+        analysis_started_at = datetime.now(timezone.utc)
+        try:
+            trade_mode = None
+            if repository is not None:
+                bridge = await repository.bridge()
+                for bridge_symbol, quote in ((bridge or {}).get("quotes") or {}).items():
+                    if symbol_key(bridge_symbol) == symbol_key(resolved.execution_registry_symbol):
+                        trade_mode = (quote or {}).get("trade_mode")
+                        break
+            session = classify_market_session(
+                analysis_started_at, instrument=resolved.instrument, trade_mode=trade_mode,
+            ).to_dict()
+            if resolved.asset_class is FTMOAssetClass.CRYPTO:
+                raw = await asyncio.wait_for(
+                    self.runtime.analyse(
+                        resolved.analysis_symbol, correlation_id=analysis_id, interval="15m",
+                        source="monatise.telegram.on_demand", notify=False,
+                    ), timeout=90,
+                )
+            elif resolved.asset_class is FTMOAssetClass.STOCK:
+                raw = await asyncio.wait_for(self.runtime.analyse_stock(resolved.analysis_symbol), timeout=90)
+            else:
+                raw = await asyncio.wait_for(
+                    self.runtime.analyse_ftmo_futures_instrument(resolved.instrument), timeout=90,
+                )
+            analysis_completed_at = datetime.now(timezone.utc)
+            analysis = normalize_analysis(
+                raw, resolved, request_id=request_id, analysis_id=analysis_id,
+                requested_at=requested_at, started_at=analysis_started_at,
+                completed_at=analysis_completed_at, session=session,
+            )
+            if repository is not None and hasattr(repository, "save_telegram_analysis"):
+                if not await repository.save_telegram_analysis(analysis):
+                    raise RuntimeError("analysis identity was already persisted")
+            analysis_message = format_analysis(analysis)
+            proposal = None
+            proposal_error = None
+            if analysis["executable"] and service is not None:
+                try:
+                    execution_symbol = await service.execution_symbol_for(resolved.instrument, now=analysis_completed_at)
+                    signal_id = signal_identity(request_id, analysis_id, analysis)
+                    expiry = datetime.fromisoformat(str(analysis["expires_at"]).replace("Z", "+00:00"))
+                    zone = analysis.get("entry_zone") or {}
+                    proposal = await service.create_signal_proposal(
+                        telegram_request_id=request_id,
+                        analysis_id=analysis_id,
+                        signal_id=signal_id,
+                        symbol=execution_symbol,
+                        direction=analysis["bias"],
+                        analysis_entry=analysis["entry"],
+                        analysis_stop=analysis["stop_loss"],
+                        analysis_target=analysis["targets"][0],
+                        source="monatise.telegram.on_demand",
+                        analysis_state=analysis["bias"],
+                        confirmation_status="confirmed",
+                        analysis_provider=analysis["analysis_provider"],
+                        analysis_instrument=analysis["analysis_instrument"],
+                        analysis_exchange=resolved.instrument.exchange,
+                        analysis_observed_at=analysis_completed_at,
+                        signal_expires_at=expiry,
+                        entry_zone_low=zone.get("low"),
+                        entry_zone_high=zone.get("high"),
+                        strategy=f"Monatise on-demand {analysis.get('market_state')}",
+                        timeframe=analysis["timeframe"],
+                        conviction=analysis["conviction"],
+                        recommended_risk_percent=analysis["recommended_risk_percent"],
+                        evidence_bundle={
+                            "market_data_provenance": analysis["market_data_provenance"],
+                            "session": analysis["session"],
+                            "liquidity": analysis["liquidity"],
+                            "market_structure": analysis["structure"],
+                            "supply_demand": analysis["supply_demand"],
+                            "fibonacci": analysis["fibonacci"],
+                            "order_flow": analysis["order_flow"],
+                        },
+                        now=analysis_completed_at,
+                    )
+                except FTMOMasterError as exc:
+                    proposal_error = str(exc)
+            proposal_message = format_proposal(proposal) if proposal is not None else None
+            if analysis["qualified"] and proposal is None:
+                analysis_message += "\nTRADE PROPOSAL WITHHELD\nReason: " + (
+                    proposal_error or "The setup is not currently executable at the verified entry zone."
+                )
+            if repository is not None and hasattr(repository, "finish_telegram_analysis_request"):
+                await repository.finish_telegram_analysis_request(request_id, {
+                    "status": "completed",
+                    "analysis_completed_at": analysis_completed_at.isoformat(),
+                    "analysis_message": analysis_message,
+                    "proposal_id": proposal.get("proposal_id") if proposal else None,
+                    "signal_id": proposal.get("signal_id") if proposal else None,
+                    "proposal_message": proposal_message,
+                })
         except Exception as exc:
-            LOGGER.warning("Telegram command analysis failed", extra={"symbol": symbol, "error_type": type(exc).__name__})
-            response = f"Monatise NO TRADE: {symbol}\nReason: analysis is currently unavailable.\nExecution: disabled"
-        await self._send_owned_telegram_response(notifier, response, ownership_check)
+            LOGGER.warning("Telegram command analysis failed", extra={"symbol": requested_symbol, "error_type": type(exc).__name__})
+            analysis_message = (
+                f"ANALYSIS FAILED\nInstrument: {resolved.canonical}\n"
+                "Reason: Fresh market data or the Monatise decision pipeline is currently unavailable.\n"
+                "No trade proposal created."
+            )
+            proposal = None
+            proposal_message = None
+            if repository is not None and hasattr(repository, "finish_telegram_analysis_request"):
+                await repository.finish_telegram_analysis_request(request_id, {
+                    "status": "completed", "analysis_completed_at": datetime.now(timezone.utc).isoformat(),
+                    "analysis_message": analysis_message, "error_type": type(exc).__name__,
+                })
+        await self._send_owned_telegram_response(notifier, analysis_message, ownership_check)
+        if proposal is not None and proposal_message is not None:
+            await self._send_owned_trade_proposal(notifier, proposal_message, proposal["proposal_id"], ownership_check)
 
     async def _handle_ftmo_telegram_command(self, text: str) -> str:
         service = getattr(self.runtime, "ftmo_master", None)
@@ -614,7 +840,21 @@ class ProductionASGI(OrchestrationASGI):
                 if len(parts) != 2:
                     raise FTMOMasterError("use /approve PROPOSAL_ID")
                 result = await service.approve(parts[1], user_id)
-                return f"FTMO command {result['command_id'][:12]} approved and queued for the account-bound MT5 EA."
+                if "execution_snapshot" not in result:
+                    return f"FTMO command {result['command_id'][:12]} approved and queued for the account-bound MT5 EA."
+                snapshot = result.get("execution_snapshot") or {}
+                risk = result.get("risk_policy") or {}
+                payload = result.get("payload") or {}
+                return "\n".join((
+                    "REVALIDATED",
+                    f"Signal: {result.get('signal_id') or 'operator'} | Analysis: {result.get('analysis_id') or 'operator'}",
+                    f"FTMO Bid/Ask: {snapshot.get('ftmo_bid') or 'unknown'} / {snapshot.get('ftmo_ask') or 'unknown'}",
+                    f"Entry: {payload.get('entry') or 'unknown'} | Volume: {payload.get('volume') or 'unknown'} lots",
+                    f"Risk: {Decimal(str(risk.get('actual_risk_fraction') or 0)) * 100:.2f}% (${risk.get('actual_risk_amount') or 'unknown'})",
+                    f"Session: {(result.get('market_session') or {}).get('market_session') or 'UNKNOWN'}",
+                    f"Command: {result['command_id'][:12]} — queued for the account-bound MT5 EA.",
+                    "Autonomous execution remains OFF.",
+                ))
             if command == "/reject":
                 if len(parts) != 2:
                     raise FTMOMasterError("use /reject PROPOSAL_ID")

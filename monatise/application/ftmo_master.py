@@ -245,6 +245,8 @@ class FTMOMasterRepository:
     CONTROL = "ftmo_master_control"
     NONCES = "ftmo_master_nonces"
     AUDIT = "ftmo_master_audit"
+    TELEGRAM_REQUESTS = "telegram_analysis_requests"
+    ANALYSES = "telegram_analyses"
 
     def __init__(self, store: Any) -> None:
         self.store = store
@@ -345,6 +347,57 @@ class FTMOMasterRepository:
             "observed_at": _utc().isoformat(),
         })
 
+    async def claim_telegram_analysis_request(self, request: dict[str, Any]) -> bool:
+        """Claim one Telegram update across workers and Render restarts."""
+        request_id = str(request.get("request_id") or "")
+        if not request_id:
+            raise ValueError("Telegram request identity is required")
+        try:
+            await self._put(self.TELEGRAM_REQUESTS, request_id, request, expected_version=0)
+        except RuntimeError:
+            return False
+        await self.audit("telegram_analysis_requested", request_id, {
+            "analysis_id": request.get("analysis_id"),
+            "telegram_user": request.get("telegram_user"),
+            "requested_instrument": request.get("requested_instrument"),
+            "requested_at": request.get("requested_at"),
+        })
+        return True
+
+    async def telegram_analysis_request(self, request_id: str) -> tuple[dict[str, Any], int] | None:
+        record = await self.store.get(self.TELEGRAM_REQUESTS, request_id)
+        return (dict(record.value), record.version) if record else None
+
+    async def finish_telegram_analysis_request(self, request_id: str, changes: Mapping[str, Any]) -> dict[str, Any]:
+        record = await self.store.get(self.TELEGRAM_REQUESTS, request_id)
+        if record is None:
+            raise KeyError("unknown Telegram analysis request")
+        value = dict(record.value)
+        value.update(dict(changes))
+        await self._put(self.TELEGRAM_REQUESTS, request_id, value, expected_version=record.version)
+        return value
+
+    async def save_telegram_analysis(self, analysis: dict[str, Any]) -> bool:
+        analysis_id = str(analysis.get("analysis_id") or "")
+        if not analysis_id:
+            raise ValueError("analysis identity is required")
+        try:
+            await self._put(self.ANALYSES, analysis_id, analysis, expected_version=0)
+        except RuntimeError:
+            return False
+        await self.audit("telegram_analysis_completed", analysis_id, {
+            "telegram_request_id": analysis.get("telegram_request_id"),
+            "decision": analysis.get("decision"),
+            "qualified": analysis.get("qualified"),
+            "market_data_provenance": analysis.get("market_data_provenance"),
+            "session": analysis.get("session"),
+        })
+        return True
+
+    async def telegram_analysis(self, analysis_id: str) -> dict[str, Any] | None:
+        record = await self.store.get(self.ANALYSES, analysis_id)
+        return dict(record.value) if record else None
+
     async def retention_sweep(self, *, now: datetime | None = None) -> dict[str, int]:
         observed = _utc(now)
         removed = {"nonces": 0, "proposals": 0, "commands": 0}
@@ -412,6 +465,17 @@ class FTMOMasterControlService:
                 raise FTMOMasterError("CoinGlass instrument does not match the verified FTMO mapping")
         return instrument
 
+    async def execution_symbol_for(self, instrument: FTMOInstrument, *, now: datetime | None = None) -> str:
+        """Resolve the exact symbol spelling exposed by the identity-matched EA."""
+        bridge = await self._healthy_bridge(_utc(now))
+        accepted = {self._symbol_key(instrument.ftmo_symbol)}
+        if instrument.asset_class is FTMOAssetClass.CRYPTO:
+            accepted.add(self._symbol_key(f"{instrument.underlying_symbol}USD"))
+        matches = [symbol for symbol in (bridge.get("quotes") or {}) if self._symbol_key(symbol) in accepted]
+        if len(matches) != 1:
+            raise FTMOMasterError("FTMO execution symbol could not be verified from the current MT5 heartbeat")
+        return matches[0]
+
     @staticmethod
     def _execution_snapshot(symbol: str, quote: Mapping[str, Any], bridge: Mapping[str, Any]) -> dict[str, Any]:
         return {
@@ -454,6 +518,7 @@ class FTMOMasterControlService:
         reference_entry: Any | None = None,
         entry_zone_low: Any | None = None,
         entry_zone_high: Any | None = None,
+        risk_fraction_limit: Any | None = None,
     ) -> dict[str, Any]:
         symbol = symbol.strip().upper()
         side = side.strip().casefold()
@@ -527,7 +592,11 @@ class FTMOMasterControlService:
             position_volume = _decimal(position.get("volume"), "position volume", positive=True)
             existing_open_risk += abs(position_entry - position_stop) / Decimal(str(position_quote["tick_size"])) * Decimal(str(position_quote.get("tick_value_loss", position_quote["tick_value"]))) * position_volume
         available_loss_capacity = min(daily_remaining, total_remaining) - existing_open_risk
-        risk_budget = min(risk_ceiling(equity), equity * self.configuration.risk_fraction, available_loss_capacity)
+        requested_risk_fraction = self.configuration.risk_fraction if risk_fraction_limit is None else _decimal(
+            risk_fraction_limit, "recommended risk fraction", positive=True,
+        )
+        requested_risk_fraction = min(requested_risk_fraction, self.configuration.risk_fraction, MAX_RISK_FRACTION_PER_TRADE)
+        risk_budget = min(risk_ceiling(equity), equity * requested_risk_fraction, available_loss_capacity)
         if risk_budget <= ZERO:
             raise FTMOMasterError("FTMO daily/total loss capacity is exhausted")
         loss_per_lot = (stop_distance / tick_size) * tick_value
@@ -549,6 +618,7 @@ class FTMOMasterControlService:
             "volume": str(volume),
             "risk_amount": str(actual_risk),
             "risk_fraction": str(actual_risk / equity),
+            "recommended_risk_fraction": str(requested_risk_fraction),
             "quote_bid": str(bid),
             "quote_ask": str(ask),
             "quote_timestamp": str(quote["timestamp"]),
@@ -789,6 +859,7 @@ class FTMOMasterControlService:
         _proposal_id: str | None = None,
         metadata: Mapping[str, Any] | None = None,
         expires_at: datetime | None = None,
+        risk_fraction_limit: Any | None = None,
     ) -> dict[str, Any]:
         observed = _utc(now)
         if actor not in self.configuration.authorized_user_ids and actor != "monatise-scanner":
@@ -796,6 +867,7 @@ class FTMOMasterControlService:
         fields = await self._validated_open_fields(
             symbol=symbol, side=side, order_type=order_type, stop_loss=stop_loss,
             take_profit=take_profit, entry=entry, now=observed,
+            risk_fraction_limit=risk_fraction_limit,
         )
         instrument = self._verified_instrument_mapping(symbol)
         session_context = classify_market_session(
@@ -859,6 +931,8 @@ class FTMOMasterControlService:
         conviction: Any | None = None,
         evidence_bundle: Mapping[str, Any] | None = None,
         supersedes_signal_id: str | None = None,
+        telegram_request_id: str | None = None,
+        recommended_risk_percent: Any | None = None,
     ) -> dict[str, Any]:
         """Translate external structure into FTMO-native levels.
 
@@ -934,6 +1008,7 @@ class FTMOMasterControlService:
         provider = str(analysis_provider or instrument.market_data_provider or source).strip().casefold()
         provider_instrument = str(analysis_instrument or instrument.provider_symbol or instrument.underlying_symbol)
         metadata = {
+            "telegram_request_id": str(telegram_request_id or "") or None,
             "analysis_id": str(analysis_id or signal_id),
             "signal_id": str(signal_id),
             "analysis_source": source,
@@ -975,6 +1050,10 @@ class FTMOMasterControlService:
             stop_loss=ftmo_stop, take_profit=ftmo_target, now=observed, _proposal_id=proposal_id,
             metadata=metadata,
             expires_at=signal_expires_at,
+            risk_fraction_limit=(
+                _decimal(recommended_risk_percent, "recommended risk percent", positive=True) / Decimal("100")
+                if recommended_risk_percent is not None else None
+            ),
         )
         return proposal
 
@@ -1069,6 +1148,7 @@ class FTMOMasterControlService:
                     now=observed,
                     reference_entry=proposal.get("entry") if proposal["order_type"] == "market" else None,
                     entry_zone_low=proposal.get("entry_zone_low"), entry_zone_high=proposal.get("entry_zone_high"),
+                    risk_fraction_limit=proposal.get("recommended_risk_fraction"),
                 )
             except FTMOMasterError as exc:
                 reason = str(exc)
@@ -1094,12 +1174,14 @@ class FTMOMasterControlService:
             "proposal_id": proposal_id,
             "analysis_id": proposal.get("analysis_id"),
             "signal_id": proposal.get("signal_id"),
+            "telegram_request_id": proposal.get("telegram_request_id"),
             "approval_id": approval_id,
             "execution_id": execution_id,
             "operation": proposal.get("operation", "open"),
             "payload": {key: proposal.get(key) for key in (
                 "symbol", "side", "order_type", "entry", "stop_loss", "take_profit", "volume", "target_id", "value",
                 "analysis_id", "signal_id",
+                "telegram_request_id",
             ) if proposal.get(key) is not None},
             "expected_account_id": self.configuration.account_id,
             "expected_server": self.configuration.server,
@@ -1121,6 +1203,7 @@ class FTMOMasterControlService:
             },
             "analysis_provenance": {key: proposal.get(key) for key in (
                 "analysis_id", "signal_id", "analysis_source", "analysis_provider", "analysis_instrument",
+                "telegram_request_id",
                 "analysis_exchange", "analysis_price", "analysis_observed_at", "analysis_state",
                 "confirmation_status", "strategy", "timeframe",
                 "conviction", "evidence_bundle", "mapping",
@@ -1134,6 +1217,7 @@ class FTMOMasterControlService:
                 "maximum_open_exposures": self.configuration.maximum_open_exposures,
                 "actual_risk_amount": proposal.get("risk_amount"),
                 "actual_risk_fraction": proposal.get("risk_fraction"),
+                "recommended_risk_fraction": proposal.get("recommended_risk_fraction"),
             },
         }
         command["payload"].update({
@@ -1275,6 +1359,8 @@ def format_proposal(proposal: Mapping[str, Any]) -> str:
         return "\n".join((
             "MONATISE TRADE PROPOSAL",
             f"ID: {proposal['proposal_id']}",
+            *((f"Signal: {proposal['signal_id']} | Analysis: {proposal.get('analysis_id') or 'unknown'}",) if proposal.get("signal_id") else ()),
+            *((f"Telegram request: {proposal['telegram_request_id']}",) if proposal.get("telegram_request_id") else ()),
             f"Instrument: {proposal['symbol']}",
             f"Direction: {str(proposal['side']).upper()} | Type: {str(proposal['order_type']).upper()}",
             f"Strategy: {proposal.get('strategy') or 'Operator preview'}",
@@ -1282,7 +1368,8 @@ def format_proposal(proposal: Mapping[str, Any]) -> str:
             f"Market: {'OPEN' if proposal.get('market_open') is True else 'CLOSED' if proposal.get('market_open') is False else 'UNKNOWN'} | Broker break: {proposal.get('broker_break_proximity') or 'UNKNOWN'}",
             f"Analysis reference price: {proposal.get('analysis_price') or proposal['entry']}",
             f"Proposed SL: {proposal['stop_loss']} | Proposed TP: {proposal['take_profit']}",
-            f"Risk ceiling: {MAX_RISK_PERCENT_PER_TRADE:.2f}% | Proposed risk: {Decimal(str(proposal['risk_fraction'])) * 100:.2f}%",
+            f"Risk ceiling: {MAX_RISK_PERCENT_PER_TRADE:.2f}% | Recommended risk: {Decimal(str(proposal.get('recommended_risk_fraction') or proposal['risk_fraction'])) * 100:.2f}%",
+            f"Preview calculated risk: {Decimal(str(proposal['risk_fraction'])) * 100:.2f}%",
             f"Estimated risk: ${proposal['risk_amount']} | Estimated volume: {proposal.get('volume') or 'RECALCULATE AT APPROVAL'} lots",
             f"FTMO preview Bid/Ask: {proposal['quote_bid']} / {proposal['quote_ask']}",
             f"Signal expires: {proposal['expires_at']}",

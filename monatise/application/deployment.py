@@ -2394,6 +2394,33 @@ class OrchestrationRuntime:
         validity_minutes = max(15, int(self.environment.get("MONATISE_STOCK_15M_VALIDITY_MINUTES", "60")))
         return build_stock_analysis(context, bars=bars, trigger_bars=trigger_bars, snapshot=snapshot, finnhub=finnhub, flashalpha=flashalpha, validity_minutes=validity_minutes)
 
+    async def analyse_ftmo_futures_instrument(self, instrument: Any) -> dict[str, Any]:
+        """Run a fresh provider analysis for one verified futures-linked FTMO CFD."""
+        if instrument.asset_class is not FTMOAssetClass.FUTURES_LINKED or not instrument.futures_symbol:
+            raise ValueError("instrument is not a verified futures-linked FTMO CFD")
+        adapter = getattr(self, "flashalpha", None) or FlashAlphaAdapter.from_env()
+        self.flashalpha = adapter
+        context = await asyncio.to_thread(adapter.context, f"{instrument.futures_symbol}=F")
+        analysis = build_flashalpha_futures_analysis(context)
+        observed = datetime.now(timezone.utc)
+        validity_minutes = max(5, int(self.environment.get("MONATISE_FUTURES_ON_DEMAND_VALIDITY_MINUTES", "15")))
+        analysis.update({
+            "ftmo_symbol": instrument.ftmo_symbol,
+            "underlying_market": instrument.underlying_market,
+            "futures_symbol": instrument.futures_symbol,
+            "micro_futures_symbol": instrument.micro_futures_symbol,
+            "asset_class": FTMOAssetClass.FUTURES_LINKED.value,
+            "analysis_provider": instrument.market_data_provider,
+            "analysis_instrument": f"{instrument.futures_symbol}=F",
+            "analysis_exchange": instrument.exchange,
+            "timeframe": "intraday",
+            "generated_at": observed.isoformat(),
+            "expires_at": (observed + timedelta(minutes=validity_minutes)).isoformat(),
+            "freshness": "fresh",
+            "publication_valid": True,
+        })
+        return analysis
+
     async def _telegram_notification_candidate(self, result: Any, interval: str) -> dict[str, Any] | None:
         outputs = result.context.outputs
         key = (result.symbol, interval)
