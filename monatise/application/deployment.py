@@ -1371,10 +1371,14 @@ class OrchestrationRuntime:
 
     async def _register_ftmo_stock_scanner(self) -> tuple[str, ...]:
         if not _true(self.environment.get("MONATISE_FTMO_STOCK_SCAN_ENABLED", "true")):
-            self.dependencies["ftmo_stock_scan"] = {"status": "ok", "enabled": False}
+            self.dependencies["ftmo_stock_scan"] = {
+                "status": "ok", "enabled": False, "scheduled": False, "running": False,
+            }
             return ()
         if self.application is None or self.telegram is None or self.redis is None:
-            self.dependencies["ftmo_stock_scan"] = {"status": "error", "enabled": True}
+            self.dependencies["ftmo_stock_scan"] = {
+                "status": "error", "enabled": True, "scheduled": False, "running": False,
+            }
             raise RuntimeError("FTMO stock scanner dependencies are unavailable")
         namespace = self.environment.get("MONATISE_REDIS_NAMESPACE", "monatise:production-analysis")
         interval_seconds = max(300, int(self.environment.get("MONATISE_STOCK_SCAN_INTERVAL_SECONDS", "1800")))
@@ -1392,20 +1396,69 @@ class OrchestrationRuntime:
 
         async def monitor() -> dict[str, Any]:
             started_at = datetime.now(timezone.utc)
-            self.dependencies["ftmo_stock_scan"].update({"last_started_at": started_at.isoformat(), "last_error": None})
+            cycle_started = perf_counter()
+            self.dependencies["ftmo_stock_scan"].update({
+                "running": True,
+                "last_cycle_status": "running",
+                "last_started_at": started_at.isoformat(),
+                "last_error": None,
+                "candidate_count": 0,
+                "analysis_completed_count": 0,
+                "qualified_count": 0,
+                "suppressed_count": 0,
+                "published_count": 0,
+            })
+            LOGGER.info(
+                "stock_scan_started",
+                extra={"job_id": "ftmo-stock-scanner-telegram", "interval_seconds": interval_seconds},
+            )
             try:
                 result = await self._run_stock_universe_scan(configuration, cooldown_seconds, namespace)
                 completed_at = datetime.now(timezone.utc)
+                duration_ms = round((perf_counter() - cycle_started) * 1000, 2)
+                counters = {
+                    "candidate_count": int(result.get("candidate_count", result.get("deep_analysis_attempted", 0))),
+                    "analysis_completed_count": int(result.get("analysis_completed_count", result.get("deep_analysis_completed", 0))),
+                    "qualified_count": int(result.get("qualified_count", result.get("qualified_setups", 0))),
+                    "suppressed_count": int(result.get("suppressed_count", 0)),
+                    "published_count": int(result.get("proposal_published_count", result.get("telegram_published", 0))),
+                }
                 self.dependencies["ftmo_stock_scan"].update({
                     "last_success_at": completed_at.isoformat(),
+                    "last_succeeded_at": completed_at.isoformat(),
                     "next_expected_at": (completed_at + timedelta(seconds=interval_seconds)).isoformat(),
-                    "last_result": result, "last_error": None,
+                    "last_cycle_duration_ms": duration_ms,
+                    "last_cycle_status": "succeeded",
+                    "running": False,
+                    "last_result": result,
+                    "last_error": None,
+                    **counters,
                 })
+                LOGGER.info(
+                    "stock_scan_completed",
+                    extra={"job_id": "ftmo-stock-scanner-telegram", "duration_ms": duration_ms, **counters},
+                )
                 return result
             except Exception as exc:
+                failed_at = datetime.now(timezone.utc)
+                duration_ms = round((perf_counter() - cycle_started) * 1000, 2)
+                error_type = type(exc).__name__
                 self.dependencies["ftmo_stock_scan"].update({
-                    "last_failure_at": datetime.now(timezone.utc).isoformat(), "last_error": type(exc).__name__,
+                    "last_failure_at": failed_at.isoformat(),
+                    "last_failed_at": failed_at.isoformat(),
+                    "last_cycle_duration_ms": duration_ms,
+                    "last_cycle_status": "failed",
+                    "running": False,
+                    "last_error": error_type,
                 })
+                LOGGER.warning(
+                    "stock_scan_failed",
+                    extra={
+                        "job_id": "ftmo-stock-scanner-telegram",
+                        "duration_ms": duration_ms,
+                        "error_type": error_type,
+                    },
+                )
                 raise
 
         job_id = "ftmo-stock-scanner-telegram"
@@ -1422,9 +1475,15 @@ class OrchestrationRuntime:
         ))
         registry = getattr(self, "ftmo_registry", FTMO_REGISTRY)
         self.dependencies["ftmo_stock_scan"] = {
-            "status": "ok", "enabled": True, "job": job_id,
+            "status": "ok", "enabled": True, "scheduled": True, "running": False,
+            "last_cycle_status": "never_run", "job": job_id,
             "universe_size": len(registry.for_asset_class(FTMOAssetClass.STOCK)),
             "poll_interval_seconds": interval_seconds, "cooldown_seconds": cooldown_seconds,
+            "last_started_at": None, "last_success_at": None, "last_succeeded_at": None,
+            "last_failure_at": None, "last_failed_at": None, "last_error": None,
+            "last_cycle_duration_ms": None,
+            "candidate_count": 0, "analysis_completed_count": 0, "qualified_count": 0,
+            "suppressed_count": 0, "published_count": 0,
             "maximum_universe_size": configuration.maximum_universe_size,
             "shortlist_per_side": configuration.shortlist_per_side,
             "minimum_score": configuration.minimum_score,
@@ -1481,7 +1540,7 @@ class OrchestrationRuntime:
             shorts[:configuration.shortlist_per_side],
         )
         outcomes = await asyncio.gather(*(self._analyze_market_stock(candidate, configuration, index) for index, candidate in enumerate(shortlisted)), return_exceptions=True)
-        analyzed = qualified = published = 0
+        analyzed = qualified = published = proposal_published = suppressed = 0
         scan_results: list[dict[str, Any]] = []
         failures: list[dict[str, str]] = []
         suppressions: dict[str, int] = {}
@@ -1500,6 +1559,7 @@ class OrchestrationRuntime:
             if (additional.get("flashalpha") or {}).get("unavailable"): provider_degraded["flashalpha"] += 1
             if (additional.get("finnhub") or {}).get("unavailable"): provider_degraded["finnhub"] += 1
             if outcome.get("setup_status") != "confirmed":
+                suppressed += 1
                 for reason in outcome.get("suppression_reasons") or ["not_qualified"]:
                     suppressions[reason] = suppressions.get(reason, 0) + 1
                 continue
@@ -1508,6 +1568,7 @@ class OrchestrationRuntime:
             dedupe_key = f"{namespace}:stock-setup-alert:{candidate.symbol}"
             previous_state = await self.redis.get(dedupe_key)
             if previous_state and not _setup_materially_changed(previous_state, alert_state):
+                suppressed += 1
                 suppressions["duplicate_unchanged"] = suppressions.get("duplicate_unchanged", 0) + 1
                 continue
             await self.redis.set(dedupe_key, json.dumps(alert_state, separators=(",", ":"), sort_keys=True), ex=cooldown_seconds)
@@ -1515,7 +1576,7 @@ class OrchestrationRuntime:
                 notifier = getattr(self.telegram, "ftmo_stock_notification", self.telegram.stock_analysis_notification)
                 message = TelegramNotifier.format_market_stock_setup(outcome)
                 await notifier(message)
-                await self._publish_ftmo_signal_proposal(outcome, source="monatise.stock.scanner")
+                proposal_published += int(await self._publish_ftmo_signal_proposal(outcome, source="monatise.stock.scanner"))
                 published += 1
             except Exception as exc:
                 if previous_state:
@@ -1532,6 +1593,9 @@ class OrchestrationRuntime:
             "shortlisted_short": min(len(shorts), configuration.shortlist_per_side),
             "deep_analysis_attempted": len(shortlisted), "deep_analysis_completed": analyzed,
             "qualified_setups": qualified, "telegram_published": published,
+            "candidate_count": len(shortlisted), "analysis_completed_count": analyzed,
+            "qualified_count": qualified, "suppressed_count": suppressed,
+            "proposal_published_count": proposal_published,
             "suppressions": suppressions, "failures": failures, "provider_degraded": provider_degraded,
             "results": scan_results, "execution_enabled": False,
         }
