@@ -1,5 +1,5 @@
 #property copyright "Monatise"
-#property version   "1.04"
+#property version   "1.05"
 #property strict
 #property description "Account-bound FTMO bridge. Telegram never talks directly to the broker."
 
@@ -10,7 +10,7 @@ input string InpBridgeSecret           = "";       // Set in MT5; never commit t
 input string InpExpectedAccount        = "";
 input string InpExpectedServer         = "FTMO-Server";
 input string InpExpectedCurrency       = "USD";
-input string InpSymbols                = "XAUUSD";
+input string InpSymbols                = "XAUUSD,BTCUSD,ETHUSD,US100.cash,AAPL"; // Telegram on-demand preview universe.
 input bool   InpExecutionEnabled       = false;    // Independent local gate.
 input bool   InpMasterAccountApproved  = false;    // Independent local gate.
 input double InpRiskFraction           = 0.03;     // Absolute per-trade ceiling; may be configured lower.
@@ -24,7 +24,7 @@ input int    InpMaximumSpreadTicks     = 80;
 input int    InpMaximumDeviationPoints = 20;
 input long   InpMagicNumber            = 26082501;
 
-string EA_VERSION = "1.04";
+string EA_VERSION = "1.05";
 string JOURNAL_FILE = "monatise-ftmo-command-journal.csv";
 CTrade Trade;
 
