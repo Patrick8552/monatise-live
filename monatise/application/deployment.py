@@ -8,6 +8,7 @@ import html
 import inspect
 import json
 import logging
+import math
 import os
 import re
 from dataclasses import dataclass, field
@@ -1147,20 +1148,38 @@ class OrchestrationRuntime:
         self.dependencies["flashalpha"] = result
         return result
 
-    def _flashalpha_scheduled_capacity(self) -> int | None:
-        """Return safe context-call capacity while reserving on-demand quota."""
+    def _flashalpha_scheduled_capacity(
+        self,
+        *,
+        interval_seconds: int | None = None,
+        allocation_fraction: float = 1.0,
+    ) -> int | None:
+        """Return a daily-plan-aware context budget for one scanner cycle."""
         if "flashalpha" not in getattr(self, "dependencies", {}) and getattr(self, "flashalpha", None) is None:
             return None
         health = self.flashalpha_health()
         remaining = health.get("remaining")
         if remaining is None:
             remaining = ((health.get("probe") or {}).get("rate_limit") or {}).get("remaining")
-        if remaining == "unlimited":
+        daily_limit = health.get("daily_limit")
+        if daily_limit is None:
+            daily_limit = ((health.get("account") or {}).get("daily_limit"))
+        if remaining == "unlimited" or daily_limit == "unlimited":
             return None
         if not isinstance(remaining, int):
             return 0
-        reserve = max(2, int(self.environment.get("MONATISE_FLASHALPHA_ON_DEMAND_RESERVE_REQUESTS", "2")))
-        return max(0, (remaining - reserve) // 2)
+        environment = getattr(self, "environment", {})
+        configured_reserve = environment.get("MONATISE_FLASHALPHA_ON_DEMAND_RESERVE_REQUESTS")
+        reserve = max(2, int(configured_reserve)) if configured_reserve is not None else (
+            max(2, min(50, daily_limit // 10)) if isinstance(daily_limit, int) else 2
+        )
+        remaining_capacity = max(0, (remaining - reserve) // 2)
+        if not isinstance(daily_limit, int) or interval_seconds is None:
+            return remaining_capacity
+        cycles_per_day = max(1, math.ceil(86_400 / max(1, interval_seconds)))
+        daily_scheduled_requests = max(0, daily_limit - reserve) * max(0.0, min(1.0, allocation_fraction))
+        planned_capacity = math.floor(daily_scheduled_requests / cycles_per_day / 2)
+        return min(remaining_capacity, max(0, planned_capacity))
 
     async def _register_scheduled_analysis(self) -> tuple[str, ...]:
         configuration = scheduled_analysis_configuration(self.environment)
@@ -1631,7 +1650,8 @@ class OrchestrationRuntime:
             longs[:configuration.shortlist_per_side],
             shorts[:configuration.shortlist_per_side],
         )
-        scheduled_capacity = self._flashalpha_scheduled_capacity()
+        stock_interval = max(300, int(getattr(self, "environment", {}).get("MONATISE_STOCK_SCAN_INTERVAL_SECONDS", "1800")))
+        scheduled_capacity = self._flashalpha_scheduled_capacity(interval_seconds=stock_interval, allocation_fraction=0.7)
         quota_deferred = 0
         if scheduled_capacity is not None and len(shortlisted) > scheduled_capacity:
             quota_deferred = len(shortlisted) - scheduled_capacity
@@ -1818,8 +1838,14 @@ class OrchestrationRuntime:
             self.dependencies["ftmo_futures_scan"] = {"status": "error", "enabled": True}
             raise RuntimeError("FTMO futures scanner dependencies are unavailable")
         registry = getattr(self, "ftmo_registry", FTMO_REGISTRY)
-        instruments = registry.for_asset_class(FTMOAssetClass.FUTURES_LINKED)
-        interval_seconds = max(300, int(self.environment.get("MONATISE_FTMO_FUTURES_SCAN_INTERVAL_SECONDS", "900")))
+        all_instruments = registry.for_asset_class(FTMOAssetClass.FUTURES_LINKED)
+        configured_roots = {
+            item.strip().upper()
+            for item in self.environment.get("MONATISE_FLASHALPHA_FUTURES_ROOTS", "ES,NQ,GC").split(",")
+            if item.strip()
+        }
+        instruments = tuple(item for item in all_instruments if item.futures_symbol in configured_roots)
+        interval_seconds = max(3600, int(self.environment.get("MONATISE_FTMO_FUTURES_SCAN_INTERVAL_SECONDS", "3600")))
         cooldown_seconds = max(300, int(self.environment.get("MONATISE_FTMO_FUTURES_SCAN_COOLDOWN_SECONDS", "3600")))
         namespace = self.environment.get("MONATISE_REDIS_NAMESPACE", "monatise:production-analysis")
 
@@ -1852,7 +1878,8 @@ class OrchestrationRuntime:
         ))
         self.dependencies["ftmo_futures_scan"] = {
             "status": "ok" if api_key_configured else "degraded", "enabled": True, "configured": api_key_configured, "job": job_id,
-            "universe_size": len(instruments), "futures_roots": sorted({item.futures_symbol for item in instruments}),
+            "universe_size": len(instruments), "registry_universe_size": len(all_instruments),
+            "futures_roots": sorted({item.futures_symbol for item in instruments}),
             "poll_interval_seconds": interval_seconds, "cooldown_seconds": cooldown_seconds,
         }
         return (job_id,)
@@ -1861,7 +1888,8 @@ class OrchestrationRuntime:
         adapter = getattr(self, "flashalpha", None) or FlashAlphaAdapter.from_env()
         self.flashalpha = adapter
         all_unique_roots = tuple(dict.fromkeys(item.futures_symbol for item in instruments if item.futures_symbol))
-        scheduled_capacity = self._flashalpha_scheduled_capacity()
+        futures_interval = max(3600, int(getattr(self, "environment", {}).get("MONATISE_FTMO_FUTURES_SCAN_INTERVAL_SECONDS", "3600")))
+        scheduled_capacity = self._flashalpha_scheduled_capacity(interval_seconds=futures_interval, allocation_fraction=0.3)
         unique_roots = all_unique_roots if scheduled_capacity is None else all_unique_roots[:scheduled_capacity]
         queue: asyncio.Queue[str] = asyncio.Queue()
         for root in unique_roots:

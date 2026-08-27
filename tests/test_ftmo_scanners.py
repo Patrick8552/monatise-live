@@ -224,7 +224,8 @@ def test_three_ftmo_scanner_jobs_replace_legacy_scheduler_jobs():
     assert runtime.dependencies["ftmo_stock_scan"]["scheduled"] is True
     assert runtime.dependencies["ftmo_stock_scan"]["poll_interval_seconds"] == 1800
     assert runtime.dependencies["ftmo_crypto_scan"]["poll_interval_seconds"] == 300
-    assert runtime.dependencies["ftmo_futures_scan"]["poll_interval_seconds"] == 900
+    assert runtime.dependencies["ftmo_futures_scan"]["poll_interval_seconds"] == 3600
+    assert runtime.dependencies["ftmo_futures_scan"]["futures_roots"] == ["ES", "GC", "NQ"]
 
 
 @pytest.mark.parametrize(
@@ -238,6 +239,22 @@ def test_flashalpha_scheduler_capacity_reserves_two_requests_for_on_demand(remai
     runtime.dependencies = {"flashalpha": {"status": "healthy", "remaining": remaining}}
 
     assert runtime._flashalpha_scheduled_capacity() == expected
+
+
+def test_flashalpha_cycle_budget_scales_to_plan_and_scanner_cadence():
+    runtime = OrchestrationRuntime.__new__(OrchestrationRuntime)
+    runtime.environment = {}
+    runtime.flashalpha = None
+    runtime.dependencies = {"flashalpha": {
+        "status": "healthy", "plan": "growth", "daily_limit": 2500, "remaining": 2500,
+    }}
+
+    assert runtime._flashalpha_scheduled_capacity(interval_seconds=1800, allocation_fraction=0.7) == 17
+    assert runtime._flashalpha_scheduled_capacity(interval_seconds=3600, allocation_fraction=0.3) == 15
+
+    runtime.dependencies["flashalpha"].update({"plan": "basic", "daily_limit": 250, "remaining": 250})
+    assert runtime._flashalpha_scheduled_capacity(interval_seconds=1800, allocation_fraction=0.7) == 1
+    assert runtime._flashalpha_scheduled_capacity(interval_seconds=3600, allocation_fraction=0.3) == 1
 
 
 class _RecordingScheduler:

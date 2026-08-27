@@ -55,9 +55,12 @@ historical candle feed.
   provider account identifiers are never returned.
 - A FlashAlpha stock or futures context currently costs two authenticated
   requests (`gex` and `levels`). Scheduled stock and futures scanners read the
-  cached remaining quota and reserve at least two requests for an on-demand
-  Telegram analysis. When that reserve is reached, background candidates are
-  deferred instead of consuming the last usable analysis budget.
+  cached plan/remaining quota, reserve an on-demand allowance, and calculate a
+  per-cycle budget from the plan limit. The stock scanner receives 70% of the
+  scheduled budget; the hourly futures scanner receives 30% and defaults to
+  `ES,NQ,GC`. When either allowance is reached, background candidates are
+  deferred instead of consuming the last usable analysis budget. On-demand
+  requests can still use any verified registry symbol.
 - Finnhub and Quiver limits are plan/endpoint dependent. Monatise treats HTTP
   429 as `provider_rate_limited`, caps scheduled enrichments, and does not make
   either provider a hidden required candle source.
