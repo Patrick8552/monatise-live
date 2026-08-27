@@ -83,12 +83,30 @@ them. Registry changes therefore require explicit review and a committed update.
 
 ### FTMO execution-price boundary
 
-Futures, CoinGlass, TradingView, and other providers are context-only. They may
-not define an executable FTMO entry, stop, target, volume, or validation price.
+Futures, CoinGlass, TradingView, and other providers are analysis-only. Their
+structural entry/invalidation/target levels remain analysis provenance and are
+never submitted directly as an FTMO price, volume, or validation result.
 `monatise.application.ftmo_execution` provides the normalized FTMO Bid/Ask,
-symbol-specification, 1%-maximum risk, shadow-intent, idempotency, and
+symbol-specification, 3%-maximum risk ceiling, shadow-intent, idempotency, and
 reconciliation boundary. It is disabled by default and fails closed until the
 actual FTMO platform and account identity are configured.
+
+### Telegram on-demand analysis
+
+An authorized private Telegram user can request a fresh analysis with
+`/analyze XAUUSD`, `/analyze BTC`, `/analyze ETH`, `/analyze US100.cash`, or
+`/analyze AAPL`. `/analysis XAUUSD`, `/gold`, `/btc`, and `/eth` are aliases.
+Each update is claimed durably, receives a new analysis ID and fresh session
+check, and runs the existing market-specific provider path. Crypto derivatives
+analysis remains CoinGlass-sourced; the FTMO bridge remains the only source of
+executable Bid/Ask, symbol metadata, volume, and broker evidence.
+
+Confirmed setups receive a signal-bound inline approval proposal only when the
+identity-matched MT5 heartbeat can produce a fresh FTMO preview. Approval still
+requires the kill switch to permit execution, a temporary armed session, all
+manual/master gates, and another fresh price/session/risk revalidation. The
+recommended risk is conviction-scaled below the 3% ceiling. Autonomous
+execution remains unsupported and OFF.
 
 The current XAU/USD mismatch investigation is recorded in
 `docs/ftmo-xauusd-root-cause.md`. External COMEX `GC` levels are no longer
