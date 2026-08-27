@@ -1,5 +1,5 @@
 #property copyright "Monatise"
-#property version   "1.02"
+#property version   "1.03"
 #property strict
 #property description "Account-bound FTMO bridge. Telegram never talks directly to the broker."
 
@@ -23,9 +23,10 @@ input int    InpMaximumOpenExposures   = 1;        // Positions plus pending ord
 input int    InpHeartbeatSeconds       = 5;
 input int    InpHttpTimeoutMs          = 10000;
 input int    InpMaximumSpreadTicks     = 80;
+input int    InpMaximumDeviationPoints = 20;
 input long   InpMagicNumber            = 26082501;
 
-string EA_VERSION = "1.02";
+string EA_VERSION = "1.03";
 string JOURNAL_FILE = "monatise-ftmo-command-journal.csv";
 CTrade Trade;
 
@@ -174,17 +175,25 @@ string QuoteJson(string symbol)
    double tick_size = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
    double tick_value = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE_LOSS);
    if(tick_value <= 0) tick_value = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
+   double tick_value_profit = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE_PROFIT);
+   double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
    return "\"" + JsonEscape(symbol) + "\":{"
       + "\"bid\":\"" + DoubleToString(tick.bid, digits) + "\","
       + "\"ask\":\"" + DoubleToString(tick.ask, digits) + "\","
       + "\"timestamp\":\"" + IsoTime((datetime)(tick.time_msc / 1000)) + "\","
       + "\"digits\":" + IntegerToString(digits) + ","
+      + "\"point\":\"" + DoubleToString(point, digits) + "\","
       + "\"tick_size\":\"" + DoubleToString(tick_size, digits) + "\","
       + "\"tick_value\":\"" + DoubleToString(tick_value, 8) + "\","
+      + "\"tick_value_loss\":\"" + DoubleToString(tick_value, 8) + "\","
+      + "\"tick_value_profit\":\"" + DoubleToString(tick_value_profit, 8) + "\","
+      + "\"contract_size\":\"" + DoubleToString(SymbolInfoDouble(symbol, SYMBOL_TRADE_CONTRACT_SIZE), 8) + "\","
       + "\"volume_min\":\"" + DoubleToString(SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN), 8) + "\","
       + "\"volume_max\":\"" + DoubleToString(SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX), 8) + "\","
       + "\"volume_step\":\"" + DoubleToString(SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP), 8) + "\","
-      + "\"stops_level\":\"" + IntegerToString((int)SymbolInfoInteger(symbol, SYMBOL_TRADE_STOPS_LEVEL)) + "\"}";
+      + "\"stops_level\":\"" + IntegerToString((int)SymbolInfoInteger(symbol, SYMBOL_TRADE_STOPS_LEVEL)) + "\","
+      + "\"freeze_level\":\"" + IntegerToString((int)SymbolInfoInteger(symbol, SYMBOL_TRADE_FREEZE_LEVEL)) + "\","
+      + "\"trade_mode\":\"" + IntegerToString((int)SymbolInfoInteger(symbol, SYMBOL_TRADE_MODE)) + "\"}";
 }
 
 string PositionsJson()
@@ -200,6 +209,9 @@ string PositionsJson()
              + "\",\"type\":" + IntegerToString((int)PositionGetInteger(POSITION_TYPE))
              + ",\"volume\":\"" + DoubleToString(PositionGetDouble(POSITION_VOLUME), 8)
              + "\",\"price_open\":\"" + DoubleToString(PositionGetDouble(POSITION_PRICE_OPEN), 8)
+             + "\",\"price_current\":\"" + DoubleToString(PositionGetDouble(POSITION_PRICE_CURRENT), 8)
+             + "\",\"profit\":\"" + DoubleToString(PositionGetDouble(POSITION_PROFIT), 2)
+             + "\",\"comment\":\"" + JsonEscape(PositionGetString(POSITION_COMMENT))
              + "\",\"sl\":\"" + DoubleToString(PositionGetDouble(POSITION_SL), 8)
              + "\",\"tp\":\"" + DoubleToString(PositionGetDouble(POSITION_TP), 8) + "\"}";
    }
@@ -218,7 +230,8 @@ string OrdersJson()
              + "\",\"magic\":\"" + IntegerToString(OrderGetInteger(ORDER_MAGIC))
              + "\",\"type\":" + IntegerToString((int)OrderGetInteger(ORDER_TYPE))
              + ",\"volume\":\"" + DoubleToString(OrderGetDouble(ORDER_VOLUME_CURRENT), 8)
-             + "\",\"price_open\":\"" + DoubleToString(OrderGetDouble(ORDER_PRICE_OPEN), 8) + "\"}";
+             + "\",\"price_open\":\"" + DoubleToString(OrderGetDouble(ORDER_PRICE_OPEN), 8)
+             + "\",\"comment\":\"" + JsonEscape(OrderGetString(ORDER_COMMENT)) + "\"}";
    }
    return result + "]";
 }
@@ -273,6 +286,7 @@ string BuildHeartbeat()
       + "\"currency\":\"" + JsonEscape(AccountInfoString(ACCOUNT_CURRENCY)) + "\","
       + "\"balance\":\"" + DoubleToString(AccountInfoDouble(ACCOUNT_BALANCE), 2) + "\","
       + "\"equity\":\"" + DoubleToString(AccountInfoDouble(ACCOUNT_EQUITY), 2) + "\","
+      + "\"free_margin\":\"" + DoubleToString(AccountInfoDouble(ACCOUNT_MARGIN_FREE), 2) + "\","
       + "\"daily_start_equity\":\"" + DoubleToString(DailyStartEquity(), 2) + "\","
       + "\"initial_balance\":\"" + DoubleToString(InpInitialAccountBalance, 2) + "\","
       + "\"daily_loss_limit\":\"" + DoubleToString(InpDailyLossLimit, 2) + "\","
@@ -344,14 +358,27 @@ void JournalAppend(string command_id, string status, string ticket, string messa
    FileClose(handle);
 }
 
-void Acknowledge(string command_id, string status, string ticket, string message)
+void AcknowledgeEvidence(string command_id, string status, string ticket, string message,
+                         string requested_price, string fill_price, string slippage,
+                         string executed_volume, string executed_stop, string executed_target)
 {
    string body = "{\"status\":\"" + JsonEscape(status) + "\",\"broker_ticket\":\"" + JsonEscape(ticket)
                + "\",\"broker_retcode\":\"" + IntegerToString((long)Trade.ResultRetcode())
+               + "\",\"requested_price\":\"" + JsonEscape(requested_price)
+               + "\",\"fill_price\":\"" + JsonEscape(fill_price)
+               + "\",\"slippage\":\"" + JsonEscape(slippage)
+               + "\",\"executed_volume\":\"" + JsonEscape(executed_volume)
+               + "\",\"executed_stop_loss\":\"" + JsonEscape(executed_stop)
+               + "\",\"executed_take_profit\":\"" + JsonEscape(executed_target)
                + "\",\"message\":\"" + JsonEscape(message) + "\",\"broker_observed_at\":\""
                + IsoTime(TimeGMT()) + "\"}";
    string response; int http_status;
    SignedRequest("POST", "/api/ftmo/bridge/commands/" + command_id + "/ack", body, response, http_status);
+}
+
+void Acknowledge(string command_id, string status, string ticket, string message)
+{
+   AcknowledgeEvidence(command_id, status, ticket, message, "", "", "", "", "", "");
 }
 
 bool FinalOrderValidation(string payload, string &reason)
@@ -360,6 +387,8 @@ bool FinalOrderValidation(string payload, string &reason)
    if(!IdentityMatches()) { reason = "account/server/currency mismatch"; return false; }
    if(!TradingPermission()) { reason = "MT5 trading permission is unavailable"; return false; }
    string operation = JsonString(payload, "operation");
+   long expires_epoch = StringToInteger(JsonString(payload, "expires_epoch"));
+   if(expires_epoch <= 0 || TimeGMT() >= (datetime)expires_epoch) { reason = "execution command has expired"; return false; }
    string target_text = JsonString(payload, "target_id");
    ulong target_id = (ulong)StringToInteger(target_text);
    if(operation != "open")
@@ -392,11 +421,26 @@ bool FinalOrderValidation(string payload, string &reason)
    double tick_value = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE_LOSS);
    if(tick_value <= 0) tick_value = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
    double entry = order_type == "market" ? ((side == "buy") ? tick.ask : tick.bid) : StringToDouble(JsonString(payload, "entry"));
+   double approved_entry = StringToDouble(JsonString(payload, "entry"));
+   double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+   double volume_min = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
+   double volume_max = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX);
+   double volume_step = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
    if(tick_size <= 0 || tick_value <= 0 || volume <= 0) { reason = "symbol specification is invalid"; return false; }
+   if(SymbolInfoInteger(symbol, SYMBOL_TRADE_MODE) != SYMBOL_TRADE_MODE_FULL) { reason = "symbol is not fully enabled for trading"; return false; }
+   if(volume < volume_min - 1e-8 || volume > volume_max + 1e-8 || volume_step <= 0
+      || MathAbs(volume / volume_step - MathRound(volume / volume_step)) > 1e-8)
+      { reason = "volume is outside the FTMO symbol specification"; return false; }
+   if(order_type == "market" && approved_entry > 0 && point > 0
+      && MathAbs(entry - approved_entry) / point > MathMax(0, InpMaximumDeviationPoints))
+      { reason = "live FTMO price exceeded the approved deviation"; return false; }
    if((tick.ask - tick.bid) / tick_size > InpMaximumSpreadTicks) { reason = "spread exceeds policy"; return false; }
    if(order_type == "limit" && ((side == "buy" && entry >= tick.ask) || (side == "sell" && entry <= tick.bid))) { reason = "pending limit price crossed the market"; return false; }
    if(order_type == "stop" && ((side == "buy" && entry <= tick.ask) || (side == "sell" && entry >= tick.bid))) { reason = "pending stop price crossed the market"; return false; }
    if((side == "buy" && !(stop < entry && entry < target)) || (side == "sell" && !(target < entry && entry < stop))) { reason = "SL/TP geometry is invalid at final quote"; return false; }
+   double minimum_stop = MathMax((double)SymbolInfoInteger(symbol, SYMBOL_TRADE_STOPS_LEVEL),
+                                 (double)SymbolInfoInteger(symbol, SYMBOL_TRADE_FREEZE_LEVEL)) * point;
+   if(MathAbs(entry - stop) < minimum_stop) { reason = "SL distance is below the FTMO stop/freeze level"; return false; }
    double actual_risk = (MathAbs(entry - stop) / tick_size) * tick_value * volume;
    double risk_limit = MathMin(AccountInfoDouble(ACCOUNT_EQUITY) * MathMin(InpRiskFraction, 0.01), InpMaximumRiskAmount);
    if(actual_risk > risk_limit + 0.01) { reason = "final risk exceeds configured limit"; return false; }
@@ -437,16 +481,22 @@ void ExecuteCommand(string payload)
    double target = StringToDouble(JsonString(payload, "take_profit"));
    double volume = StringToDouble(JsonString(payload, "volume"));
    ulong target_id = (ulong)StringToInteger(JsonString(payload, "target_id"));
+   datetime expires_at = (datetime)StringToInteger(JsonString(payload, "expires_epoch"));
    string comment = "MNT:" + StringSubstr(command_id, 0, 16);
    JournalAppend(command_id, "broker_uncertain", "", "submission began; reconcile before any retry");
    Trade.SetExpertMagicNumber(InpMagicNumber);
    Trade.SetAsyncMode(false);
+   Trade.SetDeviationInPoints(MathMax(0, InpMaximumDeviationPoints));
    bool ok = false;
+   double requested_price = entry;
    if(operation == "open")
    {
+      MqlTick execution_tick;
+      if(order_type == "market" && SymbolInfoTick(symbol, execution_tick))
+         requested_price = side == "buy" ? execution_tick.ask : execution_tick.bid;
       if(order_type == "market") ok = side == "buy" ? Trade.Buy(volume, symbol, 0, stop, target, comment) : Trade.Sell(volume, symbol, 0, stop, target, comment);
-      else if(order_type == "limit") ok = side == "buy" ? Trade.BuyLimit(volume, entry, symbol, stop, target, ORDER_TIME_GTC, 0, comment) : Trade.SellLimit(volume, entry, symbol, stop, target, ORDER_TIME_GTC, 0, comment);
-      else if(order_type == "stop") ok = side == "buy" ? Trade.BuyStop(volume, entry, symbol, stop, target, ORDER_TIME_GTC, 0, comment) : Trade.SellStop(volume, entry, symbol, stop, target, ORDER_TIME_GTC, 0, comment);
+      else if(order_type == "limit") ok = side == "buy" ? Trade.BuyLimit(volume, entry, symbol, stop, target, ORDER_TIME_SPECIFIED, expires_at, comment) : Trade.SellLimit(volume, entry, symbol, stop, target, ORDER_TIME_SPECIFIED, expires_at, comment);
+      else if(order_type == "stop") ok = side == "buy" ? Trade.BuyStop(volume, entry, symbol, stop, target, ORDER_TIME_SPECIFIED, expires_at, comment) : Trade.SellStop(volume, entry, symbol, stop, target, ORDER_TIME_SPECIFIED, expires_at, comment);
    }
    else if(operation == "close") ok = Trade.PositionClose(target_id);
    else if(operation == "cancel") ok = Trade.OrderDelete(target_id);
@@ -466,7 +516,14 @@ void ExecuteCommand(string payload)
    string result_status = ok ? "reconciled" : "rejected";
    string message = Trade.ResultRetcodeDescription();
    JournalAppend(command_id, result_status, ticket, message);
-   Acknowledge(command_id, result_status, ticket, message);
+   int digits = symbol == "" ? 8 : (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+   double fill_price = Trade.ResultPrice();
+   AcknowledgeEvidence(
+      command_id, result_status, ticket, message,
+      DoubleToString(requested_price, digits), DoubleToString(fill_price, digits),
+      DoubleToString(MathAbs(fill_price - requested_price), digits),
+      DoubleToString(Trade.ResultVolume(), 8), DoubleToString(stop, digits), DoubleToString(target, digits)
+   );
 }
 
 void PollCommands()
