@@ -16,6 +16,7 @@ from monatise.engines.order_flow.models import OrderFlowAssessment
 from monatise.engines.regime.models import RegimeAssessment
 from monatise.engines.rsi.models import RSIAssessment
 from monatise.engines.supply_demand.models import ZoneAssessment
+from monatise.application.risk_policy import MAX_RISK_FRACTION_PER_TRADE
 
 
 class RiskDecision(StrEnum):
@@ -69,7 +70,7 @@ class RiskRequest:
 
     account_equity: float | None = None
     risk_percent: float = 0.01
-    maximum_risk_percent: float = 0.02
+    maximum_risk_percent: float = float(MAX_RISK_FRACTION_PER_TRADE)
 
     minimum_reward_risk: float = 1.5
     maximum_stop_distance_pct: float = 0.05
