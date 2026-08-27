@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from dataclasses import replace
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -18,6 +19,7 @@ from monatise.application.ftmo_scanner import (
     publication_allowed,
     rank_ftmo_observations,
 )
+from monatise.application.registry import PRODUCTION_ENGINE_ORDER
 from monatise.application.workflows import TelegramNotifier
 
 
@@ -191,3 +193,181 @@ def test_three_ftmo_scanner_jobs_replace_legacy_scheduler_jobs():
     }
     assert not any("coin-discovery" in job_id or "altcoin" in job_id for job_id in job_ids)
     assert all(job.metadata["execution_enabled"] is False for job in scheduler.jobs)
+    assert runtime.dependencies["ftmo_stock_scan"]["scheduled"] is True
+    assert runtime.dependencies["ftmo_stock_scan"]["poll_interval_seconds"] == 1800
+    assert runtime.dependencies["ftmo_crypto_scan"]["poll_interval_seconds"] == 300
+    assert runtime.dependencies["ftmo_futures_scan"]["poll_interval_seconds"] == 900
+
+
+class _RecordingScheduler:
+    def __init__(self):
+        self.jobs = []
+
+    async def register(self, job):
+        self.jobs.append(job)
+
+
+async def _stock_runtime_async(scan):
+    scheduler = _RecordingScheduler()
+    runtime = OrchestrationRuntime.__new__(OrchestrationRuntime)
+    runtime.environment = {"MONATISE_FTMO_STOCK_SCAN_ENABLED": "true"}
+    runtime.application = SimpleNamespace(infrastructure=SimpleNamespace(scheduler=scheduler))
+    runtime.telegram = object()
+    runtime.redis = object()
+    runtime.dependencies = {}
+    runtime._run_stock_universe_scan = scan
+    await runtime._register_ftmo_stock_scanner()
+    return runtime, scheduler.jobs[0]
+
+
+def _stock_runtime(scan):
+    return asyncio.run(_stock_runtime_async(scan))
+
+
+def _stock_cycle_result(**overrides):
+    result = {
+        "deep_analysis_attempted": 0,
+        "deep_analysis_completed": 0,
+        "qualified_setups": 0,
+        "suppressed_count": 0,
+        "telegram_published": 0,
+        "proposal_published_count": 0,
+        "execution_enabled": False,
+    }
+    result.update(overrides)
+    return result
+
+
+def test_stock_scanner_records_actual_start_and_running_state():
+    async def scenario():
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def scan(_configuration, _cooldown, _namespace):
+            entered.set()
+            await release.wait()
+            return _stock_cycle_result()
+
+        runtime, job = await _stock_runtime_async(scan)
+        task = asyncio.create_task(job.task())
+        await entered.wait()
+        state = runtime.dependencies["ftmo_stock_scan"]
+        assert state["scheduled"] is True
+        assert state["running"] is True
+        assert state["last_cycle_status"] == "running"
+        assert datetime.fromisoformat(state["last_started_at"]).tzinfo is not None
+        assert state["last_success_at"] is None
+        release.set()
+        await task
+
+    asyncio.run(scenario())
+
+
+def test_stock_scanner_successful_zero_publication_cycle_is_successful(caplog):
+    async def scan(_configuration, _cooldown, _namespace):
+        return _stock_cycle_result(deep_analysis_attempted=4, deep_analysis_completed=4, suppressed_count=4)
+
+    runtime, job = _stock_runtime(scan)
+    with caplog.at_level(logging.INFO, logger="monatise.orchestration"):
+        asyncio.run(job.task())
+
+    state = runtime.dependencies["ftmo_stock_scan"]
+    assert state["running"] is False
+    assert state["last_cycle_status"] == "succeeded"
+    assert state["last_success_at"] == state["last_succeeded_at"]
+    assert state["last_cycle_duration_ms"] >= 0
+    assert state["candidate_count"] == 4
+    assert state["analysis_completed_count"] == 4
+    assert state["qualified_count"] == 0
+    assert state["suppressed_count"] == 4
+    assert state["published_count"] == 0
+    assert state["last_error"] is None
+    assert {record.message for record in caplog.records} >= {"stock_scan_started", "stock_scan_completed"}
+
+
+def test_stock_scanner_successful_qualified_cycle_records_counters():
+    async def scan(_configuration, _cooldown, _namespace):
+        return _stock_cycle_result(
+            candidate_count=5,
+            analysis_completed_count=4,
+            qualified_count=2,
+            suppressed_count=2,
+            proposal_published_count=1,
+        )
+
+    runtime, job = _stock_runtime(scan)
+    asyncio.run(job.task())
+    state = runtime.dependencies["ftmo_stock_scan"]
+    assert {
+        key: state[key]
+        for key in ("candidate_count", "analysis_completed_count", "qualified_count", "suppressed_count", "published_count")
+    } == {
+        "candidate_count": 5,
+        "analysis_completed_count": 4,
+        "qualified_count": 2,
+        "suppressed_count": 2,
+        "published_count": 1,
+    }
+
+
+def test_stock_scanner_failure_is_sanitized_and_preserves_previous_success(caplog):
+    outcomes = [_stock_cycle_result(deep_analysis_attempted=1, deep_analysis_completed=1), RuntimeError("private provider detail")]
+
+    async def scan(_configuration, _cooldown, _namespace):
+        outcome = outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    runtime, job = _stock_runtime(scan)
+    asyncio.run(job.task())
+    previous_success = runtime.dependencies["ftmo_stock_scan"]["last_success_at"]
+    with caplog.at_level(logging.WARNING, logger="monatise.orchestration"):
+        with pytest.raises(RuntimeError, match="private provider detail"):
+            asyncio.run(job.task())
+
+    state = runtime.dependencies["ftmo_stock_scan"]
+    assert state["running"] is False
+    assert state["last_cycle_status"] == "failed"
+    assert state["last_failure_at"] == state["last_failed_at"]
+    assert state["last_success_at"] == previous_success
+    assert state["last_succeeded_at"] == previous_success
+    assert state["last_error"] == "RuntimeError"
+    assert "private provider detail" not in str(state)
+    assert next(record for record in caplog.records if record.message == "stock_scan_failed").error_type == "RuntimeError"
+
+
+def test_readiness_exposes_stock_scanner_cycle_and_scheduler_state():
+    async def scan(_configuration, _cooldown, _namespace):
+        return _stock_cycle_result(candidate_count=3, analysis_completed_count=3, suppressed_count=3)
+
+    runtime, job = _stock_runtime(scan)
+    asyncio.run(job.task())
+    stock_state = runtime.dependencies["ftmo_stock_scan"]
+    mandatory = (
+        "configuration", "postgresql", "migrations", "redis", "event_bus", "state_manager",
+        "audit_repository", "audit_integrity", "audit_logging", "scheduler", "engine_registry",
+        "pipeline_orchestrator", "governance", "notifications", "coinglass", "market_data", "hierarchy_shadow",
+    )
+    runtime.dependencies.update({name: {"status": "ok"} for name in mandatory})
+    runtime.dependencies["ftmo_stock_scan"] = stock_state
+    runtime.application = SimpleNamespace(registry=SimpleNamespace(ordered=lambda: tuple(
+        SimpleNamespace(name=name) for name in PRODUCTION_ENGINE_ORDER
+    )))
+    runtime.safety = object()
+    runtime.leadership = None
+    runtime.coinglass = None
+
+    ready, payload = runtime.readiness()
+    assert ready is True
+    exposed = payload["dependencies"]["ftmo_stock_scan"]
+    assert exposed["scheduled"] is True
+    assert exposed["job"] == "ftmo-stock-scanner-telegram"
+    assert exposed["poll_interval_seconds"] == 1800
+    assert exposed["last_started_at"]
+    assert exposed["last_succeeded_at"]
+    assert exposed["last_failed_at"] is None
+    assert exposed["candidate_count"] == 3
+    assert exposed["analysis_completed_count"] == 3
+    assert exposed["suppressed_count"] == 3
+    assert exposed["published_count"] == 0
