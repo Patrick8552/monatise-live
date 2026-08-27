@@ -102,15 +102,15 @@ def test_ftmo_quote_requires_ftmo_source_and_valid_bid_ask():
         quote(source="GC futures")
 
 
-def test_shadow_intent_uses_ftmo_ask_and_limits_actual_risk_to_one_percent():
+def test_shadow_intent_uses_ftmo_ask_and_limits_actual_risk_to_three_percent():
     authority = FTMONativePriceAuthority()
     intent = authority.build_shadow_intent(setup(), quote(), specification(), account(), now=NOW)
     assert intent.entry == Decimal("2500.20")
     assert intent.stop_loss == Decimal("2490.19")
     assert intent.targets == (Decimal("2520.20"),)
-    assert intent.volume == Decimal("0.09")
-    assert intent.risk_amount == Decimal("90.09")
-    assert intent.risk_fraction < Decimal("0.01")
+    assert intent.volume == Decimal("2.99")
+    assert intent.risk_amount == Decimal("2992.99")
+    assert intent.risk_fraction < Decimal("0.03")
     assert intent.status is FTMOIntentStatus.SHADOW_VALIDATED
     assert intent.execution_enabled is False
 
@@ -180,9 +180,10 @@ def test_stop_distance_daily_loss_and_total_exposure_guards_fail_closed():
         )
 
 
-def test_policy_rejects_more_than_one_percent_risk():
-    with pytest.raises(ValueError, match="cannot exceed 1%"):
-        FTMORiskPolicy(risk_fraction=Decimal("0.011"))
+def test_policy_accepts_exact_three_percent_and_rejects_more():
+    assert FTMORiskPolicy(risk_fraction=Decimal("0.03")).risk_fraction == Decimal("0.03")
+    with pytest.raises(ValueError, match="cannot exceed 3%"):
+        FTMORiskPolicy(risk_fraction=Decimal("0.031"))
 
 
 def test_unavailable_adapter_fails_closed():

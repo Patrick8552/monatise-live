@@ -110,6 +110,33 @@ def test_confirmed_analysis_remains_notification_only():
     }) is True
 
 
+def test_every_scanner_analysis_replaces_inherited_session_with_a_fresh_check():
+    instrument = FTMO_REGISTRY.resolve("BTCUSD")
+    registry = FTMOInstrumentRegistry((instrument,))
+    published = []
+
+    async def observe(_instrument):
+        return {"ftmo_symbol": "BTCUSD", "score": 2, "direction": "long"}
+
+    async def analyze(_candidate):
+        return {
+            "decision": "BUY_WATCH", "setup_status": "confirmed", "freshness": "fresh",
+            "execution": {"enabled": False, "orders_placed": 0},
+            "market_session": "STALE_PREVIOUS_SESSION", "session_checked_at": "2000-01-01T00:00:00+00:00",
+        }
+
+    async def publish(_instrument, analysis):
+        published.append(analysis)
+
+    result = asyncio.run(FTMOScannerPipeline(registry).run(
+        FTMOAssetClass.CRYPTO, observe=observe, analyze=analyze, publish=publish,
+    ))
+    assert result.published == 1
+    assert published[0]["market_session"] != "STALE_PREVIOUS_SESSION"
+    assert published[0]["session_checked_at"] != "2000-01-01T00:00:00+00:00"
+    assert published[0]["session_source"]
+
+
 def test_registry_validation_rejects_duplicates_malformed_mappings_and_missing_provenance():
     apple = FTMO_REGISTRY.resolve("AAPL")
     with pytest.raises(ValueError, match="duplicate FTMO symbol"):

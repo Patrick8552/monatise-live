@@ -62,7 +62,6 @@ def active_environment(**changes):
         "FTMO_TELEGRAM_CONFIRMATION_REQUIRED": "true",
         "FTMO_TELEGRAM_AUTHORIZED_USER_IDS": "42",
         "FTMO_BRIDGE_SECRET": "a" * 64,
-        "FTMO_MAXIMUM_RISK_AMOUNT": "100",
     }
     value.update(changes)
     return value
@@ -153,7 +152,7 @@ def test_heartbeat_is_account_bound_and_public_status_masks_identity():
     asyncio.run(scenario())
 
 
-def test_manual_trade_always_previews_and_risk_is_minimum_of_one_percent_and_100():
+def test_manual_trade_previews_at_exact_three_percent_without_a_fixed_dollar_cap():
     async def scenario():
         control, _ = service()
         await control.accept_bridge_heartbeat(heartbeat(), now=NOW)
@@ -163,17 +162,18 @@ def test_manual_trade_always_previews_and_risk_is_minimum_of_one_percent_and_100
         )
         assert proposal["status"] == "pending_confirmation"
         assert proposal["entry"] == "2500.20"
-        assert proposal["volume"] == "0.10"
-        assert proposal["risk_amount"] == "100.00"
+        assert proposal["volume"] == "0.30"
+        assert proposal["risk_amount"] == "300.00"
+        assert proposal["risk_fraction"] == "0.03"
         assert not [value for (namespace, _), value in control.repository.store.values.items() if namespace == control.repository.COMMANDS]
 
     asyncio.run(scenario())
 
 
-def test_controlled_live_limits_cap_risk_daily_drawdown_and_open_exposure():
+def test_obsolete_dollar_caps_do_not_control_risk_but_broker_drawdown_and_exposure_do():
     async def scenario():
         environment = active_environment(
-            FTMO_RISK_FRACTION="0.0005",
+            FTMO_RISK_FRACTION="0.03",
             FTMO_MAXIMUM_RISK_AMOUNT="5",
             FTMO_MAXIMUM_DAILY_LOSS_AMOUNT="10",
             FTMO_MAXIMUM_OPEN_EXPOSURES="1",
@@ -184,11 +184,13 @@ def test_controlled_live_limits_cap_risk_daily_drawdown_and_open_exposure():
             actor="42", symbol="XAUUSD", side="buy", order_type="market",
             stop_loss="2495.20", take_profit="2510.20", now=NOW,
         )
-        assert Decimal(proposal["risk_amount"]) <= Decimal("5")
-        assert control.configuration.public_status()["maximum_daily_loss_amount"] == "10"
+        assert Decimal(proposal["risk_amount"]) == Decimal("300.00")
+        assert "maximum_risk_amount" not in control.configuration.public_status()
+        assert "maximum_daily_loss_amount" not in control.configuration.public_status()
+        assert control.configuration.public_status()["maximum_risk_percent_per_trade"] == "3.0"
         assert control.configuration.public_status()["maximum_open_exposures"] == 1
 
-        await control.accept_bridge_heartbeat(heartbeat(equity="9989"), now=NOW)
+        await control.accept_bridge_heartbeat(heartbeat(equity="9499"), now=NOW)
         with pytest.raises(FTMOMasterError, match="loss capacity"):
             await control.create_trade_proposal(
                 actor="42", symbol="XAUUSD", side="buy", order_type="market",
@@ -293,8 +295,15 @@ def test_approval_requires_kill_reset_temporary_arm_and_current_bridge_then_queu
         await control.repository.update_control(kill_switch=False)
         armed = await control.arm("42", 120, now=NOW)
         assert armed["execution_ready"] is True
+        assert armed["execution_session_armed"] is True
+        assert armed["execution_session_id"]
+        assert armed["execution_session_started_at"] == NOW.isoformat()
+        assert armed["execution_session_expiry"] == (NOW + timedelta(seconds=120)).isoformat()
         command = await control.approve(proposal["proposal_id"], "42", now=NOW)
         assert command["status"] == CommandStatus.READY.value
+        assert command["execution_session"]["execution_session_id"] == armed["execution_session_id"]
+        assert command["market_session"]["session_checked_at"] == NOW.isoformat()
+        assert command["execution_session"]["autonomous_execution_enabled"] is False
         with pytest.raises(FTMOMasterError, match="already"):
             await control.approve(proposal["proposal_id"], "42", now=NOW)
         first = await control.commands_for_bridge(now=NOW)
@@ -321,6 +330,26 @@ def test_unknown_broker_result_is_reconciliation_only_and_never_new_command():
         })
         assert result["automatic_resend"] is False
         assert await control.commands_for_bridge(now=NOW) == ()
+
+    asyncio.run(scenario())
+
+
+def test_arm_does_not_bypass_fresh_market_session_validation_at_approval():
+    async def scenario():
+        control, _ = service()
+        await control.accept_bridge_heartbeat(heartbeat(), now=NOW)
+        proposal = await control.create_trade_proposal(
+            actor="42", symbol="XAUUSD", side="buy", order_type="market",
+            stop_loss="2490.20", take_profit="2520.20", now=NOW,
+        )
+        closed = heartbeat()
+        closed["quotes"]["XAUUSD"]["trade_mode"] = "0"
+        await control.accept_bridge_heartbeat(closed, now=NOW + timedelta(seconds=1))
+        await control.repository.update_control(kill_switch=False)
+        await control.arm("42", now=NOW + timedelta(seconds=1))
+        with pytest.raises(FTMOMasterError, match="market session"):
+            await control.approve(proposal["proposal_id"], "42", now=NOW + timedelta(seconds=1))
+        assert await control.repository.pending_commands() == ()
 
     asyncio.run(scenario())
 
@@ -367,8 +396,7 @@ def test_production_bridge_endpoint_requires_valid_hmac_and_rejects_replay():
 def test_signal_approval_reprices_from_fresh_ftmo_ask_and_preserves_lineage():
     async def scenario():
         control, store = service(active_environment(
-            FTMO_RISK_FRACTION="0.0005", FTMO_MAXIMUM_RISK_AMOUNT="5",
-            FTMO_MAXIMUM_DAILY_LOSS_AMOUNT="10",
+            FTMO_RISK_FRACTION="0.0005",
         ))
         await control.accept_bridge_heartbeat(heartbeat(), now=NOW)
         proposal = await control.create_signal_proposal(
@@ -441,7 +469,7 @@ def test_sell_approval_uses_current_ftmo_bid_and_excessive_move_invalidates_sign
 
 def test_coinglass_mapping_is_explicit_and_unsupported_crypto_fails_closed():
     async def scenario():
-        control, _ = service(active_environment(FTMO_MAXIMUM_RISK_AMOUNT="5", FTMO_RISK_FRACTION="0.0005"))
+        control, _ = service(active_environment(FTMO_RISK_FRACTION="0.0005"))
         crypto_quote = heartbeat()
         crypto_quote["quotes"] = {
             "BTCUSD": {
@@ -475,7 +503,7 @@ def test_coinglass_mapping_is_explicit_and_unsupported_crypto_fails_closed():
 def test_rejection_duplicate_supersession_minimum_lot_and_broker_evidence_are_fail_closed():
     async def scenario():
         control, store = service(active_environment(
-            FTMO_RISK_FRACTION="0.0005", FTMO_MAXIMUM_RISK_AMOUNT="5",
+            FTMO_RISK_FRACTION="0.0005",
         ))
         await control.accept_bridge_heartbeat(heartbeat(), now=NOW)
         rejected = await control.create_signal_proposal(
@@ -551,7 +579,7 @@ def test_rejection_duplicate_supersession_minimum_lot_and_broker_evidence_are_fa
 def test_authenticated_heartbeat_reconciles_position_open_and_closed_lifecycle():
     async def scenario():
         control, store = service(active_environment(
-            FTMO_RISK_FRACTION="0.0005", FTMO_MAXIMUM_RISK_AMOUNT="5",
+            FTMO_RISK_FRACTION="0.0005",
         ))
         await control.accept_bridge_heartbeat(heartbeat(), now=NOW)
         proposal = await control.create_trade_proposal(
@@ -595,7 +623,7 @@ def test_authenticated_heartbeat_reconciles_position_open_and_closed_lifecycle()
 def test_expiry_restart_reconnect_and_broker_rejection_preserve_fail_closed_lineage():
     async def scenario():
         control, store = service(active_environment(
-            FTMO_RISK_FRACTION="0.0005", FTMO_MAXIMUM_RISK_AMOUNT="5",
+            FTMO_RISK_FRACTION="0.0005",
         ))
         await control.accept_bridge_heartbeat(heartbeat(), now=NOW)
         expired = await control.create_signal_proposal(
