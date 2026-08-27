@@ -288,18 +288,20 @@ def test_quote_clock_contract_preserves_broker_provenance_and_fails_closed_for_f
     asyncio.run(scenario())
 
 
-def test_small_future_clock_skew_is_tolerated_but_quotes_older_than_five_seconds_are_not():
+def test_any_future_quote_is_rejected_and_quotes_older_than_five_seconds_are_not():
     async def scenario():
         control, _ = service()
         permitted = heartbeat()
         permitted["quotes"]["XAUUSD"]["quote_observed_at_utc"] = (NOW + timedelta(milliseconds=500)).isoformat()
         await control.accept_bridge_heartbeat(permitted, now=NOW)
-        proposal = await control.create_trade_proposal(
-            actor="42", symbol="XAUUSD", side="buy", order_type="market",
-            stop_loss="2490", take_profit="2520", now=NOW,
-        )
-        assert proposal["quote_age_ms"] == "-500"
-        assert proposal["quote_freshness_state"] == "FRESH"
+        bridge = await control.repository.bridge()
+        assert bridge["quotes"]["XAUUSD"]["computed_quote_age_ms"] == -500
+        assert bridge["quotes"]["XAUUSD"]["quote_freshness_state"] == "CLOCK_SKEW_DETECTED"
+        with pytest.raises(FTMOMasterError, match="CLOCK_SKEW_DETECTED"):
+            await control.create_trade_proposal(
+                actor="42", symbol="XAUUSD", side="buy", order_type="market",
+                stop_loss="2490", take_profit="2520", now=NOW,
+            )
 
         stale = heartbeat()
         stale["quotes"]["XAUUSD"]["quote_observed_at_utc"] = (NOW - timedelta(seconds=6)).isoformat()
@@ -313,7 +315,7 @@ def test_small_future_clock_skew_is_tolerated_but_quotes_older_than_five_seconds
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("offset_seconds,allowed", [(-1, True), (-5, True), (-5.001, False), (1, True), (3600, False)])
+@pytest.mark.parametrize("offset_seconds,allowed", [(-1, True), (-5, True), (-5.001, False), (1, False), (3600, False)])
 def test_quote_freshness_boundaries_use_trusted_utc_receipt_time(offset_seconds, allowed):
     async def scenario():
         control, _ = service()
@@ -518,25 +520,26 @@ def test_production_telegram_analysis_publishes_waiting_then_durable_ftmo_propos
             }
             self.ftmo_registry, self.ftmo_master, self.telegram = FTMO_REGISTRY, control, TelegramRecorder()
 
-        async def analyse(self, symbol, **_kwargs):
-            assert symbol == "BTC"
+        async def analyse_forex(self, instrument):
+            assert instrument.ftmo_symbol == "EUR/USD"
             return {
-                "symbol": "BTC", "classification": "trend", "direction": "long",
-                "entry_confirmation_status": "confirmed", "entry": 65000, "invalidation": 64000,
-                "target": 67000, "targets": [67000], "interval": "15m", "score": 8,
-                "score_threshold": 7, "conviction": 0.8,
+                "asset": "EUR/USD", "decision": "BUY_WATCH", "direction": "LONG",
+                "setup_status": "confirmed", "entry": 1.1650, "stop_loss": 1.1600,
+                "target": 1.1750, "targets": [1.1750], "timeframe": "1h regime / 15m trigger",
+                "score": 8, "score_threshold": 7, "conviction": 0.8,
                 "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat(),
-                "current_reference_price": 65000, "market_state": "trend_up",
-                "derivatives": {"open_interest": 10_000_000}, "market_structure": {"state": "bullish"},
+                "current_price": 1.1650, "market_state": "trend_up",
+                "analysis_provider": "yahoo_finance", "analysis_instrument": "EURUSD=X",
+                "reasons": ["confirmed FX breakout"],
             }
 
     async def scenario():
         control, _ = service()
         observed = datetime.now(timezone.utc)
         payload = heartbeat()
-        payload["quotes"] = {"BTCUSD": {
-            "bid": "65000.00", "ask": "65000.50", "timestamp": observed.isoformat(),
-            "digits": 2, "tick_size": "0.01", "tick_value": "0.01",
+        payload["quotes"] = {"EURUSD": {
+            "bid": "1.16490", "ask": "1.16510", "timestamp": observed.isoformat(),
+            "digits": 5, "tick_size": "0.00001", "tick_value": "1.00",
             "volume_min": "0.01", "volume_max": "50", "volume_step": "0.01", "stops_level": "10",
             "trade_mode": "full",
         }}
@@ -546,7 +549,7 @@ def test_production_telegram_analysis_publishes_waiting_then_durable_ftmo_propos
         app._telegram_command_context = {
             "update_id": 901, "message_id": 77, "user_id": "42", "chat_type": "private", "callback_query_id": "",
         }
-        await app._handle_telegram_command("/analyze BTC")
+        await app._handle_telegram_command("/analyze EURUSD")
 
         request_records = [record for (namespace, _), record in control.repository.store.values.items() if namespace == control.repository.TELEGRAM_REQUESTS]
         request = request_records[0].value
@@ -568,7 +571,7 @@ def test_production_telegram_analysis_publishes_waiting_then_durable_ftmo_propos
         })
         assert await app._process_quote_request_once() is True
         assert len(runtime.telegram.proposals) == 1  # durable proposal message identity prevents a resend
-        await app._handle_telegram_command("/analyze BTC")
+        await app._handle_telegram_command("/analyze EURUSD")
         assert len(await control.repository.quote_requests()) == 1
         assert len(await control.repository.proposals()) == 1
 

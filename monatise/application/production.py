@@ -151,7 +151,7 @@ class ProductionASGI(OrchestrationASGI):
     }
     STOCK_SYMBOL_PATTERN = re.compile(r"^[A-Z][A-Z0-9._-]{0,11}$", re.IGNORECASE)
     TELEGRAM_COMMAND_PATTERN = re.compile(r"^/(?:analyse|analyze|analysis)(?:@[A-Za-z0-9_]+)?(?:\s+(.+))?$", re.IGNORECASE)
-    TELEGRAM_ALIAS_PATTERN = re.compile(r"^/(gold|btc|eth)(?:@[A-Za-z0-9_]+)?$", re.IGNORECASE)
+    TELEGRAM_ALIAS_PATTERN = re.compile(r"^/(gold)(?:@[A-Za-z0-9_]+)?$", re.IGNORECASE)
 
     def __init__(self, runtime: OrchestrationRuntime | None = None, static_dir: Path | None = None) -> None:
         super().__init__(runtime or ProductionRuntime())
@@ -689,8 +689,9 @@ class ProductionASGI(OrchestrationASGI):
             return
         help_text = (
             "Monatise commands\n"
-            "Fresh analysis: /analyze XAUUSD | BTC | ETH | US100.cash | AAPL\n"
-            "Aliases: /gold /btc /eth /analysis XAUUSD\n"
+            "Fresh analysis: /analyze EURUSD | XAUUSD | US100.cash | AAPL\n"
+            "Asset classes: FTMO forex, futures-linked CFDs, and stocks only\n"
+            "Alias: /gold | /analysis EURUSD\n"
             "FTMO: /status /bridge /account /positions /orders\n"
             "Trade preview: /trade XAUUSD buy market sl=LEVEL tp=LEVEL\n"
             "Control: /approve ID /reject ID /arm [seconds] /disarm /kill\n"
@@ -718,7 +719,7 @@ class ProductionASGI(OrchestrationASGI):
         parts = raw_asset.strip().upper().split()
         symbol = parts[0].lstrip("$") if parts else ""
         requested_class = parts[1].casefold() if len(parts) == 2 else None
-        if not (match or alias) or not self.STOCK_SYMBOL_PATTERN.fullmatch(symbol) or len(parts) > 2 or requested_class not in {None, "crypto", "stock"}:
+        if not (match or alias) or not self.STOCK_SYMBOL_PATTERN.fullmatch(symbol) or len(parts) > 2 or requested_class not in {None, "forex", "stock"}:
             await self._send_owned_telegram_response(notifier, help_text, ownership_check)
             return
         await self._handle_telegram_analysis_request(symbol, requested_class=requested_class, ownership_check=ownership_check)
@@ -843,10 +844,14 @@ class ProductionASGI(OrchestrationASGI):
 
         try:
             resolved = resolve_telegram_instrument(requested_symbol, getattr(self.runtime, "ftmo_registry", FTMO_REGISTRY))
+            if resolved.asset_class is FTMOAssetClass.CRYPTO:
+                raise TelegramAnalysisError("Crypto is disabled for FTMO Telegram. Use forex, futures-linked CFDs, or stocks.")
             if requested_class == "crypto" and resolved.asset_class is not FTMOAssetClass.CRYPTO:
                 raise TelegramAnalysisError("Instrument mapping could not be verified for crypto.")
             if requested_class == "stock" and resolved.asset_class is not FTMOAssetClass.STOCK:
                 raise TelegramAnalysisError("Instrument mapping could not be verified for stocks.")
+            if requested_class == "forex" and resolved.asset_class is not FTMOAssetClass.FOREX:
+                raise TelegramAnalysisError("Instrument mapping could not be verified for forex.")
         except (TelegramAnalysisError, KeyError, ValueError) as exc:
             response = f"ANALYSIS NOT STARTED\nInstrument: {requested_symbol}\nReason: {exc}"
             if repository is not None and hasattr(repository, "finish_telegram_analysis_request"):
@@ -880,6 +885,8 @@ class ProductionASGI(OrchestrationASGI):
                 )
             elif resolved.asset_class is FTMOAssetClass.STOCK:
                 raw = await asyncio.wait_for(self.runtime.analyse_stock(resolved.analysis_symbol), timeout=90)
+            elif resolved.asset_class is FTMOAssetClass.FOREX:
+                raw = await asyncio.wait_for(self.runtime.analyse_forex(resolved.instrument), timeout=90)
             else:
                 raw = await asyncio.wait_for(
                     self.runtime.analyse_ftmo_futures_instrument(resolved.instrument), timeout=90,

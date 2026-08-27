@@ -89,6 +89,10 @@ def resolve_telegram_instrument(raw: str, registry: FTMOInstrumentRegistry) -> R
     if instrument.asset_class is FTMOAssetClass.CRYPTO:
         provider, analysis_symbol = "coinglass", instrument.underlying_symbol
         analysis_instrument = f"{instrument.provider_symbol or instrument.underlying_symbol}USDT"
+    elif instrument.asset_class is FTMOAssetClass.FOREX:
+        provider = instrument.market_data_provider
+        analysis_symbol = instrument.provider_symbol or instrument.underlying_symbol
+        analysis_instrument = analysis_symbol
     elif instrument.asset_class is FTMOAssetClass.STOCK:
         provider, analysis_symbol = instrument.market_data_provider, instrument.provider_symbol or instrument.underlying_symbol
         analysis_instrument = analysis_symbol
@@ -171,7 +175,7 @@ def normalize_analysis(
         current_price = raw.get("current_reference_price") or (raw.get("evidence") or {}).get("current_price") or raw.get("entry")
         provider_evidence = raw.get("derivatives") or (raw.get("evidence") or {}).get("derivatives") or {}
         reasons = list(raw.get("blockers") or raw.get("reasons") or raw.get("price_action_reasons") or [])
-    elif asset_class is FTMOAssetClass.STOCK:
+    elif asset_class in {FTMOAssetClass.STOCK, FTMOAssetClass.FOREX}:
         stock_decision = str(raw.get("decision") or "NO_TRADE").upper()
         direction = "long" if stock_decision == "BUY_WATCH" else "short" if stock_decision == "SELL_WATCH" else "none"
         qualified = raw.get("setup_status") == "confirmed" and direction in {"long", "short"}

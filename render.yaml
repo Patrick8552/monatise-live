@@ -40,7 +40,7 @@ services:
       - key: MONATISE_REDIS_NAMESPACE
         value: monatise:production-analysis
       - key: MONATISE_SCHEDULED_ANALYSIS_ENABLED
-        value: true
+        value: false
       - key: MONATISE_DIRECTIONAL_ANALYSIS_SYMBOLS
         value: BTC,ETH,SOL,BNB,XRP,DOGE,ADA,AVAX,LINK,SUI
       - key: MONATISE_SCHEDULED_ANALYSIS_INTERVAL_SECONDS
@@ -52,12 +52,16 @@ services:
       - key: MONATISE_OPENCLAW_CACHE_TTL_SECONDS
         value: 60
       - key: MONATISE_HIERARCHICAL_SHADOW_ENABLED
-        value: true
+        value: false
       - key: MONATISE_HIERARCHICAL_TELEGRAM_PUBLISH_ENABLED
-        value: true
+        value: false
       - key: MONATISE_TELEGRAM_NOTIFICATIONS_ENABLED
         value: true
       - key: MONATISE_TELEGRAM_INBOUND_ENABLED
+        value: true
+      - key: MONATISE_FTMO_CRYPTO_SCAN_ENABLED
+        value: false
+      - key: MONATISE_FTMO_NON_CRYPTO_ONLY
         value: true
       - key: MONATISE_FTMO_ACCOUNT_ENVIRONMENT
         value: demo
@@ -88,7 +92,7 @@ services:
       - key: FTMO_MINIMUM_REWARD_RISK
         value: 1
       - key: FTMO_QUOTE_FUTURE_TOLERANCE_SECONDS
-        value: 1
+        value: 0
       - key: FTMO_ACCOUNT_ID
         sync: false
       - key: FTMO_SERVER

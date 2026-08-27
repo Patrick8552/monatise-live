@@ -118,7 +118,7 @@ class FTMOMasterConfiguration:
     arm_max_seconds: int = 900
     heartbeat_max_age_seconds: int = 30
     quote_max_age_seconds: int = 5
-    quote_future_tolerance_seconds: Decimal = Decimal("1")
+    quote_future_tolerance_seconds: Decimal = Decimal("0")
     maximum_spread_ticks: Decimal = Decimal("80")
     maximum_entry_deviation_bps: Decimal = Decimal("50")
     minimum_reward_risk: Decimal = Decimal("1")
@@ -149,7 +149,7 @@ class FTMOMasterConfiguration:
             quote_max_age_seconds=max(1, min(30, int(_env(environment, "FTMO_QUOTE_MAX_AGE_SECONDS", "5")))),
             quote_future_tolerance_seconds=min(
                 Decimal("5"),
-                max(ZERO, _decimal(_env(environment, "FTMO_QUOTE_FUTURE_TOLERANCE_SECONDS", "1"), "quote future tolerance")),
+                max(ZERO, _decimal(_env(environment, "FTMO_QUOTE_FUTURE_TOLERANCE_SECONDS", "0"), "quote future tolerance")),
             ),
             maximum_spread_ticks=_decimal(_env(environment, "FTMO_MAXIMUM_SPREAD_TICKS", "80"), "maximum spread ticks", positive=True),
             maximum_entry_deviation_bps=_decimal(

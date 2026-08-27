@@ -26,6 +26,7 @@ _SYMBOL_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/]*$")
 class FTMOAssetClass(StrEnum):
     STOCK = "stock"
     FUTURES_LINKED = "futures_linked_cfd"
+    FOREX = "forex"
     CRYPTO = "crypto"
 
 
@@ -141,7 +142,7 @@ class FTMOInstrumentRegistry:
         with urlopen(request, timeout=timeout) as response:  # noqa: S310 - fixed official FTMO endpoint
             payload = json.loads(response.read().decode("utf-8"))
         rows = payload.get("data", {}).get("symbols", []) if isinstance(payload, dict) else []
-        relevant_classes = {"Equities CFD", "Crypto CFD", "Cash CFD", "Metals CFD"}
+        relevant_classes = {"Equities CFD", "Crypto CFD", "Cash CFD", "Metals CFD", "Forex"}
         live = {
             str(row.get("code") or "").casefold(): bool(row.get("active"))
             for row in rows if isinstance(row, dict) and row.get("assetClass") in relevant_classes and row.get("code")
@@ -159,6 +160,16 @@ def _stock(symbol: str, name: str, underlying: str, exchange: str, currency: str
 
 def _crypto(symbol: str, name: str, underlying: str) -> FTMOInstrument:
     return FTMOInstrument(FTMOAssetClass.CRYPTO, symbol, name, underlying, f"{underlying}/USD crypto spot CFD", "FTMO liquidity providers", "coinglass", underlying, None, None, "FTMO crypto schedule; weekend maintenance varies", "USD", True, "active", REGISTRY_SOURCE, REGISTRY_VERSION, REGISTRY_VERIFIED_AT)
+
+
+def _forex(symbol: str, name: str) -> FTMOInstrument:
+    base, quote = symbol.split("/", 1)
+    return FTMOInstrument(
+        FTMOAssetClass.FOREX, symbol, name, symbol, f"{base}/{quote} spot FX",
+        "FTMO liquidity providers", "yahoo_finance", f"{base}{quote}=X", None, None,
+        "24x5; FTMO broker maintenance and rollover breaks apply", quote, True,
+        "active", REGISTRY_SOURCE, REGISTRY_VERSION, REGISTRY_VERIFIED_AT,
+    )
 
 
 def _future(symbol: str, name: str, underlying: str, venue: str, root: str, micro: str | None, currency: str) -> FTMOInstrument:
@@ -216,6 +227,23 @@ _CRYPTO_ROWS = (
     ("UNIUSD", "Uniswap vs US Dollar, Spot CFD", "UNI"), ("XTZUSD", "Tezos vs US Dollar, Spot CFD", "XTZ"),
 )
 
+_FOREX_ROWS = (
+    ("AUD/CAD", "Australian Dollar vs Canadian Dollar"), ("AUD/JPY", "Australian Dollar vs Japanese Yen"),
+    ("AUD/NZD", "Australian Dollar vs New Zealand Dollar"), ("AUD/CHF", "Australian Dollar vs Swiss Franc"),
+    ("AUD/USD", "Australian Dollar vs US Dollar"), ("GBP/AUD", "Great Britain Pound vs Australian Dollar"),
+    ("GBP/CAD", "Great Britain Pound vs Canadian Dollar"), ("GBP/JPY", "Great Britain Pound vs Japanese Yen"),
+    ("GBP/NZD", "Great Britain Pound vs New Zealand Dollar"), ("GBP/CHF", "Great Britain Pound vs Swiss Franc"),
+    ("GBP/USD", "Great Britain Pound vs US Dollar"), ("CAD/JPY", "Canadian Dollar vs Japanese Yen"),
+    ("CAD/CHF", "Canadian Dollar vs Swiss Franc"), ("EUR/AUD", "Euro vs Australian Dollar"),
+    ("EUR/GBP", "Euro vs Great Britain Pound"), ("EUR/CAD", "Euro vs Canadian Dollar"),
+    ("EUR/JPY", "Euro vs Japanese Yen"), ("EUR/CHF", "Euro vs Swiss Franc"),
+    ("EUR/USD", "Euro vs United States Dollar"), ("EUR/NZD", "Euro vs New Zealand Dollar"),
+    ("NZD/CAD", "New Zealand Dollar vs Canadian Dollar"), ("NZD/CHF", "New Zealand Dollar vs Swiss Franc"),
+    ("NZD/JPY", "New Zealand Dollar vs Japanese Yen"), ("NZD/USD", "New Zealand Dollar vs US Dollar"),
+    ("CHF/JPY", "Swiss Franc vs Japanese Yen"), ("USD/CAD", "US Dollar vs Canadian Dollar"),
+    ("USD/CHF", "US Dollar vs Swiss Franc"), ("USD/JPY", "US Dollar vs Japanese Yen"),
+)
+
 _FUTURES_ROWS = (
     ("XAG/USD", "Silver vs US Dollar, Spot CFD", "Silver", "COMEX", "SI", "SIL", "USD"),
     ("XAG/EUR", "Silver vs Euro, Spot CFD", "Silver", "COMEX", "SI", "SIL", "EUR"),
@@ -266,8 +294,9 @@ def _builtins() -> tuple[FTMOInstrument, ...]:
             exchange = "NASDAQ" if symbol in _US_NASDAQ else "NYSE"
             stocks.append(_stock(symbol, name, symbol, exchange, currency, "alpaca", symbol))
     crypto = [_crypto(*row) for row in _CRYPTO_ROWS]
+    forex = [_forex(*row) for row in _FOREX_ROWS]
     futures = [_future(*row) for row in _FUTURES_ROWS]
-    return tuple((*stocks, *futures, *crypto))
+    return tuple((*stocks, *futures, *forex, *crypto))
 
 
 FTMO_REGISTRY = FTMOInstrumentRegistry(_builtins())

@@ -26,8 +26,9 @@ from monatise.application.workflows import TelegramNotifier
 def test_registry_contains_complete_current_ftmo_scanner_universes():
     assert len(FTMO_REGISTRY.for_asset_class(FTMOAssetClass.STOCK)) == 59
     assert len(FTMO_REGISTRY.for_asset_class(FTMOAssetClass.FUTURES_LINKED)) == 34
+    assert len(FTMO_REGISTRY.for_asset_class(FTMOAssetClass.FOREX)) == 28
     assert len(FTMO_REGISTRY.for_asset_class(FTMOAssetClass.CRYPTO)) == 30
-    assert len(FTMO_REGISTRY.all()) == 123
+    assert len(FTMO_REGISTRY.all()) == 151
     assert all(item.source and item.registry_version and item.last_verified_at.tzinfo for item in FTMO_REGISTRY.all())
 
 

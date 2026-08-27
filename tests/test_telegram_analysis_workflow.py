@@ -74,7 +74,7 @@ class Master:
     async def execution_symbol_for(self, instrument, **_kwargs):
         candidates = {
             "XAU/USD": "XAUUSD", "BTCUSD": "BTCUSD", "ETHUSD": "ETHUSD",
-            "US100.cash": "US100.cash", "AAPL": "AAPL",
+            "US100.cash": "US100.cash", "AAPL": "AAPL", "EUR/USD": "EURUSD",
         }
         return candidates[instrument.ftmo_symbol]
 
@@ -169,6 +169,17 @@ class Runtime:
             "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat(),
         }
 
+    async def analyse_forex(self, instrument):
+        self.calls.append(("forex", instrument.provider_symbol, {}))
+        return {
+            "asset": instrument.ftmo_symbol, "decision": "BUY_WATCH", "direction": "LONG",
+            "setup_status": "confirmed", "entry": 1.165, "stop_loss": 1.16, "target": 1.175,
+            "targets": [1.175], "score": 8, "score_threshold": 7, "current_price": 1.165,
+            "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat(),
+            "analysis_provider": "yahoo_finance", "analysis_instrument": instrument.provider_symbol,
+            "reasons": ["confirmed FX breakout"],
+        }
+
     async def analyse_ftmo_futures_instrument(self, instrument):
         self.calls.append(("futures", instrument.futures_symbol, {}))
         return {
@@ -194,6 +205,7 @@ def run_request(runtime, text, *, update_id=1, user_id="42", chat_type="private"
     ("btc", "BTCUSD"), ("bitcoin", "BTCUSD"), ("BTCUSDT", "BTCUSD"),
     ("eth", "ETHUSD"), ("nasdaq", "US100.cash"), ("nq", "US100.cash"),
     ("us100", "US100.cash"), ("US100.cash", "US100.cash"), ("AAPL", "AAPL"),
+    ("EURUSD", "EUR/USD"), ("USDJPY", "USD/JPY"),
 ])
 def test_supported_aliases_resolve_without_guessing(alias, canonical):
     assert resolve_telegram_instrument(alias, FTMO_REGISTRY).canonical == canonical
@@ -219,29 +231,22 @@ def test_request_and_signal_identities_are_deterministic_and_immutable():
     assert signal_identity(*first, setup) != signal_identity(*first, {**setup, "targets": [1.3]})
 
 
-def test_analyze_btc_runs_fresh_coinglass_analysis_and_creates_linked_proposal():
+def test_analyze_btc_is_disabled_for_ftmo_telegram():
     runtime = Runtime()
     run_request(runtime, "/analyze BTC", update_id=20)
-    assert runtime.calls[0][0:2] == ("crypto", "BTC")
-    assert runtime.calls[0][2]["notify"] is False
+    assert runtime.calls == []
+    assert runtime.ftmo_master.proposals == []
+    assert "Crypto is disabled" in runtime.telegram.messages[-1]
+
+
+def test_analyze_forex_runs_fresh_provider_path_and_creates_linked_proposal():
+    runtime = Runtime()
+    run_request(runtime, "/analyze EURUSD", update_id=120)
+    assert runtime.calls[0][0:2] == ("forex", "EURUSD=X")
     analysis = next(iter(runtime.ftmo_master.repository.analyses.values()))
-    proposal = runtime.ftmo_master.proposals[0]
-    assert analysis["analysis_provider"] == "coinglass"
-    assert analysis["analysis_instrument"] == "BTCUSDT"
-    assert analysis["session"]["session_checked_at"]
-    assert proposal["analysis_id"] == analysis["analysis_id"]
-    assert proposal["telegram_request_id"] == analysis["request_id"]
-    assert runtime.telegram.proposals[0][0] == "a1b2c3d4e5f6"
-    assert "MONATISE ANALYSIS" in runtime.telegram.messages[-1]
-    request = next(iter(runtime.ftmo_master.repository.requests.values()))
-    assert request["request_id"] == analysis["request_id"]
-    assert request["analysis_id"] == analysis["analysis_id"]
-    assert request["signal_id"] == proposal["signal_id"]
-    assert request["proposal_id"] == "a1b2c3d4e5f6"
-    assert request["analysis_telegram_message_id"] == 102
-    assert request["proposal_telegram_message_id"] == 201
-    assert request["telegram_message_id"] == 201
-    assert runtime.ftmo_master.repository.proposal_telegram_message == ("a1b2c3d4e5f6", 201)
+    assert analysis["analysis_provider"] == "yahoo_finance"
+    assert analysis["execution_registry_symbol"] == "EUR/USD"
+    assert runtime.ftmo_master.proposals[0]["analysis_id"] == analysis["analysis_id"]
 
 
 def test_gold_alias_runs_fresh_futures_provider_path():
@@ -259,14 +264,15 @@ def test_analysis_alias_runs_stock_provider_path():
 
 
 def test_no_trade_returns_full_analysis_without_approval_action():
-    raw = qualified_crypto()
-    raw.update({"classification": "no_trade", "direction": "none", "entry_confirmation_status": "pending", "blockers": ["CVD conflicts with structure"]})
-    runtime = Runtime(raw)
-    run_request(runtime, "/btc", update_id=23)
+    runtime = Runtime()
+    async def no_trade(_instrument):
+        return {"asset": "EUR/USD", "decision": "NO_TRADE", "direction": "NONE", "setup_status": "suppressed", "score": 4, "score_threshold": 7, "reasons": ["FX structure is inconclusive"]}
+    runtime.analyse_forex = no_trade
+    run_request(runtime, "/analyze EURUSD", update_id=23)
     assert runtime.ftmo_master.proposals == []
     assert runtime.telegram.proposals == []
     assert "Decision: NO_TRADE" in runtime.telegram.messages[-1]
-    assert "CVD conflicts" in runtime.telegram.messages[-1]
+    assert "FX structure is inconclusive" in runtime.telegram.messages[-1]
     request = next(iter(runtime.ftmo_master.repository.requests.values()))
     assert request["proposal_state"] == "NO_TRADE"
     assert request["proposal_id"] is None
@@ -274,10 +280,11 @@ def test_no_trade_returns_full_analysis_without_approval_action():
 
 
 def test_waiting_for_entry_zone_does_not_create_market_proposal():
-    raw = qualified_crypto()
-    raw.update({"entry": None, "entry_zone": {"low": 64000, "high": 64500}, "current_reference_price": 65000})
-    runtime = Runtime(raw)
-    run_request(runtime, "/btc", update_id=24)
+    runtime = Runtime()
+    async def waiting(_instrument):
+        return {"asset": "EUR/USD", "decision": "BUY_WATCH", "direction": "LONG", "setup_status": "confirmed", "entry": None, "entry_zone": {"low": 1.16, "high": 1.162}, "current_price": 1.165, "stop_loss": 1.155, "target": 1.175, "targets": [1.175], "score": 8, "score_threshold": 7, "expires_at": (datetime.now(timezone.utc)+timedelta(minutes=30)).isoformat()}
+    runtime.analyse_forex = waiting
+    run_request(runtime, "/analyze EURUSD", update_id=24)
     assert runtime.ftmo_master.proposals == []
     assert "WAITING FOR ENTRY ZONE" in runtime.telegram.messages[-1]
     request = next(iter(runtime.ftmo_master.repository.requests.values()))
@@ -287,15 +294,15 @@ def test_waiting_for_entry_zone_does_not_create_market_proposal():
 
 def test_unknown_user_cannot_start_analysis():
     runtime = Runtime()
-    run_request(runtime, "/analyze BTC", update_id=25, user_id="99")
+    run_request(runtime, "/analyze EURUSD", update_id=25, user_id="99")
     assert runtime.calls == []
     assert "not authorized" in runtime.telegram.messages[-1]
 
 
 def test_duplicate_worker_retry_reuses_completed_response_without_new_analysis_or_order():
     runtime = Runtime()
-    app = run_request(runtime, "/analyze BTC", update_id=26)
-    asyncio.run(app._handle_telegram_command("/analyze BTC"))
+    app = run_request(runtime, "/analyze EURUSD", update_id=26)
+    asyncio.run(app._handle_telegram_command("/analyze EURUSD"))
     assert len(runtime.calls) == 1
     assert len(runtime.ftmo_master.proposals) == 1
 
@@ -306,8 +313,8 @@ def test_provider_failure_is_deterministic_and_never_creates_proposal():
     async def fail(*_args, **_kwargs):
         raise RuntimeError("provider secret detail")
 
-    runtime.analyse = fail
-    run_request(runtime, "/analyze BTC", update_id=27)
+    runtime.analyse_forex = fail
+    run_request(runtime, "/analyze EURUSD", update_id=27)
     assert runtime.ftmo_master.proposals == []
     assert "ANALYSIS FAILED" in runtime.telegram.messages[-1]
     assert "secret detail" not in runtime.telegram.messages[-1]
@@ -315,10 +322,9 @@ def test_provider_failure_is_deterministic_and_never_creates_proposal():
 
 def test_analysis_records_session_provenance_and_autonomy_off():
     runtime = Runtime()
-    run_request(runtime, "/analyze BTC", update_id=28)
+    run_request(runtime, "/analyze EURUSD", update_id=28)
     analysis = next(iter(runtime.ftmo_master.repository.analyses.values()))
-    assert analysis["market_data_provenance"]["provider"] == "coinglass"
-    assert analysis["market_data_provenance"]["evidence"]["open_interest"] == 10_000_000
+    assert analysis["market_data_provenance"]["provider"] == "yahoo_finance"
     assert analysis["session"]["session_source"]
     assert analysis["autonomous_execution"] is False
 

@@ -33,8 +33,10 @@ from monatise.adapters.alpaca import AlpacaMarketDataAdapter
 from monatise.adapters.quiver import QuiverAdapter, normalize_quiver_symbol
 from monatise.adapters.finnhub import FinnhubAdapter, FinnhubAdapterError
 from monatise.adapters.flashalpha import FlashAlphaAdapter, FlashAlphaAdapterError
+from monatise.adapters.yahoo_forex import YahooForexAdapter
 from monatise.application.stock_analysis import build_stock_analysis
 from monatise.application.flashalpha_analysis import build_flashalpha_futures_analysis
+from monatise.application.forex_analysis import build_forex_analysis
 from monatise.application.stock_universe import StockCandidate, StockUniverseConfiguration, build_technical_stock_setup, rank_stock_universe
 from monatise.application.universe_discovery import rank_significant_futures_universe
 from monatise.application.ftmo_registry import FTMOAssetClass, FTMOInstrumentRegistry, FTMO_REGISTRY
@@ -1979,6 +1981,17 @@ class OrchestrationRuntime:
             telegram_token = self.environment.get("MONATISE_TELEGRAM_BOT_TOKEN", "")
             telegram_chat = self.environment.get("MONATISE_TELEGRAM_CHAT_ID", "")
             telegram_notifications_enabled = _true(self.environment.get("MONATISE_TELEGRAM_NOTIFICATIONS_ENABLED", "false"))
+            # The production FTMO/Telegram scope is deliberately non-crypto.
+            # Enforce it in the runtime as well as the Render Blueprint so a
+            # stale dashboard environment cannot revive legacy crypto jobs.
+            if _true(self.environment.get("MONATISE_FTMO_NON_CRYPTO_ONLY", "true")):
+                self.environment = {
+                    **self.environment,
+                    "MONATISE_SCHEDULED_ANALYSIS_ENABLED": "false",
+                    "MONATISE_HIERARCHICAL_SHADOW_ENABLED": "false",
+                    "MONATISE_HIERARCHICAL_TELEGRAM_PUBLISH_ENABLED": "false",
+                    "MONATISE_FTMO_CRYPTO_SCAN_ENABLED": "false",
+                }
             if not telegram_notifications_enabled:
                 self.environment = {
                     **self.environment,
@@ -2442,6 +2455,26 @@ class OrchestrationRuntime:
             "expires_at": (observed + timedelta(minutes=validity_minutes)).isoformat(),
             "freshness": "fresh",
             "publication_valid": True,
+        })
+        return analysis
+
+    async def analyse_forex(self, instrument: Any) -> dict[str, Any]:
+        """Run read-only multi-timeframe analysis for one verified FTMO FX pair."""
+        if instrument.asset_class is not FTMOAssetClass.FOREX or not instrument.provider_symbol:
+            raise ValueError("instrument is not a verified FTMO forex pair")
+        adapter = YahooForexAdapter(timeout=max(2.0, float(self.environment.get("MONATISE_FOREX_TIMEOUT_SECONDS", "10"))))
+        hourly, trigger = await asyncio.gather(
+            asyncio.to_thread(adapter.candles, instrument.provider_symbol, interval="1h", range_="1mo", limit=240),
+            asyncio.to_thread(adapter.candles, instrument.provider_symbol, interval="15m", range_="5d", limit=240),
+        )
+        analysis = build_forex_analysis(instrument.provider_symbol, hourly, trigger)
+        analysis.update({
+            "asset": instrument.ftmo_symbol, "ftmo_symbol": instrument.ftmo_symbol,
+            "underlying_market": instrument.underlying_market,
+            "asset_class": FTMOAssetClass.FOREX.value,
+            "analysis_provider": instrument.market_data_provider,
+            "analysis_instrument": instrument.provider_symbol,
+            "analysis_exchange": instrument.exchange,
         })
         return analysis
 
