@@ -76,21 +76,6 @@ def configured_telegram_webhook_secret(environment: Mapping[str, str]) -> str:
     return telegram_webhook_secret(token) if token else ""
 
 
-def quote_preview_failure_state(reason: str) -> str:
-    normalized = reason.casefold()
-    if "identity mismatch" in normalized or "account/server/currency mismatch" in normalized:
-        return "FTMO_IDENTITY_MISMATCH"
-    if "never connected" in normalized or "disconnected" in normalized or "heartbeat is stale" in normalized:
-        return "WAITING_FOR_FTMO_HEARTBEAT"
-    if "clock_skew" in normalized or "materially in the future" in normalized:
-        return "FTMO_QUOTE_INVALID"
-    if "quote is stale" in normalized:
-        return "FTMO_QUOTE_STALE"
-    if "execution symbol" in normalized or "no current quote" in normalized or "no unique verified" in normalized:
-        return "FTMO_SYMBOL_UNAVAILABLE"
-    return "FTMO_QUOTE_UNAVAILABLE"
-
-
 class ProductionRuntime(OrchestrationRuntime):
     async def start(self) -> None:
         LOGGER.info(
@@ -181,6 +166,7 @@ class ProductionASGI(OrchestrationASGI):
         self._market_summary_cache: tuple[float, dict[str, Any]] | None = None
         self._telegram_worker: asyncio.Task[None] | None = None
         self._telegram_webhook_monitor: asyncio.Task[None] | None = None
+        self._quote_lifecycle_worker: asyncio.Task[None] | None = None
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         if scope.get("type") == "lifespan":
@@ -424,6 +410,7 @@ class ProductionASGI(OrchestrationASGI):
         chat = message.get("chat") if isinstance(message.get("chat"), dict) else {}
         queued = await self.runtime.redis_coordination.enqueue_telegram_command(update_id, {
             "update_id": update_id,
+            "message_id": message.get("message_id"),
             "text": text,
             "user_id": str(sender.get("id", "")),
             "chat_type": str(chat.get("type", "")),
@@ -442,6 +429,9 @@ class ProductionASGI(OrchestrationASGI):
                     if self.runtime.dependencies.get("telegram_inbound", {}).get("enabled"):
                         await self.runtime.redis_coordination.recover_telegram_commands()
                         self._telegram_worker = asyncio.create_task(self._telegram_command_worker(), name="telegram-command-worker")
+                        self._quote_lifecycle_worker = asyncio.create_task(
+                            self._quote_lifecycle_worker_loop(), name="ftmo-quote-lifecycle-worker",
+                        )
                         self._telegram_webhook_monitor = asyncio.create_task(
                             self._telegram_webhook_monitor_loop(), name="telegram-webhook-owner-monitor",
                         )
@@ -451,6 +441,11 @@ class ProductionASGI(OrchestrationASGI):
                     return
                 await send({"type": "lifespan.startup.complete"})
             elif message["type"] == "lifespan.shutdown":
+                if self._quote_lifecycle_worker is not None:
+                    self._quote_lifecycle_worker.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await self._quote_lifecycle_worker
+                    self._quote_lifecycle_worker = None
                 if self._telegram_worker is not None:
                     self._telegram_worker.cancel()
                     with suppress(asyncio.CancelledError):
@@ -525,6 +520,89 @@ class ProductionASGI(OrchestrationASGI):
                     status["status"] = "ok"
                 status.pop("worker_error_type", None)
 
+    async def _quote_lifecycle_worker_loop(self) -> None:
+        failures = 0
+        while True:
+            try:
+                processed = await self._process_quote_request_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                failures += 1
+                LOGGER.exception("FTMO quote lifecycle worker failed; retrying", extra={"error_type": type(exc).__name__})
+                await asyncio.sleep(min(30, 2 ** min(failures - 1, 5)))
+            else:
+                failures = 0
+                if not processed:
+                    await asyncio.sleep(1)
+
+    async def _process_quote_request_once(self, quote_request_id: str | None = None) -> bool:
+        service = getattr(self.runtime, "ftmo_master", None)
+        notifier = self.runtime.telegram
+        if service is None or notifier is None or not hasattr(service, "process_quote_request"):
+            return False
+        repository = service.repository
+        if quote_request_id:
+            stored_request = await repository.quote_request(quote_request_id)
+            requests = (stored_request[0],) if stored_request else ()
+        else:
+            requests = await service.pending_quote_requests()
+        processed = False
+        for request in requests:
+            current_id = str(request.get("quote_request_id") or "")
+            if not current_id:
+                continue
+            if request.get("state") in {"PROPOSAL_CREATED", "PROPOSAL_PUBLISHING"}:
+                stored_proposal = await repository.proposal(str(request.get("proposal_id") or ""))
+                result, proposal = request, stored_proposal[0] if stored_proposal else None
+            else:
+                result, proposal = await service.process_quote_request(current_id)
+            if result.get("state") in {"FAILED", "EXPIRED"}:
+                processed = True
+            if proposal is None:
+                continue
+            proposal_message = format_proposal(proposal)
+            message_id = proposal.get("telegram_message_id")
+            if not isinstance(message_id, int) or isinstance(message_id, bool):
+                claimed = await repository.claim_quote_publication(current_id, now=datetime.now(timezone.utc))
+                if claimed is None:
+                    continue
+                try:
+                    message_id = await self._send_owned_trade_proposal(
+                        notifier, proposal_message, proposal["proposal_id"], None,
+                    )
+                    if isinstance(message_id, int) and not isinstance(message_id, bool):
+                        await repository.attach_proposal_telegram_message(proposal["proposal_id"], message_id)
+                except Exception:
+                    await repository.update_quote_request(current_id, {
+                        "state": "PROPOSAL_CREATED", "publication_claimed_at": None,
+                    })
+                    raise
+            else:
+                claimed = request
+            published_at = datetime.now(timezone.utc)
+            await repository.update_quote_request(current_id, {
+                "state": "PROPOSAL_PUBLISHED", "telegram_message_id": message_id,
+                "proposal_published_at": published_at.isoformat(),
+            })
+            await repository.update_telegram_analysis(str(claimed["analysis_id"]), {
+                "lifecycle_state": "PROPOSAL_PUBLISHED", "proposal_telegram_message_id": message_id,
+            })
+            await repository.finish_telegram_analysis_request(str(claimed["telegram_request_id"]), {
+                "status": "completed", "proposal_state": "PROPOSAL_PUBLISHED",
+                "proposal_id": proposal["proposal_id"], "proposal_message": proposal_message,
+                "proposal_telegram_message_id": message_id, "telegram_message_id": message_id,
+                "resolved_mt5_symbol": proposal.get("symbol"),
+                "quote_observed_at_utc": proposal.get("quote_observed_at_utc"),
+                "quote_age_ms": proposal.get("quote_age_ms"),
+            })
+            await repository.audit("proposal_published", current_id, {
+                "analysis_id": claimed["analysis_id"], "quote_request_id": current_id,
+                "proposal_id": proposal["proposal_id"], "telegram_message_id": message_id,
+            })
+            processed = True
+        return processed
+
     async def _process_telegram_command_once(self, *, timeout_seconds: int = 1) -> bool:
         coordination = self.runtime.redis_coordination
         payload = await coordination.dequeue_telegram_command(
@@ -536,6 +614,7 @@ class ProductionASGI(OrchestrationASGI):
         previous_context = getattr(self, "_telegram_command_context", None)
         self._telegram_command_context = {
             "update_id": payload.get("update_id"),
+            "message_id": payload.get("message_id"),
             "user_id": str(payload.get("user_id") or ""),
             "chat_type": str(payload.get("chat_type") or ""),
             "callback_query_id": str(payload.get("callback_query_id") or ""),
@@ -684,6 +763,11 @@ class ProductionASGI(OrchestrationASGI):
             "request_id": request_id,
             "analysis_id": analysis_id,
             "telegram_user": user_id,
+            "telegram_chat_id": chat_id,
+            "telegram_update_id": update_id,
+            "telegram_message_id": context.get("message_id"),
+            "telegram_bot_id": self.runtime.environment.get("MONATISE_TELEGRAM_BOT_TOKEN", "").partition(":")[0] or None,
+            "telegram_delivery_mode": self.runtime.environment.get("MONATISE_TELEGRAM_BOT_DELIVERY_MODE", ""),
             "requested_instrument": requested_symbol,
             "requested_at": requested_at.isoformat(),
             "status": "processing",
@@ -700,9 +784,40 @@ class ProductionASGI(OrchestrationASGI):
                     if cached.get("proposal_message") and cached.get("proposal_id"):
                         await self._send_owned_trade_proposal(notifier, cached["proposal_message"], cached["proposal_id"], ownership_check)
                     return
+                if cached.get("status") == "waiting_for_quote" and cached.get("analysis_message"):
+                    await self._send_owned_telegram_response(notifier, cached["analysis_message"], ownership_check)
+                    await self._process_quote_request_once(cached.get("quote_request_id"))
+                    return
                 persisted = await repository.telegram_analysis(analysis_id) if hasattr(repository, "telegram_analysis") else None
                 if persisted is not None:
                     analysis_message = format_analysis(persisted)
+                    if persisted.get("executable") and hasattr(service, "create_quote_request"):
+                        persisted_resolved = resolve_telegram_instrument(
+                            str(persisted.get("canonical_instrument") or requested_symbol),
+                            getattr(self.runtime, "ftmo_registry", FTMO_REGISTRY),
+                        )
+                        expiry = datetime.fromisoformat(str(persisted["expires_at"]).replace("Z", "+00:00"))
+                        quote_request = await service.create_quote_request(
+                            analysis_id=analysis_id, telegram_request_id=request_id,
+                            canonical_instrument=persisted_resolved.canonical,
+                            ftmo_symbol=persisted_resolved.execution_registry_symbol,
+                            deadline=expiry,
+                        )
+                        if quote_request.get("state") not in {"PROPOSAL_PUBLISHED", "FAILED", "EXPIRED"}:
+                            analysis_message += (
+                                "\nWAITING FOR FTMO QUOTE — analysis retained"
+                                f"\nQuote request: {quote_request['quote_request_id']}"
+                                f"\nFTMO symbol: {quote_request['ftmo_symbol']}"
+                            )
+                            await repository.finish_telegram_analysis_request(request_id, {
+                                "status": "waiting_for_quote", "analysis_message": analysis_message,
+                                "signal_id": persisted.get("signal_id"),
+                                "quote_request_id": quote_request["quote_request_id"],
+                                "proposal_state": quote_request.get("state"),
+                            })
+                            await self._send_owned_telegram_response(notifier, analysis_message, ownership_check)
+                            await self._process_quote_request_once(quote_request["quote_request_id"])
+                            return
                     matching = next((item for item in await repository.proposals() if item.get("analysis_id") == analysis_id), None)
                     proposal_message = format_proposal(matching) if matching is not None else None
                     await repository.finish_telegram_analysis_request(request_id, {
@@ -776,86 +891,92 @@ class ProductionASGI(OrchestrationASGI):
                 completed_at=analysis_completed_at, session=session,
             )
             signal_id = signal_identity(request_id, analysis_id, analysis) if analysis["executable"] else None
+            analysis.update({
+                "telegram_bot_id": request_record["telegram_bot_id"],
+                "telegram_chat_id": chat_id,
+                "telegram_user_id": user_id,
+                "telegram_update_id": update_id,
+                "telegram_request_message_id": context.get("message_id"),
+                "telegram_delivery_mode": request_record["telegram_delivery_mode"],
+                "strategy_version": "monatise.telegram.on_demand.v2",
+                "lifecycle_state": "ANALYSIS_CREATED",
+            })
             if signal_id is not None:
                 analysis["signal_id"] = signal_id
             if repository is not None and hasattr(repository, "save_telegram_analysis"):
+                if hasattr(repository, "audit"):
+                    await repository.audit("analysis_created", analysis_id, {
+                        "analysis_id": analysis_id, "telegram_request_id": request_id,
+                        "telegram_update_id": update_id,
+                    })
                 if not await repository.save_telegram_analysis(analysis):
                     raise RuntimeError("analysis identity was already persisted")
+                if hasattr(repository, "update_telegram_analysis"):
+                    analysis = await repository.update_telegram_analysis(analysis_id, {"lifecycle_state": "ANALYSIS_PERSISTED"})
+                else:
+                    analysis["lifecycle_state"] = "ANALYSIS_PERSISTED"
+                if hasattr(repository, "audit"):
+                    await repository.audit("analysis_persisted", analysis_id, {
+                        "analysis_id": analysis_id, "telegram_request_id": request_id,
+                    })
             analysis_message = format_analysis(analysis)
             proposal = None
-            proposal_error = None
+            quote_request = None
             proposal_state = "NO_TRADE" if not analysis["qualified"] else "CONTEXT_ONLY"
             if analysis["executable"] and service is not None:
-                proposal_state = "FETCHING_FTMO_QUOTE"
-                if repository is not None and hasattr(repository, "finish_telegram_analysis_request"):
-                    await repository.finish_telegram_analysis_request(request_id, {
-                        "signal_id": signal_id,
-                        "proposal_state": proposal_state,
-                        "latest_quote_request_at": analysis_completed_at.isoformat(),
-                        "requested_symbol": resolved.execution_registry_symbol,
+                expiry = datetime.fromisoformat(str(analysis["expires_at"]).replace("Z", "+00:00"))
+                if hasattr(service, "create_quote_request"):
+                    analysis = await repository.update_telegram_analysis(analysis_id, {
+                        "lifecycle_state": "QUOTE_REQUIRED", "ftmo_symbol": resolved.execution_registry_symbol,
                     })
-                try:
+                    await repository.audit("quote_required", analysis_id, {
+                        "analysis_id": analysis_id, "telegram_request_id": request_id,
+                        "ftmo_symbol": resolved.execution_registry_symbol,
+                    })
+                    quote_request = await service.create_quote_request(
+                        analysis_id=analysis_id, telegram_request_id=request_id,
+                        canonical_instrument=resolved.canonical,
+                        ftmo_symbol=resolved.execution_registry_symbol,
+                        deadline=expiry, now=analysis_completed_at,
+                    )
+                    proposal_state = "WAITING_FOR_QUOTE"
+                    analysis_message += (
+                        "\nWAITING FOR FTMO QUOTE — analysis retained"
+                        f"\nQuote request: {quote_request['quote_request_id']}"
+                        f"\nFTMO symbol: {quote_request['ftmo_symbol']}"
+                        "\nNative MT5 Bid/Ask will be validated before a proposal is published."
+                    )
+                else:
                     execution_symbol = await service.execution_symbol_for(resolved.instrument, now=analysis_completed_at)
-                    expiry = datetime.fromisoformat(str(analysis["expires_at"]).replace("Z", "+00:00"))
                     zone = analysis.get("entry_zone") or {}
                     proposal = await service.create_signal_proposal(
-                        telegram_request_id=request_id,
-                        analysis_id=analysis_id,
-                        signal_id=signal_id,
-                        symbol=execution_symbol,
-                        direction=analysis["bias"],
-                        analysis_entry=analysis["entry"],
-                        analysis_stop=analysis["stop_loss"],
-                        analysis_target=analysis["targets"][0],
-                        source="monatise.telegram.on_demand",
-                        analysis_state=analysis["bias"],
-                        confirmation_status="confirmed",
-                        analysis_provider=analysis["analysis_provider"],
-                        analysis_instrument=analysis["analysis_instrument"],
-                        analysis_exchange=resolved.instrument.exchange,
-                        analysis_observed_at=analysis_completed_at,
-                        signal_expires_at=expiry,
-                        entry_zone_low=zone.get("low"),
-                        entry_zone_high=zone.get("high"),
-                        strategy=f"Monatise on-demand {analysis.get('market_state')}",
-                        timeframe=analysis["timeframe"],
-                        conviction=analysis["conviction"],
-                        recommended_risk_percent=analysis["recommended_risk_percent"],
-                        evidence_bundle={
-                            "market_data_provenance": analysis["market_data_provenance"],
-                            "session": analysis["session"],
-                            "liquidity": analysis["liquidity"],
-                            "market_structure": analysis["structure"],
-                            "supply_demand": analysis["supply_demand"],
-                            "fibonacci": analysis["fibonacci"],
-                            "order_flow": analysis["order_flow"],
-                        },
+                        telegram_request_id=request_id, analysis_id=analysis_id, signal_id=signal_id,
+                        symbol=execution_symbol, direction=analysis["bias"], analysis_entry=analysis["entry"],
+                        analysis_stop=analysis["stop_loss"], analysis_target=analysis["targets"][0],
+                        source="monatise.telegram.on_demand", analysis_state=analysis["bias"],
+                        confirmation_status="confirmed", analysis_provider=analysis["analysis_provider"],
+                        analysis_instrument=analysis["analysis_instrument"], analysis_exchange=resolved.instrument.exchange,
+                        analysis_observed_at=analysis_completed_at, signal_expires_at=expiry,
+                        entry_zone_low=zone.get("low"), entry_zone_high=zone.get("high"),
+                        strategy=f"Monatise on-demand {analysis.get('market_state')}", timeframe=analysis["timeframe"],
+                        conviction=analysis["conviction"], recommended_risk_percent=analysis["recommended_risk_percent"],
+                        evidence_bundle={"market_data_provenance": analysis["market_data_provenance"], "session": analysis["session"]},
                         now=analysis_completed_at,
                     )
                     proposal_state = "TRADE_PREVIEW_READY"
-                except FTMOMasterError as exc:
-                    proposal_error = str(exc)
-                    proposal_state = quote_preview_failure_state(proposal_error)
             proposal_message = format_proposal(proposal) if proposal is not None else None
-            if analysis["qualified"] and proposal is None:
-                analysis_message += "\nTRADE PROPOSAL WITHHELD\nReason: " + (
-                    proposal_error or "The setup is not currently executable at the verified entry zone."
-                )
             if repository is not None and hasattr(repository, "finish_telegram_analysis_request"):
                 await repository.finish_telegram_analysis_request(request_id, {
-                    "status": "completed",
+                    "status": "waiting_for_quote" if quote_request else "completed",
                     "analysis_completed_at": analysis_completed_at.isoformat(),
                     "analysis_message": analysis_message,
                     "proposal_id": proposal.get("proposal_id") if proposal else None,
                     "signal_id": signal_id,
                     "proposal_message": proposal_message,
                     "proposal_state": proposal_state,
-                    "latest_quote_success_at": analysis_completed_at.isoformat() if proposal else None,
-                    "latest_quote_failure_at": analysis_completed_at.isoformat() if proposal_error else None,
-                    "latest_quote_error": proposal_error,
-                    "resolved_mt5_symbol": proposal.get("symbol") if proposal else None,
-                    "quote_observed_at_utc": proposal.get("quote_observed_at_utc") if proposal else None,
-                    "quote_age_ms": proposal.get("quote_age_ms") if proposal else None,
+                    "quote_request_id": quote_request.get("quote_request_id") if quote_request else None,
+                    "latest_quote_request_at": analysis_completed_at.isoformat() if quote_request else None,
+                    "requested_symbol": resolved.execution_registry_symbol,
                 })
         except Exception as exc:
             LOGGER.warning("Telegram command analysis failed", extra={"symbol": requested_symbol, "error_type": type(exc).__name__})
@@ -866,6 +987,7 @@ class ProductionASGI(OrchestrationASGI):
             )
             proposal = None
             proposal_message = None
+            quote_request = None
             if repository is not None and hasattr(repository, "finish_telegram_analysis_request"):
                 await repository.finish_telegram_analysis_request(request_id, {
                     "status": "completed", "analysis_completed_at": datetime.now(timezone.utc).isoformat(),
@@ -874,7 +996,9 @@ class ProductionASGI(OrchestrationASGI):
         analysis_delivery = await self._send_owned_telegram_response(notifier, analysis_message, ownership_check)
         proposal_delivery = None
         if proposal is not None and proposal_message is not None:
-            proposal_delivery = await self._send_owned_trade_proposal(notifier, proposal_message, proposal["proposal_id"], ownership_check)
+            proposal_delivery = await self._send_owned_trade_proposal(
+                notifier, proposal_message, proposal["proposal_id"], ownership_check,
+            )
         if repository is not None and hasattr(repository, "finish_telegram_analysis_request"):
             publication = {
                 "analysis_telegram_message_id": analysis_delivery if isinstance(analysis_delivery, int) and not isinstance(analysis_delivery, bool) else None,
@@ -887,10 +1011,16 @@ class ProductionASGI(OrchestrationASGI):
                 "telegram_publish_at": datetime.now(timezone.utc).isoformat(),
             }
             await repository.finish_telegram_analysis_request(request_id, publication)
+            if hasattr(repository, "update_telegram_analysis") and await repository.telegram_analysis(analysis_id):
+                await repository.update_telegram_analysis(analysis_id, {
+                    "analysis_telegram_message_id": publication["analysis_telegram_message_id"],
+                })
             if proposal is not None and isinstance(proposal_delivery, int) and not isinstance(proposal_delivery, bool):
                 attach = getattr(repository, "attach_proposal_telegram_message", None)
                 if attach is not None:
                     await attach(proposal["proposal_id"], proposal_delivery)
+        if quote_request is not None:
+            await self._process_quote_request_once(quote_request["quote_request_id"])
 
     async def _handle_ftmo_telegram_command(self, text: str) -> str:
         service = getattr(self.runtime, "ftmo_master", None)

@@ -268,6 +268,7 @@ class FTMOMasterRepository:
     AUDIT = "ftmo_master_audit"
     TELEGRAM_REQUESTS = "telegram_analysis_requests"
     ANALYSES = "telegram_analyses"
+    QUOTE_REQUESTS = "ftmo_quote_requests"
 
     def __init__(self, store: Any) -> None:
         self.store = store
@@ -316,7 +317,11 @@ class FTMOMasterRepository:
             await self._put(self.PROPOSALS, proposal["proposal_id"], proposal, expected_version=0)
         except RuntimeError:
             return False
-        await self.audit("proposal_created", proposal["proposal_id"], {"kind": proposal["kind"], "symbol": proposal.get("symbol")})
+        await self.audit("proposal_created", proposal["proposal_id"], {
+            "kind": proposal["kind"], "symbol": proposal.get("symbol"),
+            "analysis_id": proposal.get("analysis_id"), "quote_request_id": proposal.get("quote_request_id"),
+            "proposal_id": proposal["proposal_id"], "signal_id": proposal.get("signal_id"),
+        })
         return True
 
     async def proposal(self, proposal_id: str) -> tuple[dict[str, Any], int] | None:
@@ -357,7 +362,11 @@ class FTMOMasterRepository:
             await self._put(self.COMMANDS, command["command_id"], command, expected_version=0)
         except RuntimeError:
             return False
-        await self.audit("command_created", command["command_id"], {"proposal_id": command["proposal_id"], "operation": command["operation"]})
+        await self.audit("command_created", command["command_id"], {
+            "analysis_id": command.get("analysis_id"), "quote_request_id": command.get("quote_request_id"),
+            "proposal_id": command["proposal_id"], "execution_id": command.get("execution_id"),
+            "operation": command["operation"],
+        })
         return True
 
     async def pending_commands(self, limit: int = 10) -> tuple[dict[str, Any], ...]:
@@ -439,9 +448,113 @@ class FTMOMasterRepository:
         record = await self.store.get(self.ANALYSES, analysis_id)
         return dict(record.value) if record else None
 
+    async def update_telegram_analysis(self, analysis_id: str, changes: Mapping[str, Any]) -> dict[str, Any]:
+        record = await self.store.get(self.ANALYSES, analysis_id)
+        if record is None:
+            raise KeyError("unknown Telegram analysis")
+        value = dict(record.value)
+        value.update(dict(changes))
+        value["updated_at"] = _utc().isoformat()
+        await self._put(self.ANALYSES, analysis_id, value, expected_version=record.version)
+        return value
+
+    async def save_quote_request(self, request: dict[str, Any]) -> bool:
+        quote_request_id = str(request.get("quote_request_id") or "")
+        if not quote_request_id:
+            raise ValueError("quote request identity is required")
+        try:
+            await self._put(self.QUOTE_REQUESTS, quote_request_id, request, expected_version=0)
+        except RuntimeError:
+            return False
+        await self.audit("quote_requested", quote_request_id, {
+            "analysis_id": request.get("analysis_id"),
+            "quote_request_id": quote_request_id,
+            "ftmo_symbol": request.get("ftmo_symbol"),
+            "deadline": request.get("deadline"),
+        })
+        return True
+
+    async def quote_request(self, quote_request_id: str) -> tuple[dict[str, Any], int] | None:
+        record = await self.store.get(self.QUOTE_REQUESTS, quote_request_id)
+        return (dict(record.value), record.version) if record else None
+
+    async def quote_requests(self, *, states: frozenset[str] | None = None) -> tuple[dict[str, Any], ...]:
+        records = await self.store.list_namespace(self.QUOTE_REQUESTS)
+        values = [dict(record.value) for record in records]
+        if states is not None:
+            values = [value for value in values if str(value.get("state")) in states]
+        values.sort(key=lambda item: (item.get("next_retry_at", ""), item.get("requested_at", "")))
+        return tuple(values)
+
+    async def update_quote_request(
+        self, quote_request_id: str, changes: Mapping[str, Any], *, expected_version: int | None = None,
+    ) -> dict[str, Any]:
+        record = await self.store.get(self.QUOTE_REQUESTS, quote_request_id)
+        if record is None:
+            raise KeyError("unknown quote request")
+        if expected_version is not None and record.version != expected_version:
+            raise RuntimeError("version conflict")
+        value = dict(record.value)
+        value.update(dict(changes))
+        value["updated_at"] = _utc().isoformat()
+        await self._put(self.QUOTE_REQUESTS, quote_request_id, value, expected_version=record.version)
+        return value
+
+    async def claim_quote_attempt(
+        self, quote_request_id: str, *, now: datetime, lease_seconds: int = 30,
+    ) -> dict[str, Any] | None:
+        stored = await self.quote_request(quote_request_id)
+        if stored is None:
+            return None
+        value, version = stored
+        if value.get("state") not in {"QUOTE_REQUESTED", "WAITING_FOR_QUOTE"}:
+            return None
+        if int(value.get("retry_count") or 0) >= int(value.get("maximum_attempts") or 4):
+            return None
+        deadline = _timestamp(value.get("deadline"), "quote request deadline")
+        if now >= deadline:
+            return None
+        next_retry = _timestamp(value.get("next_retry_at") or value.get("requested_at"), "quote request retry time")
+        lease_until_raw = value.get("lease_until")
+        lease_until = _timestamp(lease_until_raw, "quote request lease") if lease_until_raw else None
+        if now < next_retry or (lease_until is not None and now < lease_until):
+            return None
+        value.update({
+            "state": "QUOTE_REQUESTED",
+            "retry_count": int(value.get("retry_count") or 0) + 1,
+            "last_attempt_at": now.isoformat(),
+            "lease_until": (now + timedelta(seconds=lease_seconds)).isoformat(),
+        })
+        try:
+            await self._put(self.QUOTE_REQUESTS, quote_request_id, value, expected_version=version)
+        except RuntimeError:
+            return None
+        return value
+
+    async def claim_quote_publication(self, quote_request_id: str, *, now: datetime) -> dict[str, Any] | None:
+        stored = await self.quote_request(quote_request_id)
+        if stored is None:
+            return None
+        value, version = stored
+        state = value.get("state")
+        if value.get("telegram_message_id"):
+            return None
+        if state == "PROPOSAL_PUBLISHING":
+            claimed_at = _timestamp(value.get("publication_claimed_at"), "quote publication claim")
+            if now - claimed_at < timedelta(minutes=2):
+                return None
+        elif state != "PROPOSAL_CREATED":
+            return None
+        value.update({"state": "PROPOSAL_PUBLISHING", "publication_claimed_at": now.isoformat()})
+        try:
+            await self._put(self.QUOTE_REQUESTS, quote_request_id, value, expected_version=version)
+        except RuntimeError:
+            return None
+        return value
+
     async def retention_sweep(self, *, now: datetime | None = None) -> dict[str, int]:
         observed = _utc(now)
-        removed = {"nonces": 0, "proposals": 0, "commands": 0}
+        removed = {"nonces": 0, "proposals": 0, "commands": 0, "quote_requests": 0}
         for record in await self.store.list_namespace(self.NONCES):
             try:
                 created = datetime.fromisoformat(str(record.value.get("observed_at")))
@@ -460,6 +573,14 @@ class FTMOMasterRepository:
                 if created < cutoff:
                     await self.store.delete(namespace, record.key)
                     removed[label] += 1
+        for record in await self.store.list_namespace(self.QUOTE_REQUESTS):
+            try:
+                created = datetime.fromisoformat(str(record.value.get("requested_at")))
+            except ValueError:
+                continue
+            if created < cutoff:
+                await self.store.delete(self.QUOTE_REQUESTS, record.key)
+                removed["quote_requests"] += 1
         return removed
 
 
@@ -467,6 +588,216 @@ class FTMOMasterControlService:
     def __init__(self, configuration: FTMOMasterConfiguration, repository: FTMOMasterRepository) -> None:
         self.configuration = configuration
         self.repository = repository
+
+    @staticmethod
+    def quote_request_identity(analysis_id: str, ftmo_symbol: str) -> str:
+        digest = hashlib.sha256(f"quote:{analysis_id}:{ftmo_symbol.upper()}".encode()).hexdigest()
+        return f"qtr_{digest[:24]}"
+
+    async def create_quote_request(
+        self,
+        *,
+        analysis_id: str,
+        telegram_request_id: str,
+        canonical_instrument: str,
+        ftmo_symbol: str,
+        deadline: datetime,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        observed = _utc(now)
+        expiry = _utc(deadline)
+        if expiry <= observed:
+            raise FTMOMasterError("signal has already expired")
+        quote_request_id = self.quote_request_identity(analysis_id, ftmo_symbol)
+        request = {
+            "quote_request_id": quote_request_id,
+            "analysis_id": analysis_id,
+            "telegram_request_id": telegram_request_id,
+            "canonical_instrument": canonical_instrument,
+            "ftmo_symbol": ftmo_symbol,
+            "expected_account": self.configuration.account_id,
+            "expected_server": self.configuration.server,
+            "expected_currency": self.configuration.currency,
+            "requested_at": observed.isoformat(),
+            "deadline": expiry.isoformat(),
+            "retry_count": 0,
+            "maximum_attempts": 4,
+            "next_retry_at": observed.isoformat(),
+            "state": "QUOTE_REQUESTED",
+            "autonomous_execution": False,
+        }
+        if not await self.repository.save_quote_request(request):
+            stored = await self.repository.quote_request(quote_request_id)
+            if stored is None:
+                raise FTMOMasterError("quote request identity collision")
+            existing = stored[0]
+            if existing.get("analysis_id") != analysis_id or self._symbol_key(str(existing.get("ftmo_symbol"))) != self._symbol_key(ftmo_symbol):
+                raise FTMOMasterError("quote request identity collision")
+            return existing
+        await self.repository.update_telegram_analysis(analysis_id, {
+            "lifecycle_state": "WAITING_FOR_QUOTE",
+            "quote_request_id": quote_request_id,
+            "ftmo_symbol": ftmo_symbol,
+        })
+        await self.repository.audit("waiting_for_quote", quote_request_id, {
+            "analysis_id": analysis_id, "quote_request_id": quote_request_id,
+        })
+        return request
+
+    async def pending_quote_requests(self) -> tuple[dict[str, Any], ...]:
+        return await self.repository.quote_requests(states=frozenset({
+            "QUOTE_REQUESTED", "WAITING_FOR_QUOTE", "PROPOSAL_CREATED", "PROPOSAL_PUBLISHING",
+        }))
+
+    @staticmethod
+    def _terminal_quote_error(reason: str) -> bool:
+        value = reason.casefold()
+        return any(fragment in value for fragment in (
+            "identity does not match", "identity mismatch", "account/server/currency mismatch",
+            "account identity", "server identity", "currency identity",
+            "no unique verified ftmo symbol mapping", "instrument does not match", "signal has already expired",
+            "external signal", "not fully confirmed",
+        ))
+
+    async def process_quote_request(
+        self, quote_request_id: str, *, now: datetime | None = None,
+    ) -> tuple[dict[str, Any], dict[str, Any] | None]:
+        observed = _utc(now)
+        claimed = await self.repository.claim_quote_attempt(quote_request_id, now=observed)
+        if claimed is None:
+            stored = await self.repository.quote_request(quote_request_id)
+            if stored is None:
+                return {}, None
+            current = stored[0]
+            if current.get("state") in {"QUOTE_REQUESTED", "WAITING_FOR_QUOTE"} and observed >= _timestamp(current["deadline"], "quote request deadline"):
+                current = await self.repository.update_quote_request(quote_request_id, {
+                    "state": "EXPIRED", "expired_at": observed.isoformat(), "lease_until": None,
+                })
+                await self.repository.update_telegram_analysis(str(current["analysis_id"]), {"lifecycle_state": "EXPIRED"})
+                await self.repository.audit("quote_rejected", quote_request_id, {
+                    "analysis_id": current["analysis_id"], "quote_request_id": quote_request_id,
+                    "reason": "analysis expired",
+                })
+            return current, None
+        analysis_id = str(claimed["analysis_id"])
+        analysis = await self.repository.telegram_analysis(analysis_id)
+        if analysis is None:
+            await self.repository.update_quote_request(quote_request_id, {
+                "state": "FAILED", "failure_reason": "durable analysis is missing", "lease_until": None,
+            })
+            await self.repository.audit("quote_rejected", quote_request_id, {
+                "analysis_id": analysis_id, "quote_request_id": quote_request_id,
+                "reason": "durable analysis is missing",
+            })
+            return claimed, None
+        deadline = min(
+            _timestamp(claimed["deadline"], "quote request deadline"),
+            _timestamp(analysis["expires_at"], "analysis expiry"),
+        )
+        if observed >= deadline:
+            expired = await self.repository.update_quote_request(quote_request_id, {
+                "state": "EXPIRED", "expired_at": observed.isoformat(), "lease_until": None,
+            })
+            await self.repository.update_telegram_analysis(analysis_id, {"lifecycle_state": "EXPIRED"})
+            await self.repository.audit("quote_rejected", quote_request_id, {
+                "analysis_id": analysis_id, "quote_request_id": quote_request_id, "reason": "analysis expired",
+            })
+            return expired, None
+        try:
+            bridge = await self._healthy_bridge(observed)
+            if str(bridge.get("account_id")) != str(claimed.get("expected_account")):
+                raise FTMOMasterError("FTMO account identity does not match quote request")
+            if str(bridge.get("server", "")).casefold() != str(claimed.get("expected_server", "")).casefold():
+                raise FTMOMasterError("FTMO server identity does not match quote request")
+            if str(bridge.get("currency", "")).upper() != str(claimed.get("expected_currency", "")).upper():
+                raise FTMOMasterError("FTMO currency identity does not match quote request")
+            instrument = FTMO_REGISTRY.resolve(str(claimed["canonical_instrument"]))
+            execution_symbol = await self.execution_symbol_for(instrument, now=observed)
+            if self._symbol_key(execution_symbol) != self._symbol_key(str(claimed["ftmo_symbol"])):
+                crypto_alias = instrument.asset_class is FTMOAssetClass.CRYPTO and self._symbol_key(execution_symbol) == self._symbol_key(f"{instrument.underlying_symbol}USD")
+                if not crypto_alias:
+                    raise FTMOMasterError("FTMO quote symbol does not match quote request")
+            quote = (bridge.get("quotes") or {}).get(execution_symbol.upper())
+            if quote is None:
+                raise FTMOMasterError("FTMO bridge has no current quote for the requested symbol")
+            await self.repository.update_quote_request(quote_request_id, {
+                "state": "QUOTE_RECEIVED", "resolved_mt5_symbol": execution_symbol,
+                "quote_received_at": observed.isoformat(), "quote": self._execution_snapshot(execution_symbol, quote, bridge),
+                "lease_until": None,
+            })
+            await self.repository.audit("quote_received", quote_request_id, {
+                "analysis_id": analysis_id, "quote_request_id": quote_request_id,
+                "symbol": execution_symbol, "quote_observed_at_utc": quote.get("quote_observed_at_utc"),
+            })
+            expiry = _timestamp(analysis["expires_at"], "analysis expiry")
+            zone = analysis.get("entry_zone") or {}
+            try:
+                proposal = await self.create_signal_proposal(
+                    telegram_request_id=analysis["telegram_request_id"], analysis_id=analysis_id,
+                    quote_request_id=quote_request_id, signal_id=analysis["signal_id"], symbol=execution_symbol,
+                    direction=analysis["bias"], analysis_entry=analysis["entry"],
+                    analysis_stop=analysis["stop_loss"], analysis_target=analysis["targets"][0],
+                    source="monatise.telegram.on_demand", analysis_state=analysis["bias"],
+                    confirmation_status="confirmed", analysis_provider=analysis["analysis_provider"],
+                    analysis_instrument=analysis["analysis_instrument"], analysis_exchange=instrument.exchange,
+                    analysis_observed_at=_timestamp(analysis["analysis_completed_at"], "analysis observation"),
+                    signal_expires_at=expiry, entry_zone_low=zone.get("low"), entry_zone_high=zone.get("high"),
+                    strategy=f"Monatise on-demand {analysis.get('market_state')}", timeframe=analysis["timeframe"],
+                    conviction=analysis["conviction"], recommended_risk_percent=analysis["recommended_risk_percent"],
+                    evidence_bundle={
+                        "market_data_provenance": analysis["market_data_provenance"], "session": analysis["session"],
+                        "liquidity": analysis["liquidity"], "market_structure": analysis["structure"],
+                        "supply_demand": analysis["supply_demand"], "fibonacci": analysis["fibonacci"],
+                        "order_flow": analysis["order_flow"],
+                    }, now=observed,
+                )
+            except FTMOMasterError as exc:
+                if "proposal identity collision" not in str(exc):
+                    raise
+                proposal_id = hashlib.sha256(f"signal:{analysis['signal_id']}".encode()).hexdigest()[:12]
+                stored_proposal = await self.repository.proposal(proposal_id)
+                if stored_proposal is None or stored_proposal[0].get("analysis_id") != analysis_id:
+                    raise
+                proposal = stored_proposal[0]
+            await self.repository.update_quote_request(quote_request_id, {
+                "state": "QUOTE_VALIDATED", "quote_validated_at": observed.isoformat(),
+                "proposal_id": proposal["proposal_id"], "lease_until": None,
+            })
+            await self.repository.audit("quote_validated", quote_request_id, {
+                "analysis_id": analysis_id, "quote_request_id": quote_request_id,
+                "proposal_id": proposal["proposal_id"], "quote_age_ms": proposal.get("quote_age_ms"),
+            })
+            completed = await self.repository.update_quote_request(quote_request_id, {
+                "state": "PROPOSAL_CREATED", "proposal_id": proposal["proposal_id"],
+                "proposal_created_at": observed.isoformat(),
+                "lease_until": None, "last_error": None,
+            })
+            await self.repository.update_telegram_analysis(analysis_id, {
+                "lifecycle_state": "PROPOSAL_CREATED", "proposal_id": proposal["proposal_id"],
+            })
+            await self.repository.audit("quote_proposal_created", quote_request_id, {
+                "analysis_id": analysis_id, "quote_request_id": quote_request_id,
+                "proposal_id": proposal["proposal_id"],
+            })
+            return completed, proposal
+        except (FTMOMasterError, KeyError, ValueError) as exc:
+            reason = str(exc)
+            attempts = int(claimed.get("retry_count") or 0)
+            terminal = self._terminal_quote_error(reason) or attempts >= int(claimed.get("maximum_attempts") or 4)
+            next_retry = observed + timedelta(seconds=(2, 5, 10, 20)[min(attempts - 1, 3)])
+            failed = await self.repository.update_quote_request(quote_request_id, {
+                "state": "FAILED" if terminal else "WAITING_FOR_QUOTE",
+                "last_error": reason, "last_failure_at": observed.isoformat(),
+                "next_retry_at": next_retry.isoformat(), "lease_until": None,
+            })
+            await self.repository.update_telegram_analysis(analysis_id, {
+                "lifecycle_state": "QUOTE_FAILED" if terminal else "WAITING_FOR_QUOTE",
+            })
+            await self.repository.audit("quote_rejected", quote_request_id, {
+                "analysis_id": analysis_id, "quote_request_id": quote_request_id,
+                "reason": reason, "retryable": not terminal, "attempt": attempts,
+            })
+            return failed, None
 
     def authorized(self, user_id: str | None, chat_type: str | None) -> bool:
         return bool(user_id and chat_type == "private" and user_id in self.configuration.authorized_user_ids)
@@ -522,6 +853,12 @@ class FTMOMasterControlService:
         return {
             "execution_broker": "FTMO",
             "execution_symbol": symbol,
+            "account_id": str(bridge.get("account_id") or ""),
+            "server": str(bridge.get("server") or ""),
+            "currency": str(bridge.get("currency") or ""),
+            "terminal_build": str(bridge.get("terminal_build") or ""),
+            "ea_version": str(bridge.get("ea_version") or ""),
+            "identity_match": bool(bridge.get("identity_match")),
             "ftmo_bid": str(quote["bid"]),
             "ftmo_ask": str(quote["ask"]),
             "spread": str(Decimal(str(quote["ask"])) - Decimal(str(quote["bid"]))),
@@ -1041,6 +1378,7 @@ class FTMOMasterControlService:
         evidence_bundle: Mapping[str, Any] | None = None,
         supersedes_signal_id: str | None = None,
         telegram_request_id: str | None = None,
+        quote_request_id: str | None = None,
         recommended_risk_percent: Any | None = None,
     ) -> dict[str, Any]:
         """Translate external structure into FTMO-native levels.
@@ -1118,6 +1456,7 @@ class FTMOMasterControlService:
         provider_instrument = str(analysis_instrument or instrument.provider_symbol or instrument.underlying_symbol)
         metadata = {
             "telegram_request_id": str(telegram_request_id or "") or None,
+            "quote_request_id": str(quote_request_id or "") or None,
             "analysis_id": str(analysis_id or signal_id),
             "signal_id": str(signal_id),
             "analysis_source": source,
@@ -1198,6 +1537,10 @@ class FTMOMasterControlService:
         if stored is None:
             raise FTMOMasterError("unknown proposal")
         proposal, version = stored
+        await self.repository.audit("approval_received", proposal_id, {
+            "actor": actor, "analysis_id": proposal.get("analysis_id"),
+            "quote_request_id": proposal.get("quote_request_id"), "proposal_id": proposal_id,
+        })
         if proposal.get("status") != ProposalStatus.PENDING.value:
             raise FTMOMasterError(f"proposal is already {proposal.get('status')}")
         if datetime.fromisoformat(proposal["expires_at"]) <= observed:
@@ -1283,6 +1626,7 @@ class FTMOMasterControlService:
             "command_id": command_id,
             "proposal_id": proposal_id,
             "analysis_id": proposal.get("analysis_id"),
+            "quote_request_id": proposal.get("quote_request_id"),
             "signal_id": proposal.get("signal_id"),
             "telegram_request_id": proposal.get("telegram_request_id"),
             "approval_id": approval_id,
@@ -1290,7 +1634,7 @@ class FTMOMasterControlService:
             "operation": proposal.get("operation", "open"),
             "payload": {key: proposal.get(key) for key in (
                 "symbol", "side", "order_type", "entry", "stop_loss", "take_profit", "volume", "target_id", "value",
-                "analysis_id", "signal_id",
+                "analysis_id", "quote_request_id", "signal_id",
                 "telegram_request_id",
             ) if proposal.get(key) is not None},
             "expected_account_id": self.configuration.account_id,
@@ -1312,7 +1656,7 @@ class FTMOMasterControlService:
                 "autonomous_execution_enabled": False,
             },
             "analysis_provenance": {key: proposal.get(key) for key in (
-                "analysis_id", "signal_id", "analysis_source", "analysis_provider", "analysis_instrument",
+                "analysis_id", "quote_request_id", "signal_id", "analysis_source", "analysis_provider", "analysis_instrument",
                 "telegram_request_id",
                 "analysis_exchange", "analysis_price", "analysis_observed_at", "analysis_state",
                 "confirmation_status", "strategy", "timeframe",
@@ -1345,7 +1689,9 @@ class FTMOMasterControlService:
         await self.repository.update_proposal(proposal_id, proposal, version)
         await self.repository.audit("proposal_approved", proposal_id, {
             "actor": actor, "approval_id": approval_id, "command_id": command_id,
-            "execution_id": execution_id, "risk_amount": proposal.get("risk_amount"),
+            "execution_id": execution_id, "analysis_id": proposal.get("analysis_id"),
+            "quote_request_id": proposal.get("quote_request_id"), "proposal_id": proposal_id,
+            "risk_amount": proposal.get("risk_amount"),
         })
         telegram_request_id = proposal.get("telegram_request_id")
         telegram_request = await self.repository.telegram_analysis_request(telegram_request_id) if telegram_request_id else None
@@ -1464,6 +1810,8 @@ class FTMOMasterControlService:
         await self.repository.audit("bridge_acknowledgement", command_id, {
             "status": raw_status, "lifecycle_state": lifecycle, "broker_ticket": changes["broker_ticket"],
             "broker_retcode": changes["broker_retcode"], "fill_price": changes["fill_price"],
+            "analysis_id": command.get("analysis_id"), "quote_request_id": command.get("quote_request_id"),
+            "proposal_id": command.get("proposal_id"), "execution_id": command.get("execution_id"),
         })
         command["notification_required"] = notification_required
         return command

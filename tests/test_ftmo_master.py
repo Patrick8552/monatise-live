@@ -8,6 +8,7 @@ from decimal import Decimal
 
 import pytest
 
+from monatise.application.ftmo_registry import FTMO_REGISTRY
 from monatise.application.ftmo_master import (
     CommandStatus,
     FTMOBridgeAuthenticator,
@@ -312,6 +313,31 @@ def test_small_future_clock_skew_is_tolerated_but_quotes_older_than_five_seconds
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("offset_seconds,allowed", [(-1, True), (-5, True), (-5.001, False), (1, True), (3600, False)])
+def test_quote_freshness_boundaries_use_trusted_utc_receipt_time(offset_seconds, allowed):
+    async def scenario():
+        control, _ = service()
+        payload = heartbeat()
+        payload["quotes"]["XAUUSD"]["quote_observed_at_utc"] = (NOW + timedelta(seconds=offset_seconds)).isoformat()
+        payload["quotes"]["XAUUSD"]["broker_time"] = "2026-03-29T04:00:00"
+        payload["quotes"]["XAUUSD"]["broker_time_offset"] = 10_800 if offset_seconds < 0 else 7_200
+        await control.accept_bridge_heartbeat(payload, now=NOW)
+        if allowed:
+            proposal = await control.create_trade_proposal(
+                actor="42", symbol="XAUUSD", side="buy", order_type="market",
+                stop_loss="2490", take_profit="2520", now=NOW,
+            )
+            assert proposal["quote_freshness_state"] == "FRESH"
+        else:
+            with pytest.raises(FTMOMasterError, match="stale|CLOCK_SKEW_DETECTED"):
+                await control.create_trade_proposal(
+                    actor="42", symbol="XAUUSD", side="buy", order_type="market",
+                    stop_loss="2490", take_profit="2520", now=NOW,
+                )
+
+    asyncio.run(scenario())
+
+
 def test_heartbeat_older_than_thirty_seconds_blocks_each_new_proposal():
     async def scenario():
         control, _ = service()
@@ -389,6 +415,162 @@ def test_telegram_request_analysis_signal_command_audit_chain_is_durable():
         await control.repository.finish_telegram_analysis_request("tgr_audit", {"status": "completed"})
         events = store.streams[control.repository.AUDIT]
         assert [event["event"] for event in events] == ["telegram_analysis_requested", "telegram_analysis_completed"]
+
+    asyncio.run(scenario())
+
+
+def durable_gold_analysis(*, expires_at=None):
+    return {
+        "analysis_id": "ana_quote", "telegram_request_id": "tgr_quote", "request_id": "tgr_quote",
+        "signal_id": "sig_quote", "canonical_instrument": "XAU/USD", "analysis_provider": "FlashAlpha",
+        "analysis_instrument": "GC", "analysis_completed_at": NOW.isoformat(), "expires_at": (expires_at or NOW + timedelta(minutes=30)).isoformat(),
+        "bias": "LONG", "entry": "3500", "stop_loss": "3486", "targets": ["3528"],
+        "entry_zone": None, "market_state": "TREND", "timeframe": "intraday", "conviction": 8,
+        "recommended_risk_percent": "1.25", "market_data_provenance": {"provider": "FlashAlpha"},
+        "session": {"market_session": "NEW_YORK"}, "liquidity": {}, "structure": {},
+        "supply_demand": {}, "fibonacci": {}, "order_flow": {}, "qualified": True, "executable": True,
+        "decision": "QUALIFIED LONG", "lifecycle_state": "ANALYSIS_PERSISTED",
+    }
+
+
+def test_durable_quote_request_survives_restart_and_creates_exactly_one_proposal():
+    async def scenario():
+        control, store = service()
+        analysis = durable_gold_analysis()
+        assert await control.repository.save_telegram_analysis(analysis)
+        request = await control.create_quote_request(
+            analysis_id=analysis["analysis_id"], telegram_request_id=analysis["telegram_request_id"],
+            canonical_instrument="XAU/USD", ftmo_symbol="XAU/USD", deadline=NOW + timedelta(minutes=30), now=NOW,
+        )
+        duplicate = await control.create_quote_request(
+            analysis_id=analysis["analysis_id"], telegram_request_id=analysis["telegram_request_id"],
+            canonical_instrument="XAU/USD", ftmo_symbol="XAU/USD", deadline=NOW + timedelta(minutes=30), now=NOW,
+        )
+        assert duplicate["quote_request_id"] == request["quote_request_id"]
+        waiting, proposal = await control.process_quote_request(request["quote_request_id"], now=NOW)
+        assert waiting["state"] == "WAITING_FOR_QUOTE"
+        assert proposal is None
+
+        restarted = FTMOMasterControlService(control.configuration, FTMOMasterRepository(store))
+        fresh = heartbeat()
+        fresh["quotes"]["XAUUSD"]["timestamp"] = (NOW + timedelta(seconds=3)).isoformat()
+        await restarted.accept_bridge_heartbeat(fresh, now=NOW + timedelta(seconds=3))
+        completed, proposal = await restarted.process_quote_request(request["quote_request_id"], now=NOW + timedelta(seconds=3))
+        assert completed["state"] == "PROPOSAL_CREATED"
+        assert proposal["quote_request_id"] == request["quote_request_id"]
+        assert proposal["quote_ask"] == "2500.20"
+        assert proposal["entry"] == "2500.20"  # LONG executes from native FTMO Ask.
+        assert len(await restarted.repository.proposals()) == 1
+        _, duplicate_proposal = await restarted.process_quote_request(request["quote_request_id"], now=NOW + timedelta(seconds=3))
+        assert duplicate_proposal is None
+        assert len(await restarted.repository.proposals()) == 1
+
+    asyncio.run(scenario())
+
+
+def test_late_quote_and_wrong_bridge_identity_fail_closed():
+    async def scenario():
+        control, _ = service()
+        expiring = durable_gold_analysis(expires_at=NOW + timedelta(seconds=1))
+        assert await control.repository.save_telegram_analysis(expiring)
+        request = await control.create_quote_request(
+            analysis_id=expiring["analysis_id"], telegram_request_id=expiring["telegram_request_id"],
+            canonical_instrument="XAU/USD", ftmo_symbol="XAU/USD", deadline=NOW + timedelta(seconds=1), now=NOW,
+        )
+        expired, proposal = await control.process_quote_request(request["quote_request_id"], now=NOW + timedelta(seconds=2))
+        assert expired["state"] == "EXPIRED"
+        assert proposal is None
+
+        other, _ = service()
+        analysis = durable_gold_analysis()
+        assert await other.repository.save_telegram_analysis(analysis)
+        request = await other.create_quote_request(
+            analysis_id=analysis["analysis_id"], telegram_request_id=analysis["telegram_request_id"],
+            canonical_instrument="XAU/USD", ftmo_symbol="XAU/USD", deadline=NOW + timedelta(minutes=30), now=NOW,
+        )
+        with pytest.raises(FTMOMasterError, match="mismatch"):
+            await other.accept_bridge_heartbeat(heartbeat(server="Wrong-Server"), now=NOW)
+        failed, proposal = await other.process_quote_request(request["quote_request_id"], now=NOW)
+        assert failed["state"] == "FAILED"
+        assert proposal is None
+
+    asyncio.run(scenario())
+
+
+def test_production_telegram_analysis_publishes_waiting_then_durable_ftmo_proposal():
+    class TelegramRecorder:
+        def __init__(self):
+            self.messages, self.proposals = [], []
+
+        async def command_response(self, message):
+            self.messages.append(message)
+            return 100 + len(self.messages)
+
+        async def trade_proposal(self, message, proposal_id):
+            self.proposals.append((proposal_id, message))
+            return 200 + len(self.proposals)
+
+    class Runtime:
+        def __init__(self, control):
+            self.environment = {
+                "MONATISE_TELEGRAM_CHAT_ID": "42", "MONATISE_TELEGRAM_BOT_TOKEN": "123:test-only",
+                "MONATISE_TELEGRAM_BOT_DELIVERY_MODE": "dedicated_webhook",
+            }
+            self.ftmo_registry, self.ftmo_master, self.telegram = FTMO_REGISTRY, control, TelegramRecorder()
+
+        async def analyse(self, symbol, **_kwargs):
+            assert symbol == "BTC"
+            return {
+                "symbol": "BTC", "classification": "trend", "direction": "long",
+                "entry_confirmation_status": "confirmed", "entry": 65000, "invalidation": 64000,
+                "target": 67000, "targets": [67000], "interval": "15m", "score": 8,
+                "score_threshold": 7, "conviction": 0.8,
+                "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat(),
+                "current_reference_price": 65000, "market_state": "trend_up",
+                "derivatives": {"open_interest": 10_000_000}, "market_structure": {"state": "bullish"},
+            }
+
+    async def scenario():
+        control, _ = service()
+        observed = datetime.now(timezone.utc)
+        payload = heartbeat()
+        payload["quotes"] = {"BTCUSD": {
+            "bid": "65000.00", "ask": "65000.50", "timestamp": observed.isoformat(),
+            "digits": 2, "tick_size": "0.01", "tick_value": "0.01",
+            "volume_min": "0.01", "volume_max": "50", "volume_step": "0.01", "stops_level": "10",
+            "trade_mode": "full",
+        }}
+        await control.accept_bridge_heartbeat(payload, now=observed)
+        runtime = Runtime(control)
+        app = ProductionASGI(runtime)
+        app._telegram_command_context = {
+            "update_id": 901, "message_id": 77, "user_id": "42", "chat_type": "private", "callback_query_id": "",
+        }
+        await app._handle_telegram_command("/analyze BTC")
+
+        request_records = [record for (namespace, _), record in control.repository.store.values.items() if namespace == control.repository.TELEGRAM_REQUESTS]
+        request = request_records[0].value
+        quote = (await control.repository.quote_request(request["quote_request_id"]))[0]
+        analysis = await control.repository.telegram_analysis(request["analysis_id"])
+        proposal = (await control.repository.proposal(request["proposal_id"]))[0]
+        assert "WAITING FOR FTMO QUOTE" in runtime.telegram.messages[-1]
+        assert quote["state"] == "PROPOSAL_PUBLISHED"
+        assert analysis["lifecycle_state"] == "PROPOSAL_PUBLISHED"
+        assert proposal["quote_request_id"] == quote["quote_request_id"]
+        assert proposal["entry"] == proposal["quote_ask"]
+        assert proposal["execution_snapshot"]["server"] == "FTMO-Server"
+        assert runtime.telegram.proposals[0][0] == proposal["proposal_id"]
+        assert quote["quote_request_id"] in runtime.telegram.messages[-1]
+        assert "Analysis:" in runtime.telegram.proposals[0][1]
+        await control.repository.update_quote_request(quote["quote_request_id"], {
+            "state": "PROPOSAL_PUBLISHING", "telegram_message_id": None,
+            "publication_claimed_at": (datetime.now(timezone.utc) - timedelta(minutes=3)).isoformat(),
+        })
+        assert await app._process_quote_request_once() is True
+        assert len(runtime.telegram.proposals) == 1  # durable proposal message identity prevents a resend
+        await app._handle_telegram_command("/analyze BTC")
+        assert len(await control.repository.quote_requests()) == 1
+        assert len(await control.repository.proposals()) == 1
 
     asyncio.run(scenario())
 
