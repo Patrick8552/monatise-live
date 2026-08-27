@@ -6,9 +6,11 @@ import asyncio
 import inspect
 import math
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Iterable, Mapping
 
 from monatise.application.ftmo_registry import FTMOAssetClass, FTMOInstrument, FTMOInstrumentRegistry
+from monatise.application.market_session import classify_market_session
 
 
 ObservationProvider = Callable[[FTMOInstrument], Mapping[str, Any] | None | Awaitable[Mapping[str, Any] | None]]
@@ -133,6 +135,11 @@ class FTMOScannerPipeline:
             value = dict(result)
             value.setdefault("ftmo_symbol", candidate.instrument.ftmo_symbol)
             value.setdefault("asset_class", candidate.instrument.asset_class.value)
+            # Every analysis gets a new clock-derived session snapshot. Never
+            # inherit session state from an observation or prior scanner run.
+            session = classify_market_session(datetime.now(timezone.utc), instrument=candidate.instrument)
+            value.update(session.to_dict())
+            value["session_context"] = session.to_dict()
             return value
 
         analyses, analysis_failures = await _bounded_collect(

@@ -19,7 +19,9 @@ from decimal import Decimal, ROUND_FLOOR
 from enum import StrEnum
 from typing import Any, Mapping
 
+from monatise.application.market_session import classify_market_session, session_allows_execution
 from monatise.application.ftmo_registry import FTMOAssetClass, FTMOInstrument, FTMO_REGISTRY
+from monatise.application.risk_policy import MAX_RISK_FRACTION_PER_TRADE, MAX_RISK_PERCENT_PER_TRADE, risk_ceiling
 
 
 ZERO = Decimal("0")
@@ -99,9 +101,7 @@ class FTMOMasterConfiguration:
     execution_environment: str
     bridge_secret: str | None
     authorized_user_ids: frozenset[str]
-    maximum_risk_amount: Decimal = Decimal("100")
-    risk_fraction: Decimal = Decimal("0.01")
-    maximum_daily_loss_amount: Decimal = Decimal("500")
+    risk_fraction: Decimal = MAX_RISK_FRACTION_PER_TRADE
     maximum_open_exposures: int = 1
     arm_max_seconds: int = 900
     heartbeat_max_age_seconds: int = 30
@@ -125,13 +125,7 @@ class FTMOMasterConfiguration:
             execution_environment=_env(environment, "FTMO_EXECUTION_ENVIRONMENT", "demo").casefold(),
             bridge_secret=_env(environment, "FTMO_BRIDGE_SECRET") or None,
             authorized_user_ids=users,
-            maximum_risk_amount=_decimal(_env(environment, "FTMO_MAXIMUM_RISK_AMOUNT", "100"), "maximum risk amount", positive=True),
-            risk_fraction=_decimal(_env(environment, "FTMO_RISK_FRACTION", "0.01"), "risk fraction", positive=True),
-            maximum_daily_loss_amount=_decimal(
-                _env(environment, "FTMO_MAXIMUM_DAILY_LOSS_AMOUNT", "500"),
-                "maximum daily loss amount",
-                positive=True,
-            ),
+            risk_fraction=_decimal(_env(environment, "FTMO_RISK_FRACTION", str(MAX_RISK_FRACTION_PER_TRADE)), "risk fraction", positive=True),
             maximum_open_exposures=int(_env(environment, "FTMO_MAXIMUM_OPEN_EXPOSURES", "1")),
             arm_max_seconds=max(60, min(3600, int(_env(environment, "FTMO_ARM_MAX_SECONDS", "900")))),
             heartbeat_max_age_seconds=max(5, min(120, int(_env(environment, "FTMO_HEARTBEAT_MAX_AGE_SECONDS", "30")))),
@@ -148,8 +142,8 @@ class FTMOMasterConfiguration:
                 positive=True,
             ),
         )
-        if configuration.risk_fraction > Decimal("0.01"):
-            raise ValueError("FTMO risk fraction cannot exceed 1%")
+        if configuration.risk_fraction > MAX_RISK_FRACTION_PER_TRADE:
+            raise ValueError("FTMO risk fraction cannot exceed 3%")
         if configuration.maximum_open_exposures < 1:
             raise ValueError("FTMO maximum open exposures must be at least one")
         if configuration.execution_environment not in {"demo", "master"}:
@@ -192,8 +186,8 @@ class FTMOMasterConfiguration:
             "autonomous_execution": False,
             "activation_configured": self.activation_configured,
             "risk_fraction": str(self.risk_fraction),
-            "maximum_risk_amount": str(self.maximum_risk_amount),
-            "maximum_daily_loss_amount": str(self.maximum_daily_loss_amount),
+            "maximum_risk_percent_per_trade": str(MAX_RISK_PERCENT_PER_TRADE),
+            "risk_policy": "percentage_only_current_equity",
             "maximum_open_exposures": self.maximum_open_exposures,
             "maximum_entry_deviation_bps": str(self.maximum_entry_deviation_bps),
             "minimum_reward_risk": str(self.minimum_reward_risk),
@@ -278,11 +272,17 @@ class FTMOMasterRepository:
 
     async def control(self) -> dict[str, Any]:
         record = await self.store.get(self.CONTROL, "state")
-        return dict(record.value) if record else {"kill_switch": True, "armed_until": None, "armed_by": None}
+        return dict(record.value) if record else {
+            "kill_switch": True, "armed_until": None, "armed_by": None,
+            "execution_session_id": None, "execution_session_started_at": None,
+        }
 
     async def update_control(self, **changes: Any) -> dict[str, Any]:
         record = await self.store.get(self.CONTROL, "state")
-        value = dict(record.value) if record else {"kill_switch": True, "armed_until": None, "armed_by": None}
+        value = dict(record.value) if record else {
+            "kill_switch": True, "armed_until": None, "armed_by": None,
+            "execution_session_id": None, "execution_session_started_at": None,
+        }
         value.update(changes)
         value["updated_at"] = _utc().isoformat()
         await self._put(self.CONTROL, "state", value, expected_version=record.version if record else 0)
@@ -504,7 +504,7 @@ class FTMOMasterControlService:
             raise FTMOMasterError("reward/risk is below execution policy")
         equity = Decimal(str(bridge["equity"]))
         loss_today = max(ZERO, Decimal(str(bridge["daily_start_equity"])) - equity)
-        daily_remaining = min(Decimal(str(bridge["daily_loss_limit"])), self.configuration.maximum_daily_loss_amount) - loss_today
+        daily_remaining = Decimal(str(bridge["daily_loss_limit"])) - loss_today
         total_loss = max(ZERO, Decimal(str(bridge["initial_balance"])) - equity)
         total_remaining = Decimal(str(bridge["total_loss_limit"])) - total_loss
         exposures = tuple(item for item in (*tuple(bridge.get("positions") or ()), *tuple(bridge.get("orders") or ())) if isinstance(item, Mapping))
@@ -527,7 +527,7 @@ class FTMOMasterControlService:
             position_volume = _decimal(position.get("volume"), "position volume", positive=True)
             existing_open_risk += abs(position_entry - position_stop) / Decimal(str(position_quote["tick_size"])) * Decimal(str(position_quote.get("tick_value_loss", position_quote["tick_value"]))) * position_volume
         available_loss_capacity = min(daily_remaining, total_remaining) - existing_open_risk
-        risk_budget = min(equity * self.configuration.risk_fraction, self.configuration.maximum_risk_amount, available_loss_capacity)
+        risk_budget = min(risk_ceiling(equity), equity * self.configuration.risk_fraction, available_loss_capacity)
         if risk_budget <= ZERO:
             raise FTMOMasterError("FTMO daily/total loss capacity is exhausted")
         loss_per_lot = (stop_distance / tick_size) * tick_value
@@ -537,7 +537,7 @@ class FTMOMasterControlService:
         if volume < Decimal(str(quote["volume_min"])):
             raise FTMOMasterError("minimum FTMO volume would exceed the permitted risk")
         actual_risk = loss_per_lot * volume
-        if existing_open_risk + actual_risk > equity * Decimal("0.03"):
+        if existing_open_risk + actual_risk > risk_ceiling(equity):
             raise FTMOMasterError("FTMO total open risk limit would be exceeded")
         return {
             "symbol": symbol,
@@ -731,6 +731,10 @@ class FTMOMasterControlService:
             "quote_symbols": sorted((bridge or {}).get("quotes", {})),
             "armed": armed,
             "armed_until": armed_until if armed else None,
+            "execution_session_armed": armed,
+            "execution_session_id": control.get("execution_session_id") if armed else None,
+            "execution_session_started_at": control.get("execution_session_started_at") if armed else None,
+            "execution_session_expiry": armed_until if armed else None,
             "kill_switch": kill_switch,
             "execution_ready": execution_ready,
         }
@@ -744,18 +748,30 @@ class FTMOMasterControlService:
         if not self.configuration.activation_configured:
             raise FTMOMasterError("master activation configuration is incomplete")
         duration = min(max(60, int(seconds or self.configuration.arm_max_seconds)), self.configuration.arm_max_seconds)
-        until = _utc(now) + timedelta(seconds=duration)
-        await self.repository.update_control(armed_until=until.isoformat(), armed_by=actor)
-        await self.repository.audit("execution_armed", actor, {"armed_until": until.isoformat()})
+        started = _utc(now)
+        until = started + timedelta(seconds=duration)
+        session_id = secrets.token_hex(16)
+        await self.repository.update_control(
+            armed_until=until.isoformat(), armed_by=actor,
+            execution_session_id=session_id, execution_session_started_at=started.isoformat(),
+        )
+        await self.repository.audit("execution_armed", actor, {
+            "execution_session_id": session_id, "started_at": started.isoformat(), "armed_until": until.isoformat(),
+        })
         return await self.status(now=now)
 
     async def disarm(self, actor: str) -> dict[str, Any]:
-        await self.repository.update_control(armed_until=None, armed_by=None)
+        await self.repository.update_control(
+            armed_until=None, armed_by=None, execution_session_id=None, execution_session_started_at=None,
+        )
         await self.repository.audit("execution_disarmed", actor, {})
         return await self.status()
 
     async def kill(self, actor: str) -> dict[str, Any]:
-        await self.repository.update_control(kill_switch=True, armed_until=None, armed_by=None)
+        await self.repository.update_control(
+            kill_switch=True, armed_until=None, armed_by=None,
+            execution_session_id=None, execution_session_started_at=None,
+        )
         await self.repository.audit("kill_switch_activated", actor, {})
         return await self.status()
 
@@ -781,6 +797,14 @@ class FTMOMasterControlService:
             symbol=symbol, side=side, order_type=order_type, stop_loss=stop_loss,
             take_profit=take_profit, entry=entry, now=observed,
         )
+        instrument = self._verified_instrument_mapping(symbol)
+        session_context = classify_market_session(
+            observed,
+            instrument=instrument,
+            trade_mode=fields["execution_snapshot"]["trading_status"],
+        )
+        if not session_allows_execution(session_context):
+            raise FTMOMasterError("current market session does not permit an executable proposal")
         proposal_id = _proposal_id or secrets.token_hex(6)
         proposal_expiry = _utc(expires_at) if expires_at is not None else observed + timedelta(minutes=5)
         if proposal_expiry <= observed:
@@ -794,6 +818,8 @@ class FTMOMasterControlService:
             "actor": actor,
             **fields,
             **details,
+            **session_context.to_dict(),
+            "session_context": session_context.to_dict(),
             "created_at": observed.isoformat(),
             "expires_at": proposal_expiry.isoformat(),
             "confirmation_required": True,
@@ -1007,6 +1033,16 @@ class FTMOMasterControlService:
             quote = (bridge.get("quotes") or {}).get(proposal["symbol"])
             if not quote or (observed - datetime.fromisoformat(quote["timestamp"])).total_seconds() > self.configuration.quote_max_age_seconds:
                 raise FTMOMasterError("FTMO quote is stale at approval")
+            instrument = self._verified_instrument_mapping(
+                proposal["symbol"],
+                analysis_provider=proposal.get("analysis_provider"),
+                analysis_instrument=proposal.get("analysis_instrument"),
+            )
+            approval_session = classify_market_session(
+                observed, instrument=instrument, trade_mode=quote.get("trade_mode"),
+            )
+            if not session_allows_execution(approval_session):
+                raise FTMOMasterError("current market session does not permit execution")
             stop_loss, take_profit = proposal["stop_loss"], proposal["take_profit"]
             if proposal.get("analysis_risk_fraction") and proposal.get("analysis_reward_fraction") and proposal.get("order_type") == "market":
                 live_entry = Decimal(str(quote["ask"] if proposal["side"] == "buy" else quote["bid"]))
@@ -1048,6 +1084,7 @@ class FTMOMasterControlService:
                 raise
             proposal.update(refreshed)
             proposal["approval_execution_snapshot"] = refreshed["execution_snapshot"]
+            proposal["approval_session_context"] = approval_session.to_dict()
 
         approval_id = hashlib.sha256(f"approval:{proposal_id}:{actor}:{observed.isoformat()}".encode()).hexdigest()
         command_id = hashlib.sha256(f"{proposal_id}:{proposal['kind']}:{proposal.get('operation', 'open')}".encode()).hexdigest()
@@ -1073,6 +1110,15 @@ class FTMOMasterControlService:
             "expires_at": min(datetime.fromisoformat(proposal["expires_at"]), observed + timedelta(seconds=30)).isoformat(),
             "automatic_resend": "same_command_id_only",
             "approval": {"approved_by": actor, "approved_at": observed.isoformat(), "approval_id": approval_id},
+            "execution_session": {
+                "execution_session_armed": readiness.get("execution_session_armed"),
+                "execution_session_id": readiness.get("execution_session_id"),
+                "execution_session_started_at": readiness.get("execution_session_started_at"),
+                "execution_session_expiry": readiness.get("execution_session_expiry"),
+                "kill_switch": readiness.get("kill_switch"),
+                "manual_master_execution_enabled": self.configuration.activation_configured,
+                "autonomous_execution_enabled": False,
+            },
             "analysis_provenance": {key: proposal.get(key) for key in (
                 "analysis_id", "signal_id", "analysis_source", "analysis_provider", "analysis_instrument",
                 "analysis_exchange", "analysis_price", "analysis_observed_at", "analysis_state",
@@ -1080,10 +1126,11 @@ class FTMOMasterControlService:
                 "conviction", "evidence_bundle", "mapping",
             ) if proposal.get(key) is not None},
             "execution_snapshot": proposal.get("approval_execution_snapshot"),
+            "market_session": proposal.get("approval_session_context"),
             "risk_policy": {
-                "maximum_risk_amount": str(self.configuration.maximum_risk_amount),
                 "risk_fraction": str(self.configuration.risk_fraction),
-                "maximum_daily_loss_amount": str(self.configuration.maximum_daily_loss_amount),
+                "maximum_risk_percent_per_trade": str(MAX_RISK_PERCENT_PER_TRADE),
+                "authority": "percentage_only_current_equity",
                 "maximum_open_exposures": self.configuration.maximum_open_exposures,
                 "actual_risk_amount": proposal.get("risk_amount"),
                 "actual_risk_fraction": proposal.get("risk_fraction"),
@@ -1231,9 +1278,12 @@ def format_proposal(proposal: Mapping[str, Any]) -> str:
             f"Instrument: {proposal['symbol']}",
             f"Direction: {str(proposal['side']).upper()} | Type: {str(proposal['order_type']).upper()}",
             f"Strategy: {proposal.get('strategy') or 'Operator preview'}",
+            f"Session: {proposal.get('market_session') or 'UNKNOWN'} | Checked: {proposal.get('session_checked_at') or 'UNKNOWN'}",
+            f"Market: {'OPEN' if proposal.get('market_open') is True else 'CLOSED' if proposal.get('market_open') is False else 'UNKNOWN'} | Broker break: {proposal.get('broker_break_proximity') or 'UNKNOWN'}",
             f"Analysis reference price: {proposal.get('analysis_price') or proposal['entry']}",
             f"Proposed SL: {proposal['stop_loss']} | Proposed TP: {proposal['take_profit']}",
-            f"Maximum risk: ${proposal['risk_amount']} | Risk limit: {Decimal(str(proposal['risk_fraction'])) * 100:.2f}%",
+            f"Risk ceiling: {MAX_RISK_PERCENT_PER_TRADE:.2f}% | Proposed risk: {Decimal(str(proposal['risk_fraction'])) * 100:.2f}%",
+            f"Estimated risk: ${proposal['risk_amount']} | Estimated volume: {proposal.get('volume') or 'RECALCULATE AT APPROVAL'} lots",
             f"FTMO preview Bid/Ask: {proposal['quote_bid']} / {proposal['quote_ask']}",
             f"Signal expires: {proposal['expires_at']}",
             *((f"Conviction: {proposal['conviction']}",) if proposal.get("conviction") is not None else ()),
@@ -1259,6 +1309,7 @@ def format_status(status: Mapping[str, Any]) -> str:
         f"Bridge: {'HEALTHY' if status.get('bridge_healthy') else 'OFFLINE/STALE'}",
         f"MT5 connected: {bool(status.get('terminal_connected'))} | EA: {bool(status.get('ea_attached'))} | Trade permission: {bool(status.get('trade_allowed'))}",
         f"Kill switch: {'ON' if status.get('kill_switch') else 'OFF'} | Armed: {bool(status.get('armed'))}",
+        f"Execution session: {status.get('execution_session_id') or 'NONE'} | Expiry: {status.get('execution_session_expiry') or 'NONE'}",
         f"Master gates: {'READY' if status.get('activation_configured') else 'BLOCKED'}",
         f"Execution: {'READY' if status.get('execution_ready') else 'BLOCKED'}",
     ))

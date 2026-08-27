@@ -16,6 +16,8 @@ from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_UP
 from enum import StrEnum
 from typing import Any, Mapping, Protocol
 
+from monatise.application.risk_policy import MAX_RISK_FRACTION_PER_TRADE, risk_ceiling
+
 
 ZERO = Decimal("0")
 
@@ -251,9 +253,8 @@ class UnavailableFTMOAdapter:
 
 @dataclass(frozen=True)
 class FTMORiskPolicy:
-    risk_fraction: Decimal = Decimal("0.01")
-    maximum_risk_amount: Decimal = Decimal("100")
-    maximum_total_open_risk_fraction: Decimal = Decimal("0.03")
+    risk_fraction: Decimal = MAX_RISK_FRACTION_PER_TRADE
+    maximum_total_open_risk_fraction: Decimal = MAX_RISK_FRACTION_PER_TRADE
     daily_loss_safety_buffer_fraction: Decimal = Decimal("0.10")
     maximum_quote_age_seconds: Decimal = Decimal("5")
     maximum_spread_ticks: Decimal = Decimal("80")
@@ -261,7 +262,7 @@ class FTMORiskPolicy:
 
     def __post_init__(self) -> None:
         for name in (
-            "risk_fraction", "maximum_risk_amount", "maximum_total_open_risk_fraction",
+            "risk_fraction", "maximum_total_open_risk_fraction",
             "maximum_quote_age_seconds", "maximum_spread_ticks",
             "maximum_reference_deviation_fraction",
         ):
@@ -271,8 +272,8 @@ class FTMORiskPolicy:
             "daily_loss_safety_buffer_fraction",
             _decimal(self.daily_loss_safety_buffer_fraction, "daily_loss_safety_buffer_fraction"),
         )
-        if self.risk_fraction > Decimal("0.01"):
-            raise ValueError("FTMO risk per trade idea cannot exceed 1%")
+        if self.risk_fraction > MAX_RISK_FRACTION_PER_TRADE:
+            raise ValueError("FTMO risk per trade idea cannot exceed 3%")
         if not ZERO <= self.daily_loss_safety_buffer_fraction < Decimal("1"):
             raise ValueError("daily loss safety buffer must be between 0 and 1")
 
@@ -420,7 +421,7 @@ class FTMONativePriceAuthority:
         if stop_distance < specification.minimum_stop_distance:
             raise FTMOValidationError("FTMO stop distance is below the symbol minimum")
 
-        risk_budget = min(account.equity * self.policy.risk_fraction, self.policy.maximum_risk_amount)
+        risk_budget = min(account.equity * self.policy.risk_fraction, risk_ceiling(account.equity))
         loss_today = max(ZERO, account.daily_start_equity - account.equity)
         daily_buffer = account.daily_loss_limit * self.policy.daily_loss_safety_buffer_fraction
         remaining_daily_capacity = account.daily_loss_limit - loss_today - daily_buffer
