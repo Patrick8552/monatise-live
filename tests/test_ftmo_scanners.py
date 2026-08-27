@@ -227,6 +227,19 @@ def test_three_ftmo_scanner_jobs_replace_legacy_scheduler_jobs():
     assert runtime.dependencies["ftmo_futures_scan"]["poll_interval_seconds"] == 900
 
 
+@pytest.mark.parametrize(
+    ("remaining", "expected"),
+    [(0, 0), (1, 0), (2, 0), (3, 0), (4, 1), (100, 49), ("unlimited", None)],
+)
+def test_flashalpha_scheduler_capacity_reserves_two_requests_for_on_demand(remaining, expected):
+    runtime = OrchestrationRuntime.__new__(OrchestrationRuntime)
+    runtime.environment = {}
+    runtime.flashalpha = None
+    runtime.dependencies = {"flashalpha": {"status": "healthy", "remaining": remaining}}
+
+    assert runtime._flashalpha_scheduled_capacity() == expected
+
+
 class _RecordingScheduler:
     def __init__(self):
         self.jobs = []

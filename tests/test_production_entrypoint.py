@@ -972,6 +972,23 @@ def test_production_restores_public_legacy_health_contract():
     assert payload["telegram"]["pending_depth"] == 0
 
 
+def test_flashalpha_health_surface_is_cached_sanitized_and_execution_disabled():
+    runtime = Runtime()
+    runtime.flashalpha_health = lambda: {
+        "status": "rate_limited", "configured": True, "plan": "free",
+        "remaining": 0, "reset_epoch": 1787875200, "execution_enabled": False,
+    }
+
+    response = get(ProductionASGI(runtime), "/api/providers/flashalpha/health")
+    payload = json.loads(response[1]["body"])
+
+    assert response[0]["status"] == 200
+    assert payload == {
+        "status": "rate_limited", "configured": True, "plan": "free",
+        "remaining": 0, "reset_epoch": 1787875200, "execution_enabled": False,
+    }
+
+
 def test_production_frontend_does_not_shadow_api_or_allow_traversal(tmp_path):
     (tmp_path / "index.html").write_text("Monatise")
     app = ProductionASGI(Runtime(), static_dir=tmp_path)

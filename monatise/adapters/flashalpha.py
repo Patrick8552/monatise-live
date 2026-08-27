@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
@@ -10,7 +11,18 @@ from urllib.request import Request, urlopen
 
 
 class FlashAlphaAdapterError(RuntimeError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "provider_unavailable",
+        status_code: int | None = None,
+        rate_limit: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.status_code = status_code
+        self.rate_limit = dict(rate_limit or {})
 
 
 @dataclass(frozen=True)
@@ -18,6 +30,7 @@ class FlashAlphaAdapter:
     api_key: str
     base_url: str = "https://lab.flashalpha.com"
     timeout: float = 10
+    telemetry: dict[str, Any] = field(default_factory=dict, compare=False, repr=False)
 
     @classmethod
     def from_env(cls) -> "FlashAlphaAdapter":
@@ -53,9 +66,85 @@ class FlashAlphaAdapter:
             "net_gex_label": payload.get("net_gex_label"),
         }
 
+    def account(self) -> dict[str, Any]:
+        """Return a sanitized account/quota view without identity fields."""
+        payload, metadata = self._get_with_metadata("/v1/account")
+        if not isinstance(payload, dict):
+            raise FlashAlphaAdapterError("FlashAlpha returned malformed account data", code="provider_incomplete")
+        result = {
+            "status": "healthy",
+            "plan": _text(payload.get("plan")),
+            "daily_limit": _quota_value(payload.get("daily_limit")),
+            "usage_today": _integer(payload.get("usage_today")),
+            "remaining": _quota_value(payload.get("remaining")),
+            "resets_at": _text(payload.get("resets_at") or payload.get("reset_at")),
+            "rate_limit": metadata["rate_limit"],
+        }
+        self.telemetry.update({key: value for key, value in result.items() if value is not None})
+        return result
+
+    def probe(self, symbol: str = "AAPL") -> dict[str, Any]:
+        """Make one authenticated provider request and return only diagnostics."""
+        ticker = normalize_flashalpha_symbol(symbol)
+        try:
+            payload, metadata = self._get_with_metadata(f"/v1/exposure/gex/{quote(ticker, safe='')}")
+            _raise_for_provider_payload(payload, expected=("underlying_price", "gamma_flip", "net_gex"))
+            result = {
+                "status": "healthy",
+                "symbol": ticker,
+                "http_status": metadata["http_status"],
+                "rate_limit": metadata["rate_limit"],
+            }
+        except FlashAlphaAdapterError as error:
+            result = {
+                "status": error.code,
+                "symbol": ticker,
+                "http_status": error.status_code,
+                "rate_limit": error.rate_limit,
+            }
+        self.telemetry.update({
+            "status": result["status"],
+            "last_probe_symbol": ticker,
+            "last_probe_http_status": result["http_status"],
+            "last_checked_at": datetime.now(timezone.utc).isoformat(),
+            **result["rate_limit"],
+        })
+        return result
+
+    def diagnose(self, symbol: str = "AAPL") -> dict[str, Any]:
+        """Check the deployed credential's account and one direct symbol call."""
+        try:
+            account = self.account()
+        except FlashAlphaAdapterError as error:
+            account = {
+                "status": error.code,
+                "http_status": error.status_code,
+                "rate_limit": error.rate_limit,
+            }
+        probe = self.probe(symbol)
+        health = probe["status"] if probe["status"] != "healthy" else account["status"]
+        result = {
+            "status": health,
+            "configured": self.configured,
+            "checked_at": datetime.now(timezone.utc).isoformat(),
+            "account": account,
+            "probe": probe,
+            "requests_per_analysis": 2,
+        }
+        self.telemetry.update({"status": health, "checked_at": result["checked_at"]})
+        return result
+
+    def health_snapshot(self) -> dict[str, Any]:
+        """Return cached telemetry. This method never consumes provider quota."""
+        return {"configured": self.configured, **self.telemetry}
+
     def _get(self, path: str, query: dict[str, Any] | None = None) -> Any:
+        payload, _metadata = self._get_with_metadata(path, query)
+        return payload
+
+    def _get_with_metadata(self, path: str, query: dict[str, Any] | None = None) -> tuple[Any, dict[str, Any]]:
         if not self.configured:
-            raise FlashAlphaAdapterError("FlashAlpha is not configured")
+            raise FlashAlphaAdapterError("FlashAlpha is not configured", code="auth_failed")
         url = f"{self.base_url}{path}"
         if query:
             url = f"{url}?{urlencode(query)}"
@@ -65,11 +154,27 @@ class FlashAlphaAdapter:
         )
         try:
             with urlopen(request, timeout=self.timeout) as response:  # noqa: S310
-                return json.loads(response.read().decode("utf-8"))
+                rate_limit = _rate_limit_headers(getattr(response, "headers", {}))
+                self.telemetry.update(rate_limit)
+                return json.loads(response.read().decode("utf-8")), {
+                    "http_status": int(getattr(response, "status", 200)),
+                    "rate_limit": rate_limit,
+                }
         except HTTPError as error:
-            raise FlashAlphaAdapterError(f"FlashAlpha HTTP {error.code}") from error
+            rate_limit = _rate_limit_headers(getattr(error, "headers", {}))
+            self.telemetry.update(rate_limit)
+            code = {
+                401: "auth_failed",
+                403: "tier_restricted",
+                404: "provider_unsupported",
+                429: "rate_limited",
+            }.get(error.code, "provider_down" if error.code >= 500 else "provider_unavailable")
+            raise FlashAlphaAdapterError(
+                f"FlashAlpha HTTP {error.code}", code=code, status_code=error.code, rate_limit=rate_limit,
+            ) from error
         except (URLError, TimeoutError, OSError, json.JSONDecodeError) as error:
-            raise FlashAlphaAdapterError(f"FlashAlpha unavailable: {type(error).__name__}") from error
+            code = "provider_timeout" if isinstance(error, TimeoutError) else "provider_down"
+            raise FlashAlphaAdapterError(f"FlashAlpha unavailable: {type(error).__name__}", code=code) from error
 
 
 def normalize_flashalpha_symbol(symbol: str) -> str:
@@ -94,7 +199,54 @@ def _raise_for_provider_payload(payload: Any, *, expected: tuple[str, ...]) -> N
     if not detail.strip():
         return
     if any(term in detail for term in ("rate", "limit", "quota", "too many")):
-        raise FlashAlphaAdapterError("FlashAlpha rate limit exceeded")
+        raise FlashAlphaAdapterError("FlashAlpha rate limit exceeded", code="rate_limited")
     if any(term in detail for term in ("plan", "tier", "entitlement", "upgrade", "access", "permission")):
-        raise FlashAlphaAdapterError("FlashAlpha unsupported for the current account tier")
-    raise FlashAlphaAdapterError("FlashAlpha returned an unavailable provider payload")
+        raise FlashAlphaAdapterError("FlashAlpha unsupported for the current account tier", code="tier_restricted")
+    raise FlashAlphaAdapterError("FlashAlpha returned an unavailable provider payload", code="provider_unavailable")
+
+
+def _header(headers: Any, name: str) -> str | None:
+    getter = getattr(headers, "get", None)
+    if not callable(getter):
+        return None
+    value = getter(name)
+    return str(value).strip() if value is not None and str(value).strip() else None
+
+
+def _rate_limit_headers(headers: Any) -> dict[str, Any]:
+    limit = _quota_value(_header(headers, "X-RateLimit-Limit"))
+    remaining = _quota_value(_header(headers, "X-RateLimit-Remaining"))
+    reset = _header(headers, "X-RateLimit-Reset")
+    retry_after = _integer(_header(headers, "Retry-After"))
+    result = {
+        "daily_limit": limit,
+        "remaining": remaining,
+        "reset_epoch": _integer(reset),
+        "retry_after_seconds": retry_after,
+    }
+    return {key: value for key, value in result.items() if value is not None}
+
+
+def _quota_value(value: Any) -> int | str | None:
+    if value is None:
+        return None
+    text = str(value).strip().casefold()
+    if text == "unlimited":
+        return "unlimited"
+    try:
+        return int(text)
+    except ValueError:
+        return None
+
+
+def _integer(value: Any) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _text(value: Any) -> str | None:
+    return str(value).strip() if value is not None and str(value).strip() else None

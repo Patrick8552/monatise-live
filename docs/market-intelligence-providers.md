@@ -49,7 +49,15 @@ historical candle feed.
   data plan documents a 200-requests-per-minute historical limit.
 - FlashAlpha exposes account plan/quota information and rate-limit headers.
   Documented daily tiers are Free 5, Basic 250, Growth 2,500, and Alpha
-  unlimited. CME futures functionality is tier-gated.
+  unlimited. CME futures functionality is tier-gated. Production performs one
+  sanitized account check and one direct AAPL probe at startup, then exposes
+  the cached result at `/api/providers/flashalpha/health`. API keys, email, and
+  provider account identifiers are never returned.
+- A FlashAlpha stock or futures context currently costs two authenticated
+  requests (`gex` and `levels`). Scheduled stock and futures scanners read the
+  cached remaining quota and reserve at least two requests for an on-demand
+  Telegram analysis. When that reserve is reached, background candidates are
+  deferred instead of consuming the last usable analysis budget.
 - Finnhub and Quiver limits are plan/endpoint dependent. Monatise treats HTTP
   429 as `provider_rate_limited`, caps scheduled enrichments, and does not make
   either provider a hidden required candle source.

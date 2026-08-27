@@ -1103,6 +1103,65 @@ class OrchestrationRuntime:
             providers["backpack_public"] = self.backpack
         return providers
 
+    def flashalpha_health(self) -> dict[str, Any]:
+        """Return quota telemetry without making a provider request."""
+        dependencies = getattr(self, "dependencies", {})
+        environment = getattr(self, "environment", {})
+        adapter = getattr(self, "flashalpha", None)
+        recorded = dict(dependencies.get("flashalpha") or {})
+        if adapter is not None:
+            snapshot = adapter.health_snapshot()
+            recorded.update({key: value for key, value in snapshot.items() if value is not None})
+        recorded.setdefault("configured", bool(environment.get("FLASHALPHA_API_KEY", "").strip()))
+        recorded.setdefault("status", "not_checked" if recorded["configured"] else "auth_failed")
+        recorded["execution_enabled"] = False
+        return recorded
+
+    async def _diagnose_flashalpha(self) -> dict[str, Any]:
+        """Run one account call and one AAPL request with the deployed key."""
+        self.flashalpha = self.flashalpha or FlashAlphaAdapter(
+            self.environment.get("FLASHALPHA_API_KEY", "").strip(),
+            self.environment.get("FLASHALPHA_API_BASE", "https://lab.flashalpha.com").rstrip("/"),
+        )
+        if not self.flashalpha.configured:
+            result = {
+                "status": "auth_failed", "configured": False,
+                "checked_at": datetime.now(timezone.utc).isoformat(),
+                "account": {"status": "auth_failed"},
+                "probe": {"status": "auth_failed", "symbol": "AAPL", "http_status": None, "rate_limit": {}},
+                "requests_per_analysis": 2,
+            }
+        else:
+            try:
+                result = await asyncio.to_thread(self.flashalpha.diagnose, "AAPL")
+            except Exception as exc:
+                LOGGER.warning("FlashAlpha startup diagnostic failed", extra={"error_type": type(exc).__name__})
+                result = {
+                    "status": "provider_down", "configured": True,
+                    "checked_at": datetime.now(timezone.utc).isoformat(),
+                    "account": {"status": "provider_down"},
+                    "probe": {"status": "provider_down", "symbol": "AAPL", "http_status": None, "rate_limit": {}},
+                    "requests_per_analysis": 2,
+                }
+        result["execution_enabled"] = False
+        self.dependencies["flashalpha"] = result
+        return result
+
+    def _flashalpha_scheduled_capacity(self) -> int | None:
+        """Return safe context-call capacity while reserving on-demand quota."""
+        if "flashalpha" not in getattr(self, "dependencies", {}) and getattr(self, "flashalpha", None) is None:
+            return None
+        health = self.flashalpha_health()
+        remaining = health.get("remaining")
+        if remaining is None:
+            remaining = ((health.get("probe") or {}).get("rate_limit") or {}).get("remaining")
+        if remaining == "unlimited":
+            return None
+        if not isinstance(remaining, int):
+            return 0
+        reserve = max(2, int(self.environment.get("MONATISE_FLASHALPHA_ON_DEMAND_RESERVE_REQUESTS", "2")))
+        return max(0, (remaining - reserve) // 2)
+
     async def _register_scheduled_analysis(self) -> tuple[str, ...]:
         configuration = scheduled_analysis_configuration(self.environment)
         if configuration is None:
@@ -1572,6 +1631,12 @@ class OrchestrationRuntime:
             longs[:configuration.shortlist_per_side],
             shorts[:configuration.shortlist_per_side],
         )
+        scheduled_capacity = self._flashalpha_scheduled_capacity()
+        quota_deferred = 0
+        if scheduled_capacity is not None and len(shortlisted) > scheduled_capacity:
+            quota_deferred = len(shortlisted) - scheduled_capacity
+            shortlisted = shortlisted[:scheduled_capacity]
+            exclusions["flashalpha_quota_reserved_for_on_demand"] = quota_deferred
         outcomes = await asyncio.gather(*(self._analyze_market_stock(candidate, configuration, index) for index, candidate in enumerate(shortlisted)), return_exceptions=True)
         analyzed = qualified = published = proposal_published = suppressed = 0
         scan_results: list[dict[str, Any]] = []
@@ -1629,6 +1694,8 @@ class OrchestrationRuntime:
             "candidate_count": len(shortlisted), "analysis_completed_count": analyzed,
             "qualified_count": qualified, "suppressed_count": suppressed,
             "proposal_published_count": proposal_published,
+            "flashalpha_scheduled_capacity": scheduled_capacity,
+            "flashalpha_quota_deferred": quota_deferred,
             "suppressions": suppressions, "failures": failures, "provider_degraded": provider_degraded,
             "results": scan_results, "execution_enabled": False,
         }
@@ -1793,7 +1860,9 @@ class OrchestrationRuntime:
     async def _analyze_ftmo_futures(self, instruments: tuple[Any, ...], cooldown_seconds: int, namespace: str) -> dict[str, Any]:
         adapter = getattr(self, "flashalpha", None) or FlashAlphaAdapter.from_env()
         self.flashalpha = adapter
-        unique_roots = tuple(dict.fromkeys(item.futures_symbol for item in instruments if item.futures_symbol))
+        all_unique_roots = tuple(dict.fromkeys(item.futures_symbol for item in instruments if item.futures_symbol))
+        scheduled_capacity = self._flashalpha_scheduled_capacity()
+        unique_roots = all_unique_roots if scheduled_capacity is None else all_unique_roots[:scheduled_capacity]
         queue: asyncio.Queue[str] = asyncio.Queue()
         for root in unique_roots:
             queue.put_nowait(root)
@@ -1874,7 +1943,9 @@ class OrchestrationRuntime:
                 else:
                     await self.redis.delete(cooldown_key)
         return {
-            "universe_size": len(instruments), "provider_roots": len(unique_roots), "provider_contexts": len(contexts),
+            "universe_size": len(instruments), "provider_roots": len(unique_roots), "provider_roots_total": len(all_unique_roots),
+            "provider_roots_quota_deferred": len(all_unique_roots) - len(unique_roots), "flashalpha_scheduled_capacity": scheduled_capacity,
+            "provider_contexts": len(contexts),
             "ranked_candidates": len(candidates), "deep_analysis_attempted": min(len(candidates), deep_limit),
             "telegram_published": published, "suppressed": suppressed, "failures": failures, "execution_enabled": False,
         }
@@ -2111,6 +2182,8 @@ class OrchestrationRuntime:
             if x_token:
                 secrets = EnvironmentSecretBoundary(self.environment)
                 self.x_macro = XMacroAdapter(lambda: secrets.get("MONATISE_X_BEARER_TOKEN"))
+            startup_phase = "flashalpha_provider_health"
+            await self._diagnose_flashalpha()
             startup_phase = "scheduler_registration"
             scheduled_jobs = await self._register_scheduled_analysis()
             await self._register_hierarchy_shadow(store)

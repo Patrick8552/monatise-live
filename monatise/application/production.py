@@ -190,8 +190,16 @@ class ProductionASGI(OrchestrationASGI):
                 return
             await self._respond(send, 200, {
                 "ok": True, "status": "alive", "telegram": await self._telegram_queue_telemetry(),
+                "providers": {"flashalpha": self.runtime.flashalpha_health() if hasattr(self.runtime, "flashalpha_health") else {"status": "not_checked"}},
                 "execution_enabled": False,
             })
+            return
+        if scope.get("type") == "http" and path == "/api/providers/flashalpha/health":
+            if scope.get("method", "GET").upper() not in {"GET", "HEAD"}:
+                await self._respond(send, 405, {"status": "method_not_allowed"})
+                return
+            payload = self.runtime.flashalpha_health() if hasattr(self.runtime, "flashalpha_health") else {"status": "not_checked", "configured": False}
+            await self._respond(send, 200, payload)
             return
         if scope.get("type") == "http" and path == "/api/x/status":
             if scope.get("method", "GET").upper() not in {"GET", "HEAD"}:
