@@ -689,9 +689,9 @@ class ProductionASGI(OrchestrationASGI):
             return
         help_text = (
             "Monatise commands\n"
-            "Fresh analysis: /analyze EURUSD | XAUUSD | US100.cash | AAPL\n"
-            "Asset classes: FTMO forex, futures-linked CFDs, and stocks only\n"
-            "Alias: /gold | /analysis EURUSD\n"
+            "Fresh analysis: /analyze XAUUSD | US100.cash | AAPL\n"
+            "Asset classes: FTMO futures-linked CFDs and supported stocks only\n"
+            "Alias: /gold | /analysis AAPL\n"
             "FTMO: /status /bridge /account /positions /orders\n"
             "Trade preview: /trade XAUUSD buy market sl=LEVEL tp=LEVEL\n"
             "Control: /approve ID /reject ID /arm [seconds] /disarm /kill\n"
@@ -845,7 +845,9 @@ class ProductionASGI(OrchestrationASGI):
         try:
             resolved = resolve_telegram_instrument(requested_symbol, getattr(self.runtime, "ftmo_registry", FTMO_REGISTRY))
             if resolved.asset_class is FTMOAssetClass.CRYPTO:
-                raise TelegramAnalysisError("Crypto is disabled for FTMO Telegram. Use forex, futures-linked CFDs, or stocks.")
+                raise TelegramAnalysisError("Crypto is disabled for FTMO Telegram. Use futures-linked CFDs or supported stocks.")
+            if resolved.asset_class is FTMOAssetClass.FOREX:
+                raise TelegramAnalysisError("Forex analysis is out of scope because no verified non-Yahoo provider is configured. Use futures-linked CFDs or supported stocks.")
             if requested_class == "crypto" and resolved.asset_class is not FTMOAssetClass.CRYPTO:
                 raise TelegramAnalysisError("Instrument mapping could not be verified for crypto.")
             if requested_class == "stock" and resolved.asset_class is not FTMOAssetClass.STOCK:
@@ -884,9 +886,9 @@ class ProductionASGI(OrchestrationASGI):
                     ), timeout=90,
                 )
             elif resolved.asset_class is FTMOAssetClass.STOCK:
-                raw = await asyncio.wait_for(self.runtime.analyse_stock(resolved.analysis_symbol), timeout=90)
-            elif resolved.asset_class is FTMOAssetClass.FOREX:
-                raw = await asyncio.wait_for(self.runtime.analyse_forex(resolved.instrument), timeout=90)
+                raw = await asyncio.wait_for(
+                    self.runtime.analyse_stock(resolved.analysis_symbol, instrument=resolved.instrument), timeout=90,
+                )
             else:
                 raw = await asyncio.wait_for(
                     self.runtime.analyse_ftmo_futures_instrument(resolved.instrument), timeout=90,
@@ -947,7 +949,21 @@ class ProductionASGI(OrchestrationASGI):
                         deadline=expiry, now=analysis_completed_at,
                     )
                     proposal_state = "WAITING_FOR_QUOTE"
-                    analysis_message += (
+                    quote_sources = [dict(item) for item in analysis.get("analysis_sources") or []]
+                    for item in quote_sources:
+                        if item.get("provider") == "ftmo_mt5":
+                            item.update({"requested": True, "status": "requested", "failure_reason": None})
+                    ftmo_quote = {
+                        "provider": "ftmo_mt5", "status": "requested",
+                        "quote_request_id": quote_request["quote_request_id"],
+                        "ftmo_symbol": quote_request["ftmo_symbol"],
+                    }
+                    analysis = await repository.update_telegram_analysis(analysis_id, {
+                        "analysis_sources": quote_sources,
+                        "market_data_provenance": {**analysis["market_data_provenance"], "sources": quote_sources},
+                        "ftmo_execution_quote": ftmo_quote,
+                    })
+                    analysis_message = format_analysis(analysis) + (
                         "\nWAITING FOR FTMO QUOTE — analysis retained"
                         f"\nQuote request: {quote_request['quote_request_id']}"
                         f"\nFTMO symbol: {quote_request['ftmo_symbol']}"
@@ -967,7 +983,12 @@ class ProductionASGI(OrchestrationASGI):
                         entry_zone_low=zone.get("low"), entry_zone_high=zone.get("high"),
                         strategy=f"Monatise on-demand {analysis.get('market_state')}", timeframe=analysis["timeframe"],
                         conviction=analysis["conviction"], recommended_risk_percent=analysis["recommended_risk_percent"],
-                        evidence_bundle={"market_data_provenance": analysis["market_data_provenance"], "session": analysis["session"]},
+                        evidence_bundle={
+                            "market_data_provenance": analysis["market_data_provenance"],
+                            "analysis_sources": analysis.get("analysis_sources") or [],
+                            "provider_consensus": analysis.get("provider_consensus"),
+                            "session": analysis["session"],
+                        },
                         now=analysis_completed_at,
                     )
                     proposal_state = "TRADE_PREVIEW_READY"

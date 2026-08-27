@@ -30,13 +30,16 @@ from monatise.application.hierarchy import HierarchyConfiguration, HierarchyLaye
 from monatise.adapters.coinglass_production import CoinGlassProductionAdapter
 from monatise.adapters.backpack import BackpackAdapter, BackpackCredentials
 from monatise.adapters.alpaca import AlpacaMarketDataAdapter
-from monatise.adapters.quiver import QuiverAdapter, normalize_quiver_symbol
-from monatise.adapters.finnhub import FinnhubAdapter, FinnhubAdapterError
-from monatise.adapters.flashalpha import FlashAlphaAdapter, FlashAlphaAdapterError
-from monatise.adapters.yahoo_forex import YahooForexAdapter
-from monatise.application.stock_analysis import build_stock_analysis
+from monatise.adapters.quiver import QuiverAdapter
+from monatise.adapters.finnhub import FinnhubAdapter
+from monatise.adapters.flashalpha import FlashAlphaAdapter
 from monatise.application.flashalpha_analysis import build_flashalpha_futures_analysis
-from monatise.application.forex_analysis import build_forex_analysis
+from monatise.application.market_intelligence import (
+    FuturesMarketIntelligenceCoordinator,
+    StockMarketIntelligenceCoordinator,
+    validate_candles,
+    validate_flashalpha_context,
+)
 from monatise.application.stock_universe import StockCandidate, StockUniverseConfiguration, build_technical_stock_setup, rank_stock_universe
 from monatise.application.universe_discovery import rank_significant_futures_universe
 from monatise.application.ftmo_registry import FTMOAssetClass, FTMOInstrumentRegistry, FTMO_REGISTRY
@@ -1078,6 +1081,8 @@ class OrchestrationRuntime:
     quiver: QuiverAdapter | None = None
     finnhub: FinnhubAdapter | None = None
     flashalpha: FlashAlphaAdapter | None = None
+    stock_intelligence: StockMarketIntelligenceCoordinator | None = None
+    futures_intelligence: FuturesMarketIntelligenceCoordinator | None = None
     telegram: TelegramNotifier | None = None
     x_macro: XMacroAdapter | None = None
     dependencies: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -1633,8 +1638,16 @@ class OrchestrationRuntime:
         flashalpha = getattr(self, "flashalpha", None) or FlashAlphaAdapter.from_env()
         finnhub = getattr(self, "finnhub", None) or FinnhubAdapter.from_env()
         self.quiver, self.flashalpha, self.finnhub = quiver, flashalpha, finnhub
-        hourly_task = asyncio.to_thread(alpaca.stock_bars, candidate.symbol, "1Hour", 220)
-        daily_task = asyncio.to_thread(alpaca.stock_bars, candidate.symbol, "1Day", 120)
+        async def required_bars(timeframe: str, limit: int) -> tuple[list[dict[str, Any]] | None, str | None]:
+            try:
+                return await asyncio.to_thread(alpaca.stock_bars, candidate.symbol, timeframe, limit), None
+            except Exception as exc:
+                detail = str(exc).casefold()
+                code = "provider_rate_limited" if "429" in detail else "provider_timeout" if "timeout" in detail else "provider_unavailable"
+                return None, code
+
+        hourly_task = required_bars("1Hour", 220)
+        daily_task = required_bars("1Day", 120)
 
         async def optional_context(factory: Any, fallback: dict[str, Any]) -> dict[str, Any]:
             try:
@@ -1654,8 +1667,58 @@ class OrchestrationRuntime:
             lambda: finnhub.context(candidate.symbol),
             {"source": "Finnhub", "unavailable": True},
         ) if enrichment_index < max(0, int(self.environment.get("MONATISE_STOCK_FINNHUB_CAP_PER_CYCLE", "6"))) else asyncio.sleep(0, result={"source": "Finnhub", "unavailable": True, "reason": "cycle quota reserved"})
-        hourly, daily, quiver, flashalpha, finnhub = await asyncio.gather(hourly_task, daily_task, quiver_task, flashalpha_task, finnhub_task)
-        return build_technical_stock_setup(candidate, hourly, daily, configuration=configuration, quiver=quiver, flashalpha=flashalpha, finnhub=finnhub)
+        hourly_result, daily_result, quiver, flashalpha, finnhub = await asyncio.gather(hourly_task, daily_task, quiver_task, flashalpha_task, finnhub_task)
+        hourly, hourly_error = hourly_result
+        daily, daily_error = daily_result
+        observed = datetime.now(timezone.utc)
+        quality: dict[str, Any] = {}
+        required_error = hourly_error or daily_error
+        if required_error is None:
+            try:
+                hourly, quality["1h"] = validate_candles(
+                    hourly, provider="alpaca", symbol=candidate.symbol, timeframe="1h",
+                    now=observed, minimum_count=25, maximum_age=timedelta(days=4),
+                )
+                daily, quality["1d"] = validate_candles(
+                    daily, provider="alpaca", symbol=candidate.symbol, timeframe="1d",
+                    now=observed, minimum_count=60, maximum_age=timedelta(days=4),
+                )
+            except ValueError as exc:
+                required_error = "provider_stale" if str(exc).startswith("provider_stale") else "provider_incomplete"
+        quiver_available = bool((quiver or {}).get("available"))
+        flashalpha_available = (flashalpha or {}).get("net_gex") is not None and not (flashalpha or {}).get("unavailable")
+        finnhub_available = not (finnhub or {}).get("unavailable")
+        sources = [
+            {"provider": "alpaca", "role": "required_market_data", "requested": True, "status": "used" if required_error is None else "failed", "provider_symbol": candidate.symbol, "timeframes": quality, "failure_reason": required_error, "evidence_contributed": ["1h OHLC", "1d OHLC"] if required_error is None else [], "affected_score": True},
+            {"provider": "quiver", "role": "supplemental_intelligence", "requested": True, "status": "used" if quiver_available else "degraded", "provider_symbol": candidate.symbol, "timeframes": {}, "failure_reason": None if quiver_available else "provider_incomplete", "evidence_contributed": ["alternative-data conflict check"] if quiver_available else [], "affected_score": quiver_available},
+            {"provider": "finnhub", "role": "supplemental_intelligence", "requested": True, "status": "used" if finnhub_available else "degraded", "provider_symbol": candidate.symbol, "timeframes": {}, "failure_reason": None if finnhub_available else "provider_unavailable", "evidence_contributed": ["earnings calendar"] if finnhub_available else [], "affected_score": finnhub_available},
+            {"provider": "flashalpha", "role": "confirmation", "requested": True, "status": "used" if flashalpha_available else "degraded", "provider_symbol": candidate.symbol, "timeframes": {}, "failure_reason": None if flashalpha_available else "provider_unavailable", "evidence_contributed": ["options positioning conflict check"] if flashalpha_available else [], "affected_score": flashalpha_available},
+            {"provider": "ftmo_mt5", "role": "execution_pricing", "requested": False, "status": "not_requested", "provider_symbol": candidate.ftmo_symbol, "timeframes": {}, "failure_reason": "analysis_not_qualified", "evidence_contributed": [], "affected_score": False},
+        ]
+        if required_error is not None:
+            return {
+                "asset": candidate.symbol, "ftmo_symbol": candidate.ftmo_symbol,
+                "asset_class": FTMOAssetClass.STOCK.value, "decision": "INSUFFICIENT_MARKET_DATA",
+                "direction": "NONE", "score": 0, "score_threshold": configuration.minimum_score,
+                "setup_status": "insufficient_market_data", "reason_code": required_error,
+                "reasons": [required_error], "suppression_reasons": [required_error],
+                "analysis_provider": "alpaca", "analysis_instrument": candidate.symbol,
+                "analysis_sources": sources, "provider_consensus": "INSUFFICIENT",
+                "fallback_status": "no_verified_fallback", "data_quality": quality,
+                "additional_context": {"quiver": quiver, "flashalpha": flashalpha, "finnhub": finnhub},
+                "ftmo_execution_quote": {"provider": "ftmo_mt5", "status": "not_requested", "reason": "analysis_not_qualified"},
+                "execution": {"enabled": False, "orders_placed": 0},
+            }
+        result = build_technical_stock_setup(candidate, hourly, daily, configuration=configuration, quiver=quiver, flashalpha=flashalpha, finnhub=finnhub)
+        conflict = any(reason in {"quiver_material_conflict", "flashalpha_positioning_conflict"} for reason in result.get("suppression_reasons") or [])
+        result.update({
+            "analysis_provider": "alpaca", "analysis_instrument": candidate.symbol,
+            "analysis_sources": sources,
+            "provider_consensus": "CONFLICT" if conflict else "CONFIRMED" if quiver_available and flashalpha_available else "PARTIAL",
+            "fallback_status": "not_available_no_verified_fallback", "data_quality": quality,
+            "ftmo_execution_quote": {"provider": "ftmo_mt5", "status": "not_requested", "reason": "awaiting_qualification" if result.get("setup_status") == "confirmed" else "analysis_not_qualified"},
+        })
+        return result
 
     async def _register_ftmo_futures_scanner(self) -> tuple[str, ...]:
         api_key_configured = bool(self.environment.get("FLASHALPHA_API_KEY", "").strip())
@@ -1736,6 +1799,15 @@ class OrchestrationRuntime:
             context = contexts.get(instrument.futures_symbol)
             if context is None:
                 continue
+            provider_symbol = f"{instrument.futures_symbol}=F"
+            try:
+                as_of = validate_flashalpha_context(
+                    context, provider_symbol=provider_symbol, now=datetime.now(timezone.utc),
+                    maximum_age=timedelta(minutes=max(5, int(self.environment.get("MONATISE_FLASHALPHA_MAX_AGE_MINUTES", "60")))),
+                )
+            except ValueError as exc:
+                failures.append({"symbol": instrument.ftmo_symbol, "error_type": str(exc).split(":", 1)[0]})
+                continue
             analysis = build_flashalpha_futures_analysis(context)
             analysis.update({
                 "ftmo_symbol": instrument.ftmo_symbol,
@@ -1743,6 +1815,14 @@ class OrchestrationRuntime:
                 "futures_symbol": instrument.futures_symbol,
                 "micro_futures_symbol": instrument.micro_futures_symbol,
                 "asset_class": FTMOAssetClass.FUTURES_LINKED.value,
+                "analysis_provider": "flashalpha", "analysis_instrument": provider_symbol,
+                "analysis_sources": [
+                    {"provider": "flashalpha", "role": "specialist_futures_intelligence", "requested": True, "status": "used", "provider_symbol": provider_symbol, "timeframes": {"snapshot": {"latest_timestamp": as_of.isoformat(), "quality": "valid"}}, "failure_reason": None, "evidence_contributed": ["options-on-futures gamma exposure", "gamma flip", "call/put walls"], "affected_score": True},
+                    {"provider": "ftmo_mt5", "role": "execution_pricing", "requested": False, "status": "not_requested", "provider_symbol": instrument.ftmo_symbol, "timeframes": {}, "failure_reason": "analysis_not_qualified", "evidence_contributed": [], "affected_score": False},
+                ],
+                "provider_consensus": "PARTIAL", "fallback_status": "not_available_no_verified_fallback",
+                "data_quality": {"flashalpha_snapshot": {"latest_timestamp": as_of.isoformat(), "quality": "valid"}},
+                "ftmo_execution_quote": {"provider": "ftmo_mt5", "status": "not_requested", "reason": "awaiting_qualification" if analysis.get("setup_status") == "confirmed" else "analysis_not_qualified"},
             })
             candidates.append((instrument, analysis))
         candidates.sort(key=lambda item: (-abs(int(item[1].get("score") or 0)), item[0].ftmo_symbol))
@@ -1814,7 +1894,8 @@ class OrchestrationRuntime:
         evidence = {key: analysis.get(key) for key in (
             "market_regime", "liquidity", "liquidity_sweep", "market_structure", "supply_demand",
             "fibonacci", "order_flow", "trigger", "open_interest", "funding_rate", "liquidations",
-            "cvd", "long_short_ratio", "provider_observed_at",
+            "cvd", "long_short_ratio", "provider_observed_at", "analysis_sources",
+            "provider_consensus", "fallback_status", "data_quality", "ftmo_execution_quote",
         ) if analysis.get(key) is not None}
         try:
             proposal = await self.ftmo_master.create_signal_proposal(
@@ -2402,81 +2483,31 @@ class OrchestrationRuntime:
         )
         return finalize_dynamic_analysis(sanitized_result(result), result, asset)
 
-    async def analyse_stock(self, symbol: str) -> dict[str, Any]:
-        """Fetch and build one Quiver-backed stock analysis without notifications
-        or execution -- shared by the on-demand OpenClaw endpoint and the
-        autonomous stock scan job, so there is one source of this logic."""
-        alpaca = AlpacaMarketDataAdapter.from_env()
-        normalized = normalize_quiver_symbol(symbol)
-        quiver_task = asyncio.to_thread(QuiverAdapter.from_env().context, normalized)
-        bars_task = asyncio.to_thread(alpaca.stock_bars, symbol, "1Hour")
-        trigger_bars_task = asyncio.to_thread(alpaca.stock_bars, symbol, "15Min")
-        snapshot_task = asyncio.to_thread(alpaca.stock_snapshot, symbol)
-
-        def finnhub_context() -> dict[str, Any]:
-            try:
-                return FinnhubAdapter.from_env().context(symbol)
-            except FinnhubAdapterError:
-                return {"source": "Finnhub", "unavailable": True}
-
-        def flashalpha_context() -> dict[str, Any]:
-            try:
-                return FlashAlphaAdapter.from_env().context(normalized)
-            except FlashAlphaAdapterError:
-                return {"source": "FlashAlpha", "unavailable": True}
-
-        context, bars, trigger_bars, snapshot, finnhub, flashalpha = await asyncio.gather(
-            quiver_task, bars_task, trigger_bars_task, snapshot_task, asyncio.to_thread(finnhub_context), asyncio.to_thread(flashalpha_context)
-        )
-        validity_minutes = max(15, int(self.environment.get("MONATISE_STOCK_15M_VALIDITY_MINUTES", "60")))
-        return build_stock_analysis(context, bars=bars, trigger_bars=trigger_bars, snapshot=snapshot, finnhub=finnhub, flashalpha=flashalpha, validity_minutes=validity_minutes)
+    async def analyse_stock(self, symbol: str, *, instrument: Any | None = None) -> dict[str, Any]:
+        """Run capability-aware, analysis-only stock intelligence."""
+        if self.stock_intelligence is None:
+            self.alpaca = self.alpaca or AlpacaMarketDataAdapter.from_env()
+            self.quiver = self.quiver or QuiverAdapter.from_env()
+            self.finnhub = self.finnhub or FinnhubAdapter.from_env()
+            self.flashalpha = self.flashalpha or FlashAlphaAdapter.from_env()
+            self.stock_intelligence = StockMarketIntelligenceCoordinator(
+                self.alpaca, self.quiver, self.finnhub, self.flashalpha,
+                environment=self.environment,
+            )
+        return await self.stock_intelligence.analyse(symbol, instrument=instrument)
 
     async def analyse_ftmo_futures_instrument(self, instrument: Any) -> dict[str, Any]:
-        """Run a fresh provider analysis for one verified futures-linked FTMO CFD."""
-        if instrument.asset_class is not FTMOAssetClass.FUTURES_LINKED or not instrument.futures_symbol:
-            raise ValueError("instrument is not a verified futures-linked FTMO CFD")
-        adapter = getattr(self, "flashalpha", None) or FlashAlphaAdapter.from_env()
-        self.flashalpha = adapter
-        context = await asyncio.to_thread(adapter.context, f"{instrument.futures_symbol}=F")
-        analysis = build_flashalpha_futures_analysis(context)
-        observed = datetime.now(timezone.utc)
-        validity_minutes = max(5, int(self.environment.get("MONATISE_FUTURES_ON_DEMAND_VALIDITY_MINUTES", "15")))
-        analysis.update({
-            "ftmo_symbol": instrument.ftmo_symbol,
-            "underlying_market": instrument.underlying_market,
-            "futures_symbol": instrument.futures_symbol,
-            "micro_futures_symbol": instrument.micro_futures_symbol,
-            "asset_class": FTMOAssetClass.FUTURES_LINKED.value,
-            "analysis_provider": instrument.market_data_provider,
-            "analysis_instrument": f"{instrument.futures_symbol}=F",
-            "analysis_exchange": instrument.exchange,
-            "timeframe": "intraday",
-            "generated_at": observed.isoformat(),
-            "expires_at": (observed + timedelta(minutes=validity_minutes)).isoformat(),
-            "freshness": "fresh",
-            "publication_valid": True,
-        })
-        return analysis
+        """Run capability-aware specialist futures intelligence."""
+        if self.futures_intelligence is None:
+            self.flashalpha = self.flashalpha or FlashAlphaAdapter.from_env()
+            self.futures_intelligence = FuturesMarketIntelligenceCoordinator(
+                self.flashalpha, environment=self.environment,
+            )
+        return await self.futures_intelligence.analyse(instrument)
 
     async def analyse_forex(self, instrument: Any) -> dict[str, Any]:
-        """Run read-only multi-timeframe analysis for one verified FTMO FX pair."""
-        if instrument.asset_class is not FTMOAssetClass.FOREX or not instrument.provider_symbol:
-            raise ValueError("instrument is not a verified FTMO forex pair")
-        adapter = YahooForexAdapter(timeout=max(2.0, float(self.environment.get("MONATISE_FOREX_TIMEOUT_SECONDS", "10"))))
-        hourly, trigger = await asyncio.gather(
-            asyncio.to_thread(adapter.candles, instrument.provider_symbol, interval="1h", range_="1mo", limit=240),
-            asyncio.to_thread(adapter.candles, instrument.provider_symbol, interval="15m", range_="5d", limit=240),
-        )
-        analysis = build_forex_analysis(instrument.provider_symbol, hourly, trigger)
-        analysis.update({
-            "asset": instrument.ftmo_symbol, "ftmo_symbol": instrument.ftmo_symbol,
-            "underlying_market": instrument.underlying_market,
-            "asset_class": FTMOAssetClass.FOREX.value,
-            "analysis_provider": instrument.market_data_provider,
-            "analysis_instrument": instrument.provider_symbol,
-            "analysis_exchange": instrument.exchange,
-        })
-        return analysis
+        """Forex is excluded until a verified non-Yahoo provider is configured."""
+        raise ValueError("forex analysis is out of scope: no verified configured provider")
 
     async def _telegram_notification_candidate(self, result: Any, interval: str) -> dict[str, Any] | None:
         outputs = result.context.outputs

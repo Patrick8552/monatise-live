@@ -720,10 +720,30 @@ class FTMOMasterControlService:
             quote = (bridge.get("quotes") or {}).get(execution_symbol.upper())
             if quote is None:
                 raise FTMOMasterError("FTMO bridge has no current quote for the requested symbol")
+            execution_snapshot = self._execution_snapshot(execution_symbol, quote, bridge)
             await self.repository.update_quote_request(quote_request_id, {
                 "state": "QUOTE_RECEIVED", "resolved_mt5_symbol": execution_symbol,
-                "quote_received_at": observed.isoformat(), "quote": self._execution_snapshot(execution_symbol, quote, bridge),
+                "quote_received_at": observed.isoformat(), "quote": execution_snapshot,
                 "lease_until": None,
+            })
+            analysis_sources = [dict(item) for item in analysis.get("analysis_sources") or []]
+            for item in analysis_sources:
+                if item.get("provider") == "ftmo_mt5":
+                    item.update({
+                        "requested": True, "status": "used", "failure_reason": None,
+                        "evidence_contributed": ["native MT5 Bid/Ask", "spread", "broker symbol specification"],
+                        "affected_score": False,
+                    })
+            await self.repository.update_telegram_analysis(analysis_id, {
+                "analysis_sources": analysis_sources,
+                "market_data_provenance": {**(analysis.get("market_data_provenance") or {}), "sources": analysis_sources},
+                "ftmo_execution_quote": {
+                    "provider": "ftmo_mt5", "status": "received",
+                    "quote_request_id": quote_request_id, "symbol": execution_symbol,
+                    "bid": execution_snapshot.get("ftmo_bid"), "ask": execution_snapshot.get("ftmo_ask"),
+                    "spread": execution_snapshot.get("spread"),
+                    "observed_at": execution_snapshot.get("quote_observed_at_utc"),
+                },
             })
             await self.repository.audit("quote_received", quote_request_id, {
                 "analysis_id": analysis_id, "quote_request_id": quote_request_id,
@@ -746,6 +766,8 @@ class FTMOMasterControlService:
                     conviction=analysis["conviction"], recommended_risk_percent=analysis["recommended_risk_percent"],
                     evidence_bundle={
                         "market_data_provenance": analysis["market_data_provenance"], "session": analysis["session"],
+                        "analysis_sources": analysis.get("analysis_sources") or [],
+                        "provider_consensus": analysis.get("provider_consensus"),
                         "liquidity": analysis["liquidity"], "market_structure": analysis["structure"],
                         "supply_demand": analysis["supply_demand"], "fibonacci": analysis["fibonacci"],
                         "order_flow": analysis["order_flow"],
@@ -774,6 +796,14 @@ class FTMOMasterControlService:
             })
             await self.repository.update_telegram_analysis(analysis_id, {
                 "lifecycle_state": "PROPOSAL_CREATED", "proposal_id": proposal["proposal_id"],
+                "ftmo_execution_quote": {
+                    "provider": "ftmo_mt5", "status": "validated",
+                    "quote_request_id": quote_request_id, "symbol": execution_symbol,
+                    "bid": execution_snapshot.get("ftmo_bid"), "ask": execution_snapshot.get("ftmo_ask"),
+                    "spread": execution_snapshot.get("spread"),
+                    "observed_at": execution_snapshot.get("quote_observed_at_utc"),
+                    "proposal_id": proposal["proposal_id"],
+                },
             })
             await self.repository.audit("quote_proposal_created", quote_request_id, {
                 "analysis_id": analysis_id, "quote_request_id": quote_request_id,

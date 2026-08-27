@@ -160,24 +160,20 @@ class Runtime:
         self.calls.append(("crypto", symbol, kwargs))
         return dict(self.crypto)
 
-    async def analyse_stock(self, symbol):
+    async def analyse_stock(self, symbol, **_kwargs):
         self.calls.append(("stock", symbol, {}))
         return {
             "asset": symbol, "decision": "BUY_WATCH", "direction": "LONG",
             "setup_status": "confirmed", "entry": 200, "stop_loss": 195, "target": 210,
             "score": 8, "score_threshold": 7, "current_price": 200,
             "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat(),
-        }
-
-    async def analyse_forex(self, instrument):
-        self.calls.append(("forex", instrument.provider_symbol, {}))
-        return {
-            "asset": instrument.ftmo_symbol, "decision": "BUY_WATCH", "direction": "LONG",
-            "setup_status": "confirmed", "entry": 1.165, "stop_loss": 1.16, "target": 1.175,
-            "targets": [1.175], "score": 8, "score_threshold": 7, "current_price": 1.165,
-            "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat(),
-            "analysis_provider": "yahoo_finance", "analysis_instrument": instrument.provider_symbol,
-            "reasons": ["confirmed FX breakout"],
+            "analysis_provider": "alpaca+quiver", "analysis_instrument": symbol,
+            "analysis_sources": [
+                {"provider": "alpaca", "status": "used", "role": "required_market_data"},
+                {"provider": "quiver", "status": "used", "role": "directional_intelligence"},
+                {"provider": "ftmo_mt5", "status": "not_requested", "role": "execution_pricing"},
+            ],
+            "provider_consensus": "PARTIAL", "fallback_status": "not_available_no_verified_fallback",
         }
 
     async def analyse_ftmo_futures_instrument(self, instrument):
@@ -239,14 +235,12 @@ def test_analyze_btc_is_disabled_for_ftmo_telegram():
     assert "Crypto is disabled" in runtime.telegram.messages[-1]
 
 
-def test_analyze_forex_runs_fresh_provider_path_and_creates_linked_proposal():
+def test_analyze_forex_is_rejected_without_calling_a_provider():
     runtime = Runtime()
     run_request(runtime, "/analyze EURUSD", update_id=120)
-    assert runtime.calls[0][0:2] == ("forex", "EURUSD=X")
-    analysis = next(iter(runtime.ftmo_master.repository.analyses.values()))
-    assert analysis["analysis_provider"] == "yahoo_finance"
-    assert analysis["execution_registry_symbol"] == "EUR/USD"
-    assert runtime.ftmo_master.proposals[0]["analysis_id"] == analysis["analysis_id"]
+    assert runtime.calls == []
+    assert runtime.ftmo_master.proposals == []
+    assert "Forex analysis is out of scope" in runtime.telegram.messages[-1]
 
 
 def test_gold_alias_runs_fresh_futures_provider_path():
@@ -265,14 +259,14 @@ def test_analysis_alias_runs_stock_provider_path():
 
 def test_no_trade_returns_full_analysis_without_approval_action():
     runtime = Runtime()
-    async def no_trade(_instrument):
-        return {"asset": "EUR/USD", "decision": "NO_TRADE", "direction": "NONE", "setup_status": "suppressed", "score": 4, "score_threshold": 7, "reasons": ["FX structure is inconclusive"]}
-    runtime.analyse_forex = no_trade
-    run_request(runtime, "/analyze EURUSD", update_id=23)
+    async def no_trade(symbol, **_kwargs):
+        return {"asset": symbol, "decision": "NO_TRADE", "direction": "NONE", "setup_status": "suppressed", "score": 4, "score_threshold": 7, "reasons": ["Stock structure is inconclusive"], "analysis_provider": "alpaca+quiver", "analysis_instrument": symbol}
+    runtime.analyse_stock = no_trade
+    run_request(runtime, "/analyze AAPL", update_id=23)
     assert runtime.ftmo_master.proposals == []
     assert runtime.telegram.proposals == []
     assert "Decision: NO_TRADE" in runtime.telegram.messages[-1]
-    assert "FX structure is inconclusive" in runtime.telegram.messages[-1]
+    assert "Stock structure is inconclusive" in runtime.telegram.messages[-1]
     request = next(iter(runtime.ftmo_master.repository.requests.values()))
     assert request["proposal_state"] == "NO_TRADE"
     assert request["proposal_id"] is None
@@ -281,10 +275,10 @@ def test_no_trade_returns_full_analysis_without_approval_action():
 
 def test_waiting_for_entry_zone_does_not_create_market_proposal():
     runtime = Runtime()
-    async def waiting(_instrument):
-        return {"asset": "EUR/USD", "decision": "BUY_WATCH", "direction": "LONG", "setup_status": "confirmed", "entry": None, "entry_zone": {"low": 1.16, "high": 1.162}, "current_price": 1.165, "stop_loss": 1.155, "target": 1.175, "targets": [1.175], "score": 8, "score_threshold": 7, "expires_at": (datetime.now(timezone.utc)+timedelta(minutes=30)).isoformat()}
-    runtime.analyse_forex = waiting
-    run_request(runtime, "/analyze EURUSD", update_id=24)
+    async def waiting(symbol, **_kwargs):
+        return {"asset": symbol, "decision": "BUY_WATCH", "direction": "LONG", "setup_status": "confirmed", "entry": None, "entry_zone": {"low": 198, "high": 199}, "current_price": 200, "stop_loss": 195, "target": 205, "targets": [205], "score": 8, "score_threshold": 7, "expires_at": (datetime.now(timezone.utc)+timedelta(minutes=30)).isoformat()}
+    runtime.analyse_stock = waiting
+    run_request(runtime, "/analyze AAPL", update_id=24)
     assert runtime.ftmo_master.proposals == []
     assert "WAITING FOR ENTRY ZONE" in runtime.telegram.messages[-1]
     request = next(iter(runtime.ftmo_master.repository.requests.values()))
@@ -301,8 +295,8 @@ def test_unknown_user_cannot_start_analysis():
 
 def test_duplicate_worker_retry_reuses_completed_response_without_new_analysis_or_order():
     runtime = Runtime()
-    app = run_request(runtime, "/analyze EURUSD", update_id=26)
-    asyncio.run(app._handle_telegram_command("/analyze EURUSD"))
+    app = run_request(runtime, "/analyze AAPL", update_id=26)
+    asyncio.run(app._handle_telegram_command("/analyze AAPL"))
     assert len(runtime.calls) == 1
     assert len(runtime.ftmo_master.proposals) == 1
 
@@ -313,8 +307,8 @@ def test_provider_failure_is_deterministic_and_never_creates_proposal():
     async def fail(*_args, **_kwargs):
         raise RuntimeError("provider secret detail")
 
-    runtime.analyse_forex = fail
-    run_request(runtime, "/analyze EURUSD", update_id=27)
+    runtime.analyse_stock = fail
+    run_request(runtime, "/analyze AAPL", update_id=27)
     assert runtime.ftmo_master.proposals == []
     assert "ANALYSIS FAILED" in runtime.telegram.messages[-1]
     assert "secret detail" not in runtime.telegram.messages[-1]
@@ -322,9 +316,9 @@ def test_provider_failure_is_deterministic_and_never_creates_proposal():
 
 def test_analysis_records_session_provenance_and_autonomy_off():
     runtime = Runtime()
-    run_request(runtime, "/analyze EURUSD", update_id=28)
+    run_request(runtime, "/analyze AAPL", update_id=28)
     analysis = next(iter(runtime.ftmo_master.repository.analyses.values()))
-    assert analysis["market_data_provenance"]["provider"] == "yahoo_finance"
+    assert analysis["market_data_provenance"]["provider"] == "alpaca+quiver"
     assert analysis["session"]["session_source"]
     assert analysis["autonomous_execution"] is False
 

@@ -166,14 +166,14 @@ def _forex(symbol: str, name: str) -> FTMOInstrument:
     base, quote = symbol.split("/", 1)
     return FTMOInstrument(
         FTMOAssetClass.FOREX, symbol, name, symbol, f"{base}/{quote} spot FX",
-        "FTMO liquidity providers", "yahoo_finance", f"{base}{quote}=X", None, None,
+        "FTMO liquidity providers", "unavailable", f"{base}{quote}", None, None,
         "24x5; FTMO broker maintenance and rollover breaks apply", quote, True,
         "active", REGISTRY_SOURCE, REGISTRY_VERSION, REGISTRY_VERIFIED_AT,
     )
 
 
 def _future(symbol: str, name: str, underlying: str, venue: str, root: str, micro: str | None, currency: str) -> FTMOInstrument:
-    return FTMOInstrument(FTMOAssetClass.FUTURES_LINKED, symbol, name, underlying, underlying, venue, "exchange_futures", root, root, micro, "FTMO published platform schedule; futures venue hours differ", currency, True, "active", REGISTRY_SOURCE, REGISTRY_VERSION, REGISTRY_VERIFIED_AT)
+    return FTMOInstrument(FTMOAssetClass.FUTURES_LINKED, symbol, name, underlying, underlying, venue, "flashalpha", root, root, micro, "FTMO published platform schedule; futures venue hours differ", currency, True, "active", REGISTRY_SOURCE, REGISTRY_VERSION, REGISTRY_VERIFIED_AT)
 
 
 _US_NASDAQ = {"AAPL", "AMZN", "ARM", "ASML", "AVGO", "AZN", "CSCO", "GOOG", "INTC", "META", "MSFT", "MSTR", "NFLX", "NVDA", "PLTR", "QCOM", "SBUX", "TSLA", "ZM"}
@@ -287,7 +287,7 @@ def _builtins() -> tuple[FTMOInstrument, ...]:
     for symbol, name, currency in _STOCK_ROWS:
         if symbol in _EU_STOCKS:
             provider_symbol, exchange = _EU_STOCKS[symbol]
-            stocks.append(_stock(symbol, name, provider_symbol, exchange, currency, "yahoo_finance", provider_symbol))
+            stocks.append(_stock(symbol, name, provider_symbol, exchange, currency, "unavailable", provider_symbol))
         elif symbol == "SPCX":
             stocks.append(_stock(symbol, name, symbol, "Private market / FTMO CFD", currency, "unavailable", None))
         else:

@@ -520,27 +520,35 @@ def test_production_telegram_analysis_publishes_waiting_then_durable_ftmo_propos
             }
             self.ftmo_registry, self.ftmo_master, self.telegram = FTMO_REGISTRY, control, TelegramRecorder()
 
-        async def analyse_forex(self, instrument):
-            assert instrument.ftmo_symbol == "EUR/USD"
+        async def analyse_stock(self, symbol, **kwargs):
+            assert symbol == "AAPL"
+            assert kwargs["instrument"].ftmo_symbol == "AAPL"
             return {
-                "asset": "EUR/USD", "decision": "BUY_WATCH", "direction": "LONG",
-                "setup_status": "confirmed", "entry": 1.1650, "stop_loss": 1.1600,
-                "target": 1.1750, "targets": [1.1750], "timeframe": "1h regime / 15m trigger",
+                "asset": "AAPL", "decision": "BUY_WATCH", "direction": "LONG",
+                "setup_status": "confirmed", "entry": 200.00, "stop_loss": 195.00,
+                "target": 210.00, "targets": [210.00], "timeframe": "1h regime / 15m trigger",
                 "score": 8, "score_threshold": 7, "conviction": 0.8,
                 "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat(),
-                "current_price": 1.1650, "market_state": "trend_up",
-                "analysis_provider": "yahoo_finance", "analysis_instrument": "EURUSD=X",
-                "reasons": ["confirmed FX breakout"],
+                "current_price": 200.00, "market_state": "trend_up",
+                "analysis_provider": "alpaca+quiver", "analysis_instrument": "AAPL",
+                "analysis_sources": [
+                    {"provider": "alpaca", "role": "required_market_data", "status": "used"},
+                    {"provider": "quiver", "role": "directional_intelligence", "status": "used"},
+                    {"provider": "ftmo_mt5", "role": "execution_pricing", "status": "not_requested"},
+                ],
+                "provider_consensus": "PARTIAL",
+                "fallback_status": "not_available_no_verified_fallback",
+                "reasons": ["confirmed stock breakout"],
             }
 
     async def scenario():
         control, _ = service()
         observed = datetime.now(timezone.utc)
         payload = heartbeat()
-        payload["quotes"] = {"EURUSD": {
-            "bid": "1.16490", "ask": "1.16510", "timestamp": observed.isoformat(),
-            "digits": 5, "tick_size": "0.00001", "tick_value": "1.00",
-            "volume_min": "0.01", "volume_max": "50", "volume_step": "0.01", "stops_level": "10",
+        payload["quotes"] = {"AAPL": {
+            "bid": "199.95", "ask": "200.05", "timestamp": observed.isoformat(),
+            "digits": 2, "tick_size": "0.01", "tick_value": "1.00",
+            "volume_min": "0.01", "volume_max": "50", "volume_step": "0.01", "stops_level": "1",
             "trade_mode": "full",
         }}
         await control.accept_bridge_heartbeat(payload, now=observed)
@@ -549,7 +557,7 @@ def test_production_telegram_analysis_publishes_waiting_then_durable_ftmo_propos
         app._telegram_command_context = {
             "update_id": 901, "message_id": 77, "user_id": "42", "chat_type": "private", "callback_query_id": "",
         }
-        await app._handle_telegram_command("/analyze EURUSD")
+        await app._handle_telegram_command("/analyze AAPL")
 
         request_records = [record for (namespace, _), record in control.repository.store.values.items() if namespace == control.repository.TELEGRAM_REQUESTS]
         request = request_records[0].value
@@ -571,7 +579,7 @@ def test_production_telegram_analysis_publishes_waiting_then_durable_ftmo_propos
         })
         assert await app._process_quote_request_once() is True
         assert len(runtime.telegram.proposals) == 1  # durable proposal message identity prevents a resend
-        await app._handle_telegram_command("/analyze EURUSD")
+        await app._handle_telegram_command("/analyze AAPL")
         assert len(await control.repository.quote_requests()) == 1
         assert len(await control.repository.proposals()) == 1
 

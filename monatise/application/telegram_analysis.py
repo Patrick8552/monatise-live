@@ -200,6 +200,12 @@ def normalize_analysis(
         reasons = list(raw.get("reasons") or [])
         classification, confirmed = "trend" if qualified else "no_trade", qualified
 
+    if str(raw.get("decision") or "").upper() == "INSUFFICIENT_MARKET_DATA" or raw.get("setup_status") == "insufficient_market_data":
+        qualified = confirmed = False
+        decision = "INSUFFICIENT_MARKET_DATA"
+        direction = "none"
+        reasons = list(raw.get("reasons") or [raw.get("reason_code") or "all_market_data_providers_failed"])
+
     score = int(raw.get("score") or 0)
     recommended = recommended_risk_percent(score)
     expires_at = raw.get("expires_at") or raw.get("valid_until")
@@ -220,8 +226,8 @@ def normalize_analysis(
         "requested_instrument": resolved.requested,
         "canonical_instrument": resolved.canonical,
         "analysis_symbol": resolved.analysis_symbol,
-        "analysis_provider": resolved.analysis_provider,
-        "analysis_instrument": resolved.analysis_instrument,
+        "analysis_provider": raw.get("analysis_provider") or resolved.analysis_provider,
+        "analysis_instrument": raw.get("analysis_instrument") or resolved.analysis_instrument,
         "execution_registry_symbol": resolved.execution_registry_symbol,
         "asset_class": asset_class.value,
         "requested_at": requested_at.isoformat(),
@@ -254,11 +260,20 @@ def normalize_analysis(
         "risk_ceiling_percent": str(RISK_CEILING_PERCENT),
         "recommended_risk_percent": str(recommended),
         "reasons": reasons[:8],
+        "analysis_sources": list(raw.get("analysis_sources") or []),
+        "provider_consensus": raw.get("provider_consensus") or "INSUFFICIENT",
+        "fallback_status": raw.get("fallback_status") or "not_applicable",
+        "data_quality": raw.get("data_quality") or {},
+        "supplemental_intelligence": raw.get("supplemental_intelligence") or {},
+        "ftmo_execution_quote": raw.get("ftmo_execution_quote") or {
+            "provider": "ftmo_mt5", "status": "not_requested", "reason": "analysis_not_qualified",
+        },
         "market_data_provenance": {
-            "provider": resolved.analysis_provider,
-            "instrument": resolved.analysis_instrument,
+            "provider": raw.get("analysis_provider") or resolved.analysis_provider,
+            "instrument": raw.get("analysis_instrument") or resolved.analysis_instrument,
             "observed_at": raw.get("market_observed_at") or raw.get("as_of") or raw.get("generated_at") or completed_at.isoformat(),
             "evidence": provider_evidence,
+            "sources": list(raw.get("analysis_sources") or []),
         },
         "raw_audit_reference": raw.get("audit_reference") or raw.get("run_id"),
         "autonomous_execution": False,
@@ -311,6 +326,25 @@ def format_analysis(analysis: Mapping[str, Any]) -> str:
         f"Decision: {analysis['decision']}",
         f"Analysis source: {analysis['analysis_provider']} ({analysis['analysis_instrument']})",
     ))
+    sources = analysis.get("analysis_sources") or []
+    used = [str(item.get("provider")) for item in sources if isinstance(item, Mapping) and item.get("status") == "used"]
+    degraded = [
+        f"{item.get('provider')}:{item.get('failure_reason') or item.get('status')}"
+        for item in sources
+        if isinstance(item, Mapping) and item.get("status") in {"failed", "degraded"}
+    ]
+    if used:
+        lines.append("Providers used: " + " + ".join(used))
+    if degraded:
+        lines.append("Provider degradation: " + "; ".join(degraded[:4]))
+    lines.append(f"Provider agreement: {analysis.get('provider_consensus') or 'INSUFFICIENT'}")
+    lines.append(f"Fallback: {analysis.get('fallback_status') or 'not applicable'}")
+    ftmo_quote = analysis.get("ftmo_execution_quote") or {}
+    lines.append(
+        "FTMO execution quote: "
+        f"{ftmo_quote.get('status') or 'not_requested'}"
+        + (f" ({ftmo_quote.get('reason')})" if ftmo_quote.get("reason") else "")
+    )
     if not analysis.get("executable"):
         reasons = analysis.get("reasons") or []
         if reasons:
