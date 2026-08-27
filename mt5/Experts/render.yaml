@@ -1,0 +1,164 @@
+# Production-facing analysis-only Blueprint. The previous Render deployment
+# remains available for rollback until this definition is manually promoted.
+services:
+  - type: web
+    name: monatise-live
+    runtime: python
+    plan: starter
+    region: oregon
+    buildCommand: pip install .
+    startCommand: sh scripts/start_production.sh
+    # Keep the serving instance alive during transient upstream degradation;
+    # detailed dependency readiness remains available at /health/ready.
+    healthCheckPath: /health/live
+    autoDeployTrigger: checksPass
+    envVars:
+      - key: MONATISE_MODE
+        value: paper
+      - key: MONATISE_ENVIRONMENT
+        value: production
+      - key: MONATISE_PUBLIC_URL
+        value: https://monatise-live.onrender.com
+      - key: MONATISE_NETWORK
+        value: paper
+      - key: MONATISE_EXECUTION_ENABLED
+        value: false
+      - key: MONATISE_AUTONOMOUS_EXECUTION
+        value: false
+      - key: MONATISE_EXECUTION_ADAPTER_ENABLED
+        value: false
+      - key: MONATISE_ALLOW_LIVE_ORDERS
+        value: false
+      - key: MONATISE_OPENCLAW_EXECUTION_ALLOWED
+        value: false
+      - key: MONATISE_TELEGRAM_EXECUTION_ALLOWED
+        value: false
+      - key: MONATISE_GOVERNANCE_KILL_SWITCH_ENABLED
+        value: true
+      - key: MONATISE_AUDIT_LOGGING_ENABLED
+        value: true
+      - key: MONATISE_REDIS_NAMESPACE
+        value: monatise:production-analysis
+      - key: MONATISE_SCHEDULED_ANALYSIS_ENABLED
+        value: true
+      - key: MONATISE_DIRECTIONAL_ANALYSIS_SYMBOLS
+        value: BTC,ETH,SOL,BNB,XRP,DOGE,ADA,AVAX,LINK,SUI
+      - key: MONATISE_SCHEDULED_ANALYSIS_INTERVAL_SECONDS
+        value: 900
+      - key: MONATISE_SCHEDULED_ANALYSIS_TIMEFRAMES
+        value: 15m
+      - key: MONATISE_STOCK_15M_VALIDITY_MINUTES
+        value: 60
+      - key: MONATISE_OPENCLAW_CACHE_TTL_SECONDS
+        value: 60
+      - key: MONATISE_HIERARCHICAL_SHADOW_ENABLED
+        value: true
+      - key: MONATISE_HIERARCHICAL_TELEGRAM_PUBLISH_ENABLED
+        value: true
+      - key: MONATISE_TELEGRAM_NOTIFICATIONS_ENABLED
+        value: true
+      - key: MONATISE_TELEGRAM_INBOUND_ENABLED
+        value: true
+      - key: MONATISE_FTMO_ACCOUNT_ENVIRONMENT
+        value: demo
+      - key: MONATISE_FTMO_EXECUTION_MODE
+        value: disabled
+      - key: MONATISE_FTMO_EXECUTION_ENABLED
+        value: false
+      # FTMO master control is an independently gated subsystem. These safe
+      # defaults deploy the full Telegram/EA path without activating orders.
+      - key: FTMO_EXECUTION_ENABLED
+        value: false
+      - key: FTMO_EXECUTION_ENVIRONMENT
+        value: demo
+      - key: FTMO_MASTER_ACCOUNT_APPROVED
+        value: false
+      - key: FTMO_TELEGRAM_EXECUTION_ARMED
+        value: false
+      - key: FTMO_AUTONOMOUS_EXECUTION
+        value: false
+      - key: FTMO_TELEGRAM_CONFIRMATION_REQUIRED
+        value: true
+      - key: FTMO_RISK_FRACTION
+        value: 0.03
+      - key: FTMO_MAXIMUM_OPEN_EXPOSURES
+        value: 1
+      - key: FTMO_MAXIMUM_ENTRY_DEVIATION_BPS
+        value: 50
+      - key: FTMO_MINIMUM_REWARD_RISK
+        value: 1
+      - key: FTMO_ACCOUNT_ID
+        sync: false
+      - key: FTMO_SERVER
+        sync: false
+      - key: FTMO_ACCOUNT_CURRENCY
+        value: USD
+      - key: FTMO_TELEGRAM_AUTHORIZED_USER_IDS
+        sync: false
+      - key: FTMO_BRIDGE_SECRET
+        sync: false
+      - key: MONATISE_HIERARCHICAL_INTERVAL_SECONDS
+        value: 900
+      - key: MONATISE_HIERARCHICAL_ALWAYS_COLLECT_5M
+        value: true
+      - key: MONATISE_HIERARCHICAL_STRATEGY_VERSION
+        value: hierarchy-shadow-v1
+      - key: MONATISE_DATABASE_URL
+        fromDatabase:
+          name: monatise-live-postgres
+          property: connectionString
+      - key: MONATISE_REDIS_URL
+        fromService:
+          type: keyvalue
+          name: monatise-live-redis
+          property: connectionString
+      - key: COINGLASS_API_KEY
+        sync: false
+      - key: MONATISE_TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: MONATISE_TELEGRAM_CHAT_ID
+        sync: false
+      - key: MONATISE_OPENCLAW_TOKEN
+        sync: false
+      - key: MONATISE_TRADINGVIEW_WEBHOOK_TOKEN
+        sync: false
+      - key: MONATISE_X_BEARER_TOKEN
+        sync: false
+      - key: MONATISE_X_MONITOR_ENABLED
+        value: true
+      - key: MONATISE_X_WATCH_ACCOUNTS
+        sync: false
+      - key: MONATISE_X_OAUTH_CONNECT_URL
+        sync: false
+      - key: MONATISE_X_POLL_INTERVAL_SECONDS
+        value: 300
+      - key: MONATISE_COIN_DISCOVERY_ENABLED
+        value: true
+      - key: MONATISE_COIN_DISCOVERY_INTERVAL_SECONDS
+        value: 300
+      - key: MONATISE_VOLATILITY_ALERT_PERCENT
+        value: 15
+      - key: MONATISE_COIN_DISCOVERY_ANALYSIS_ENABLED
+        value: true
+      - key: MONATISE_COIN_DISCOVERY_ANALYSIS_CAP
+        value: 10
+      - key: MONATISE_COIN_DISCOVERY_CANDIDATE_LIMIT
+        value: 20
+      - key: MONATISE_COIN_DISCOVERY_MIN_VOLUME_USD
+        value: 5000000
+      - key: MONATISE_COIN_DISCOVERY_MIN_OPEN_INTEREST_USD
+        value: 1000000
+
+  - type: keyvalue
+    name: monatise-live-redis
+    plan: starter
+    region: oregon
+    ipAllowList: []
+    maxmemoryPolicy: noeviction
+
+databases:
+  - name: monatise-live-postgres
+    plan: basic-256mb
+    region: oregon
+    databaseName: monatise_live
+    user: monatise_production
