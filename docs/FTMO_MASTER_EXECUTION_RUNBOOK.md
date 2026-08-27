@@ -1,6 +1,8 @@
 # Monatise FTMO master execution runbook
 
-Status: master-capable code path implemented; master activation remains blocked pending VPS and demo evidence.
+Status: human-approved master-capable code path implemented. Production must remain
+fail-closed (kill switch ON, session disarmed, autonomous execution OFF) until a
+separately authorized operator completes deployment and live validation.
 
 ## Infrastructure decision
 
@@ -37,6 +39,37 @@ Optional Linux OpenClaw Gateway -> read-only/operator API on Render
 ```
 
 The Mac is development and administration only. Production must continue when it is asleep or offline.
+
+## Responsibility boundaries
+
+- Monatise is the only component allowed to originate a qualified proposal. It
+  persists the analysis, strategy evidence, setup expiry, risk structure, and a
+  deterministic signal/proposal identity.
+- CoinGlass is read-only crypto market intelligence. Its price is an analysis
+  reference and is never copied into an FTMO order. A verified registry mapping
+  must connect the CoinGlass instrument to an enabled FTMO symbol.
+- Telegram is the private, allowlisted human approval surface. Its inline buttons
+  carry only a bounded proposal ID; they do not contain price, volume, credentials,
+  or an executable order.
+- Render revalidates the proposal against a fresh account-bound FTMO heartbeat at
+  approval time. BUY uses the current Ask and SELL uses the current Bid. It then
+  recalculates geometry, reward/risk, spread, stop distance, volume, drawdown
+  capacity, exposure, expiry, and entry deviation before creating a signed command.
+- The MT5 EA is the final broker boundary. It repeats account, expiry, symbol,
+  trading-mode, volume-step, price-deviation, stop/freeze-distance, daily-loss,
+  and one-exposure checks immediately before submission.
+- PostgreSQL holds durable proposal/approval/command state and immutable lineage.
+  Redis leases and deduplicates Telegram updates. Neither is a source of signals.
+
+The persisted lifecycle is:
+
+```text
+AWAITING_APPROVAL -> REVALIDATING -> EXECUTION_QUEUED -> MT5_RECEIVED
+-> BROKER_ACCEPTED -> POSITION_OPEN -> POSITION_CLOSED
+
+Any failed gate -> INVALIDATED / REJECTED / EXECUTION_FAILED
+Uncertain broker outcome -> RECONCILIATION_REQUIRED (never automatic resend)
+```
 
 ## OpenClaw decision
 
@@ -77,8 +110,12 @@ FTMO_MASTER_ACCOUNT_APPROVED=false
 FTMO_TELEGRAM_EXECUTION_ARMED=false
 FTMO_AUTONOMOUS_EXECUTION=false
 FTMO_TELEGRAM_CONFIRMATION_REQUIRED=true
-FTMO_RISK_FRACTION=0.01
-FTMO_MAXIMUM_RISK_AMOUNT=100
+FTMO_RISK_FRACTION=0.0005
+FTMO_MAXIMUM_RISK_AMOUNT=5
+FTMO_MAXIMUM_DAILY_LOSS_AMOUNT=10
+FTMO_MAXIMUM_OPEN_EXPOSURES=1
+FTMO_MAXIMUM_ENTRY_DEVIATION_BPS=50
+FTMO_MINIMUM_REWARD_RISK=1
 ```
 
 Never send the FTMO password to Render, Telegram, OpenClaw, or the repository. It stays inside desktop MT5's credential store on the Windows VPS.
@@ -107,6 +144,13 @@ All control commands require the configured numeric user ID and a private chat. 
 /kill
 ```
 
+Qualified scanner proposals are delivered with `APPROVE TRADE` and `REJECT TRADE`
+inline buttons. Telegram callback updates are authenticated by the webhook secret,
+restricted to the configured private chat and user ID, strictly parsed, durably
+deduplicated, and then routed through the same `/approve` or `/reject` service path.
+Approval never bypasses the kill switch, temporary arm, account binding, or fresh
+quote revalidation.
+
 Duplicate Telegram updates are deduplicated in Redis. A deterministic command ID is derived from the proposal. The EA journals that ID before its broker call and uses the same ID in the order comment. A repeated network delivery therefore reconciles the journal entry; it does not submit a second order.
 
 ## Master activation gates
@@ -123,6 +167,13 @@ FTMO_TELEGRAM_CONFIRMATION_REQUIRED=true
 ```
 
 The EA also requires `InpExecutionEnabled=true` and `InpMasterAccountApproved=true`. A temporary `/arm` session is still mandatory. The durable kill switch defaults to ON; resetting it is an out-of-band administrative operation, never a Telegram command.
+
+For controlled live validation, keep the EA at `InpRiskFraction=0.0005`,
+`InpMaximumRiskAmount=5`, `InpMaximumDailyLossAmount=10`, and
+`InpMaximumOpenExposures=1`. The exposure slot counts both live positions and
+pending orders. The Render control plane rechecks the slot and daily capacity
+when a proposal is created and again immediately before command creation; the
+EA repeats both checks against broker state immediately before submission.
 
 After every other gate is configured, the audited reset command is:
 
@@ -141,7 +192,13 @@ Record timestamped evidence for every item before master activation:
 - Exact account/server/currency binding succeeds; each deliberate mismatch fails.
 - EA heartbeat, terminal permission state, positions, orders, XAUUSD Bid/Ask, and symbol specification appear in `/bridge`.
 - Telegram XAUUSD previews use the heartbeat's FTMO Bid/Ask, not GC futures or another broker.
+- Crypto proposals preserve both CoinGlass analysis provenance and the independent
+  FTMO Bid/Ask execution snapshot; unsupported or ambiguous mappings fail closed.
+- Approval after a material price move, expiry, invalid entry zone, or degraded
+  reward/risk invalidates the proposal and creates no command.
 - Market, limit, and stop BUY/SELL demo orders reconcile to one broker ticket.
+- Broker receipts record requested price, fill price, slippage, executed volume,
+  actual SL/TP, retcode, ticket, and observation time against the immutable lineage.
 - SL, TP, close, cancel, and breakeven demo operations reconcile.
 - Duplicate callback and duplicate command delivery create one economic action.
 - A network timeout after submission becomes `broker_uncertain`; no new command is created.
