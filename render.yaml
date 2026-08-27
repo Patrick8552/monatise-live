@@ -80,11 +80,7 @@ services:
       - key: FTMO_TELEGRAM_CONFIRMATION_REQUIRED
         value: true
       - key: FTMO_RISK_FRACTION
-        value: 0.0005
-      - key: FTMO_MAXIMUM_RISK_AMOUNT
-        value: 5
-      - key: FTMO_MAXIMUM_DAILY_LOSS_AMOUNT
-        value: 10
+        value: 0.03
       - key: FTMO_MAXIMUM_OPEN_EXPOSURES
         value: 1
       - key: FTMO_MAXIMUM_ENTRY_DEVIATION_BPS
