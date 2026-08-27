@@ -87,6 +87,10 @@ services:
         value: 10
       - key: FTMO_MAXIMUM_OPEN_EXPOSURES
         value: 1
+      - key: FTMO_MAXIMUM_ENTRY_DEVIATION_BPS
+        value: 50
+      - key: FTMO_MINIMUM_REWARD_RISK
+        value: 1
       - key: FTMO_ACCOUNT_ID
         sync: false
       - key: FTMO_SERVER
