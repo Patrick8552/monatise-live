@@ -261,6 +261,54 @@ def test_external_scanner_levels_are_translated_to_ftmo_bid_ask_and_still_requir
     asyncio.run(scenario())
 
 
+def test_signal_specific_recommended_risk_is_respected_below_three_percent_ceiling():
+    async def scenario():
+        control, _ = service(active_environment(FTMO_RISK_FRACTION="0.03"))
+        await control.accept_bridge_heartbeat(heartbeat(), now=NOW)
+        proposal = await control.create_signal_proposal(
+            telegram_request_id="tgr_1", analysis_id="ana_1", signal_id="sig_risk_1",
+            symbol="XAUUSD", direction="long", analysis_entry="3500",
+            analysis_stop="3486", analysis_target="3528", source="monatise.telegram.on_demand",
+            analysis_state="LONG", confirmation_status="confirmed",
+            recommended_risk_percent="1.25", now=NOW,
+        )
+        assert Decimal(proposal["recommended_risk_fraction"]) == Decimal("0.0125")
+        assert Decimal(proposal["risk_amount"]) <= Decimal("125")
+        assert proposal["telegram_request_id"] == "tgr_1"
+
+        await control.repository.update_control(kill_switch=False)
+        await control.arm("42", now=NOW)
+        command = await control.approve(proposal["proposal_id"], "42", now=NOW)
+        assert command["telegram_request_id"] == "tgr_1"
+        assert Decimal(command["risk_policy"]["recommended_risk_fraction"]) == Decimal("0.0125")
+        assert Decimal(command["risk_policy"]["actual_risk_fraction"]) <= Decimal("0.0125")
+        assert command["execution_session"]["autonomous_execution_enabled"] is False
+
+    asyncio.run(scenario())
+
+
+def test_telegram_request_analysis_signal_command_audit_chain_is_durable():
+    async def scenario():
+        control, store = service()
+        request = {
+            "request_id": "tgr_audit", "analysis_id": "ana_audit", "telegram_user": "42",
+            "requested_instrument": "XAUUSD", "requested_at": NOW.isoformat(), "status": "processing",
+        }
+        assert await control.repository.claim_telegram_analysis_request(request) is True
+        assert await control.repository.claim_telegram_analysis_request(request) is False
+        assert await control.repository.save_telegram_analysis({
+            "analysis_id": "ana_audit", "telegram_request_id": "tgr_audit", "decision": "QUALIFIED LONG",
+            "qualified": True, "market_data_provenance": {"provider": "FlashAlpha"}, "session": {"market_session": "NEW_YORK"},
+        }) is True
+        saved = await control.repository.telegram_analysis("ana_audit")
+        assert saved["telegram_request_id"] == "tgr_audit"
+        await control.repository.finish_telegram_analysis_request("tgr_audit", {"status": "completed"})
+        events = store.streams[control.repository.AUDIT]
+        assert [event["event"] for event in events] == ["telegram_analysis_requested", "telegram_analysis_completed"]
+
+    asyncio.run(scenario())
+
+
 def test_no_trade_incomplete_or_direction_conflicted_analysis_cannot_become_a_proposal():
     async def scenario():
         control, _ = service()

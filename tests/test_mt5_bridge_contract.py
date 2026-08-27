@@ -7,7 +7,8 @@ BRIDGE_SOURCE = Path(__file__).parents[1] / "mt5" / "Experts" / "MonatiseFTMOBri
 def test_mt5_bridge_enforces_expiry_price_volume_and_broker_symbol_constraints():
     source = BRIDGE_SOURCE.read_text(encoding="utf-8")
 
-    assert '#property version   "1.04"' in source
+    assert '#property version   "1.05"' in source
+    assert 'InpSymbols                = "XAUUSD,BTCUSD,ETHUSD,US100.cash,AAPL"' in source
     assert "InpRiskFraction           = 0.03" in source
     assert "InpMaximumRiskAmount" not in source
     assert "InpMaximumDailyLossAmount" not in source
