@@ -110,9 +110,7 @@ FTMO_MASTER_ACCOUNT_APPROVED=false
 FTMO_TELEGRAM_EXECUTION_ARMED=false
 FTMO_AUTONOMOUS_EXECUTION=false
 FTMO_TELEGRAM_CONFIRMATION_REQUIRED=true
-FTMO_RISK_FRACTION=0.0005
-FTMO_MAXIMUM_RISK_AMOUNT=5
-FTMO_MAXIMUM_DAILY_LOSS_AMOUNT=10
+FTMO_RISK_FRACTION=0.03
 FTMO_MAXIMUM_OPEN_EXPOSURES=1
 FTMO_MAXIMUM_ENTRY_DEVIATION_BPS=50
 FTMO_MINIMUM_REWARD_RISK=1
@@ -168,12 +166,13 @@ FTMO_TELEGRAM_CONFIRMATION_REQUIRED=true
 
 The EA also requires `InpExecutionEnabled=true` and `InpMasterAccountApproved=true`. A temporary `/arm` session is still mandatory. The durable kill switch defaults to ON; resetting it is an out-of-band administrative operation, never a Telegram command.
 
-For controlled live validation, keep the EA at `InpRiskFraction=0.0005`,
-`InpMaximumRiskAmount=5`, `InpMaximumDailyLossAmount=10`, and
-`InpMaximumOpenExposures=1`. The exposure slot counts both live positions and
-pending orders. The Render control plane rechecks the slot and daily capacity
-when a proposal is created and again immediately before command creation; the
-EA repeats both checks against broker state immediately before submission.
+The live per-trade ceiling is percentage-only: keep the EA at
+`InpRiskFraction=0.03` and `InpMaximumOpenExposures=1`. The obsolete `$5`
+per-trade and `$10` temporary daily caps are removed. The exposure slot counts
+both live positions and pending orders. The Render control plane rechecks the
+slot and broker-reported daily/total loss capacity when a proposal is created
+and again immediately before command creation; the EA repeats both checks
+against broker state immediately before submission.
 
 After every other gate is configured, the audited reset command is:
 
