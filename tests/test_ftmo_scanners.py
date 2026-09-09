@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from monatise.application.deployment import OrchestrationRuntime
+from monatise.application.deployment import OrchestrationRuntime, _select_tradingview_futures_reference
 from monatise.application.ftmo_registry import (
     FTMOAssetClass,
     FTMOInstrument,
@@ -84,6 +84,34 @@ def test_required_ftmo_futures_mappings_are_explicit_and_cfds_are_not_conflated(
     assert "Entry: 20,000" not in message
     assert "Invalidation: 19,900" not in message
     assert "Target: 20,200" not in message
+
+
+def test_futures_scanner_displays_fresh_tradingview_price_as_reference_only():
+    instrument = FTMO_REGISTRY.resolve("XAU/USD")
+    reference = _select_tradingview_futures_reference(instrument, [{
+        "symbol": "GC", "priceValue": 2501.25, "timeframe": "1m", "receivedAt": 1_800_000_000,
+        "classification": {"fresh": True, "ageSeconds": 2},
+    }])
+
+    assert reference is not None
+    message = TelegramNotifier.format_ftmo_futures_setup({
+        "underlying_market": "Gold", "ftmo_symbol": "XAU/USD",
+        "futures_symbol": "GC", "micro_futures_symbol": "MGC",
+        "direction": "LONG", "score": 8, "score_threshold": 7,
+        "data_source": "FlashAlpha", "tradingview_reference": reference,
+    })
+    assert "TradingView reference price: 2,501.25" in message
+    assert "Price status: REFERENCE ONLY — not the FTMO Bid/Ask." in message
+    assert "FTMO executable entry/stop/target: WITHHELD" in message
+
+
+def test_futures_scanner_rejects_stale_invalid_and_unmapped_tradingview_prices():
+    instrument = FTMO_REGISTRY.resolve("XAU/USD")
+    assert _select_tradingview_futures_reference(instrument, [
+        {"symbol": "GC", "priceValue": 2501, "classification": {"fresh": False}},
+        {"symbol": "GC", "priceValue": 0, "classification": {"fresh": True}},
+        {"symbol": "NQ", "priceValue": 2501, "classification": {"fresh": True}},
+    ]) is None
 
 
 @pytest.mark.parametrize("overrides", [

@@ -149,12 +149,15 @@ def _setup_alert_state(analysis: Mapping[str, Any]) -> dict[str, Any]:
     targets = analysis.get("targets")
     if not isinstance(targets, (list, tuple)):
         targets = [analysis.get("target")]
+    tradingview_reference = analysis.get("tradingview_reference")
+    reference_price = tradingview_reference.get("price") if isinstance(tradingview_reference, Mapping) else None
     return {
         "direction": str(analysis.get("direction") or "").upper(),
         "score": int(analysis.get("score") or 0),
         "entry": analysis.get("entry"),
         "stop": analysis.get("stop_loss"),
         "targets": list(targets),
+        "reference_price": reference_price,
     }
 
 
@@ -172,8 +175,8 @@ def _setup_materially_changed(previous_raw: Any, current: Mapping[str, Any], *, 
     if abs(int(previous.get("score") or 0) - int(current.get("score") or 0)) >= 2:
         return True
 
-    previous_levels = [previous.get("entry"), previous.get("stop"), *(previous.get("targets") or [])]
-    current_levels = [current.get("entry"), current.get("stop"), *(current.get("targets") or [])]
+    previous_levels = [previous.get("entry"), previous.get("stop"), *(previous.get("targets") or []), previous.get("reference_price")]
+    current_levels = [current.get("entry"), current.get("stop"), *(current.get("targets") or []), current.get("reference_price")]
     if len(previous_levels) != len(current_levels):
         return True
     for old, new in zip(previous_levels, current_levels):
@@ -190,6 +193,50 @@ def _setup_materially_changed(previous_raw: Any, current: Mapping[str, Any], *, 
         elif abs(new_value - old_value) / baseline * 10_000 >= threshold_bps:
             return True
     return False
+
+
+def _select_tradingview_futures_reference(instrument: Any, alerts: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Return the newest fresh TradingView price for an instrument's futures root.
+
+    The result is deliberately reference-only. It is attached to the scanner
+    notification and is never passed into the FTMO execution quote boundary.
+    """
+    accepted_symbols = {
+        str(symbol).strip().upper()
+        for symbol in (
+            getattr(instrument, "provider_symbol", None),
+            getattr(instrument, "futures_symbol", None),
+            getattr(instrument, "micro_futures_symbol", None),
+        )
+        if symbol
+    }
+    for alert in alerts:
+        if str(alert.get("symbol") or "").strip().upper() not in accepted_symbols:
+            continue
+        classification = alert.get("classification") or {}
+        if not classification.get("fresh"):
+            continue
+        try:
+            price = float(alert.get("priceValue"))
+        except (TypeError, ValueError):
+            continue
+        if price <= 0:
+            continue
+        received_at = alert.get("receivedAt")
+        try:
+            observed_at = datetime.fromtimestamp(float(received_at), tz=timezone.utc).isoformat()
+        except (TypeError, ValueError, OSError):
+            observed_at = None
+        return {
+            "price": price,
+            "symbol": str(alert.get("symbol") or "").strip().upper(),
+            "timeframe": str(alert.get("timeframe") or "").strip(),
+            "observed_at": observed_at,
+            "age_seconds": classification.get("ageSeconds"),
+            "source": "TradingView alert webhook",
+            "status": "reference_only",
+        }
+    return None
 
 
 def _false(value: str | None) -> bool:
@@ -1887,6 +1934,14 @@ class OrchestrationRuntime:
     async def _analyze_ftmo_futures(self, instruments: tuple[Any, ...], cooldown_seconds: int, namespace: str) -> dict[str, Any]:
         adapter = getattr(self, "flashalpha", None) or FlashAlphaAdapter.from_env()
         self.flashalpha = adapter
+        try:
+            tradingview_alerts = await self.recent_tradingview_alerts(limit=TRADINGVIEW_ALERT_LIMIT)
+        except Exception as exc:
+            LOGGER.warning(
+                "TradingView futures reference lookup failed",
+                extra={"error_type": type(exc).__name__},
+            )
+            tradingview_alerts = []
         all_unique_roots = tuple(dict.fromkeys(item.futures_symbol for item in instruments if item.futures_symbol))
         futures_interval = max(3600, int(getattr(self, "environment", {}).get("MONATISE_FTMO_FUTURES_SCAN_INTERVAL_SECONDS", "3600")))
         scheduled_capacity = self._flashalpha_scheduled_capacity(interval_seconds=futures_interval, allocation_fraction=0.3)
@@ -1943,6 +1998,9 @@ class OrchestrationRuntime:
                 "data_quality": {"flashalpha_snapshot": {"latest_timestamp": as_of.isoformat(), "quality": "valid"}},
                 "ftmo_execution_quote": {"provider": "ftmo_mt5", "status": "not_requested", "reason": "awaiting_qualification" if analysis.get("setup_status") == "confirmed" else "analysis_not_qualified"},
             })
+            tradingview_reference = _select_tradingview_futures_reference(instrument, tradingview_alerts)
+            if tradingview_reference is not None:
+                analysis["tradingview_reference"] = tradingview_reference
             candidates.append((instrument, analysis))
         candidates.sort(key=lambda item: (-abs(int(item[1].get("score") or 0)), item[0].ftmo_symbol))
         deep_limit = max(1, min(20, int(self.environment.get("MONATISE_FTMO_FUTURES_DEEP_ANALYSIS_LIMIT", "10"))))

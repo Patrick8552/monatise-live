@@ -86,6 +86,17 @@ def test_tradingview_alert_normalizes_stock_and_index_symbols() -> None:
     assert index["action"] == "SELL"
 
 
+@pytest.mark.parametrize(
+    ("ticker", "root"),
+    [("COMEX:GC1!", "GC"), ("CME_MINI:NQ1!", "NQ"), ("NYMEX:CL2!", "CL")],
+)
+def test_tradingview_alert_normalizes_continuous_futures_to_registry_root(ticker: str, root: str) -> None:
+    alert = normalize_tradingview_alert({"symbol": ticker, "action": "WAIT", "price": "2501.25"})
+
+    assert alert["symbol"] == root
+    assert alert["priceValue"] == 2501.25
+
+
 def test_tradingview_alert_preserves_crypto_indicator_stack() -> None:
     alert = normalize_tradingview_alert(
         {

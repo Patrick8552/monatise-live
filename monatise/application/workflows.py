@@ -476,10 +476,26 @@ class TelegramNotifier:
             f"Monatise score: {int(analysis.get('score') or 0):+d}/10 | threshold: ±{int(analysis.get('score_threshold') or 7)}",
             f"External context market: {analysis.get('api_symbol') or analysis.get('futures_symbol') or 'UNKNOWN'}",
             f"External context source: {analysis.get('data_source') or 'market intelligence provider'}",
+        ]
+        tradingview = analysis.get("tradingview_reference")
+        if isinstance(tradingview, dict) and tradingview.get("price") is not None:
+            reference_details = [f"symbol {tradingview.get('symbol') or 'UNKNOWN'}"]
+            if tradingview.get("timeframe"):
+                reference_details.append(f"timeframe {tradingview['timeframe']}")
+            if tradingview.get("observed_at"):
+                reference_details.append(f"observed {tradingview['observed_at']}")
+            lines.extend((
+                f"TradingView reference price: {_price(tradingview['price'])}",
+                "TradingView reference: " + " | ".join(reference_details),
+                "Price status: REFERENCE ONLY — not the FTMO Bid/Ask.",
+            ))
+        else:
+            lines.append("TradingView reference price: unavailable or stale.")
+        lines.extend((
             "FTMO executable entry/stop/target: WITHHELD — a fresh FTMO platform quote is required.",
             "Status: CONTEXT ONLY — NO EXECUTABLE SIGNAL.",
             "No trade was executed.",
-        ]
+        ))
         return "\n".join(lines)
 
     @property

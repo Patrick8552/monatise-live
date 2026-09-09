@@ -294,6 +294,15 @@ Recommended TradingView symbols include `OANDA:XAGUSD` for Silver, `TVC:SPX`,
 `NASDAQ:NVDA`. Monatise normalizes exchange-prefixed alert symbols before
 matching them to its watchlist.
 
+The FTMO futures-linked scanner also accepts fresh TradingView alert prices
+for the futures or micro-futures roots in the canonical FTMO registry. Use a
+continuous futures ticker such as `COMEX:GC1!`, `CME_MINI:NQ1!`, or
+`NYMEX:CL1!` and include `"price": "{{close}}"` in the webhook JSON. Monatise
+normalizes these to `GC`, `NQ`, and `CL`, respectively. The resulting price is
+displayed as a `REFERENCE ONLY` value in the scanner notification; executable
+entry, stop, target, sizing, preview, and approval continue to require a fresh
+account-bound FTMO Bid/Ask.
+
 See [deploy/render-hosting.md](deploy/render-hosting.md) for details.
 
 ## Quick Start

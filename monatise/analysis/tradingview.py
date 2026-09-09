@@ -34,6 +34,12 @@ def normalize_alert_symbol(value: str) -> str:
     raw = str(value).upper().strip()
     if ":" in raw:
         raw = raw.rsplit(":", 1)[-1]
+    # TradingView continuous-futures tickers commonly end in ``1!`` (front
+    # contract) or ``2!`` (next contract). Store the stable futures root so a
+    # scanner registry entry such as GC, NQ, or ES can match the alert without
+    # depending on a particular exchange prefix.
+    if len(raw) >= 3 and raw.endswith("!") and raw[-2].isdigit():
+        raw = raw[:-2]
     symbol = "".join(character for character in raw if character.isalnum())
     aliases = {
         "IXIC": "NASDAQ",
