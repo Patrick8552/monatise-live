@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import pytest
 
 import monatise.application.deployment as deployment_module
-from monatise.application.deployment import COINGLASS_PROVIDER_KEY, SCHEDULED_ANALYSIS_DEFAULT_SYMBOLS, MigrationRunner, OrchestrationASGI, OrchestrationRuntime, PaperSafetyConfiguration, RedisCoordinationStore, RedisSchedulerLeadership, TelegramNotificationTransport, register_coinglass_provider, scheduled_analysis_configuration, telegram_transport_enabled
+from monatise.application.deployment import COINGLASS_PROVIDER_KEY, SCHEDULED_ANALYSIS_DEFAULT_SYMBOLS, MigrationRunner, OrchestrationASGI, OrchestrationRuntime, PaperSafetyConfiguration, RedisCoordinationStore, RedisSchedulerLeadership, TelegramNotificationTransport, _coinglass_required, register_coinglass_provider, scheduled_analysis_configuration, telegram_transport_enabled
 from monatise.application.registry import CANONICAL_ENGINE_ORDER
 from monatise.application.registry import PRODUCTION_ENGINE_ORDER
 from monatise.application.production_analysis import PRODUCTION_SIGNAL_SCORE_THRESHOLD, build_production_analysis_run
@@ -912,6 +912,32 @@ def test_coinglass_request_failure_makes_runtime_not_ready_even_with_fallback_po
         "status": "error",
         "latest_request": "failed",
         "consecutive_failures": 3,
+    }
+
+
+def test_non_crypto_runtime_does_not_require_coinglass_for_readiness():
+    assert _coinglass_required({
+        "MONATISE_ENVIRONMENT": "production",
+        "MONATISE_FTMO_NON_CRYPTO_ONLY": "true",
+    }) is False
+    runtime = OrchestrationRuntime(environment={"MONATISE_FTMO_NON_CRYPTO_ONLY": "true"})
+    runtime.safety = SimpleNamespace()
+    runtime.application = SimpleNamespace(registry=SimpleNamespace(ordered=lambda: tuple(
+        SimpleNamespace(name=name) for name in PRODUCTION_ENGINE_ORDER
+    )))
+    runtime.dependencies = {key: {"status": "ok"} for key in (
+        "configuration", "postgresql", "migrations", "redis", "event_bus", "state_manager",
+        "audit_repository", "audit_integrity", "audit_logging", "scheduler", "engine_registry",
+        "pipeline_orchestrator", "governance", "notifications", "market_data", "hierarchy_shadow",
+    )}
+    runtime.dependencies["coinglass"] = {"status": "ok", "required": False}
+    runtime.coinglass = SimpleNamespace(health=lambda: SimpleNamespace(healthy=False, consecutive_failures=5000))
+
+    ready, payload = runtime.readiness()
+
+    assert ready is True
+    assert payload["dependencies"]["coinglass"] == {
+        "status": "ok", "required": False, "latest_request": "failed", "consecutive_failures": 5000,
     }
 
 

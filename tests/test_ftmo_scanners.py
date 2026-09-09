@@ -6,7 +6,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from monatise.application.deployment import OrchestrationRuntime, _select_tradingview_futures_reference
+from monatise.application.deployment import (
+    OrchestrationRuntime,
+    _select_tradingview_futures_reference,
+    _select_tradingview_stock_reference,
+)
 from monatise.application.ftmo_registry import (
     FTMOAssetClass,
     FTMOInstrument,
@@ -112,6 +116,26 @@ def test_futures_scanner_rejects_stale_invalid_and_unmapped_tradingview_prices()
         {"symbol": "GC", "priceValue": 0, "classification": {"fresh": True}},
         {"symbol": "NQ", "priceValue": 2501, "classification": {"fresh": True}},
     ]) is None
+
+
+def test_stock_scanner_displays_fresh_tradingview_price_as_reference_only():
+    candidate = SimpleNamespace(symbol="NVDA", underlying_symbol="NVDA", ftmo_symbol="NVDA")
+    reference = _select_tradingview_stock_reference(candidate, [{
+        "symbol": "NVDA", "priceValue": 184.25, "timeframe": "1m", "receivedAt": 1_800_000_000,
+        "classification": {"fresh": True, "ageSeconds": 3},
+    }])
+
+    assert reference is not None
+    message = TelegramNotifier.format_market_stock_setup({
+        "asset": "NVDA", "company_name": "NVIDIA", "ftmo_symbol": "NVDA",
+        "underlying_symbol": "NVDA", "exchange": "NASDAQ", "direction": "LONG",
+        "score": 8, "score_threshold": 7, "current_price": 183.90,
+        "entry": 184, "stop_loss": 180, "target": 192, "reward_risk": 2,
+        "tradingview_reference": reference,
+    })
+    assert "Current reference: 184.25" in message
+    assert "Current-reference source: TradingView alert webhook" in message
+    assert "Price status: REFERENCE ONLY — not the FTMO Bid/Ask." in message
 
 
 @pytest.mark.parametrize("overrides", [

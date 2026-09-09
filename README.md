@@ -294,14 +294,17 @@ Recommended TradingView symbols include `OANDA:XAGUSD` for Silver, `TVC:SPX`,
 `NASDAQ:NVDA`. Monatise normalizes exchange-prefixed alert symbols before
 matching them to its watchlist.
 
-The FTMO futures-linked scanner also accepts fresh TradingView alert prices
-for the futures or micro-futures roots in the canonical FTMO registry. Use a
+The FTMO stock and futures-linked scanners also accept fresh TradingView alert
+prices for stock symbols and the futures or micro-futures roots in the
+canonical FTMO registry. Use a stock ticker such as `NASDAQ:NVDA` or a
 continuous futures ticker such as `COMEX:GC1!`, `CME_MINI:NQ1!`, or
-`NYMEX:CL1!` and include `"price": "{{close}}"` in the webhook JSON. Monatise
-normalizes these to `GC`, `NQ`, and `CL`, respectively. The resulting price is
-displayed as a `REFERENCE ONLY` value in the scanner notification; executable
-entry, stop, target, sizing, preview, and approval continue to require a fresh
-account-bound FTMO Bid/Ask.
+`NYMEX:CL1!`, and include `"price": "{{close}}"` in the webhook JSON. Monatise
+normalizes the futures tickers to `GC`, `NQ`, and `CL`, respectively. The
+resulting price is displayed as a `REFERENCE ONLY` value in the scanner
+notification; executable entry, stop, target, sizing, preview, and approval
+continue to require a fresh account-bound FTMO Bid/Ask. In the production
+non-crypto configuration, CoinGlass is not a required readiness dependency and
+is not used by either scanner.
 
 See [deploy/render-hosting.md](deploy/render-hosting.md) for details.
 

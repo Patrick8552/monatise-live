@@ -414,6 +414,9 @@ class TelegramNotifier:
         ftmo_symbol = str(analysis.get("ftmo_symbol") or asset)
         underlying = str(analysis.get("underlying_symbol") or asset)
         targets = analysis.get("targets") or [analysis.get("target")]
+        tradingview = analysis.get("tradingview_reference")
+        has_tradingview_price = isinstance(tradingview, dict) and tradingview.get("price") is not None
+        current_reference = tradingview["price"] if has_tradingview_price else analysis.get("current_price")
         lines = [
             "MONATISE FTMO STOCK SCANNER",
             f"Company: {name}",
@@ -423,7 +426,7 @@ class TelegramNotifier:
             "Asset Class: STOCK",
             f"Direction: {direction}",
             f"Monatise score: {int(analysis.get('score') or 0):+d}/10 | threshold: ±{int(analysis.get('score_threshold') or 7)}",
-            f"Current: {_price(analysis.get('current_price'))}",
+            f"Current reference: {_price(current_reference)}",
             f"Entry: {_price(analysis.get('entry'))}",
             f"Trigger: {analysis.get('confirmation_trigger', 'confirmed technical trigger')}",
             f"Invalidation: {_price(analysis.get('stop_loss'))}",
@@ -432,6 +435,18 @@ class TelegramNotifier:
             f"Timeframe: {analysis.get('timeframe', '1h / 1d')}",
             f"Valid until: {analysis.get('valid_until', 'n/a')}",
         ]
+        if has_tradingview_price:
+            reference_details = [f"symbol {tradingview.get('symbol') or underlying}"]
+            if tradingview.get("timeframe"):
+                reference_details.append(f"timeframe {tradingview['timeframe']}")
+            if tradingview.get("observed_at"):
+                reference_details.append(f"observed {tradingview['observed_at']}")
+            lines.extend((
+                "Current-reference source: TradingView alert webhook | " + " | ".join(reference_details),
+                "Price status: REFERENCE ONLY — not the FTMO Bid/Ask.",
+            ))
+        else:
+            lines.append("Current-reference source: analysis provider; TradingView reference unavailable or stale.")
         reasons = list(analysis.get("reasons") or [])[:5]
         if reasons:
             lines.append("Technical hierarchy: " + "; ".join(str(reason) for reason in reasons))

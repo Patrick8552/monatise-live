@@ -195,21 +195,8 @@ def _setup_materially_changed(previous_raw: Any, current: Mapping[str, Any], *, 
     return False
 
 
-def _select_tradingview_futures_reference(instrument: Any, alerts: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """Return the newest fresh TradingView price for an instrument's futures root.
-
-    The result is deliberately reference-only. It is attached to the scanner
-    notification and is never passed into the FTMO execution quote boundary.
-    """
-    accepted_symbols = {
-        str(symbol).strip().upper()
-        for symbol in (
-            getattr(instrument, "provider_symbol", None),
-            getattr(instrument, "futures_symbol", None),
-            getattr(instrument, "micro_futures_symbol", None),
-        )
-        if symbol
-    }
+def _select_tradingview_reference(accepted_symbols: set[str], alerts: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Return the newest fresh TradingView price from an allowed symbol set."""
     for alert in alerts:
         if str(alert.get("symbol") or "").strip().upper() not in accepted_symbols:
             continue
@@ -239,12 +226,44 @@ def _select_tradingview_futures_reference(instrument: Any, alerts: list[dict[str
     return None
 
 
+def _select_tradingview_futures_reference(instrument: Any, alerts: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Select a reference-only price for an instrument's futures roots."""
+    accepted_symbols = {
+        str(symbol).strip().upper()
+        for symbol in (
+            getattr(instrument, "provider_symbol", None),
+            getattr(instrument, "futures_symbol", None),
+            getattr(instrument, "micro_futures_symbol", None),
+        )
+        if symbol
+    }
+    return _select_tradingview_reference(accepted_symbols, alerts)
+
+
+def _select_tradingview_stock_reference(candidate: StockCandidate, alerts: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Select a reference-only price for a stock scanner candidate."""
+    accepted_symbols = {
+        str(symbol).strip().upper()
+        for symbol in (candidate.symbol, candidate.underlying_symbol, candidate.ftmo_symbol)
+        if symbol
+    }
+    return _select_tradingview_reference(accepted_symbols, alerts)
+
+
 def _false(value: str | None) -> bool:
     return value is None or value.strip().casefold() in FALSE_VALUES
 
 
 def _true(value: str | None) -> bool:
     return value is not None and value.strip().casefold() in {"1", "true", "yes", "on", "enabled"}
+
+
+def _coinglass_required(environment: Mapping[str, str]) -> bool:
+    """CoinGlass is mandatory only when the deployment serves crypto analysis."""
+    return (
+        environment.get("MONATISE_ENVIRONMENT", "development").strip().casefold() != "test"
+        and not _true(environment.get("MONATISE_FTMO_NON_CRYPTO_ONLY", "false"))
+    )
 
 
 def telegram_transport_enabled(environment: Mapping[str, str]) -> bool:
@@ -1655,6 +1674,14 @@ class OrchestrationRuntime:
     async def _run_stock_universe_scan(self, configuration: StockUniverseConfiguration, cooldown_seconds: int, namespace: str) -> dict[str, Any]:
         alpaca = getattr(self, "alpaca", None) or AlpacaMarketDataAdapter.from_env()
         self.alpaca = alpaca
+        try:
+            tradingview_alerts = await self.recent_tradingview_alerts(limit=TRADINGVIEW_ALERT_LIMIT)
+        except Exception as exc:
+            LOGGER.warning(
+                "TradingView stock reference lookup failed",
+                extra={"error_type": type(exc).__name__},
+            )
+            tradingview_alerts = []
         registry = getattr(self, "ftmo_registry", FTMO_REGISTRY)
         instruments = registry.for_asset_class(FTMOAssetClass.STOCK)
         exclusions: dict[str, int] = {}
@@ -1718,6 +1745,9 @@ class OrchestrationRuntime:
             outcome.setdefault("ftmo_symbol", candidate.ftmo_symbol or candidate.symbol)
             outcome.setdefault("underlying_symbol", candidate.underlying_symbol or candidate.symbol)
             outcome.setdefault("exchange", candidate.exchange)
+            tradingview_reference = _select_tradingview_stock_reference(candidate, tradingview_alerts)
+            if tradingview_reference is not None:
+                outcome["tradingview_reference"] = tradingview_reference
             scan_results.append(outcome)
             additional = outcome.get("additional_context") or {}
             if not (additional.get("quiver") or {}).get("available"): provider_degraded["quiver"] += 1
@@ -2314,7 +2344,7 @@ class OrchestrationRuntime:
             }
             self.dependencies["governance"] = {"status": "ok", "kill_switch": True}
             configured = bool(self.environment.get("COINGLASS_API_KEY", "").strip())
-            coinglass_required = deployment_environment != "test"
+            coinglass_required = _coinglass_required(self.environment)
             self.dependencies["coinglass"] = {
                 "status": "ok" if configured or not coinglass_required else "error",
                 "configured": configured,
@@ -2385,15 +2415,16 @@ class OrchestrationRuntime:
             health = self.coinglass.health()
             coinglass_dependency = self.dependencies.setdefault("coinglass", {})
             unavailable = health.consecutive_failures >= 3
+            coinglass_required = bool(coinglass_dependency.get("required", True))
             coinglass_dependency["latest_request"] = (
                 "healthy" if health.healthy else ("failed" if unavailable else ("degraded" if health.consecutive_failures else "not_yet_requested"))
             )
-            coinglass_dependency["status"] = "error" if unavailable else "ok"
+            coinglass_dependency["status"] = "error" if coinglass_required and unavailable else "ok"
             coinglass_dependency["consecutive_failures"] = health.consecutive_failures
             market_dependency = self.dependencies.setdefault("market_data", {})
             fallback_available = self.backpack is not None
             market_dependency.update({
-                "status": "ok" if fallback_available or not unavailable else "error",
+                "status": "ok" if not coinglass_required or fallback_available or not unavailable else "error",
                 "providers": list(self.market_data_providers()),
                 "fallback_enabled": fallback_available,
                 "execution_enabled": False,
