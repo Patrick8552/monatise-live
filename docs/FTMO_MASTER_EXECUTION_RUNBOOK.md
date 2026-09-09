@@ -90,7 +90,7 @@ Primary references:
 6. Confirm the account currency and save a screenshot with the account number masked.
 7. Copy `mt5/Experts/MonatiseFTMOBridge.mq5` into the terminal's `MQL5\Experts\Monatise` directory and compile it in MetaEditor with zero errors and zero warnings.
 8. In MT5, add `https://monatise-live.onrender.com` to Tools -> Options -> Expert Advisors -> allowed WebRequest URLs.
-9. Attach the EA to a continuously quoted FTMO chart. Configure the expected account, server, currency, symbols, bridge secret, and loss limits. Keep both EA execution inputs `false` for shadow testing.
+9. Attach the EA to a continuously quoted FTMO chart. Configure the expected account, server, currency, symbols, bridge secret, and loss limits. The default `InpSymbols` includes `XAUUSD`, `US100.cash`, and `US500.cash`, which cover the scheduled GC, NQ, and ES futures-linked scanner paths; preserve the broker's exact symbol spelling if it differs. Keep both EA execution inputs `false` for shadow testing.
 10. Install the watchdog scripts under `C:\Monatise` and run `Install-MonatiseWatchdog.ps1` as Administrator.
 
 ## Render configuration
@@ -121,6 +121,7 @@ FTMO_MAXIMUM_OPEN_EXPOSURES=1
 FTMO_MAXIMUM_ENTRY_DEVIATION_BPS=50
 FTMO_MINIMUM_REWARD_RISK=1
 FTMO_QUOTE_FUTURE_TOLERANCE_SECONDS=1
+MONATISE_FTMO_SCANNER_QUOTE_WAIT_SECONDS=7
 ```
 
 Donpbot remains on OpenClaw `getUpdates`. The dedicated Monatise bot is the

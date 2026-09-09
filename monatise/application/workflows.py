@@ -477,7 +477,9 @@ class TelegramNotifier:
         return "\n".join(lines)
 
     @staticmethod
-    def format_ftmo_futures_setup(analysis: dict[str, Any]) -> str:
+    def format_ftmo_futures_setup(
+        analysis: dict[str, Any], *, proposal: dict[str, Any] | None = None,
+    ) -> str:
         direction = str(analysis.get("direction") or "NONE").upper()
         lines = [
             "MONATISE FTMO FUTURES SCANNER",
@@ -489,8 +491,9 @@ class TelegramNotifier:
             "Product note: the FTMO instrument is a CFD, not an exchange-traded futures contract.",
             f"Direction: {direction}",
             f"Monatise score: {int(analysis.get('score') or 0):+d}/10 | threshold: ±{int(analysis.get('score_threshold') or 7)}",
-            f"External context market: {analysis.get('api_symbol') or analysis.get('futures_symbol') or 'UNKNOWN'}",
-            f"External context source: {analysis.get('data_source') or 'market intelligence provider'}",
+            "ANALYSIS",
+            f"Primary context: {analysis.get('api_symbol') or analysis.get('futures_symbol') or 'UNKNOWN'}",
+            f"Source: {analysis.get('data_source') or 'market intelligence provider'}",
         ]
         tradingview = analysis.get("tradingview_reference")
         if isinstance(tradingview, dict) and tradingview.get("price") is not None:
@@ -500,17 +503,54 @@ class TelegramNotifier:
             if tradingview.get("observed_at"):
                 reference_details.append(f"observed {tradingview['observed_at']}")
             lines.extend((
-                f"TradingView reference price: {_price(tradingview['price'])}",
+                f"TradingView: Optional confirmation at {_price(tradingview['price'])}",
                 "TradingView reference: " + " | ".join(reference_details),
                 "Price status: REFERENCE ONLY — not the FTMO Bid/Ask.",
             ))
         else:
-            lines.append("TradingView reference price: unavailable or stale.")
-        lines.extend((
-            "FTMO executable entry/stop/target: WITHHELD — a fresh FTMO platform quote is required.",
-            "Status: CONTEXT ONLY — NO EXECUTABLE SIGNAL.",
-            "No trade was executed.",
-        ))
+            lines.append("TradingView: Optional confirmation unavailable or stale — not an execution blocker.")
+        lines.append("EXECUTION")
+        quote = analysis.get("ftmo_execution_quote") or {}
+        if proposal is not None:
+            snapshot = proposal.get("execution_snapshot") or {}
+            age_ms = proposal.get("quote_age_ms")
+            try:
+                age = f"{float(age_ms) / 1000:.3f}s"
+            except (TypeError, ValueError):
+                age = "UNKNOWN"
+            try:
+                risk_percent = f"{float(proposal.get('risk_fraction')) * 100:.2f}%"
+            except (TypeError, ValueError):
+                risk_percent = "UNKNOWN"
+            lines.extend((
+                "Price Source: FTMO MT5",
+                f"Symbol: {proposal.get('symbol') or analysis.get('ftmo_symbol') or 'UNKNOWN'}",
+                f"Bid: {proposal.get('quote_bid') or 'UNKNOWN'}",
+                f"Ask: {proposal.get('quote_ask') or 'UNKNOWN'}",
+                f"Spread: {snapshot.get('spread') or 'UNKNOWN'} | {proposal.get('spread_ticks') or 'UNKNOWN'} ticks",
+                f"Quote Age: {age} | Heartbeat: {quote.get('heartbeat') or 'HEALTHY'}",
+                f"Account / Server: {snapshot.get('account_id') or 'UNKNOWN'} / {snapshot.get('server') or 'UNKNOWN'}",
+                f"Entry: {proposal.get('entry') or 'UNKNOWN'}",
+                f"Stop Loss: {proposal.get('stop_loss') or 'UNKNOWN'}",
+                f"Take Profit: {proposal.get('take_profit') or 'UNKNOWN'}",
+                f"Risk: {risk_percent} (${proposal.get('risk_amount') or 'UNKNOWN'})",
+                f"Lot Size: {proposal.get('volume') or 'UNKNOWN'}",
+                "Status: EXECUTABLE — AWAITING TELEGRAM APPROVAL",
+                f"Approve: /approve {proposal['proposal_id']} | Reject: /reject {proposal['proposal_id']}",
+                "Approval revalidates the current FTMO Bid/Ask before any order is sent.",
+                "No trade was executed.",
+            ))
+        else:
+            status = str(quote.get("status") or "unavailable").upper()
+            reason = str(quote.get("reason") or "FTMO execution quote unavailable")
+            lines.extend((
+                "Price Source: FTMO MT5 (mandatory)",
+                f"Quote status: {status}",
+                f"Reason: {reason}",
+                "FTMO executable entry/stop/target: WITHHELD.",
+                "Status: CONTEXT ONLY — MT5 EXECUTION QUOTE UNAVAILABLE.",
+                "No trade was executed.",
+            ))
         return "\n".join(lines)
 
     @property

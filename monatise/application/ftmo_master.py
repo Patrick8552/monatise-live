@@ -1071,8 +1071,8 @@ class FTMOMasterControlService:
             symbol = str(raw_symbol).strip().upper()
             bid = _decimal(raw_quote.get("bid"), "bid", positive=True)
             ask = _decimal(raw_quote.get("ask"), "ask", positive=True)
-            if ask < bid:
-                raise FTMOMasterError("bridge ask cannot be below bid")
+            if ask <= bid:
+                raise FTMOMasterError("bridge ask must be above bid")
             quote_at = _timestamp(
                 raw_quote.get("quote_observed_at_utc") or raw_quote.get("observed_at_utc") or raw_quote.get("timestamp"),
                 "bridge quote observation timestamp",

@@ -235,6 +235,46 @@ def test_confirmed_monatise_signal_becomes_actionable_telegram_proposal_only_onc
     asyncio.run(scenario())
 
 
+def test_futures_signal_waits_for_fresh_mt5_quote_and_uses_broker_symbol_and_scaled_risk():
+    class Repository:
+        def __init__(self): self.events = []
+        async def audit(self, event, identity, details): self.events.append((event, identity, details))
+
+    class FTMO:
+        def __init__(self): self.calls, self.repository = [], Repository()
+        async def execution_symbol_for(self, instrument):
+            assert instrument.futures_symbol == "ES"
+            return "US500.CASH"
+        async def create_signal_proposal(self, **kwargs):
+            self.calls.append(kwargs)
+            if len(self.calls) == 1:
+                from monatise.application.ftmo_master import FTMOMasterError
+                raise FTMOMasterError("FTMO quote is stale")
+            return {
+                "proposal_id": "sp500short", "symbol": kwargs["symbol"],
+                "quote_observed_at_utc": "2026-09-09T10:00:00+00:00", "quote_age_ms": "400",
+            }
+
+    async def scenario():
+        runtime = OrchestrationRuntime(environment={})
+        runtime.ftmo_master, runtime.telegram = FTMO(), object()
+        proposal, reason = await runtime._create_ftmo_signal_proposal({
+            "ftmo_symbol": "US500.cash", "direction": "SHORT", "score": -7,
+            "entry": "6500", "stop_loss": "6520", "target": "6460",
+            "setup_status": "confirmed", "analysis_provider": "flashalpha",
+            "analysis_instrument": "ES=F", "analysis_id": "es-seven",
+        }, source="monatise.futures.scanner", quote_wait_seconds=0.02)
+
+        assert reason is None and proposal["symbol"] == "US500.CASH"
+        assert len(runtime.ftmo_master.calls) == 2
+        assert str(runtime.ftmo_master.calls[-1]["recommended_risk_percent"]) == "1.00"
+        assert [event[0] for event in runtime.ftmo_master.repository.events] == [
+            "scanner_quote_requested", "scanner_quote_validated",
+        ]
+
+    asyncio.run(scenario())
+
+
 def test_telegram_transport_bounds_messages_to_provider_limit(monkeypatch):
     captured = {}
 

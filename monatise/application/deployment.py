@@ -47,6 +47,7 @@ from monatise.application.ftmo_registry import FTMOAssetClass, FTMOInstrumentReg
 from monatise.application.ftmo_scanner import publication_allowed
 from monatise.application.ftmo_execution import FTMOExecutionConfiguration
 from monatise.application.ftmo_master import FTMOMasterConfiguration, FTMOMasterControlService, FTMOMasterRepository, FTMOMasterError, format_proposal
+from monatise.application.telegram_analysis import recommended_risk_percent
 from monatise.analysis.tradingview import TRADINGVIEW_ALERT_LIMIT, TRADINGVIEW_FRESH_SECONDS, enrich_tradingview_alert, normalize_tradingview_alert
 from monatise.adapters.x_macro import XMacroAdapter, XMacroPost
 from monatise.live.config import RuntimeConfig
@@ -2048,9 +2049,58 @@ class OrchestrationRuntime:
             await self.redis.set(cooldown_key, json.dumps(alert_state, separators=(",", ":"), sort_keys=True), ex=cooldown_seconds)
             try:
                 notifier = getattr(self.telegram, "ftmo_futures_notification", self.telegram.stock_analysis_notification)
-                message = TelegramNotifier.format_ftmo_futures_setup(analysis)
-                await notifier(message)
-                await self._publish_ftmo_signal_proposal(analysis, source="monatise.futures.scanner")
+                quote_sources = [dict(item) for item in analysis.get("analysis_sources") or []]
+                for item in quote_sources:
+                    if item.get("provider") == "ftmo_mt5":
+                        item.update({"requested": True, "status": "requested", "failure_reason": None})
+                analysis["analysis_sources"] = quote_sources
+                analysis["ftmo_execution_quote"] = {
+                    "provider": "ftmo_mt5", "status": "requested", "symbol": instrument.ftmo_symbol,
+                }
+                wait_seconds = max(0.0, min(15.0, float(
+                    self.environment.get("MONATISE_FTMO_SCANNER_QUOTE_WAIT_SECONDS", "7")
+                )))
+                proposal, quote_error = await self._create_ftmo_signal_proposal(
+                    analysis, source="monatise.futures.scanner", quote_wait_seconds=wait_seconds,
+                )
+                if proposal is not None:
+                    snapshot = proposal.get("execution_snapshot") or {}
+                    analysis["ftmo_execution_quote"] = {
+                        "provider": "ftmo_mt5", "status": "validated", "symbol": proposal["symbol"],
+                        "bid": proposal["quote_bid"], "ask": proposal["quote_ask"],
+                        "spread": snapshot.get("spread"), "spread_ticks": proposal.get("spread_ticks"),
+                        "observed_at": proposal.get("quote_observed_at_utc"),
+                        "quote_age_ms": proposal.get("quote_age_ms"), "heartbeat": "HEALTHY",
+                        "account_id": snapshot.get("account_id"), "server": snapshot.get("server"),
+                    }
+                    for item in quote_sources:
+                        if item.get("provider") == "ftmo_mt5":
+                            item.update({
+                                "status": "used", "failure_reason": None,
+                                "evidence_contributed": [
+                                    "native MT5 Bid/Ask", "tick timestamp", "spread",
+                                    "broker symbol specification", "position sizing inputs",
+                                ],
+                            })
+                    message = TelegramNotifier.format_ftmo_futures_setup(analysis, proposal=proposal)
+                    publish = getattr(self.telegram, "trade_proposal", None)
+                    if publish is None:
+                        await notifier(message)
+                    else:
+                        await publish(message, proposal["proposal_id"])
+                else:
+                    unavailable = self._transient_ftmo_quote_error(quote_error or "")
+                    analysis["ftmo_execution_quote"] = {
+                        "provider": "ftmo_mt5", "status": "unavailable" if unavailable else "invalid",
+                        "symbol": instrument.ftmo_symbol,
+                        "reason": quote_error or "FTMO execution quote unavailable",
+                    }
+                    for item in quote_sources:
+                        if item.get("provider") == "ftmo_mt5":
+                            item.update({
+                                "status": "failed", "failure_reason": analysis["ftmo_execution_quote"]["reason"],
+                            })
+                    await notifier(TelegramNotifier.format_ftmo_futures_setup(analysis))
                 published += 1
             except Exception as exc:
                 failures.append({"symbol": instrument.ftmo_symbol, "error_type": type(exc).__name__})
@@ -2066,15 +2116,29 @@ class OrchestrationRuntime:
             "telegram_published": published, "suppressed": suppressed, "failures": failures, "execution_enabled": False,
         }
 
-    async def _publish_ftmo_signal_proposal(self, analysis: Mapping[str, Any], *, source: str) -> bool:
-        """Publish a second, FTMO-native preview when the bridge can price it."""
+    @staticmethod
+    def _transient_ftmo_quote_error(reason: str) -> bool:
+        normalized = reason.casefold()
+        return any(fragment in normalized for fragment in (
+            "bridge has never connected", "bridge is disconnected", "heartbeat is stale",
+            "has no current quote", "execution symbol could not be verified", "quote is stale",
+        ))
+
+    async def _create_ftmo_signal_proposal(
+        self,
+        analysis: Mapping[str, Any],
+        *,
+        source: str,
+        quote_wait_seconds: float = 0.0,
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        """Acquire and validate a native FTMO quote before creating a proposal."""
         if self.ftmo_master is None or self.telegram is None:
-            return False
+            return None, "FTMO bridge or Telegram notifier is unavailable"
         direction = str(analysis.get("direction") or "")
         symbol = str(analysis.get("ftmo_symbol") or analysis.get("asset") or "")
         entry, stop, target = analysis.get("entry"), analysis.get("stop_loss"), analysis.get("target")
         if not symbol or direction.casefold() not in {"long", "short", "buy", "sell"} or any(value is None for value in (entry, stop, target)):
-            return False
+            return None, "qualified analysis is missing executable structure"
         signal_id = str(
             analysis.get("publication_id") or analysis.get("setup_id") or analysis.get("valid_until")
             or hashlib.sha256(json.dumps({
@@ -2106,34 +2170,78 @@ class OrchestrationRuntime:
             "cvd", "long_short_ratio", "provider_observed_at", "analysis_sources",
             "provider_consensus", "fallback_status", "data_quality", "ftmo_execution_quote",
         ) if analysis.get(key) is not None}
-        try:
-            proposal = await self.ftmo_master.create_signal_proposal(
-                signal_id=signal_id, symbol=symbol, direction=direction,
-                analysis_entry=entry, analysis_stop=stop, analysis_target=target, source=source,
-                analysis_state=analysis_state, confirmation_status=confirmation_status,
-                analysis_id=str(analysis.get("analysis_id") or analysis.get("run_id") or signal_id),
-                analysis_provider=provider,
-                analysis_instrument=provider_instrument,
-                analysis_exchange=str(analysis.get("analysis_exchange") or analysis.get("exchange") or ""),
-                analysis_observed_at=timestamp(analysis.get("analysis_observed_at") or analysis.get("observed_at")),
-                signal_expires_at=timestamp(analysis.get("valid_until") or analysis.get("expires_at")),
-                entry_zone_low=analysis.get("entry_zone_low"), entry_zone_high=analysis.get("entry_zone_high"),
-                order_type=str(analysis.get("order_type") or "market"),
-                strategy=str(analysis.get("strategy") or analysis.get("setup_type") or "Monatise confirmed setup"),
-                timeframe=str(analysis.get("timeframe") or analysis.get("interval") or "unknown"),
-                conviction=analysis.get("conviction") or analysis.get("score"),
-                evidence_bundle=evidence,
-                supersedes_signal_id=str(analysis.get("supersedes_signal_id") or "") or None,
-            )
+        proposal_arguments = {
+            "signal_id": signal_id, "symbol": symbol, "direction": direction,
+            "analysis_entry": entry, "analysis_stop": stop, "analysis_target": target, "source": source,
+            "analysis_state": analysis_state, "confirmation_status": confirmation_status,
+            "analysis_id": str(analysis.get("analysis_id") or analysis.get("run_id") or signal_id),
+            "analysis_provider": provider,
+            "analysis_instrument": provider_instrument,
+            "analysis_exchange": str(analysis.get("analysis_exchange") or analysis.get("exchange") or ""),
+            "analysis_observed_at": timestamp(analysis.get("analysis_observed_at") or analysis.get("observed_at")),
+            "signal_expires_at": timestamp(analysis.get("valid_until") or analysis.get("expires_at")),
+            "entry_zone_low": analysis.get("entry_zone_low"), "entry_zone_high": analysis.get("entry_zone_high"),
+            "order_type": str(analysis.get("order_type") or "market"),
+            "strategy": str(analysis.get("strategy") or analysis.get("setup_type") or "Monatise confirmed setup"),
+            "timeframe": str(analysis.get("timeframe") or analysis.get("interval") or "unknown"),
+            "conviction": analysis.get("conviction") or analysis.get("score"),
+            "evidence_bundle": evidence,
+            "supersedes_signal_id": str(analysis.get("supersedes_signal_id") or "") or None,
+            "recommended_risk_percent": (
+                analysis.get("recommended_risk_percent")
+                or recommended_risk_percent(analysis.get("score"))
+            ) if "futures" in source.casefold() else analysis.get("recommended_risk_percent"),
+        }
+        request_id = "qhr_" + hashlib.sha256(
+            f"{signal_id}:{symbol}:{source}".encode()
+        ).hexdigest()[:24]
+        audit = getattr(getattr(self.ftmo_master, "repository", None), "audit", None)
+        if audit is not None:
+            await audit("scanner_quote_requested", request_id, {
+                "analysis_id": proposal_arguments["analysis_id"], "signal_id": signal_id,
+                "ftmo_symbol": symbol, "source": source, "maximum_wait_seconds": quote_wait_seconds,
+            })
+        deadline = asyncio.get_running_loop().time() + quote_wait_seconds
+        while True:
+            try:
+                if "futures" in source.casefold():
+                    registry = getattr(self, "ftmo_registry", FTMO_REGISTRY)
+                    instrument = registry.resolve(symbol)
+                    proposal_arguments["symbol"] = await self.ftmo_master.execution_symbol_for(instrument)
+                proposal = await self.ftmo_master.create_signal_proposal(**proposal_arguments)
+            except FTMOMasterError as exc:
+                reason = str(exc)
+                remaining = deadline - asyncio.get_running_loop().time()
+                if not self._transient_ftmo_quote_error(reason) or remaining <= 0:
+                    if audit is not None:
+                        await audit("scanner_quote_rejected", request_id, {
+                            "analysis_id": proposal_arguments["analysis_id"], "signal_id": signal_id,
+                            "ftmo_symbol": symbol, "reason": reason,
+                        })
+                    LOGGER.info("FTMO-native scanner proposal withheld", extra={"symbol": symbol, "reason": reason})
+                    return None, reason
+                await asyncio.sleep(min(0.5, remaining))
+                continue
+            if audit is not None:
+                await audit("scanner_quote_validated", request_id, {
+                    "analysis_id": proposal_arguments["analysis_id"], "signal_id": signal_id,
+                    "proposal_id": proposal["proposal_id"], "ftmo_symbol": proposal["symbol"],
+                    "quote_observed_at_utc": proposal.get("quote_observed_at_utc"),
+                    "quote_age_ms": proposal.get("quote_age_ms"),
+                })
+            return proposal, None
+
+    async def _publish_ftmo_signal_proposal(self, analysis: Mapping[str, Any], *, source: str) -> bool:
+        """Publish a second, FTMO-native preview when the bridge can price it."""
+        proposal, _ = await self._create_ftmo_signal_proposal(analysis, source=source)
+        if proposal is not None:
             publish = getattr(self.telegram, "trade_proposal", None)
             if publish is None:
                 await self.telegram.command_response(format_proposal(proposal))
             else:
                 await publish(format_proposal(proposal), proposal["proposal_id"])
             return True
-        except FTMOMasterError as exc:
-            LOGGER.info("FTMO-native scanner proposal withheld", extra={"symbol": symbol, "reason": str(exc)})
-            return False
+        return False
 
     async def _publish_ftmo_signal_from_message(self, message: str, *, source: str) -> bool:
         fields = {}

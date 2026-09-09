@@ -315,6 +315,17 @@ def test_any_future_quote_is_rejected_and_quotes_older_than_five_seconds_are_not
     asyncio.run(scenario())
 
 
+def test_bridge_rejects_zero_spread_quote():
+    async def scenario():
+        control, _ = service()
+        invalid = heartbeat()
+        invalid["quotes"]["XAUUSD"]["ask"] = invalid["quotes"]["XAUUSD"]["bid"]
+        with pytest.raises(FTMOMasterError, match="ask must be above bid"):
+            await control.accept_bridge_heartbeat(invalid, now=NOW)
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("offset_seconds,allowed", [(-1, True), (-5, True), (-5.001, False), (1, False), (3600, False)])
 def test_quote_freshness_boundaries_use_trusted_utc_receipt_time(offset_seconds, allowed):
     async def scenario():
@@ -369,6 +380,41 @@ def test_external_scanner_levels_are_translated_to_ftmo_bid_ask_and_still_requir
         assert proposal["status"] == "pending_confirmation"
         assert proposal["level_conversion"] == "external_relative_structure_to_ftmo_bid_ask"
         assert await control.repository.pending_commands() == ()
+
+    asyncio.run(scenario())
+
+
+def test_es_short_uses_ftmo_us500_bid_and_native_symbol_specification():
+    async def scenario():
+        control, _ = service()
+        payload = heartbeat()
+        payload["quotes"] = {"US500.CASH": {
+            **payload["quotes"]["XAUUSD"], "bid": "6500.00", "ask": "6500.50",
+            "digits": 1, "point": "0.1", "tick_size": "0.1", "tick_value": "1",
+            "volume_min": "0.01", "volume_max": "50", "volume_step": "0.01",
+            "stops_level": "5",
+        }}
+        await control.accept_bridge_heartbeat(payload, now=NOW)
+        instrument = control._verified_instrument_mapping(
+            "US500.CASH", analysis_provider="flashalpha", analysis_instrument="ES=F",
+        )
+        assert await control.execution_symbol_for(instrument, now=NOW) == "US500.CASH"
+
+        proposal = await control.create_signal_proposal(
+            signal_id="es-short-7", symbol="US500.CASH", direction="short",
+            analysis_entry="7000", analysis_stop="7020", analysis_target="6960",
+            source="monatise.futures.scanner", analysis_state="SHORT",
+            confirmation_status="confirmed", analysis_provider="flashalpha",
+            analysis_instrument="ES=F", recommended_risk_percent="1.00", now=NOW,
+        )
+
+        assert proposal["entry"] == "6500.00"
+        assert proposal["quote_bid"] == "6500.00" and proposal["quote_ask"] == "6500.50"
+        assert proposal["stop_loss"] == "6518.5" and proposal["take_profit"] == "6462.8"
+        assert proposal["volume"] == "0.54"
+        assert Decimal(proposal["risk_amount"]) <= Decimal("100")
+        assert proposal["mapping"]["analysis_instrument"] == "ES=F"
+        assert proposal["mapping"]["ftmo_execution_symbol"] == "US500.CASH"
 
     asyncio.run(scenario())
 

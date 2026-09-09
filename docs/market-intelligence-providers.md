@@ -35,8 +35,15 @@ Futures-linked analysis:
 ```text
 FlashAlpha validated options-on-futures snapshot for the exact futures root
   -> Monatise positioning setup
-  -> native FTMO quote only if qualified
+  -> synchronous, bounded native FTMO quote acquisition only if qualified
+  -> validate bridge/account identity, exact MT5 symbol, tick age (maximum 5
+     seconds), Bid/Ask, spread, and symbol specification
+  -> translate relative futures structure into CFD entry/stop/target and size
+  -> Telegram approval proposal, or context-only when MT5 is unavailable
 ```
+
+TradingView is optional reference confirmation in this path. It never supplies
+the executable price and its absence never blocks a valid FTMO MT5 quote.
 
 There is no verified general futures OHLC provider in the current adapter set.
 FlashAlpha levels are analytical evidence, not an FTMO quote and not a general

@@ -104,9 +104,40 @@ def test_futures_scanner_displays_fresh_tradingview_price_as_reference_only():
         "direction": "LONG", "score": 8, "score_threshold": 7,
         "data_source": "FlashAlpha", "tradingview_reference": reference,
     })
-    assert "TradingView reference price: 2,501.25" in message
+    assert "TradingView: Optional confirmation at 2,501.25" in message
     assert "Price status: REFERENCE ONLY — not the FTMO Bid/Ask." in message
     assert "FTMO executable entry/stop/target: WITHHELD" in message
+
+
+def test_futures_scanner_formats_validated_mt5_quote_as_executable_proposal():
+    message = TelegramNotifier.format_ftmo_futures_setup({
+        "underlying_market": "S&P 500", "ftmo_symbol": "US500.cash",
+        "futures_symbol": "ES", "micro_futures_symbol": "MES",
+        "direction": "SHORT", "score": -7, "score_threshold": 7,
+        "data_source": "FlashAlpha",
+        "ftmo_execution_quote": {"status": "validated", "heartbeat": "HEALTHY"},
+    }, proposal={
+        "proposal_id": "abc123", "symbol": "US500.CASH", "entry": "6500.1",
+        "stop_loss": "6520.1", "take_profit": "6460.1", "volume": "0.5",
+        "risk_amount": "100.00", "risk_fraction": "0.01", "quote_bid": "6500.1",
+        "quote_ask": "6500.5", "spread_ticks": "4", "quote_age_ms": "800",
+        "execution_snapshot": {
+            "spread": "0.4", "account_id": "123456", "server": "FTMO-Server",
+        },
+    })
+
+    assert "Primary context: ES" in message
+    assert "TradingView: Optional confirmation unavailable or stale — not an execution blocker." in message
+    assert "Price Source: FTMO MT5" in message
+    assert "Bid: 6500.1" in message and "Ask: 6500.5" in message
+    assert "Quote Age: 0.800s | Heartbeat: HEALTHY" in message
+    assert "Entry: 6500.1" in message
+    assert "Stop Loss: 6520.1" in message
+    assert "Take Profit: 6460.1" in message
+    assert "Risk: 1.00% ($100.00)" in message
+    assert "Lot Size: 0.5" in message
+    assert "Status: EXECUTABLE — AWAITING TELEGRAM APPROVAL" in message
+    assert "Approve: /approve abc123 | Reject: /reject abc123" in message
 
 
 def test_futures_scanner_rejects_stale_invalid_and_unmapped_tradingview_prices():
