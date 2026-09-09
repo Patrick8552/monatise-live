@@ -315,13 +315,18 @@ def test_any_future_quote_is_rejected_and_quotes_older_than_five_seconds_are_not
     asyncio.run(scenario())
 
 
-def test_bridge_rejects_zero_spread_quote():
+def test_bridge_discards_zero_spread_quote_without_rejecting_other_symbols():
     async def scenario():
         control, _ = service()
         invalid = heartbeat()
         invalid["quotes"]["XAUUSD"]["ask"] = invalid["quotes"]["XAUUSD"]["bid"]
-        with pytest.raises(FTMOMasterError, match="ask must be above bid"):
-            await control.accept_bridge_heartbeat(invalid, now=NOW)
+        invalid["quotes"]["US500.CASH"] = {
+            **invalid["quotes"]["XAUUSD"], "bid": "6500.0", "ask": "6500.5",
+        }
+        await control.accept_bridge_heartbeat(invalid, now=NOW)
+        bridge = await control.repository.bridge()
+        assert "XAUUSD" not in bridge["quotes"]
+        assert bridge["quotes"]["US500.CASH"]["bid"] == "6500.0"
 
     asyncio.run(scenario())
 
