@@ -262,7 +262,7 @@ def _coinglass_required(environment: Mapping[str, str]) -> bool:
     """CoinGlass is mandatory only when the deployment serves crypto analysis."""
     return (
         environment.get("MONATISE_ENVIRONMENT", "development").strip().casefold() != "test"
-        and not _true(environment.get("MONATISE_FTMO_NON_CRYPTO_ONLY", "false"))
+        and not _true(environment.get("MONATISE_FTMO_NON_CRYPTO_ONLY", "true"))
     )
 
 

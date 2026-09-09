@@ -916,6 +916,11 @@ def test_coinglass_request_failure_makes_runtime_not_ready_even_with_fallback_po
 
 
 def test_non_crypto_runtime_does_not_require_coinglass_for_readiness():
+    assert _coinglass_required({"MONATISE_ENVIRONMENT": "production"}) is False
+    assert _coinglass_required({
+        "MONATISE_ENVIRONMENT": "production",
+        "MONATISE_FTMO_NON_CRYPTO_ONLY": "false",
+    }) is True
     assert _coinglass_required({
         "MONATISE_ENVIRONMENT": "production",
         "MONATISE_FTMO_NON_CRYPTO_ONLY": "true",
