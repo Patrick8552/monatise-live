@@ -751,6 +751,45 @@ def test_approval_requires_kill_reset_temporary_arm_and_current_bridge_then_queu
     asyncio.run(scenario())
 
 
+def test_live_approval_waits_for_next_authenticated_mt5_quote_then_revalidates():
+    async def scenario():
+        observed = datetime.now(timezone.utc)
+        control, store = service(active_environment(FTMO_APPROVAL_QUOTE_WAIT_SECONDS="2"))
+        initial = heartbeat()
+        initial["quotes"]["XAUUSD"]["timestamp"] = observed.isoformat()
+        await control.accept_bridge_heartbeat(initial, now=observed)
+        proposal = await control.create_trade_proposal(
+            actor="42", symbol="XAUUSD", side="buy", order_type="market",
+            stop_loss="2495.20", take_profit="2510.20", now=observed,
+        )
+        stale = heartbeat()
+        stale["quotes"]["XAUUSD"]["timestamp"] = (observed - timedelta(seconds=6)).isoformat()
+        await control.accept_bridge_heartbeat(stale, now=observed)
+        await control.repository.update_control(kill_switch=False)
+        await control.arm("42", 120, now=observed)
+
+        async def publish_next_heartbeat():
+            await asyncio.sleep(0.05)
+            refreshed_at = datetime.now(timezone.utc)
+            refreshed = heartbeat()
+            refreshed["quotes"]["XAUUSD"].update({
+                "bid": "2501.00", "ask": "2501.20", "timestamp": refreshed_at.isoformat(),
+            })
+            await control.accept_bridge_heartbeat(refreshed, now=refreshed_at)
+
+        refresh = asyncio.create_task(publish_next_heartbeat())
+        command = await control.approve(proposal["proposal_id"], "42")
+        await refresh
+
+        assert command["execution_snapshot"]["ftmo_bid"] == "2501.00"
+        assert command["execution_snapshot"]["ftmo_ask"] == "2501.20"
+        events = [event["event"] for event in store.streams[control.repository.AUDIT]]
+        assert "approval_quote_refresh_waiting" in events
+        assert "approval_quote_refreshed" in events
+
+    asyncio.run(scenario())
+
+
 def test_unknown_broker_result_is_reconciliation_only_and_never_new_command():
     async def scenario():
         control, _ = service()
@@ -1263,7 +1302,7 @@ def test_telegram_does_not_publish_approval_controls_when_execution_is_already_b
 
 def test_mt5_bridge_reports_exact_symbol_diagnostics_and_the_actual_tick_timestamp():
     source = Path("mt5/Experts/MonatiseFTMOBridge.mq5").read_text()
-    assert '#property version   "1.11"' in source
+    assert '#property version   "1.12"' in source
     assert "ResolveBrokerSymbol" in source and "SymbolInfoTick(resolved_symbol, tick)" in source
     assert '\\"quote_diagnostics\\"' in source
     assert 'IsoTime(broker_time_utc)' in source

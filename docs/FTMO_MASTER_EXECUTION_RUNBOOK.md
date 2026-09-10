@@ -101,6 +101,12 @@ same Telegram approval workflow when they are no longer wanted. Explicit UTC
 signal expiry values are converted to the current broker-server offset before
 they are submitted to MT5. The short execution-command delivery deadline and
 the pending order's proposal-validity deadline remain separate fields.
+When an operator approves a proposal after its preview quote has aged out, the
+control plane waits up to `FTMO_APPROVAL_QUOTE_WAIT_SECONDS` (12 seconds by
+default) for the next authenticated MT5 heartbeat and re-runs every execution
+gate against that fresh quote. The EA heartbeat is capped at two seconds so the
+five-second execution-quote freshness ceiling remains enforceable without
+making Telegram approvals depend on lucky timing.
 
 ## Render configuration
 

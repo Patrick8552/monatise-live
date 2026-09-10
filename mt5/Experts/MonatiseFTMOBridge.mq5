@@ -1,5 +1,5 @@
 #property copyright "Monatise"
-#property version   "1.11"
+#property version   "1.12"
 #property strict
 #property description "Account-bound FTMO bridge. Telegram never talks directly to the broker."
 
@@ -18,13 +18,13 @@ input double InpDailyLossLimit         = 500.0;
 input double InpTotalLossLimit         = 1000.0;
 input double InpInitialAccountBalance  = 10000.0;
 input int    InpMaximumOpenExposures   = 1;        // Positions plus pending orders.
-input int    InpHeartbeatSeconds       = 5;
+input int    InpHeartbeatSeconds       = 2;
 input int    InpHttpTimeoutMs          = 10000;
 input int    InpMaximumSpreadTicks     = 80;
 input int    InpMaximumDeviationPoints = 20;
 input long   InpMagicNumber            = 26082501;
 
-string EA_VERSION = "1.11";
+string EA_VERSION = "1.12";
 string JOURNAL_FILE = "monatise-ftmo-command-journal.csv";
 CTrade Trade;
 
@@ -764,7 +764,10 @@ int OnInit()
       Print("Monatise bridge blocked: configured account/server/currency does not match MT5");
       return INIT_FAILED;
    }
-   EventSetTimer(MathMax(1, InpHeartbeatSeconds));
+   // The server accepts execution quotes for at most five seconds. Keep the
+   // outbound heartbeat cadence safely inside that window even when an older
+   // chart template retained a larger input value.
+   EventSetTimer(MathMax(1, MathMin(InpHeartbeatSeconds, 2)));
    PrintFormat("Monatise FTMO bridge %s started. Execution gate=%s master-approved=%s", EA_VERSION,
                InpExecutionEnabled ? "on" : "off", InpMasterAccountApproved ? "yes" : "no");
    return INIT_SUCCEEDED;

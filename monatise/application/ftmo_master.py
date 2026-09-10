@@ -9,6 +9,7 @@ validation.  Autonomous execution is intentionally unsupported.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -118,6 +119,7 @@ class FTMOMasterConfiguration:
     arm_max_seconds: int = 900
     heartbeat_max_age_seconds: int = 30
     quote_max_age_seconds: int = 5
+    approval_quote_wait_seconds: int = 12
     quote_future_tolerance_seconds: Decimal = Decimal("0")
     maximum_spread_ticks: Decimal = Decimal("80")
     maximum_entry_deviation_bps: Decimal = Decimal("50")
@@ -147,6 +149,9 @@ class FTMOMasterConfiguration:
             arm_max_seconds=max(60, min(3600, int(_env(environment, "FTMO_ARM_MAX_SECONDS", "900")))),
             heartbeat_max_age_seconds=max(5, min(120, int(_env(environment, "FTMO_HEARTBEAT_MAX_AGE_SECONDS", "30")))),
             quote_max_age_seconds=max(1, min(30, int(_env(environment, "FTMO_QUOTE_MAX_AGE_SECONDS", "5")))),
+            approval_quote_wait_seconds=max(
+                0, min(30, int(_env(environment, "FTMO_APPROVAL_QUOTE_WAIT_SECONDS", "12")))
+            ),
             quote_future_tolerance_seconds=min(
                 Decimal("5"),
                 max(ZERO, _decimal(_env(environment, "FTMO_QUOTE_FUTURE_TOLERANCE_SECONDS", "0"), "quote future tolerance")),
@@ -1677,10 +1682,18 @@ class FTMOMasterControlService:
         # Approval authorizes a fresh attempt, never the stale preview price.
         bridge = await self._healthy_bridge(observed)
         if proposal["kind"] == "open_trade":
-            quote_match = self._quote_match(bridge, proposal["symbol"])
-            quote = quote_match[1] if quote_match is not None else None
-            if not quote or (observed - datetime.fromisoformat(quote["timestamp"])).total_seconds() > self.configuration.quote_max_age_seconds:
-                raise FTMOMasterError("FTMO quote is stale at approval")
+            bridge, quote, observed = await self._fresh_approval_quote(
+                proposal["symbol"], observed=observed, wait_for_refresh=now is None,
+                proposal_id=proposal_id, actor=actor,
+            )
+            if datetime.fromisoformat(proposal["expires_at"]) <= observed:
+                raise FTMOMasterError("proposal expired while waiting for a fresh FTMO quote")
+            readiness = await self.status(now=observed)
+            if not readiness["execution_ready"]:
+                raise FTMOMasterError(
+                    "execution became blocked while waiting for a fresh FTMO quote: "
+                    + ", ".join(self.execution_blockers(readiness))
+                )
             instrument = self._verified_instrument_mapping(
                 proposal["symbol"],
                 analysis_provider=proposal.get("analysis_provider"),
@@ -1948,6 +1961,67 @@ class FTMOMasterControlService:
         if (now - datetime.fromisoformat(bridge["observed_at"])).total_seconds() > self.configuration.heartbeat_max_age_seconds:
             raise FTMOMasterError("FTMO bridge heartbeat is stale")
         return bridge
+
+    async def _fresh_approval_quote(
+        self,
+        symbol: str,
+        *,
+        observed: datetime,
+        wait_for_refresh: bool,
+        proposal_id: str,
+        actor: str,
+    ) -> tuple[dict[str, Any], Mapping[str, Any], datetime]:
+        """Wait briefly for the next authenticated MT5 heartbeat at approval.
+
+        The preview snapshot is never promoted to an execution quote after it
+        becomes stale. Production approvals may wait for the outbound bridge's
+        next live tick; deterministic callers that supply ``now`` fail closed
+        immediately so tests and administrative checks never hide clock state.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.configuration.approval_quote_wait_seconds
+        waiting_audited = False
+        current = observed
+        while True:
+            bridge = await self._healthy_bridge(current)
+            quote_match = self._quote_match(bridge, symbol)
+            quote = quote_match[1] if quote_match is not None else None
+            quote_age = None
+            if quote is not None:
+                quote_at = _timestamp(
+                    quote.get("quote_observed_at_utc") or quote.get("timestamp"),
+                    "FTMO quote timestamp",
+                )
+                quote_age = (current - quote_at).total_seconds()
+                if quote_age < -float(self.configuration.quote_future_tolerance_seconds):
+                    raise FTMOMasterError(
+                        "FTMO quote timestamp is materially in the future at approval (CLOCK_SKEW_DETECTED)"
+                    )
+                if quote_age <= self.configuration.quote_max_age_seconds:
+                    if waiting_audited:
+                        await self.repository.audit("approval_quote_refreshed", proposal_id, {
+                            "actor": actor,
+                            "symbol": symbol,
+                            "quote_timestamp": quote_at.isoformat(),
+                            "quote_age_ms": int(max(0, quote_age) * 1000),
+                        })
+                    return bridge, quote, current
+            if (
+                not wait_for_refresh
+                or self.configuration.approval_quote_wait_seconds <= 0
+                or loop.time() >= deadline
+            ):
+                raise FTMOMasterError("FTMO quote remained stale after synchronous approval refresh")
+            if not waiting_audited:
+                await self.repository.audit("approval_quote_refresh_waiting", proposal_id, {
+                    "actor": actor,
+                    "symbol": symbol,
+                    "last_quote_age_ms": int(max(0, quote_age) * 1000) if quote_age is not None else None,
+                    "maximum_wait_seconds": self.configuration.approval_quote_wait_seconds,
+                })
+                waiting_audited = True
+            await asyncio.sleep(0.25)
+            current = _utc()
 
 
 def format_proposal(
