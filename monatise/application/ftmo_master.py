@@ -1738,6 +1738,8 @@ class FTMOMasterControlService:
         approval_id = hashlib.sha256(f"approval:{proposal_id}:{actor}:{observed.isoformat()}".encode()).hexdigest()
         command_id = hashlib.sha256(f"{proposal_id}:{proposal['kind']}:{proposal.get('operation', 'open')}".encode()).hexdigest()
         execution_id = hashlib.sha256(f"execution:{command_id}".encode()).hexdigest()
+        proposal_expires_at = datetime.fromisoformat(proposal["expires_at"])
+        command_expires_at = min(proposal_expires_at, observed + timedelta(seconds=30))
         command = {
             "command_id": command_id,
             "proposal_id": proposal_id,
@@ -1759,7 +1761,7 @@ class FTMOMasterControlService:
             "status": CommandStatus.READY.value,
             "lifecycle_state": "EXECUTION_QUEUED",
             "created_at": observed.isoformat(),
-            "expires_at": min(datetime.fromisoformat(proposal["expires_at"]), observed + timedelta(seconds=30)).isoformat(),
+            "expires_at": command_expires_at.isoformat(),
             "automatic_resend": "same_command_id_only",
             "approval": {"approved_by": actor, "approved_at": observed.isoformat(), "approval_id": approval_id},
             "execution_session": {
@@ -1793,7 +1795,8 @@ class FTMOMasterControlService:
         command["payload"].update({
             "approval_id": approval_id,
             "execution_id": execution_id,
-            "expires_epoch": str(int(min(datetime.fromisoformat(proposal["expires_at"]), observed + timedelta(seconds=30)).timestamp())),
+            "expires_epoch": str(int(command_expires_at.timestamp())),
+            "pending_expires_epoch": str(int(proposal_expires_at.timestamp())),
         })
         if not await self.repository.save_command(command):
             raise FTMOMasterError("duplicate execution command")

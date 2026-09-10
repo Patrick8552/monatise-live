@@ -1,5 +1,5 @@
 #property copyright "Monatise"
-#property version   "1.10"
+#property version   "1.11"
 #property strict
 #property description "Account-bound FTMO bridge. Telegram never talks directly to the broker."
 
@@ -24,7 +24,7 @@ input int    InpMaximumSpreadTicks     = 80;
 input int    InpMaximumDeviationPoints = 20;
 input long   InpMagicNumber            = 26082501;
 
-string EA_VERSION = "1.10";
+string EA_VERSION = "1.11";
 string JOURNAL_FILE = "monatise-ftmo-command-journal.csv";
 CTrade Trade;
 
@@ -658,7 +658,7 @@ void ExecuteCommand(string payload)
    double target = StringToDouble(JsonString(payload, "take_profit"));
    double volume = StringToDouble(JsonString(payload, "volume"));
    ulong target_id = (ulong)StringToInteger(JsonString(payload, "target_id"));
-   datetime expires_at = (datetime)StringToInteger(JsonString(payload, "expires_epoch"));
+   datetime pending_expires_at = (datetime)StringToInteger(JsonString(payload, "pending_expires_epoch"));
    string comment = "MNT:" + StringSubstr(command_id, 0, 16);
    ENUM_ORDER_TYPE_TIME pending_order_time = ORDER_TIME_GTC;
    datetime pending_expiration = 0;
@@ -672,7 +672,7 @@ void ExecuteCommand(string payload)
          return;
       }
       if(order_type != "market" && !ResolvePendingOrderExpiration(
-         symbol, expires_at, pending_order_time, pending_expiration, reason
+         symbol, pending_expires_at, pending_order_time, pending_expiration, reason
       ))
       {
          JournalAppend(command_id, "rejected", "", reason);

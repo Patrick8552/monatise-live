@@ -735,6 +735,9 @@ def test_approval_requires_kill_reset_temporary_arm_and_current_bridge_then_queu
         assert armed["execution_session_expiry"] == (NOW + timedelta(seconds=120)).isoformat()
         command = await control.approve(proposal["proposal_id"], "42", now=NOW)
         assert command["status"] == CommandStatus.READY.value
+        assert command["expires_at"] == (NOW + timedelta(seconds=30)).isoformat()
+        assert command["payload"]["expires_epoch"] == str(int((NOW + timedelta(seconds=30)).timestamp()))
+        assert command["payload"]["pending_expires_epoch"] == str(int((NOW + timedelta(minutes=5)).timestamp()))
         assert command["execution_session"]["execution_session_id"] == armed["execution_session_id"]
         assert command["market_session"]["session_checked_at"] == NOW.isoformat()
         assert command["execution_session"]["autonomous_execution_enabled"] is False
@@ -1260,7 +1263,7 @@ def test_telegram_does_not_publish_approval_controls_when_execution_is_already_b
 
 def test_mt5_bridge_reports_exact_symbol_diagnostics_and_the_actual_tick_timestamp():
     source = Path("mt5/Experts/MonatiseFTMOBridge.mq5").read_text()
-    assert '#property version   "1.10"' in source
+    assert '#property version   "1.11"' in source
     assert "ResolveBrokerSymbol" in source and "SymbolInfoTick(resolved_symbol, tick)" in source
     assert '\\"quote_diagnostics\\"' in source
     assert 'IsoTime(broker_time_utc)' in source

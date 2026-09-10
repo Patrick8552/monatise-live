@@ -99,7 +99,8 @@ supports it, otherwise a supported day policy, and GTC only as the final
 broker-supported fallback. GTC orders must be explicitly cancelled through the
 same Telegram approval workflow when they are no longer wanted. Explicit UTC
 signal expiry values are converted to the current broker-server offset before
-they are submitted to MT5.
+they are submitted to MT5. The short execution-command delivery deadline and
+the pending order's proposal-validity deadline remain separate fields.
 
 ## Render configuration
 
