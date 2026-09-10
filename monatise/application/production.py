@@ -36,6 +36,7 @@ from monatise.application.ftmo_master import (
     format_proposal,
     format_status as format_ftmo_master_status,
 )
+from monatise.application.risk_policy import MAX_RISK_PERCENT_PER_TRADE
 from monatise.application.stock_analysis import refresh_setup_validity
 from monatise.application.market_session import classify_market_session
 from monatise.application.telegram_analysis import (
@@ -796,6 +797,20 @@ class ProductionASGI(OrchestrationASGI):
             message_id = await self._send_owned_telegram_response(notifier, message, ownership_check)
         return message_id, message, approval_available
 
+    async def _publish_operator_proposal(
+        self, service: Any, proposal: Mapping[str, Any], ownership_check: Any | None,
+    ) -> None:
+        notifier = self.runtime.telegram
+        if notifier is None:
+            raise FTMOMasterError("Telegram delivery is unavailable")
+        message_id, _, _ = await self._publish_trade_proposal(
+            notifier, service, proposal, ownership_check,
+        )
+        if isinstance(message_id, int) and not isinstance(message_id, bool):
+            attach = getattr(service.repository, "attach_proposal_telegram_message", None)
+            if attach is not None:
+                await attach(str(proposal["proposal_id"]), message_id)
+
     async def _handle_telegram_command(self, text: str, *, ownership_check: Any | None = None) -> None:
         notifier = self.runtime.telegram
         if notifier is None:
@@ -806,7 +821,7 @@ class ProductionASGI(OrchestrationASGI):
             "Asset classes: FTMO futures-linked CFDs and supported stocks only\n"
             "Alias: /gold | /analysis AAPL\n"
             "FTMO: /status /bridge /quotes /account /positions /orders\n"
-            "Trade preview: /trade XAUUSD buy market sl=LEVEL tp=LEVEL\n"
+            "Trade preview: /trade XAUUSD buy market sl=LEVEL tp=LEVEL [risk=PERCENT]\n"
             "Control: /approve ID /reject ID /arm [seconds] /disarm /kill\n"
             "Management previews: /close ID /cancel ID /sl ID LEVEL /tp ID LEVEL /breakeven ID"
         )
@@ -823,8 +838,14 @@ class ProductionASGI(OrchestrationASGI):
                         "APPROVAL RECEIVED\nChecking current FTMO market, identity, session, risk, and execution gates...",
                         ownership_check,
                     )
-            response = await self._handle_ftmo_telegram_command(text)
-            await self._send_owned_telegram_response(notifier, response, ownership_check)
+            proposal_command = bool(re.match(
+                r"^/(?:trade|close|cancel|sl|tp|breakeven)(?:@|\s|$)", text, re.IGNORECASE,
+            ))
+            response = await self._handle_ftmo_telegram_command(
+                text, publish_proposal=proposal_command, ownership_check=ownership_check,
+            )
+            if response is not None:
+                await self._send_owned_telegram_response(notifier, response, ownership_check)
             return
         match = self.TELEGRAM_COMMAND_PATTERN.fullmatch(text)
         alias = self.TELEGRAM_ALIAS_PATTERN.fullmatch(text)
@@ -1184,7 +1205,9 @@ class ProductionASGI(OrchestrationASGI):
         if quote_request is not None:
             await self._process_quote_request_once(quote_request["quote_request_id"])
 
-    async def _handle_ftmo_telegram_command(self, text: str) -> str:
+    async def _handle_ftmo_telegram_command(
+        self, text: str, *, publish_proposal: bool = False, ownership_check: Any | None = None,
+    ) -> str | None:
         service = getattr(self.runtime, "ftmo_master", None)
         context = getattr(self, "_telegram_command_context", None) or {}
         user_id = str(context.get("user_id") or "")
@@ -1243,15 +1266,36 @@ class ProductionASGI(OrchestrationASGI):
                 return "\n".join(rows)
             if command == "/trade":
                 if len(parts) < 6:
-                    raise FTMOMasterError("use /trade SYMBOL buy|sell market|limit|stop [entry=LEVEL] sl=LEVEL tp=LEVEL")
+                    raise FTMOMasterError(
+                        "use /trade SYMBOL buy|sell market|limit|stop [entry=LEVEL] "
+                        "sl=LEVEL tp=LEVEL [risk=PERCENT]"
+                    )
                 symbol, side, order_type = parts[1:4]
                 parameters = dict(item.split("=", 1) for item in parts[4:] if "=" in item)
+                unknown_parameters = sorted(set(parameters) - {"entry", "sl", "tp", "risk"})
+                if unknown_parameters:
+                    raise FTMOMasterError("unsupported trade parameter: " + ", ".join(unknown_parameters))
                 if "sl" not in parameters or "tp" not in parameters:
                     raise FTMOMasterError("trade preview requires sl=LEVEL and tp=LEVEL")
+                risk_fraction_limit = None
+                if "risk" in parameters:
+                    try:
+                        risk_percent = Decimal(parameters["risk"])
+                    except Exception as exc:
+                        raise FTMOMasterError("risk must be a numeric percentage") from exc
+                    if not risk_percent.is_finite() or risk_percent <= 0 or risk_percent > MAX_RISK_PERCENT_PER_TRADE:
+                        raise FTMOMasterError(
+                            f"risk must be greater than 0 and at most {MAX_RISK_PERCENT_PER_TRADE}%"
+                        )
+                    risk_fraction_limit = risk_percent / Decimal("100")
                 proposal = await service.create_trade_proposal(
                     actor=user_id, symbol=symbol, side=side, order_type=order_type,
                     entry=parameters.get("entry"), stop_loss=parameters["sl"], take_profit=parameters["tp"],
+                    risk_fraction_limit=risk_fraction_limit,
                 )
+                if publish_proposal:
+                    await self._publish_operator_proposal(service, proposal, ownership_check)
+                    return None
                 return (await self._proposal_presentation(service, proposal))[0]
             if command in {"/close", "/cancel", "/breakeven"}:
                 if len(parts) != 2:
@@ -1259,6 +1303,9 @@ class ProductionASGI(OrchestrationASGI):
                 proposal = await service.create_management_proposal(
                     actor=user_id, operation=command[1:], target_id=parts[1],
                 )
+                if publish_proposal:
+                    await self._publish_operator_proposal(service, proposal, ownership_check)
+                    return None
                 return (await self._proposal_presentation(service, proposal))[0]
             if command in {"/sl", "/tp"}:
                 if len(parts) != 3:
@@ -1266,6 +1313,9 @@ class ProductionASGI(OrchestrationASGI):
                 proposal = await service.create_management_proposal(
                     actor=user_id, operation=command[1:], target_id=parts[1], value=parts[2],
                 )
+                if publish_proposal:
+                    await self._publish_operator_proposal(service, proposal, ownership_check)
+                    return None
                 return (await self._proposal_presentation(service, proposal))[0]
             if command == "/approve":
                 if len(parts) != 2:

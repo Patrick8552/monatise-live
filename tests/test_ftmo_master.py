@@ -182,6 +182,56 @@ def test_manual_trade_previews_at_exact_three_percent_without_a_fixed_dollar_cap
     asyncio.run(scenario())
 
 
+def test_manual_telegram_trade_applies_risk_ceiling_and_publishes_approval_controls():
+    class TelegramRecorder:
+        def __init__(self):
+            self.messages, self.proposals = [], []
+
+        async def command_response(self, message):
+            self.messages.append(message)
+            return 100 + len(self.messages)
+
+        async def trade_proposal(self, message, proposal_id):
+            self.proposals.append((proposal_id, message))
+            return 200 + len(self.proposals)
+
+    async def scenario():
+        control, _ = service()
+        observed = datetime.now(timezone.utc)
+        payload = heartbeat()
+        payload["quotes"]["XAUUSD"]["timestamp"] = observed.isoformat()
+        await control.accept_bridge_heartbeat(payload, now=observed)
+        await control.repository.update_control(kill_switch=False)
+        await control.arm("42", now=observed)
+        telegram = TelegramRecorder()
+        runtime = type("Runtime", (), {"ftmo_master": control, "telegram": telegram})()
+        app = ProductionASGI(runtime)
+        app._telegram_command_context = {"user_id": "42", "chat_type": "private"}
+
+        await app._handle_telegram_command(
+            "/trade XAUUSD buy market sl=2499.20 tp=2502.20 risk=0.1"
+        )
+
+        assert telegram.messages == []
+        assert len(telegram.proposals) == 1
+        proposal_id, message = telegram.proposals[0]
+        proposal = (await control.repository.proposal(proposal_id))[0]
+        assert proposal["recommended_risk_fraction"] == "0.001"
+        assert proposal["risk_fraction"] == "0.001"
+        assert proposal["risk_amount"] == "10.00"
+        assert proposal["telegram_message_id"] == 201
+        assert "Recommended risk: 0.10%" in message
+        assert "Status: AWAITING APPROVAL" in message
+
+        response = await app._handle_ftmo_telegram_command(
+            "/trade XAUUSD buy market sl=2499.20 tp=2502.20 risk=3.1"
+        )
+        assert "at most 3.0%" in response
+        assert len(await control.repository.proposals()) == 1
+
+    asyncio.run(scenario())
+
+
 def test_obsolete_dollar_caps_do_not_control_risk_but_broker_drawdown_and_exposure_do():
     async def scenario():
         environment = active_environment(

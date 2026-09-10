@@ -142,8 +142,8 @@ All control commands require the configured numeric user ID and a private chat. 
 /account
 /positions
 /orders
-/trade XAUUSD buy market sl=2490.00 tp=2520.00
-/trade XAUUSD buy limit entry=2495.00 sl=2485.00 tp=2520.00
+/trade XAUUSD buy market sl=2490.00 tp=2520.00 risk=0.1
+/trade XAUUSD buy limit entry=2495.00 sl=2485.00 tp=2520.00 risk=0.1
 /approve <proposal-id>
 /reject <proposal-id>
 /close <position-ticket>
@@ -156,7 +156,10 @@ All control commands require the configured numeric user ID and a private chat. 
 /kill
 ```
 
-Qualified scanner proposals are delivered with `APPROVE TRADE` and `REJECT TRADE`
+The optional `risk=PERCENT` value is a per-proposal ceiling and must be greater
+than zero and no higher than the platform's 3% absolute ceiling. If it is omitted,
+the configured risk policy applies. Manual and qualified scanner proposals are
+delivered with `APPROVE TRADE` and `REJECT TRADE`
 inline buttons only while every execution gate is ready. A blocked proposal states
 the exact gate and has no actionable controls. Telegram callback updates are authenticated by the webhook secret,
 restricted to the configured private chat and user ID, strictly parsed, durably
