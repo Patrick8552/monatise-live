@@ -1985,7 +1985,13 @@ def format_proposal(
         f"ID: {proposal['proposal_id']}",
         f"Operation: {str(proposal['operation']).upper()} · target {proposal['target_id']}",
         *((f"Value: {proposal['value']}",) if proposal.get("value") else ()),
-        f"Approve: /approve {proposal['proposal_id']} | Reject: /reject {proposal['proposal_id']}",
+        *( (
+            "Status: AWAITING APPROVAL",
+            f"Approve: /approve {proposal['proposal_id']} | Reject: /reject {proposal['proposal_id']}",
+        ) if approval_available else (
+            f"Status: BLOCKED — {blocking_reason or 'execution gates are not ready'}",
+            "Approval controls are withheld until every independent execution gate is ready.",
+        )),
         "No broker change has been sent.",
     ))
 

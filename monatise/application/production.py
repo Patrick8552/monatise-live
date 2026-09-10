@@ -1252,15 +1252,21 @@ class ProductionASGI(OrchestrationASGI):
                     actor=user_id, symbol=symbol, side=side, order_type=order_type,
                     entry=parameters.get("entry"), stop_loss=parameters["sl"], take_profit=parameters["tp"],
                 )
-                return format_proposal(proposal)
+                return (await self._proposal_presentation(service, proposal))[0]
             if command in {"/close", "/cancel", "/breakeven"}:
                 if len(parts) != 2:
                     raise FTMOMasterError(f"use {command} TICKET")
-                return format_proposal(await service.create_management_proposal(actor=user_id, operation=command[1:], target_id=parts[1]))
+                proposal = await service.create_management_proposal(
+                    actor=user_id, operation=command[1:], target_id=parts[1],
+                )
+                return (await self._proposal_presentation(service, proposal))[0]
             if command in {"/sl", "/tp"}:
                 if len(parts) != 3:
                     raise FTMOMasterError(f"use {command} TICKET LEVEL")
-                return format_proposal(await service.create_management_proposal(actor=user_id, operation=command[1:], target_id=parts[1], value=parts[2]))
+                proposal = await service.create_management_proposal(
+                    actor=user_id, operation=command[1:], target_id=parts[1], value=parts[2],
+                )
+                return (await self._proposal_presentation(service, proposal))[0]
             if command == "/approve":
                 if len(parts) != 2:
                     raise FTMOMasterError("use /approve PROPOSAL_ID")
