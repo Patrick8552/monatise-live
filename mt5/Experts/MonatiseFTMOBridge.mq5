@@ -1,5 +1,5 @@
 #property copyright "Monatise"
-#property version   "1.08"
+#property version   "1.09"
 #property strict
 #property description "Account-bound FTMO bridge. Telegram never talks directly to the broker."
 
@@ -24,7 +24,7 @@ input int    InpMaximumSpreadTicks     = 80;
 input int    InpMaximumDeviationPoints = 20;
 input long   InpMagicNumber            = 26082501;
 
-string EA_VERSION = "1.08";
+string EA_VERSION = "1.09";
 string JOURNAL_FILE = "monatise-ftmo-command-journal.csv";
 CTrade Trade;
 
@@ -302,6 +302,9 @@ string QuoteJson(string requested_symbol, string &resolved_symbol, string &reaso
       + "\"volume_step\":\"" + DoubleToString(SymbolInfoDouble(resolved_symbol, SYMBOL_VOLUME_STEP), 8) + "\","
       + "\"stops_level\":\"" + IntegerToString((int)SymbolInfoInteger(resolved_symbol, SYMBOL_TRADE_STOPS_LEVEL)) + "\","
       + "\"freeze_level\":\"" + IntegerToString((int)SymbolInfoInteger(resolved_symbol, SYMBOL_TRADE_FREEZE_LEVEL)) + "\","
+      + "\"expiration_mode\":\"" + IntegerToString((int)SymbolInfoInteger(resolved_symbol, SYMBOL_EXPIRATION_MODE)) + "\","
+      + "\"filling_mode\":\"" + IntegerToString((int)SymbolInfoInteger(resolved_symbol, SYMBOL_FILLING_MODE)) + "\","
+      + "\"order_mode\":\"" + IntegerToString((int)SymbolInfoInteger(resolved_symbol, SYMBOL_ORDER_MODE)) + "\","
       + "\"trade_mode\":\"" + IntegerToString((int)SymbolInfoInteger(resolved_symbol, SYMBOL_TRADE_MODE)) + "\"}";
 }
 
@@ -584,6 +587,53 @@ bool FinalOrderValidation(string payload, string &reason)
    return true;
 }
 
+bool ResolvePendingOrderExpiration(
+   string symbol,
+   datetime requested_expiration,
+   ENUM_ORDER_TYPE_TIME &order_time,
+   datetime &expiration,
+   string &reason
+)
+{
+   long modes = SymbolInfoInteger(symbol, SYMBOL_EXPIRATION_MODE);
+   if((modes & SYMBOL_EXPIRATION_SPECIFIED) == SYMBOL_EXPIRATION_SPECIFIED)
+   {
+      if(requested_expiration <= TimeTradeServer())
+      {
+         reason = "approved pending-order expiration has already passed";
+         return false;
+      }
+      order_time = ORDER_TIME_SPECIFIED;
+      expiration = requested_expiration;
+      return true;
+   }
+   if((modes & SYMBOL_EXPIRATION_DAY) == SYMBOL_EXPIRATION_DAY)
+   {
+      order_time = ORDER_TIME_DAY;
+      expiration = 0;
+      return true;
+   }
+   if((modes & SYMBOL_EXPIRATION_SPECIFIED_DAY) == SYMBOL_EXPIRATION_SPECIFIED_DAY)
+   {
+      if(requested_expiration <= TimeTradeServer())
+      {
+         reason = "approved pending-order expiration date has already passed";
+         return false;
+      }
+      order_time = ORDER_TIME_SPECIFIED_DAY;
+      expiration = requested_expiration;
+      return true;
+   }
+   if((modes & SYMBOL_EXPIRATION_GTC) == SYMBOL_EXPIRATION_GTC)
+   {
+      order_time = ORDER_TIME_GTC;
+      expiration = 0;
+      return true;
+   }
+   reason = "FTMO symbol exposes no supported pending-order expiration mode";
+   return false;
+}
+
 void ExecuteCommand(string payload)
 {
    string command_id = JsonString(payload, "command_id");
@@ -612,6 +662,26 @@ void ExecuteCommand(string payload)
    ulong target_id = (ulong)StringToInteger(JsonString(payload, "target_id"));
    datetime expires_at = (datetime)StringToInteger(JsonString(payload, "expires_epoch"));
    string comment = "MNT:" + StringSubstr(command_id, 0, 16);
+   ENUM_ORDER_TYPE_TIME pending_order_time = ORDER_TIME_GTC;
+   datetime pending_expiration = 0;
+   if(operation == "open")
+   {
+      if(!Trade.SetTypeFillingBySymbol(symbol))
+      {
+         reason = "FTMO symbol filling policy is unavailable";
+         JournalAppend(command_id, "rejected", "", reason);
+         Acknowledge(command_id, "rejected", "", reason);
+         return;
+      }
+      if(order_type != "market" && !ResolvePendingOrderExpiration(
+         symbol, expires_at, pending_order_time, pending_expiration, reason
+      ))
+      {
+         JournalAppend(command_id, "rejected", "", reason);
+         Acknowledge(command_id, "rejected", "", reason);
+         return;
+      }
+   }
    JournalAppend(command_id, "broker_uncertain", "", "submission began; reconcile before any retry");
    Trade.SetExpertMagicNumber(InpMagicNumber);
    Trade.SetAsyncMode(false);
@@ -624,8 +694,8 @@ void ExecuteCommand(string payload)
       if(order_type == "market" && SymbolInfoTick(symbol, execution_tick))
          requested_price = side == "buy" ? execution_tick.ask : execution_tick.bid;
       if(order_type == "market") ok = side == "buy" ? Trade.Buy(volume, symbol, 0, stop, target, comment) : Trade.Sell(volume, symbol, 0, stop, target, comment);
-      else if(order_type == "limit") ok = side == "buy" ? Trade.BuyLimit(volume, entry, symbol, stop, target, ORDER_TIME_SPECIFIED, expires_at, comment) : Trade.SellLimit(volume, entry, symbol, stop, target, ORDER_TIME_SPECIFIED, expires_at, comment);
-      else if(order_type == "stop") ok = side == "buy" ? Trade.BuyStop(volume, entry, symbol, stop, target, ORDER_TIME_SPECIFIED, expires_at, comment) : Trade.SellStop(volume, entry, symbol, stop, target, ORDER_TIME_SPECIFIED, expires_at, comment);
+      else if(order_type == "limit") ok = side == "buy" ? Trade.BuyLimit(volume, entry, symbol, stop, target, pending_order_time, pending_expiration, comment) : Trade.SellLimit(volume, entry, symbol, stop, target, pending_order_time, pending_expiration, comment);
+      else if(order_type == "stop") ok = side == "buy" ? Trade.BuyStop(volume, entry, symbol, stop, target, pending_order_time, pending_expiration, comment) : Trade.SellStop(volume, entry, symbol, stop, target, pending_order_time, pending_expiration, comment);
    }
    else if(operation == "close") ok = Trade.PositionClose(target_id);
    else if(operation == "cancel") ok = Trade.OrderDelete(target_id);
@@ -644,6 +714,8 @@ void ExecuteCommand(string payload)
    string ticket = IntegerToString((long)(Trade.ResultOrder() > 0 ? Trade.ResultOrder() : Trade.ResultDeal()));
    string result_status = ok ? "reconciled" : "rejected";
    string message = Trade.ResultRetcodeDescription();
+   if(operation == "open" && order_type != "market")
+      message += " | pending lifetime " + EnumToString(pending_order_time);
    JournalAppend(command_id, result_status, ticket, message);
    int digits = symbol == "" ? 8 : (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
    double fill_price = Trade.ResultPrice();

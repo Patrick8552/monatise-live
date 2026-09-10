@@ -93,6 +93,12 @@ Primary references:
 9. Attach the EA to a continuously quoted FTMO chart. Configure the expected account, server, currency, symbols, bridge secret, and loss limits. The default `InpSymbols` includes `XAUUSD`, `US100.cash`, and `US500.cash`, which cover the scheduled GC, NQ, and ES futures-linked scanner paths; preserve the broker's exact symbol spelling if it differs. Keep both EA execution inputs `false` for shadow testing.
 10. Install the watchdog scripts under `C:\Monatise` and run `Install-MonatiseWatchdog.ps1` as Administrator.
 
+The EA derives pending-order lifetime and filling policies from the live FTMO
+symbol specification. It uses an explicit signal expiry only when the broker
+supports it, otherwise a supported day policy, and GTC only as the final
+broker-supported fallback. GTC orders must be explicitly cancelled through the
+same Telegram approval workflow when they are no longer wanted.
+
 ## Render configuration
 
 The repository deploys safe defaults. The first VPS heartbeat requires these secrets/settings:
