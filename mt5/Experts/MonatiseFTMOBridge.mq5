@@ -1,5 +1,5 @@
 #property copyright "Monatise"
-#property version   "1.09"
+#property version   "1.10"
 #property strict
 #property description "Account-bound FTMO bridge. Telegram never talks directly to the broker."
 
@@ -24,7 +24,7 @@ input int    InpMaximumSpreadTicks     = 80;
 input int    InpMaximumDeviationPoints = 20;
 input long   InpMagicNumber            = 26082501;
 
-string EA_VERSION = "1.09";
+string EA_VERSION = "1.10";
 string JOURNAL_FILE = "monatise-ftmo-command-journal.csv";
 CTrade Trade;
 
@@ -589,22 +589,25 @@ bool FinalOrderValidation(string payload, string &reason)
 
 bool ResolvePendingOrderExpiration(
    string symbol,
-   datetime requested_expiration,
+   datetime requested_expiration_utc,
    ENUM_ORDER_TYPE_TIME &order_time,
    datetime &expiration,
    string &reason
 )
 {
    long modes = SymbolInfoInteger(symbol, SYMBOL_EXPIRATION_MODE);
+   if(requested_expiration_utc <= TimeGMT())
+   {
+      reason = "approved pending-order expiration has already passed";
+      return false;
+   }
+   datetime broker_expiration = (datetime)(
+      (long)requested_expiration_utc + BrokerUtcOffsetSeconds()
+   );
    if((modes & SYMBOL_EXPIRATION_SPECIFIED) == SYMBOL_EXPIRATION_SPECIFIED)
    {
-      if(requested_expiration <= TimeTradeServer())
-      {
-         reason = "approved pending-order expiration has already passed";
-         return false;
-      }
       order_time = ORDER_TIME_SPECIFIED;
-      expiration = requested_expiration;
+      expiration = broker_expiration;
       return true;
    }
    if((modes & SYMBOL_EXPIRATION_DAY) == SYMBOL_EXPIRATION_DAY)
@@ -615,13 +618,8 @@ bool ResolvePendingOrderExpiration(
    }
    if((modes & SYMBOL_EXPIRATION_SPECIFIED_DAY) == SYMBOL_EXPIRATION_SPECIFIED_DAY)
    {
-      if(requested_expiration <= TimeTradeServer())
-      {
-         reason = "approved pending-order expiration date has already passed";
-         return false;
-      }
       order_time = ORDER_TIME_SPECIFIED_DAY;
-      expiration = requested_expiration;
+      expiration = broker_expiration;
       return true;
    }
    if((modes & SYMBOL_EXPIRATION_GTC) == SYMBOL_EXPIRATION_GTC)

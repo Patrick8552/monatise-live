@@ -322,11 +322,17 @@ def test_ftmo_broker_and_position_lifecycle_are_reported_to_telegram():
             "entry": "63128.50", "volume": "0.01", "stop_loss": "62980", "take_profit": "63450",
             "broker_ticket": "12345678", "unrealized_profit": "1.20", "analysis_provider": "coinglass",
         })
+        await app._notify_ftmo_command_result({
+            "status": "rejected", "lifecycle_state": "EXECUTION_FAILED",
+            "broker_retcode": "0", "message": "approved pending-order expiration has already passed",
+            "payload": {"symbol": "US500.cash", "side": "buy", "entry": "7500.00", "volume": "0.20"},
+        })
 
         assert runtime.telegram.messages[0].startswith("FTMO EXECUTION CONFIRMATION\nInstrument: BTCUSD | Direction: BUY")
         assert "Execution source: FTMO MT5 | Analysis source: coinglass + Monatise" in runtime.telegram.messages[0]
         assert runtime.telegram.messages[1].startswith("FTMO POSITION OPEN\nInstrument: BTCUSD | Direction: BUY")
         assert "Unrealized P/L: 1.20" in runtime.telegram.messages[1]
+        assert "Reason: approved pending-order expiration has already passed" in runtime.telegram.messages[2]
 
     asyncio.run(scenario())
 

@@ -1445,6 +1445,8 @@ class ProductionASGI(OrchestrationASGI):
             f"Ticket: {command.get('broker_ticket') or 'pending'} | Retcode: {command.get('broker_retcode') or 'pending'}",
             f"Execution source: FTMO MT5 | Analysis source: {provenance.get('analysis_provider') or 'Monatise'} + Monatise",
         ]
+        if status in {"EXECUTION_FAILED", "REJECTED", "BROKER_UNCERTAIN"} and command.get("message"):
+            lines.append(f"Reason: {str(command['message'])[:500]}")
         await self._send_ftmo_notification(lines)
         proposal_id = str(command.get("proposal_id") or "")
         if proposal_id:

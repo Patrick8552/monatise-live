@@ -97,7 +97,9 @@ The EA derives pending-order lifetime and filling policies from the live FTMO
 symbol specification. It uses an explicit signal expiry only when the broker
 supports it, otherwise a supported day policy, and GTC only as the final
 broker-supported fallback. GTC orders must be explicitly cancelled through the
-same Telegram approval workflow when they are no longer wanted.
+same Telegram approval workflow when they are no longer wanted. Explicit UTC
+signal expiry values are converted to the current broker-server offset before
+they are submitted to MT5.
 
 ## Render configuration
 

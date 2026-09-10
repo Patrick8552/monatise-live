@@ -1260,7 +1260,7 @@ def test_telegram_does_not_publish_approval_controls_when_execution_is_already_b
 
 def test_mt5_bridge_reports_exact_symbol_diagnostics_and_the_actual_tick_timestamp():
     source = Path("mt5/Experts/MonatiseFTMOBridge.mq5").read_text()
-    assert '#property version   "1.09"' in source
+    assert '#property version   "1.10"' in source
     assert "ResolveBrokerSymbol" in source and "SymbolInfoTick(resolved_symbol, tick)" in source
     assert '\\"quote_diagnostics\\"' in source
     assert 'IsoTime(broker_time_utc)' in source
