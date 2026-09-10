@@ -177,12 +177,16 @@ def test_telegram_trade_proposal_uses_bounded_callback_data_and_registers_callba
     proposal_id = "a1b2c3d4e5f6"
 
     assert asyncio.run(transport.send_trade_proposal("42", "Proposal: ready", proposal_id)) == 654
+    assert asyncio.run(transport.update_trade_proposal("42", 654, "Status: REJECTED")) is True
     assert asyncio.run(transport.set_webhook("https://example.test/api/telegram/webhook", "secret")) is True
     assert requests[0][1]["reply_markup"] == {"inline_keyboard": [[
         {"text": "APPROVE TRADE", "callback_data": f"ftmo:approve:{proposal_id}"},
         {"text": "REJECT TRADE", "callback_data": f"ftmo:reject:{proposal_id}"},
     ]]}
-    assert requests[1][1]["allowed_updates"] == ["message", "callback_query"]
+    assert requests[1][0] == "editMessageText"
+    assert requests[1][1]["message_id"] == 654
+    assert requests[1][1]["reply_markup"] == {"inline_keyboard": []}
+    assert requests[2][1]["allowed_updates"] == ["message", "callback_query"]
     with pytest.raises(ValueError, match="proposal identity"):
         asyncio.run(transport.send_trade_proposal("42", "unsafe", "../../approve"))
 

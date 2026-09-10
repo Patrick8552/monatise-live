@@ -371,6 +371,11 @@ class TelegramNotificationTransport:
     async def answer_callback_query(self, callback_query_id: str, text: str) -> bool:
         return await asyncio.to_thread(self._answer_callback_query, callback_query_id, text)
 
+    async def update_trade_proposal(self, chat_id: str, message_id: int, text: str) -> bool:
+        if not isinstance(message_id, int) or isinstance(message_id, bool) or message_id <= 0:
+            raise ValueError("invalid Telegram proposal message identity")
+        return await asyncio.to_thread(self._update_trade_proposal, chat_id, message_id, text)
+
     async def set_webhook(self, url: str, secret_token: str) -> bool:
         return await asyncio.to_thread(self._set_webhook, url, secret_token)
 
@@ -423,6 +428,32 @@ class TelegramNotificationTransport:
                 return bool(response.status < 300 and payload.get("ok") is True)
         except Exception as exc:
             raise RuntimeError("Telegram callback acknowledgement failed") from exc
+
+    def _update_trade_proposal(self, chat_id: str, message_id: int, text: str) -> bool:
+        token = self._token_provider()
+        if not token:
+            raise RuntimeError("Telegram credential is unavailable")
+        if len(text) > 1800:
+            text = text[:1797].rstrip() + "..."
+        body = json.dumps({
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "text": _bold_telegram_labels(text),
+            "parse_mode": "HTML",
+            "reply_markup": {"inline_keyboard": []},
+        }, separators=(",", ":")).encode()
+        request = Request(
+            f"https://api.telegram.org/bot{token}/editMessageText",
+            data=body,
+            headers={"content-type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=15) as response:  # noqa: S310
+                payload = json.loads(response.read().decode())
+                return bool(response.status < 300 and payload.get("ok") is True)
+        except Exception as exc:
+            raise RuntimeError("Telegram proposal-state update failed") from exc
 
     def _set_webhook(self, url: str, secret_token: str) -> bool:
         token = self._token_provider()

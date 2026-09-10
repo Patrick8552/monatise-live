@@ -836,6 +836,18 @@ class FTMOMasterControlService:
     def _symbol_key(value: str) -> str:
         return "".join(character for character in value.upper() if character.isalnum())
 
+    @classmethod
+    def _quote_match(cls, bridge: Mapping[str, Any], symbol: str) -> tuple[str, Mapping[str, Any]] | None:
+        """Return one broker quote by normalized identity without inventing an alias."""
+        requested = cls._symbol_key(symbol)
+        matches = [
+            (key, quote) for key, quote in (bridge.get("quotes") or {}).items()
+            if cls._symbol_key(str(quote.get("broker_symbol") or key)) == requested
+        ]
+        if len(matches) != 1:
+            return None
+        return matches[0]
+
     def _verified_instrument_mapping(
         self,
         symbol: str,
@@ -873,9 +885,22 @@ class FTMOMasterControlService:
         accepted = {self._symbol_key(instrument.ftmo_symbol)}
         if instrument.asset_class is FTMOAssetClass.CRYPTO:
             accepted.add(self._symbol_key(f"{instrument.underlying_symbol}USD"))
-        matches = [symbol for symbol in (bridge.get("quotes") or {}) if self._symbol_key(symbol) in accepted]
+        matches = [
+            str(quote.get("broker_symbol") or symbol)
+            for symbol, quote in (bridge.get("quotes") or {}).items()
+            if self._symbol_key(str(quote.get("broker_symbol") or symbol)) in accepted
+        ]
         if len(matches) != 1:
-            raise FTMOMasterError("FTMO execution symbol could not be verified from the current MT5 heartbeat")
+            diagnostics = [
+                details for requested, details in (bridge.get("quote_diagnostics") or {}).items()
+                if self._symbol_key(str(details.get("requested_symbol") or requested)) in accepted
+                or self._symbol_key(str(details.get("resolved_symbol") or "")) in accepted
+            ]
+            reasons = sorted({str(item.get("reason") or "").strip() for item in diagnostics if item.get("reason")})
+            detail = ": " + "; ".join(reasons) if reasons else ""
+            raise FTMOMasterError(
+                "FTMO execution symbol could not be verified from the current MT5 heartbeat" + detail
+            )
         return matches[0]
 
     @staticmethod
@@ -935,15 +960,18 @@ class FTMOMasterControlService:
         entry_zone_high: Any | None = None,
         risk_fraction_limit: Any | None = None,
     ) -> dict[str, Any]:
-        symbol = symbol.strip().upper()
         side = side.strip().casefold()
         order_type = order_type.strip().casefold()
         if side not in {"buy", "sell"} or order_type not in {"market", "limit", "stop"}:
             raise FTMOMasterError("trade side/type must be buy|sell and market|limit|stop")
         bridge = await self._healthy_bridge(now)
-        quote = (bridge.get("quotes") or {}).get(symbol)
-        if quote is None:
+        instrument = self._verified_instrument_mapping(symbol)
+        execution_symbol = await self.execution_symbol_for(instrument, now=now)
+        quote_match = self._quote_match(bridge, execution_symbol)
+        if quote_match is None:
             raise FTMOMasterError("FTMO bridge has no current quote for that symbol")
+        _, quote = quote_match
+        symbol = str(quote.get("broker_symbol") or execution_symbol)
         quote_at = _timestamp(quote.get("quote_observed_at_utc") or quote.get("timestamp"), "FTMO quote timestamp")
         quote_age = (now - quote_at).total_seconds()
         if quote_age < -float(self.configuration.quote_future_tolerance_seconds):
@@ -993,14 +1021,15 @@ class FTMOMasterControlService:
         exposures = tuple(item for item in (*tuple(bridge.get("positions") or ()), *tuple(bridge.get("orders") or ())) if isinstance(item, Mapping))
         if len(exposures) >= self.configuration.maximum_open_exposures:
             raise FTMOMasterError("maximum open position/pending-order exposure limit is reached")
-        if any(str(item.get("symbol") or "").upper() == symbol for item in exposures):
+        if any(self._symbol_key(str(item.get("symbol") or "")) == self._symbol_key(symbol) for item in exposures):
             raise FTMOMasterError("a conflicting FTMO exposure already exists for the symbol")
         existing_open_risk = ZERO
         for position in bridge.get("positions") or []:
             if not isinstance(position, Mapping):
                 continue
-            position_symbol = str(position.get("symbol") or "").upper()
-            position_quote = (bridge.get("quotes") or {}).get(position_symbol)
+            position_symbol = str(position.get("symbol") or "")
+            position_match = self._quote_match(bridge, position_symbol)
+            position_quote = position_match[1] if position_match is not None else None
             position_stop = _decimal(position.get("sl", 0), "position stop")
             if position_stop <= ZERO:
                 raise FTMOMasterError("an open position has no protective stop; new risk is blocked")
@@ -1068,7 +1097,8 @@ class FTMOMasterControlService:
         for raw_symbol, raw_quote in list(quotes.items())[:256]:
             if not isinstance(raw_quote, Mapping):
                 continue
-            symbol = str(raw_symbol).strip().upper()
+            broker_symbol = str(raw_symbol).strip()
+            symbol = broker_symbol.upper()
             bid = _decimal(raw_quote.get("bid"), "bid", positive=True)
             ask = _decimal(raw_quote.get("ask"), "ask", positive=True)
             if ask <= bid:
@@ -1088,6 +1118,7 @@ class FTMOMasterControlService:
             else:
                 freshness_state = "FRESH"
             normalized_quotes[symbol] = {
+                "broker_symbol": broker_symbol,
                 "bid": str(bid), "ask": str(ask),
                 "timestamp": quote_at.isoformat(),
                 "quote_observed_at_utc": quote_at.isoformat(),
@@ -1114,6 +1145,17 @@ class FTMOMasterControlService:
                 "freeze_level": str(_decimal(raw_quote.get("freeze_level", 0), "freeze level")),
                 "trade_mode": str(raw_quote.get("trade_mode", "full")),
             }
+        raw_diagnostics = payload.get("quote_diagnostics") or {}
+        quote_diagnostics = {
+            str(requested)[:80]: {
+                "requested_symbol": str((details or {}).get("requested_symbol") or requested)[:80],
+                "resolved_symbol": str((details or {}).get("resolved_symbol") or "")[:80] or None,
+                "status": str((details or {}).get("status") or "unknown")[:40],
+                "reason": str((details or {}).get("reason") or "")[:240] or None,
+            }
+            for requested, details in list(raw_diagnostics.items())[:256]
+            if isinstance(details, Mapping)
+        } if isinstance(raw_diagnostics, Mapping) else {}
         snapshot = {
             "account_id": account_id,
             "server": server,
@@ -1134,6 +1176,7 @@ class FTMOMasterControlService:
             "positions": list(payload.get("positions") or [])[:256],
             "orders": list(payload.get("orders") or [])[:256],
             "quotes": normalized_quotes,
+            "quote_diagnostics": quote_diagnostics,
             "ea_observed_at_utc": str(payload.get("observed_at_utc") or "") or None,
             "broker_time": str(payload.get("broker_time") or "") or None,
             "broker_time_offset_seconds": int(payload.get("broker_time_offset", 0) or 0),
@@ -1246,20 +1289,37 @@ class FTMOMasterControlService:
             except ValueError:
                 armed = False
         kill_switch = bool(control.get("kill_switch", True))
-        quote_freshness = {
-            symbol: {
-                "quote_observed_at_utc": quote.get("quote_observed_at_utc"),
+        quote_freshness = {}
+        for symbol, quote in ((bridge or {}).get("quotes") or {}).items():
+            quote_at = _timestamp(
+                quote.get("quote_observed_at_utc") or quote.get("timestamp"), "FTMO quote timestamp",
+            )
+            quote_age_ms = int(round((observed - quote_at).total_seconds() * 1000))
+            if quote_age_ms < -int(self.configuration.quote_future_tolerance_seconds * 1000):
+                freshness_state = "CLOCK_SKEW_DETECTED"
+            elif quote_age_ms > self.configuration.quote_max_age_seconds * 1000:
+                freshness_state = "STALE"
+            else:
+                freshness_state = "FRESH"
+            quote_freshness[symbol] = {
+                "quote_observed_at_utc": quote_at.isoformat(),
                 "render_received_at_utc": quote.get("render_received_at_utc"),
-                "computed_quote_age_ms": quote.get("computed_quote_age_ms"),
-                "clock_skew_ms": quote.get("clock_skew_ms"),
-                "quote_freshness_state": quote.get("quote_freshness_state"),
+                "computed_quote_age_ms": quote_age_ms,
+                "clock_skew_ms": max(0, -quote_age_ms),
+                "quote_freshness_state": freshness_state,
             }
-            for symbol, quote in ((bridge or {}).get("quotes") or {}).items()
-        }
         quote_clock_skew_detected = any(
             item.get("quote_freshness_state") == "CLOCK_SKEW_DETECTED"
             for item in quote_freshness.values()
         )
+        quote_details = {
+            str(quote.get("broker_symbol") or symbol): {
+                "bid": quote.get("bid"), "ask": quote.get("ask"),
+                "spread": str(Decimal(str(quote.get("ask"))) - Decimal(str(quote.get("bid")))),
+                **quote_freshness[symbol],
+            }
+            for symbol, quote in ((bridge or {}).get("quotes") or {}).items()
+        }
         execution_ready = bool(
             self.configuration.activation_configured
             and bridge_healthy
@@ -1275,7 +1335,9 @@ class FTMOMasterControlService:
             "terminal_connected": bool(bridge and bridge.get("terminal_connected")),
             "trade_allowed": bool(bridge and bridge.get("trade_allowed")),
             "ea_attached": bool(bridge and bridge.get("ea_attached")),
-            "quote_symbols": sorted((bridge or {}).get("quotes", {})),
+            "quote_symbols": sorted(quote_details, key=str.casefold),
+            "quote_details": quote_details,
+            "quote_diagnostics": dict((bridge or {}).get("quote_diagnostics") or {}),
             "quote_freshness": quote_freshness,
             "quote_clock_skew_detected": quote_clock_skew_detected,
             "armed": armed,
@@ -1287,6 +1349,16 @@ class FTMOMasterControlService:
             "kill_switch": kill_switch,
             "execution_ready": execution_ready,
         }
+
+    def execution_blockers(self, status: Mapping[str, Any]) -> tuple[str, ...]:
+        return tuple(name for name, blocked in (
+            ("activation configuration", not self.configuration.activation_configured),
+            ("bridge", not status.get("bridge_healthy")),
+            ("MT5 trade permission", not status.get("trade_allowed")),
+            ("temporary arm", not status.get("armed")),
+            ("kill switch", bool(status.get("kill_switch"))),
+            ("quote clock skew", bool(status.get("quote_clock_skew_detected"))),
+        ) if blocked)
 
     async def arm(self, actor: str, seconds: int | None = None, *, now: datetime | None = None) -> dict[str, Any]:
         if actor not in self.configuration.authorized_user_ids:
@@ -1447,11 +1519,12 @@ class FTMOMasterControlService:
             analysis_provider=analysis_provider,
             analysis_instrument=analysis_instrument,
         )
-        execution_symbol = symbol.strip().upper()
+        execution_symbol = await self.execution_symbol_for(instrument, now=observed)
         bridge = await self._healthy_bridge(observed)
-        quote = (bridge.get("quotes") or {}).get(execution_symbol)
-        if quote is None:
+        quote_match = self._quote_match(bridge, execution_symbol)
+        if quote_match is None:
             raise FTMOMasterError("FTMO bridge has no current quote for the signal symbol")
+        _, quote = quote_match
         ftmo_entry = Decimal(quote["ask"] if side == "buy" else quote["bid"])
         risk_fraction = abs(entry - stop) / entry
         reward_fraction = abs(target - entry) / entry
@@ -1577,25 +1650,35 @@ class FTMOMasterControlService:
         if proposal.get("status") != ProposalStatus.PENDING.value:
             raise FTMOMasterError(f"proposal is already {proposal.get('status')}")
         if datetime.fromisoformat(proposal["expires_at"]) <= observed:
-            proposal["status"] = ProposalStatus.EXPIRED.value
+            proposal.update({
+                "status": ProposalStatus.EXPIRED.value, "lifecycle_state": "EXPIRED",
+                "approval_status": "expired", "expired_at": observed.isoformat(),
+            })
             await self.repository.update_proposal(proposal_id, proposal, version)
             raise FTMOMasterError("proposal has expired")
         readiness = await self.status(now=observed)
         if not readiness["execution_ready"]:
-            blockers = [name for name, blocked in (
-                ("activation configuration", not self.configuration.activation_configured),
-                ("bridge", not readiness["bridge_healthy"]),
-                ("MT5 trade permission", not readiness["trade_allowed"]),
-                ("temporary arm", not readiness["armed"]),
-                ("kill switch", readiness["kill_switch"]),
-                ("quote clock skew", readiness.get("quote_clock_skew_detected", False)),
-            ) if blocked]
+            blockers = list(self.execution_blockers(readiness))
+            reason = "execution is blocked by: " + ", ".join(blockers)
+            proposal.update({
+                "lifecycle_state": "APPROVAL_BLOCKED", "approval_status": "blocked",
+                "approval_blocked_at": observed.isoformat(), "approval_blocked_by": actor,
+                "blocking_reason": reason, "blocking_gates": blockers,
+            })
+            await self.repository.update_proposal(proposal_id, proposal, version)
+            telegram_request_id = proposal.get("telegram_request_id")
+            if telegram_request_id and await self.repository.telegram_analysis_request(telegram_request_id) is not None:
+                await self.repository.finish_telegram_analysis_request(telegram_request_id, {
+                    "approval_status": "blocked", "approval_blocked_at": observed.isoformat(),
+                    "blocking_reason": reason, "blocking_gates": blockers,
+                })
             await self.repository.audit("approval_blocked", proposal_id, {"actor": actor, "blockers": blockers})
-            raise FTMOMasterError("execution is blocked by: " + ", ".join(blockers))
+            raise FTMOMasterError(reason)
         # Approval authorizes a fresh attempt, never the stale preview price.
         bridge = await self._healthy_bridge(observed)
         if proposal["kind"] == "open_trade":
-            quote = (bridge.get("quotes") or {}).get(proposal["symbol"])
+            quote_match = self._quote_match(bridge, proposal["symbol"])
+            quote = quote_match[1] if quote_match is not None else None
             if not quote or (observed - datetime.fromisoformat(quote["timestamp"])).total_seconds() > self.configuration.quote_max_age_seconds:
                 raise FTMOMasterError("FTMO quote is stale at approval")
             instrument = self._verified_instrument_mapping(
@@ -1716,6 +1799,7 @@ class FTMOMasterControlService:
             raise FTMOMasterError("duplicate execution command")
         proposal.update({
             "status": ProposalStatus.COMMAND_CREATED.value, "lifecycle_state": "EXECUTION_QUEUED",
+            "approval_status": "approved",
             "approved_by": actor, "approved_at": observed.isoformat(), "approval_id": approval_id,
             "command_id": command_id, "execution_id": execution_id,
         })
@@ -1749,6 +1833,7 @@ class FTMOMasterControlService:
             raise FTMOMasterError(f"proposal is already {proposal.get('status')}")
         proposal.update({
             "status": ProposalStatus.REJECTED.value, "lifecycle_state": "REJECTED",
+            "approval_status": "rejected",
             "rejected_by": actor, "rejected_at": _utc().isoformat(),
         })
         await self.repository.update_proposal(proposal_id, proposal, version)
@@ -1862,7 +1947,9 @@ class FTMOMasterControlService:
         return bridge
 
 
-def format_proposal(proposal: Mapping[str, Any]) -> str:
+def format_proposal(
+    proposal: Mapping[str, Any], *, approval_available: bool = True, blocking_reason: str | None = None,
+) -> str:
     if proposal.get("kind") == "open_trade":
         return "\n".join((
             "MONATISE TRADE PROPOSAL",
@@ -1883,8 +1970,13 @@ def format_proposal(proposal: Mapping[str, Any]) -> str:
             f"FTMO quote observed UTC: {proposal.get('quote_observed_at_utc') or proposal.get('quote_timestamp') or 'UNKNOWN'} | Age: {proposal.get('quote_age_ms') or 'UNKNOWN'} ms",
             f"Signal expires: {proposal['expires_at']}",
             *((f"Conviction: {proposal['conviction']}",) if proposal.get("conviction") is not None else ()),
-            "Status: AWAITING APPROVAL",
-            f"Approve: /approve {proposal['proposal_id']} | Reject: /reject {proposal['proposal_id']}",
+            *( (
+                "Status: AWAITING APPROVAL",
+                f"Approve: /approve {proposal['proposal_id']} | Reject: /reject {proposal['proposal_id']}",
+            ) if approval_available else (
+                f"Status: BLOCKED — {blocking_reason or 'execution gates are not ready'}",
+                "Approval controls are withheld until every independent execution gate is ready.",
+            )),
             "Approval authorizes revalidation at the current FTMO Bid/Ask; it does not authorize this preview price.",
             "No order has been sent.",
         ))

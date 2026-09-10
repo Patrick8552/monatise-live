@@ -1,5 +1,5 @@
 #property copyright "Monatise"
-#property version   "1.07"
+#property version   "1.08"
 #property strict
 #property description "Account-bound FTMO bridge. Telegram never talks directly to the broker."
 
@@ -24,7 +24,7 @@ input int    InpMaximumSpreadTicks     = 80;
 input int    InpMaximumDeviationPoints = 20;
 input long   InpMagicNumber            = 26082501;
 
-string EA_VERSION = "1.07";
+string EA_VERSION = "1.08";
 string JOURNAL_FILE = "monatise-ftmo-command-journal.csv";
 CTrade Trade;
 
@@ -181,30 +181,111 @@ bool TradingPermission()
        && AccountInfoInteger(ACCOUNT_TRADE_EXPERT);
 }
 
-string QuoteJson(string symbol)
+string SymbolKey(string value)
 {
-   MqlTick tick;
-   if(!SymbolSelect(symbol, true) || !SymbolInfoTick(symbol, tick) || tick.bid <= 0 || tick.ask <= 0)
+   StringToUpper(value);
+   string result = "";
+   for(int index = 0; index < StringLen(value); index++)
+   {
+      ushort character = StringGetCharacter(value, index);
+      if((character >= 65 && character <= 90) || (character >= 48 && character <= 57))
+         result += ShortToString(character);
+   }
+   return result;
+}
+
+bool ResolveBrokerSymbol(string requested, string &resolved, string &reason)
+{
+   bool custom = false;
+   bool exists = SymbolExist(requested, custom);
+   string requested_key = SymbolKey(requested);
+   int match_count = 0;
+   int total = SymbolsTotal(false);
+   for(int index = 0; index < total; index++)
+   {
+      string candidate = SymbolName(index, false);
+      if(StringCompare(candidate, requested, false) == 0 || SymbolKey(candidate) == requested_key)
+      {
+         resolved = candidate;
+         match_count++;
+      }
+   }
+   if(match_count == 1)
+      return true;
+   if(match_count == 0 && exists)
+   {
+      resolved = requested;
+      return true;
+   }
+   reason = match_count == 0 ? "symbol is not exposed by the connected FTMO terminal"
+                             : "symbol normalization matched more than one broker instrument";
+   resolved = "";
+   return false;
+}
+
+string QuoteJson(string requested_symbol, string &resolved_symbol, string &reason)
+{
+   if(!ResolveBrokerSymbol(requested_symbol, resolved_symbol, reason))
       return "";
+   MqlTick tick;
+   if(!SymbolSelect(resolved_symbol, true))
+   {
+      reason = "broker symbol could not be selected in Market Watch";
+      return "";
+   }
+   if(!SymbolIsSynchronized(resolved_symbol))
+   {
+      reason = "broker symbol data is not synchronized with the trade server";
+      return "";
+   }
+   if(!SymbolInfoTick(resolved_symbol, tick))
+   {
+      reason = "SymbolInfoTick returned no quote";
+      return "";
+   }
+   if(tick.bid <= 0 || tick.ask <= 0)
+   {
+      reason = "broker quote has a non-positive Bid or Ask";
+      return "";
+   }
+   if(tick.ask <= tick.bid)
+   {
+      reason = "broker quote has a zero or inverted spread";
+      return "";
+   }
    datetime observed_utc = TimeGMT();
    datetime broker_time = (datetime)(tick.time_msc / 1000);
    long broker_offset_seconds = BrokerUtcOffsetSeconds();
    datetime broker_time_utc = (datetime)((long)broker_time - broker_offset_seconds);
    long quote_age_seconds = (long)observed_utc - (long)broker_time_utc;
-   if(quote_age_seconds < -1 || quote_age_seconds > 5)
+   if(quote_age_seconds < -1)
+   {
+      reason = "broker tick timestamp is materially in the future";
       return "";
-   int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
-   double tick_size = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
-   double tick_value = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE_LOSS);
-   if(tick_value <= 0) tick_value = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
-   double tick_value_profit = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE_PROFIT);
-   double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
-   return "\"" + JsonEscape(symbol) + "\":{"
+   }
+   if(quote_age_seconds > 5)
+   {
+      reason = "broker tick is older than the 5-second execution limit";
+      return "";
+   }
+   int digits = (int)SymbolInfoInteger(resolved_symbol, SYMBOL_DIGITS);
+   double tick_size = SymbolInfoDouble(resolved_symbol, SYMBOL_TRADE_TICK_SIZE);
+   double tick_value = SymbolInfoDouble(resolved_symbol, SYMBOL_TRADE_TICK_VALUE_LOSS);
+   if(tick_value <= 0) tick_value = SymbolInfoDouble(resolved_symbol, SYMBOL_TRADE_TICK_VALUE);
+   double tick_value_profit = SymbolInfoDouble(resolved_symbol, SYMBOL_TRADE_TICK_VALUE_PROFIT);
+   double point = SymbolInfoDouble(resolved_symbol, SYMBOL_POINT);
+   if(tick_size <= 0 || tick_value <= 0 || point <= 0)
+   {
+      reason = "broker symbol specification is incomplete";
+      return "";
+   }
+   reason = "";
+   return "\"" + JsonEscape(resolved_symbol) + "\":{"
       + "\"bid\":\"" + DoubleToString(tick.bid, digits) + "\","
       + "\"ask\":\"" + DoubleToString(tick.ask, digits) + "\","
-      + "\"timestamp\":\"" + IsoTime(observed_utc) + "\","
+      + "\"timestamp\":\"" + IsoTime(broker_time_utc) + "\","
       + "\"observed_at_utc\":\"" + IsoTime(observed_utc) + "\","
-      + "\"quote_observed_at_utc\":\"" + IsoTime(observed_utc) + "\","
+      + "\"quote_observed_at_utc\":\"" + IsoTime(broker_time_utc) + "\","
       + "\"broker_time\":\"" + BrokerTime(broker_time) + "\","
       + "\"broker_time_offset\":" + IntegerToString((int)broker_offset_seconds) + ","
       + "\"broker_time_offset_seconds\":" + IntegerToString((int)broker_offset_seconds) + ","
@@ -215,13 +296,13 @@ string QuoteJson(string symbol)
       + "\"tick_value\":\"" + DoubleToString(tick_value, 8) + "\","
       + "\"tick_value_loss\":\"" + DoubleToString(tick_value, 8) + "\","
       + "\"tick_value_profit\":\"" + DoubleToString(tick_value_profit, 8) + "\","
-      + "\"contract_size\":\"" + DoubleToString(SymbolInfoDouble(symbol, SYMBOL_TRADE_CONTRACT_SIZE), 8) + "\","
-      + "\"volume_min\":\"" + DoubleToString(SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN), 8) + "\","
-      + "\"volume_max\":\"" + DoubleToString(SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX), 8) + "\","
-      + "\"volume_step\":\"" + DoubleToString(SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP), 8) + "\","
-      + "\"stops_level\":\"" + IntegerToString((int)SymbolInfoInteger(symbol, SYMBOL_TRADE_STOPS_LEVEL)) + "\","
-      + "\"freeze_level\":\"" + IntegerToString((int)SymbolInfoInteger(symbol, SYMBOL_TRADE_FREEZE_LEVEL)) + "\","
-      + "\"trade_mode\":\"" + IntegerToString((int)SymbolInfoInteger(symbol, SYMBOL_TRADE_MODE)) + "\"}";
+      + "\"contract_size\":\"" + DoubleToString(SymbolInfoDouble(resolved_symbol, SYMBOL_TRADE_CONTRACT_SIZE), 8) + "\","
+      + "\"volume_min\":\"" + DoubleToString(SymbolInfoDouble(resolved_symbol, SYMBOL_VOLUME_MIN), 8) + "\","
+      + "\"volume_max\":\"" + DoubleToString(SymbolInfoDouble(resolved_symbol, SYMBOL_VOLUME_MAX), 8) + "\","
+      + "\"volume_step\":\"" + DoubleToString(SymbolInfoDouble(resolved_symbol, SYMBOL_VOLUME_STEP), 8) + "\","
+      + "\"stops_level\":\"" + IntegerToString((int)SymbolInfoInteger(resolved_symbol, SYMBOL_TRADE_STOPS_LEVEL)) + "\","
+      + "\"freeze_level\":\"" + IntegerToString((int)SymbolInfoInteger(resolved_symbol, SYMBOL_TRADE_FREEZE_LEVEL)) + "\","
+      + "\"trade_mode\":\"" + IntegerToString((int)SymbolInfoInteger(resolved_symbol, SYMBOL_TRADE_MODE)) + "\"}";
 }
 
 string PositionsJson()
@@ -298,17 +379,29 @@ string BuildHeartbeat()
 {
    datetime observed_utc = TimeGMT();
    string quotes = "{";
+   string diagnostics = "{";
    string symbols[];
    int count = StringSplit(InpSymbols, ',', symbols);
    for(int index = 0; index < count; index++)
    {
       StringTrimLeft(symbols[index]); StringTrimRight(symbols[index]);
-      string quote = QuoteJson(symbols[index]);
-      if(quote == "") continue;
-      if(quotes != "{") quotes += ",";
-      quotes += quote;
+      string resolved = "";
+      string reason = "";
+      string quote = QuoteJson(symbols[index], resolved, reason);
+      if(quote != "")
+      {
+         if(quotes != "{") quotes += ",";
+         quotes += quote;
+      }
+      if(diagnostics != "{") diagnostics += ",";
+      diagnostics += "\"" + JsonEscape(symbols[index]) + "\":{"
+                  + "\"requested_symbol\":\"" + JsonEscape(symbols[index]) + "\","
+                  + "\"resolved_symbol\":\"" + JsonEscape(resolved) + "\","
+                  + "\"status\":\"" + (quote == "" ? "unavailable" : "quoted") + "\","
+                  + "\"reason\":\"" + JsonEscape(reason) + "\"}";
    }
    quotes += "}";
+   diagnostics += "}";
    return "{"
       + "\"account_id\":\"" + IntegerToString((long)AccountInfoInteger(ACCOUNT_LOGIN)) + "\","
       + "\"server\":\"" + JsonEscape(AccountInfoString(ACCOUNT_SERVER)) + "\","
@@ -331,7 +424,8 @@ string BuildHeartbeat()
       + "\"terminal_local_time\":\"" + BrokerTime(TimeLocal()) + "\","
       + "\"positions\":" + PositionsJson() + ","
       + "\"orders\":" + OrdersJson() + ","
-      + "\"quotes\":" + quotes + "}";
+      + "\"quotes\":" + quotes + ","
+      + "\"quote_diagnostics\":" + diagnostics + "}";
 }
 
 string JsonString(string json, string key)

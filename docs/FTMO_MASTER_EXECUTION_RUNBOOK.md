@@ -138,6 +138,7 @@ All control commands require the configured numeric user ID and a private chat. 
 ```text
 /status
 /bridge
+/quotes
 /account
 /positions
 /orders
@@ -156,11 +157,18 @@ All control commands require the configured numeric user ID and a private chat. 
 ```
 
 Qualified scanner proposals are delivered with `APPROVE TRADE` and `REJECT TRADE`
-inline buttons. Telegram callback updates are authenticated by the webhook secret,
+inline buttons only while every execution gate is ready. A blocked proposal states
+the exact gate and has no actionable controls. Telegram callback updates are authenticated by the webhook secret,
 restricted to the configured private chat and user ID, strictly parsed, durably
 deduplicated, and then routed through the same `/approve` or `/reject` service path.
 Approval never bypasses the kill switch, temporary arm, account binding, or fresh
 quote revalidation.
+
+`/quotes` reports each exact broker symbol, live Bid/Ask, computed tick age, and
+the per-symbol diagnostic returned by the EA when a configured instrument cannot
+produce a valid quote. The EA publishes the broker tick's UTC-normalized time as
+the quote timestamp; the heartbeat receipt time is retained separately and is
+never substituted for tick freshness.
 
 Duplicate Telegram updates are deduplicated in Redis. A deterministic command ID is derived from the proposal. The EA journals that ID before its broker call and uses the same ID in the order comment. A repeated network delivery therefore reconciles the journal entry; it does not submit a second order.
 

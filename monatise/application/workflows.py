@@ -133,6 +133,14 @@ class TelegramNotifier:
             return None
         return await answer(callback_query_id, message)
 
+    async def update_trade_proposal(self, message_id: int, message: str) -> Any:
+        if not message.strip():
+            raise ValueError("proposal-state message is required")
+        update = getattr(self._transport, "update_trade_proposal", None)
+        if update is None:
+            return None
+        return await update(self._chat_id, message_id, message)
+
     async def register_webhook(self, url: str, secret_token: str) -> bool:
         register = getattr(self._transport, "set_webhook", None)
         if register is None:

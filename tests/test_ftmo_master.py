@@ -5,6 +5,7 @@ import json
 import secrets
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
@@ -604,6 +605,8 @@ def test_production_telegram_analysis_publishes_waiting_then_durable_ftmo_propos
             "trade_mode": "full",
         }}
         await control.accept_bridge_heartbeat(payload, now=observed)
+        await control.repository.update_control(kill_switch=False)
+        await control.arm("42", now=observed)
         runtime = Runtime(control)
         app = ProductionASGI(runtime)
         app._telegram_command_context = {
@@ -668,6 +671,10 @@ def test_approval_requires_kill_reset_temporary_arm_and_current_bridge_then_queu
         )
         with pytest.raises(FTMOMasterError, match="kill switch"):
             await control.approve(proposal["proposal_id"], "42", now=NOW)
+        blocked = (await control.repository.proposal(proposal["proposal_id"]))[0]
+        assert blocked["approval_status"] == "blocked"
+        assert blocked["lifecycle_state"] == "APPROVAL_BLOCKED"
+        assert blocked["blocking_gates"] == ["temporary arm", "kill switch"]
         # Kill reset is deliberately an out-of-band administrative action.
         await control.repository.update_control(kill_switch=False)
         armed = await control.arm("42", 120, now=NOW)
@@ -889,6 +896,11 @@ def test_rejection_duplicate_supersession_minimum_lot_and_broker_evidence_are_fa
             source="monatise.confirmed", analysis_state="LONG", confirmation_status="confirmed", now=NOW,
         )
         await control.reject(rejected["proposal_id"], "42")
+        persisted_rejection = (await control.repository.proposal(rejected["proposal_id"]))[0]
+        assert persisted_rejection["status"] == "rejected"
+        assert persisted_rejection["approval_status"] == "rejected"
+        with pytest.raises(FTMOMasterError, match="already rejected"):
+            await control.approve(rejected["proposal_id"], "42", now=NOW)
         with pytest.raises(FTMOMasterError, match="collision"):
             await control.create_signal_proposal(
                 signal_id="immutable-signal", symbol="XAUUSD", direction="buy",
@@ -1044,5 +1056,195 @@ def test_expiry_restart_reconnect_and_broker_rejection_preserve_fail_closed_line
         assert failed_proposal["status"] == "execution_failed"
         assert failed_proposal["lifecycle_state"] == "EXECUTION_FAILED"
         assert await restarted.commands_for_bridge(now=NOW + timedelta(seconds=2)) == ()
+
+    asyncio.run(scenario())
+
+
+def test_us500_us100_and_xau_share_one_exact_broker_symbol_resolution_path():
+    async def scenario():
+        control, _ = service()
+        payload = heartbeat()
+        base = payload["quotes"]["XAUUSD"]
+        payload["quotes"] = {
+            "XAUUSD": {**base, "bid": "2500.00", "ask": "2500.20"},
+            "US100.cash": {
+                **base, "bid": "25000.0", "ask": "25000.5", "digits": 1,
+                "tick_size": "0.1", "point": "0.1", "stops_level": "5",
+            },
+            "US500.cash": {
+                **base, "bid": "6500.0", "ask": "6500.5", "digits": 1,
+                "tick_size": "0.1", "point": "0.1", "stops_level": "5",
+            },
+        }
+        await control.accept_bridge_heartbeat(payload, now=NOW)
+
+        mappings = {
+            "XAU/USD": ("XAUUSD", "GC"),
+            "US100.CASH": ("US100.cash", "NQ"),
+            "us500.cash": ("US500.cash", "ES"),
+        }
+        for requested, (actual, underlying) in mappings.items():
+            instrument = control._verified_instrument_mapping(requested)
+            assert await control.execution_symbol_for(instrument, now=NOW) == actual
+            proposal = await control.create_signal_proposal(
+                signal_id=f"central-{underlying}", symbol=requested, direction="long",
+                analysis_entry="100", analysis_stop="99", analysis_target="102",
+                source="monatise.centralized.quote", analysis_state="LONG",
+                confirmation_status="confirmed", analysis_provider="flashalpha",
+                analysis_instrument=underlying, now=NOW,
+            )
+            assert proposal["symbol"] == actual
+            assert proposal["mapping"]["ftmo_execution_symbol"] == actual
+            assert proposal["execution_snapshot"]["execution_symbol"] == actual
+
+        status = await control.status(now=NOW)
+        assert status["quote_symbols"] == ["US100.cash", "US500.cash", "XAUUSD"]
+
+    asyncio.run(scenario())
+
+
+def test_missing_mt5_quote_surfaces_the_bridge_symbol_diagnostic():
+    async def scenario():
+        control, _ = service()
+        payload = heartbeat()
+        payload["quotes"] = {}
+        payload["quote_diagnostics"] = {
+            "XAUUSD": {
+                "requested_symbol": "XAUUSD", "resolved_symbol": "XAUUSD",
+                "status": "unavailable", "reason": "broker tick is older than the 5-second execution limit",
+            }
+        }
+        await control.accept_bridge_heartbeat(payload, now=NOW)
+        instrument = control._verified_instrument_mapping("XAU/USD")
+        with pytest.raises(FTMOMasterError, match="broker tick is older than the 5-second execution limit"):
+            await control.execution_symbol_for(instrument, now=NOW)
+        status = await control.status(now=NOW)
+        assert status["quote_diagnostics"]["XAUUSD"]["resolved_symbol"] == "XAUUSD"
+
+    asyncio.run(scenario())
+
+
+def test_telegram_proposal_controls_are_removed_for_blocked_rejected_and_approved_states():
+    class TelegramEditor:
+        def __init__(self):
+            self.updates = []
+
+        async def update_trade_proposal(self, message_id, message):
+            self.updates.append((message_id, message))
+            return True
+
+    async def scenario():
+        control, _ = service()
+        observed = datetime.now(timezone.utc)
+        payload = heartbeat()
+        payload["quotes"]["XAUUSD"]["timestamp"] = observed.isoformat()
+        await control.accept_bridge_heartbeat(payload, now=observed)
+        telegram = TelegramEditor()
+        runtime = type("Runtime", (), {"ftmo_master": control, "telegram": telegram})()
+        app = ProductionASGI(runtime)
+        app._telegram_command_context = {
+            "message_id": 700, "user_id": "42", "chat_type": "private",
+        }
+
+        blocked = await control.create_trade_proposal(
+            actor="42", symbol="XAUUSD", side="sell", order_type="market",
+            stop_loss="2510", take_profit="2480", now=observed,
+        )
+        await control.repository.attach_proposal_telegram_message(blocked["proposal_id"], 700)
+        response = await app._handle_ftmo_telegram_command(f"/approve {blocked['proposal_id']}")
+        assert "temporary arm, kill switch" in response
+        assert telegram.updates[-1][0] == 700
+        assert "Status: BLOCKED" in telegram.updates[-1][1]
+
+        rejected = await control.create_trade_proposal(
+            actor="42", symbol="XAUUSD", side="sell", order_type="market",
+            stop_loss="2510", take_profit="2480", now=observed,
+        )
+        await control.repository.attach_proposal_telegram_message(rejected["proposal_id"], 701)
+        app._telegram_command_context["message_id"] = 701
+        await app._handle_ftmo_telegram_command(f"/reject {rejected['proposal_id']}")
+        assert "Status: REJECTED" in telegram.updates[-1][1]
+
+        approved = await control.create_trade_proposal(
+            actor="42", symbol="XAUUSD", side="sell", order_type="market",
+            stop_loss="2510", take_profit="2480", now=observed,
+        )
+        await control.repository.attach_proposal_telegram_message(approved["proposal_id"], 702)
+        await control.repository.update_control(kill_switch=False)
+        await control.arm("42", now=observed)
+        app._telegram_command_context["message_id"] = 702
+        response = await app._handle_ftmo_telegram_command(f"/approve {approved['proposal_id']}")
+        assert "queued for the account-bound MT5 EA" in response
+        assert "Status: APPROVED — SUBMITTING" in telegram.updates[-1][1]
+        commands = await control.repository.pending_commands()
+        assert len(commands) == 1
+        accepted = await control.acknowledge(commands[0]["command_id"], {
+            "status": "accepted", "broker_ticket": "9001", "broker_retcode": "10009",
+            "fill_price": commands[0]["payload"]["entry"],
+        })
+        await app._notify_ftmo_command_result(accepted)
+        assert "Status: EXECUTED" in telegram.updates[-1][1]
+        assert "Execution intent:" in telegram.updates[-1][1]
+
+    asyncio.run(scenario())
+
+
+def test_telegram_does_not_publish_approval_controls_when_execution_is_already_blocked():
+    async def scenario():
+        control, _ = service()
+        observed = datetime.now(timezone.utc)
+        payload = heartbeat()
+        payload["quotes"]["XAUUSD"]["timestamp"] = observed.isoformat()
+        await control.accept_bridge_heartbeat(payload, now=observed)
+        proposal = await control.create_trade_proposal(
+            actor="42", symbol="XAUUSD", side="sell", order_type="market",
+            stop_loss="2510", take_profit="2480", now=observed,
+        )
+        message, approval_available = await ProductionASGI._proposal_presentation(control, proposal)
+        assert approval_available is False
+        assert "Status: BLOCKED — execution is blocked by: temporary arm, kill switch" in message
+        assert "Approve:" not in message and "Reject:" not in message
+
+    asyncio.run(scenario())
+
+
+def test_mt5_bridge_reports_exact_symbol_diagnostics_and_the_actual_tick_timestamp():
+    source = Path("mt5/Experts/MonatiseFTMOBridge.mq5").read_text()
+    assert '#property version   "1.08"' in source
+    assert "ResolveBrokerSymbol" in source and "SymbolInfoTick(resolved_symbol, tick)" in source
+    assert '\\"quote_diagnostics\\"' in source
+    assert 'IsoTime(broker_time_utc)' in source
+    assert '"quote_observed_at_utc\\\":\\\"" + IsoTime(observed_utc)' not in source
+
+
+def test_terminal_quote_failure_is_published_once_with_the_exact_reason():
+    class TelegramRecorder:
+        def __init__(self):
+            self.messages = []
+
+        async def command_response(self, message):
+            self.messages.append(message)
+            return 800 + len(self.messages)
+
+    async def scenario():
+        observed = datetime.now(timezone.utc)
+        control, _ = service()
+        analysis = durable_gold_analysis(expires_at=observed + timedelta(minutes=30))
+        analysis["analysis_completed_at"] = observed.isoformat()
+        assert await control.repository.save_telegram_analysis(analysis)
+        request = await control.create_quote_request(
+            analysis_id=analysis["analysis_id"], telegram_request_id=analysis["telegram_request_id"],
+            canonical_instrument="XAU/USD", ftmo_symbol="XAU/USD",
+            deadline=observed + timedelta(minutes=30), now=observed,
+        )
+        await control.repository.update_quote_request(request["quote_request_id"], {"maximum_attempts": 1})
+        runtime = type("Runtime", (), {"ftmo_master": control, "telegram": TelegramRecorder()})()
+        app = ProductionASGI(runtime)
+        assert await app._process_quote_request_once(request["quote_request_id"]) is True
+        assert len(runtime.telegram.messages) == 1
+        assert "CONTEXT ONLY — MT5 EXECUTION QUOTE UNAVAILABLE" in runtime.telegram.messages[0]
+        assert "FTMO bridge has never connected" in runtime.telegram.messages[0]
+        assert await app._process_quote_request_once(request["quote_request_id"]) is True
+        assert len(runtime.telegram.messages) == 1
 
     asyncio.run(scenario())

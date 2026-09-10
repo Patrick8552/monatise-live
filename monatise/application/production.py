@@ -567,18 +567,46 @@ class ProductionASGI(OrchestrationASGI):
                 result, proposal = await service.process_quote_request(current_id)
             if result.get("state") in {"FAILED", "EXPIRED"}:
                 processed = True
+                if not result.get("terminal_telegram_message_id"):
+                    reason = result.get("last_error") or result.get("failure_reason") or (
+                        "analysis or quote request expired" if result.get("state") == "EXPIRED" else "unknown quote failure"
+                    )
+                    failure_message = "\n".join((
+                        "CONTEXT ONLY — MT5 EXECUTION QUOTE UNAVAILABLE",
+                        f"FTMO symbol: {result.get('resolved_mt5_symbol') or result.get('ftmo_symbol') or 'unknown'}",
+                        f"Quote request: {current_id}",
+                        f"Reason: {reason}",
+                        "No executable proposal was created. No order was sent.",
+                    ))
+                    terminal_message_id = await self._send_owned_telegram_response(
+                        notifier, failure_message, None,
+                    )
+                    await repository.update_quote_request(current_id, {
+                        "terminal_telegram_message_id": terminal_message_id,
+                        "terminal_message": failure_message,
+                    })
+                    await repository.update_telegram_analysis(str(result.get("analysis_id") or ""), {
+                        "lifecycle_state": "QUOTE_FAILED" if result.get("state") == "FAILED" else "EXPIRED",
+                        "quote_failure_reason": reason,
+                        "quote_terminal_telegram_message_id": terminal_message_id,
+                    })
             if proposal is None:
                 continue
-            proposal_message = format_proposal(proposal)
+            proposal_message, approval_available = await self._proposal_presentation(service, proposal)
             message_id = proposal.get("telegram_message_id")
             if not isinstance(message_id, int) or isinstance(message_id, bool):
                 claimed = await repository.claim_quote_publication(current_id, now=datetime.now(timezone.utc))
                 if claimed is None:
                     continue
                 try:
-                    message_id = await self._send_owned_trade_proposal(
-                        notifier, proposal_message, proposal["proposal_id"], None,
-                    )
+                    if approval_available:
+                        message_id = await self._send_owned_trade_proposal(
+                            notifier, proposal_message, proposal["proposal_id"], None,
+                        )
+                    else:
+                        message_id = await self._send_owned_telegram_response(
+                            notifier, proposal_message, None,
+                        )
                     if isinstance(message_id, int) and not isinstance(message_id, bool):
                         await repository.attach_proposal_telegram_message(proposal["proposal_id"], message_id)
                 except Exception:
@@ -691,6 +719,83 @@ class ProductionASGI(OrchestrationASGI):
             raise TelegramLeaseLost("Telegram command lease is no longer owned")
         return await notifier.trade_proposal(response, proposal_id)
 
+    async def _update_trade_proposal_state(
+        self, proposal_id: str, state: str, *, reason: str | None = None, command_id: str | None = None,
+    ) -> None:
+        service = getattr(self.runtime, "ftmo_master", None)
+        notifier = getattr(self.runtime, "telegram", None)
+        if service is None or notifier is None or not hasattr(service, "repository"):
+            return
+        stored = await service.repository.proposal(proposal_id)
+        if stored is None:
+            return
+        proposal = stored[0]
+        message_id = proposal.get("telegram_message_id")
+        context = getattr(self, "_telegram_command_context", None) or {}
+        if isinstance(context.get("message_id"), int) and not isinstance(context.get("message_id"), bool):
+            message_id = context["message_id"]
+        if not isinstance(message_id, int) or isinstance(message_id, bool):
+            return
+        lines = [
+            "MONATISE FTMO TRADE",
+            f"Status: {state}",
+            f"Proposal: {proposal_id}",
+            f"Symbol: {proposal.get('symbol') or 'unknown'} | Direction: {str(proposal.get('side') or 'unknown').upper()}",
+        ]
+        if command_id:
+            lines.append(f"Execution intent: {command_id[:12]}")
+        if reason:
+            lines.append(f"Reason: {reason}")
+        lines.append("No duplicate order can be created from this proposal.")
+        update = getattr(notifier, "update_trade_proposal", None)
+        if update is None:
+            return
+        try:
+            updated = await update(message_id, "\n".join(lines))
+            if updated is False:
+                raise RuntimeError("Telegram rejected the proposal-state update")
+        except Exception as exc:
+            LOGGER.warning(
+                "Telegram proposal-state update failed",
+                extra={"error_type": type(exc).__name__, "proposal_id": proposal_id, "state": state},
+            )
+
+    @staticmethod
+    async def _proposal_presentation(service: Any, proposal: Mapping[str, Any]) -> tuple[str, bool]:
+        if not hasattr(service, "status"):
+            return format_proposal(proposal), True
+        readiness = await service.status()
+        approval_available = bool(readiness.get("execution_ready"))
+        blockers = service.execution_blockers(readiness) if hasattr(service, "execution_blockers") else ()
+        reason = "execution is blocked by: " + ", ".join(blockers) if blockers else None
+        proposal_status = str(proposal.get("status") or "")
+        if proposal_status != "pending_confirmation":
+            approval_available = False
+            reason = f"proposal is already {proposal_status or 'not pending'}"
+        else:
+            try:
+                expired = datetime.fromisoformat(str(proposal.get("expires_at") or "")) <= datetime.now(timezone.utc)
+            except ValueError:
+                expired = True
+            if expired:
+                approval_available = False
+                reason = "proposal has expired"
+        return format_proposal(
+            proposal, approval_available=approval_available, blocking_reason=reason,
+        ), approval_available
+
+    async def _publish_trade_proposal(
+        self, notifier: Any, service: Any, proposal: Mapping[str, Any], ownership_check: Any | None,
+    ) -> tuple[int | Any, str, bool]:
+        message, approval_available = await self._proposal_presentation(service, proposal)
+        if approval_available:
+            message_id = await self._send_owned_trade_proposal(
+                notifier, message, str(proposal["proposal_id"]), ownership_check,
+            )
+        else:
+            message_id = await self._send_owned_telegram_response(notifier, message, ownership_check)
+        return message_id, message, approval_available
+
     async def _handle_telegram_command(self, text: str, *, ownership_check: Any | None = None) -> None:
         notifier = self.runtime.telegram
         if notifier is None:
@@ -700,7 +805,7 @@ class ProductionASGI(OrchestrationASGI):
             "Fresh analysis: /analyze XAUUSD | US100.cash | AAPL\n"
             "Asset classes: FTMO futures-linked CFDs and supported stocks only\n"
             "Alias: /gold | /analysis AAPL\n"
-            "FTMO: /status /bridge /account /positions /orders\n"
+            "FTMO: /status /bridge /quotes /account /positions /orders\n"
             "Trade preview: /trade XAUUSD buy market sl=LEVEL tp=LEVEL\n"
             "Control: /approve ID /reject ID /arm [seconds] /disarm /kill\n"
             "Management previews: /close ID /cancel ID /sl ID LEVEL /tp ID LEVEL /breakeven ID"
@@ -708,7 +813,7 @@ class ProductionASGI(OrchestrationASGI):
         if re.fullmatch(r"/(?:start|help)(?:@[A-Za-z0-9_]+)?", text, re.IGNORECASE):
             await self._send_owned_telegram_response(notifier, help_text, ownership_check)
             return
-        if re.match(r"^/(?:status|bridge|account|positions|orders|trade|close|cancel|sl|tp|breakeven|approve|reject|arm|disarm|kill)(?:@|\s|$)", text, re.IGNORECASE):
+        if re.match(r"^/(?:status|bridge|quotes|account|positions|orders|trade|close|cancel|sl|tp|breakeven|approve|reject|arm|disarm|kill)(?:@|\s|$)", text, re.IGNORECASE):
             if re.match(r"^/approve(?:@|\s|$)", text, re.IGNORECASE):
                 service = getattr(self.runtime, "ftmo_master", None)
                 context = getattr(self, "_telegram_command_context", None) or {}
@@ -790,8 +895,15 @@ class ProductionASGI(OrchestrationASGI):
                 if cached.get("status") == "completed":
                     if cached.get("analysis_message"):
                         await self._send_owned_telegram_response(notifier, cached["analysis_message"], ownership_check)
-                    if cached.get("proposal_message") and cached.get("proposal_id"):
-                        await self._send_owned_trade_proposal(notifier, cached["proposal_message"], cached["proposal_id"], ownership_check)
+                    if cached.get("proposal_id"):
+                        if hasattr(repository, "proposal"):
+                            stored_proposal = await repository.proposal(str(cached["proposal_id"]))
+                            if stored_proposal is not None:
+                                await self._publish_trade_proposal(notifier, service, stored_proposal[0], ownership_check)
+                        elif cached.get("proposal_message"):
+                            await self._send_owned_trade_proposal(
+                                notifier, cached["proposal_message"], cached["proposal_id"], ownership_check,
+                            )
                     return
                 if cached.get("status") == "waiting_for_quote" and cached.get("analysis_message"):
                     await self._send_owned_telegram_response(notifier, cached["analysis_message"], ownership_check)
@@ -828,7 +940,10 @@ class ProductionASGI(OrchestrationASGI):
                             await self._process_quote_request_once(quote_request["quote_request_id"])
                             return
                     matching = next((item for item in await repository.proposals() if item.get("analysis_id") == analysis_id), None)
-                    proposal_message = format_proposal(matching) if matching is not None else None
+                    proposal_message = None
+                    approval_available = False
+                    if matching is not None:
+                        proposal_message, approval_available = await self._proposal_presentation(service, matching)
                     await repository.finish_telegram_analysis_request(request_id, {
                         "status": "completed", "analysis_message": analysis_message,
                         "proposal_id": matching.get("proposal_id") if matching else None,
@@ -837,7 +952,10 @@ class ProductionASGI(OrchestrationASGI):
                     })
                     await self._send_owned_telegram_response(notifier, analysis_message, ownership_check)
                     if matching is not None:
-                        await self._send_owned_trade_proposal(notifier, proposal_message, matching["proposal_id"], ownership_check)
+                        if approval_available:
+                            await self._send_owned_trade_proposal(notifier, proposal_message, matching["proposal_id"], ownership_check)
+                        else:
+                            await self._send_owned_telegram_response(notifier, proposal_message, ownership_check)
                     return
                 interrupted = (
                     f"ANALYSIS FAILED\nRequest: {request_id}\n"
@@ -1000,7 +1118,10 @@ class ProductionASGI(OrchestrationASGI):
                         now=analysis_completed_at,
                     )
                     proposal_state = "TRADE_PREVIEW_READY"
-            proposal_message = format_proposal(proposal) if proposal is not None else None
+            proposal_message = None
+            approval_available = False
+            if proposal is not None:
+                proposal_message, approval_available = await self._proposal_presentation(service, proposal)
             if repository is not None and hasattr(repository, "finish_telegram_analysis_request"):
                 await repository.finish_telegram_analysis_request(request_id, {
                     "status": "waiting_for_quote" if quote_request else "completed",
@@ -1032,9 +1153,14 @@ class ProductionASGI(OrchestrationASGI):
         analysis_delivery = await self._send_owned_telegram_response(notifier, analysis_message, ownership_check)
         proposal_delivery = None
         if proposal is not None and proposal_message is not None:
-            proposal_delivery = await self._send_owned_trade_proposal(
-                notifier, proposal_message, proposal["proposal_id"], ownership_check,
-            )
+            if approval_available:
+                proposal_delivery = await self._send_owned_trade_proposal(
+                    notifier, proposal_message, proposal["proposal_id"], ownership_check,
+                )
+            else:
+                proposal_delivery = await self._send_owned_telegram_response(
+                    notifier, proposal_message, ownership_check,
+                )
         if repository is not None and hasattr(repository, "finish_telegram_analysis_request"):
             publication = {
                 "analysis_telegram_message_id": analysis_delivery if isinstance(analysis_delivery, int) and not isinstance(analysis_delivery, bool) else None,
@@ -1072,8 +1198,27 @@ class ProductionASGI(OrchestrationASGI):
         parts = command_text.split()
         command = parts[0].casefold()
         try:
-            if command in {"/status", "/bridge"}:
+            if command == "/status":
                 return format_ftmo_master_status(await service.status())
+            if command in {"/bridge", "/quotes"}:
+                status = await service.status()
+                rows = [format_ftmo_master_status(status), "LIVE MT5 QUOTES"]
+                for symbol, quote in sorted((status.get("quote_details") or {}).items(), key=lambda item: item[0].casefold()):
+                    rows.append(
+                        f"{symbol}: Bid {quote.get('bid')} | Ask {quote.get('ask')} | "
+                        f"Age {quote.get('computed_quote_age_ms')}ms | {quote.get('quote_freshness_state')}"
+                    )
+                diagnostics = status.get("quote_diagnostics") or {}
+                unavailable = [
+                    f"{requested}: {details.get('reason') or details.get('status') or 'unavailable'}"
+                    for requested, details in sorted(diagnostics.items(), key=lambda item: item[0].casefold())
+                    if str(details.get("status") or "").casefold() != "quoted"
+                ]
+                if unavailable:
+                    rows.extend(("UNAVAILABLE REQUESTED SYMBOLS", *unavailable))
+                if len(rows) == 2:
+                    rows.append("No valid quotes reported by the current heartbeat.")
+                return "\n".join(rows)
             if command == "/account":
                 bridge = await service.repository.bridge()
                 if not bridge:
@@ -1120,6 +1265,9 @@ class ProductionASGI(OrchestrationASGI):
                 if len(parts) != 2:
                     raise FTMOMasterError("use /approve PROPOSAL_ID")
                 result = await service.approve(parts[1], user_id)
+                await self._update_trade_proposal_state(
+                    parts[1], "APPROVED — SUBMITTING", command_id=result.get("command_id"),
+                )
                 if "execution_snapshot" not in result:
                     return f"FTMO command {result['command_id'][:12]} approved and queued for the account-bound MT5 EA."
                 snapshot = result.get("execution_snapshot") or {}
@@ -1139,6 +1287,7 @@ class ProductionASGI(OrchestrationASGI):
                 if len(parts) != 2:
                     raise FTMOMasterError("use /reject PROPOSAL_ID")
                 await service.reject(parts[1], user_id)
+                await self._update_trade_proposal_state(parts[1], "REJECTED")
                 return f"FTMO proposal {parts[1]} rejected. No order was sent."
             if command == "/arm":
                 seconds = int(parts[1]) if len(parts) == 2 else None
@@ -1148,6 +1297,17 @@ class ProductionASGI(OrchestrationASGI):
             if command == "/kill":
                 return format_ftmo_master_status(await service.kill(user_id))
         except (FTMOMasterError, ValueError, RuntimeError) as exc:
+            if command in {"/approve", "/reject"} and len(parts) == 2:
+                state = "BLOCKED"
+                stored = await service.repository.proposal(parts[1]) if hasattr(service, "repository") else None
+                proposal_status = str((stored or ({}, 0))[0].get("status") or "")
+                if proposal_status == "expired":
+                    state = "EXPIRED"
+                elif proposal_status in {"command_created", "approved"}:
+                    state = "APPROVED — SUBMITTING"
+                elif proposal_status == "rejected":
+                    state = "REJECTED"
+                await self._update_trade_proposal_state(parts[1], state, reason=str(exc))
             return f"Monatise FTMO BLOCKED\nReason: {exc}\nNo order was sent."
         return "Unknown FTMO command. Use /help."
 
@@ -1230,6 +1390,21 @@ class ProductionASGI(OrchestrationASGI):
             f"Execution source: FTMO MT5 | Analysis source: {provenance.get('analysis_provider') or 'Monatise'} + Monatise",
         ]
         await self._send_ftmo_notification(lines)
+        proposal_id = str(command.get("proposal_id") or "")
+        if proposal_id:
+            terminal_state = (
+                "EXECUTION FAILED"
+                if status in {"EXECUTION_FAILED", "REJECTED", "BROKER_UNCERTAIN"}
+                else "EXECUTED"
+                if status == "BROKER_ACCEPTED"
+                else "APPROVED — SUBMITTING"
+            )
+            await self._update_trade_proposal_state(
+                proposal_id,
+                terminal_state,
+                reason=str(command.get("message") or "") or None,
+                command_id=str(command.get("command_id") or "") or None,
+            )
 
     async def _notify_ftmo_lifecycle(self, event: Mapping[str, Any]) -> None:
         state = str(event.get("lifecycle_state") or "UNKNOWN").upper()
