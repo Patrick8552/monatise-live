@@ -129,9 +129,13 @@ class SignalPerformanceStore:
               mae_pct=excluded.mae_pct, return_r=excluded.return_r,
               outcome_detail=excluded.outcome_detail,
               evidence_json=excluded.evidence_json, updated_at=excluded.updated_at
+            where signal_records.user_id = excluded.user_id
+               or (signal_records.user_id is null and excluded.user_id is null)
         """.format(placeholders=", ".join([self._placeholder] * len(params)))
         with self._connect() as conn:
-            conn.execute(query, params)
+            cursor = conn.execute(query, params)
+            if cursor.rowcount != 1:
+                raise ValueError("signal record belongs to another user")
         return record
 
     def records(self, user_id: int | None = None, limit: int = 200) -> list[SignalRecord]:

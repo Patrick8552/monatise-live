@@ -72,6 +72,9 @@ class MarketDataEngine:
                     continue
 
                 latest_at = self._parse_timestamp(candles[-1].timestamp)
+                if latest_at is not None and (latest_at - observed_at).total_seconds() > 5:
+                    issues.append(f"{source_name}: latest candle timestamp is in the future")
+                    continue
                 age_seconds = (
                     max(0.0, (observed_at - latest_at).total_seconds())
                     if latest_at is not None

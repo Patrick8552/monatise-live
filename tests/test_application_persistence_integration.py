@@ -15,6 +15,25 @@ from monatise.application.persistence import PostgresDocumentStore, RedisDocumen
 
 
 @pytest.mark.skipif(not os.getenv("MONATISE_TEST_DATABASE_URL"), reason="MONATISE_TEST_DATABASE_URL is not configured")
+def test_postgres_signal_ledger_conflict_preserves_owner():
+    from monatise.live.performance import SignalPerformanceStore
+    from tests.test_performance import signal_payload
+
+    store = SignalPerformanceStore(os.environ["MONATISE_TEST_DATABASE_URL"])
+    identifier = f"ownership-{uuid4()}"
+    try:
+        store.save(signal_payload(identifier, "PENDING"), user_id=9001)
+        with pytest.raises(ValueError, match="belongs to another user"):
+            store.save(signal_payload(identifier, "WIN"), user_id=9002)
+        assert next(record for record in store.records(user_id=9001) if record.id == identifier).status == "PENDING"
+        store.save(signal_payload(identifier, "WIN"), user_id=9001)
+        assert next(record for record in store.records(user_id=9001) if record.id == identifier).status == "WIN"
+    finally:
+        with store._connect() as connection:
+            connection.execute("DELETE FROM signal_records WHERE id = %s", (identifier,))
+
+
+@pytest.mark.skipif(not os.getenv("MONATISE_TEST_DATABASE_URL"), reason="MONATISE_TEST_DATABASE_URL is not configured")
 def test_postgres_document_contract_against_real_service():
     async def scenario():
         store, connection = await connect_postgres_store(os.environ["MONATISE_TEST_DATABASE_URL"])

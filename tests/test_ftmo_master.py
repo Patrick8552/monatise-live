@@ -1365,6 +1365,7 @@ def test_telegram_proposal_controls_are_removed_for_blocked_rejected_and_approve
         accepted = await control.acknowledge(commands[0]["command_id"], {
             "status": "accepted", "broker_ticket": "9001", "broker_retcode": "10009",
             "fill_price": commands[0]["payload"]["entry"],
+            "executed_volume": commands[0]["payload"]["volume"],
         })
         await app._notify_ftmo_command_result(accepted)
         assert "Status: EXECUTED" in telegram.updates[-1][1]
@@ -1394,7 +1395,7 @@ def test_telegram_does_not_publish_approval_controls_when_execution_is_already_b
 
 def test_mt5_bridge_reports_exact_symbol_diagnostics_and_the_actual_tick_timestamp():
     source = Path("mt5/Experts/MonatiseFTMOBridge.mq5").read_text()
-    assert '#property version   "1.14"' in source
+    assert '#property version   "1.15"' in source
     assert "ResolveBrokerSymbol" in source and "SymbolInfoTick(resolved_symbol, tick)" in source
     assert '\\",\\"submission_attempted\\\":' in source
     assert 'JsonEscape(broker_retcode)' in source

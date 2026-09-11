@@ -22,6 +22,7 @@ from enum import StrEnum
 from typing import Any, Mapping
 
 from monatise.application.market_session import classify_market_session, session_allows_execution
+from monatise.application.broker_results import broker_result_status
 from monatise.application.ftmo_registry import FTMOAssetClass, FTMOInstrument, FTMO_REGISTRY
 from monatise.application.trade_publication import CONTEXT_ONLY, failure_code
 from monatise.application.risk_policy import MAX_RISK_FRACTION_PER_TRADE, MAX_RISK_PERCENT_PER_TRADE, risk_ceiling
@@ -544,16 +545,23 @@ class FTMOMasterRepository:
 
     async def request_execution_quote(self, symbol: str, *, expires_at: datetime) -> None:
         key = FTMOMasterControlService._symbol_key(symbol)
-        record = await self.store.get(self.QUOTE_DEMANDS, key)
-        if record and _timestamp(record.value.get("expires_at"), "quote demand expiry") >= _utc(expires_at):
-            # A shorter approval refresh must not end another consumer's demand.
-            return
-        value = {
-            "symbol": symbol,
-            "requested_at": _utc().isoformat(),
-            "expires_at": _utc(expires_at).isoformat(),
-        }
-        await self._put(self.QUOTE_DEMANDS, key, value, expected_version=record.version if record else 0)
+        for attempt in range(8):
+            record = await self.store.get(self.QUOTE_DEMANDS, key)
+            if record and _timestamp(record.value.get("expires_at"), "quote demand expiry") >= _utc(expires_at):
+                return
+            value = {
+                "symbol": symbol,
+                "requested_at": _utc().isoformat(),
+                "expires_at": _utc(expires_at).isoformat(),
+            }
+            try:
+                await self._put(self.QUOTE_DEMANDS, key, value, expected_version=record.version if record else 0)
+                return
+            except RuntimeError as exc:
+                # Another scanner/approval may have renewed this symbol. Re-read
+                # and retain the longest demand; unrelated storage errors propagate.
+                if str(exc) not in {"version conflict", "durable state version conflict"} or attempt == 7:
+                    raise
 
     async def requested_execution_quotes(self, *, now: datetime) -> tuple[str, ...]:
         active: list[str] = []
@@ -964,7 +972,7 @@ class FTMOMasterControlService:
 
     async def execution_symbol_for(self, instrument: FTMOInstrument, *, now: datetime | None = None) -> str:
         """Resolve the exact symbol spelling exposed by the identity-matched EA."""
-        bridge = await self._healthy_bridge(_utc(now))
+        bridge = await self._healthy_bridge(now)
         accepted = {self._symbol_key(instrument.ftmo_symbol)}
         if instrument.asset_class is FTMOAssetClass.CRYPTO:
             accepted.add(self._symbol_key(f"{instrument.underlying_symbol}USD"))
@@ -1037,7 +1045,7 @@ class FTMOMasterControlService:
         stop_loss: Any,
         take_profit: Any,
         entry: Any | None,
-        now: datetime,
+        now: datetime | None,
         reference_entry: Any | None = None,
         entry_zone_low: Any | None = None,
         entry_zone_high: Any | None = None,
@@ -1050,6 +1058,7 @@ class FTMOMasterControlService:
         bridge = await self._healthy_bridge(now)
         instrument = self._verified_instrument_mapping(symbol)
         execution_symbol = await self.execution_symbol_for(instrument, now=now)
+        now = _utc(now)
         quote_match = self._quote_match(bridge, execution_symbol)
         if quote_match is None:
             raise FTMOMasterError("FTMO bridge has no current quote for that symbol")
@@ -1351,9 +1360,9 @@ class FTMOMasterControlService:
         return tuple(events)
 
     async def status(self, *, now: datetime | None = None) -> dict[str, Any]:
-        observed = _utc(now)
         bridge = await self.repository.bridge()
         control = await self.repository.control()
+        observed = _utc(now)
         heartbeat_age = None
         bridge_healthy = False
         if bridge and bridge.get("observed_at"):
@@ -1708,13 +1717,14 @@ class FTMOMasterControlService:
             raise FTMOMasterError("position/order ticket must be a positive integer")
         if operation in {"sl", "tp"}:
             _decimal(value, f"{operation} level", positive=True)
-        bridge = await self._healthy_bridge(_utc())
+        bridge = await self._healthy_bridge(None)
         collection = bridge.get("orders" if operation == "cancel" else "positions") or []
         if not any(str(item.get("ticket")) == target_id for item in collection if isinstance(item, Mapping)):
             raise FTMOMasterError("position/order ticket is not present in the current MT5 heartbeat")
         now = _utc()
+        proposal_id = secrets.token_hex(6)
         proposal = {
-            "proposal_id": secrets.token_hex(6), "kind": "manage_trade", "status": ProposalStatus.PENDING.value,
+            "proposal_id": proposal_id, "kind": "manage_trade", "status": ProposalStatus.PENDING.value,
             "actor": actor, "operation": operation, "target_id": target_id, "value": value,
             "created_at": now.isoformat(), "expires_at": (now + timedelta(minutes=3)).isoformat(),
             "confirmation_required": True,
@@ -1753,7 +1763,7 @@ class FTMOMasterControlService:
             })
             await self.repository.update_proposal(proposal_id, proposal, version)
             raise FTMOMasterError("proposal has expired")
-        readiness = await self.status(now=observed)
+        readiness = await self.status(now=now)
         if not readiness["execution_ready"]:
             blockers = list(self.execution_blockers(readiness))
             reason = "execution is blocked by: " + ", ".join(blockers)
@@ -1772,7 +1782,7 @@ class FTMOMasterControlService:
             await self.repository.audit("approval_blocked", proposal_id, {"actor": actor, "blockers": blockers})
             raise FTMOMasterError(reason)
         # Approval authorizes a fresh attempt, never the stale preview price.
-        bridge = await self._healthy_bridge(observed)
+        bridge = await self._healthy_bridge(now)
         if proposal["kind"] == "open_trade":
             bridge, quote, observed = await self._fresh_approval_quote(
                 proposal["symbol"], observed=observed, wait_for_refresh=now is None,
@@ -1780,7 +1790,7 @@ class FTMOMasterControlService:
             )
             if datetime.fromisoformat(proposal["expires_at"]) <= observed:
                 raise FTMOMasterError("proposal expired while waiting for a fresh FTMO quote")
-            readiness = await self.status(now=observed)
+            readiness = await self.status(now=now)
             if not readiness["execution_ready"]:
                 raise FTMOMasterError(
                     "execution became blocked while waiting for a fresh FTMO quote: "
@@ -1819,7 +1829,7 @@ class FTMOMasterControlService:
                     symbol=proposal["symbol"], side=proposal["side"], order_type=proposal["order_type"],
                     stop_loss=stop_loss, take_profit=take_profit,
                     entry=proposal.get("entry") if proposal["order_type"] != "market" else None,
-                    now=observed,
+                    now=now,
                     reference_entry=proposal.get("entry") if proposal["order_type"] == "market" else None,
                     entry_zone_low=proposal.get("entry_zone_low"), entry_zone_high=proposal.get("entry_zone_high"),
                     risk_fraction_limit=proposal.get("recommended_risk_fraction"),
@@ -1839,6 +1849,14 @@ class FTMOMasterControlService:
             proposal.update(refreshed)
             proposal["approval_execution_snapshot"] = refreshed["execution_snapshot"]
             proposal["approval_session_context"] = approval_session.to_dict()
+
+        observed = _utc(now)
+        if _timestamp(proposal["expires_at"], "proposal expiry") <= observed:
+            raise FTMOMasterError("proposal expired during approval validation")
+        if proposal["kind"] == "open_trade":
+            age = (observed - _timestamp(proposal["quote_timestamp"], "FTMO quote timestamp")).total_seconds()
+            if age > self.configuration.quote_max_age_seconds:
+                raise FTMOMasterError("FTMO quote became stale during approval validation")
 
         approval_id = hashlib.sha256(f"approval:{proposal_id}:{actor}:{observed.isoformat()}".encode()).hexdigest()
         command_id = hashlib.sha256(f"{proposal_id}:{proposal['kind']}:{proposal.get('operation', 'open')}".encode()).hexdigest()
@@ -2061,6 +2079,21 @@ class FTMOMasterControlService:
         allowed = {item.value for item in CommandStatus} - {CommandStatus.READY.value, CommandStatus.DELIVERED.value}
         if raw_status not in allowed:
             raise FTMOMasterError("invalid bridge acknowledgement status")
+        previous_record = await self.repository.command(command_id)
+        if previous_record is None:
+            raise FTMOMasterError("unknown bridge command")
+        previous = previous_record[0]
+        payload = dict(payload)
+        if raw_status == previous.get("status") and not payload.get("broker_retcode") and previous.get("broker_retcode"):
+            # An EA journal replay carries only status/ticket. Keep the durable
+            # evidence from the original acknowledgement rather than erase it.
+            for key in ("broker_retcode", "fill_price", "executed_volume", "requested_price",
+                        "slippage", "executed_stop_loss", "executed_take_profit", "submission_attempted"):
+                payload[key] = previous.get(key)
+        if raw_status in {CommandStatus.ACCEPTED.value, CommandStatus.RECONCILED.value}:
+            classified = broker_result_status(str(previous.get("operation")), str((previous.get("payload") or {}).get("order_type")), payload)
+            if classified != CommandStatus.RECONCILED.value:
+                raw_status = classified
         submission_attempted = payload.get("submission_attempted")
         changes = {
             "status": raw_status,
@@ -2088,10 +2121,6 @@ class FTMOMasterControlService:
             CommandStatus.SUBMITTING.value: "MT5_RECEIVED",
         }.get(raw_status, "MT5_RECEIVED")
         changes["lifecycle_state"] = lifecycle
-        previous_record = await self.repository.command(command_id)
-        if previous_record is None:
-            raise FTMOMasterError("unknown bridge command")
-        previous = previous_record[0]
         evidence_keys = (
             "status", "lifecycle_state", "broker_ticket", "broker_retcode",
             "requested_price", "fill_price", "slippage", "executed_volume",
@@ -2125,8 +2154,9 @@ class FTMOMasterControlService:
         command["notification_required"] = notification_required
         return command
 
-    async def _healthy_bridge(self, now: datetime) -> dict[str, Any]:
+    async def _healthy_bridge(self, now: datetime | None) -> dict[str, Any]:
         bridge = await self.repository.bridge()
+        now = _utc(now)
         if bridge is None:
             raise FTMOMasterError("FTMO bridge has never connected")
         if not bridge.get("identity_match"):
@@ -2160,7 +2190,9 @@ class FTMOMasterControlService:
         waiting_audited = False
         current = observed
         while True:
-            bridge = await self._healthy_bridge(current)
+            bridge = await self._healthy_bridge(None if wait_for_refresh else current)
+            if wait_for_refresh:
+                current = _utc()
             quote_match = self._quote_match(bridge, symbol)
             quote = quote_match[1] if quote_match is not None else None
             quote_age = None
@@ -2182,6 +2214,13 @@ class FTMOMasterControlService:
                             "quote_timestamp": quote_at.isoformat(),
                             "quote_age_ms": int(max(0, quote_age) * 1000),
                         })
+                    # The audit write may itself wait for a database connection.
+                    if wait_for_refresh:
+                        current = _utc()
+                        if (current - quote_at).total_seconds() > self.configuration.quote_max_age_seconds:
+                            if loop.time() >= deadline:
+                                raise FTMOMasterError("FTMO quote became stale during approval refresh")
+                            continue
                     return bridge, quote, current
             if (
                 not wait_for_refresh
