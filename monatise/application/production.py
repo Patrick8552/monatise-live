@@ -734,6 +734,31 @@ class ProductionASGI(OrchestrationASGI):
             raise TelegramLeaseLost("Telegram command lease is no longer owned")
         return await notifier.trade_proposal(response, proposal_id)
 
+    async def _offer_limit_replacement(
+        self, proposal_id: str, *, actor: str | None = None, ownership_check: Any | None = None,
+    ) -> str | None:
+        service = getattr(self.runtime, "ftmo_master", None)
+        create = getattr(service, "create_limit_replacement", None)
+        notifier = getattr(self.runtime, "telegram", None)
+        if create is None or notifier is None:
+            return None
+        original = await service.repository.proposal(proposal_id)
+        if (original is not None and original[0].get("telegram_chat_id") is not None
+                and str(original[0]["telegram_chat_id"]) != str(getattr(notifier, "_chat_id", ""))):
+            raise FTMOMasterError("original proposal belongs to another Telegram chat")
+        replacement = await create(proposal_id, actor=actor)
+        if replacement is None or replacement.get("status") != "pending_confirmation":
+            return None
+        await self._publish_operator_proposal(service, replacement, ownership_check)
+        published = (await service.repository.proposal(str(replacement["proposal_id"])))[0]
+        if not published.get("approval_keyboard_attached") or published.get("telegram_publish_status") != "published":
+            raise FTMOMasterError("limit replacement could not be published with approval controls")
+        await self._update_trade_proposal_state(
+            proposal_id, "LIMIT REPLACEMENT PROPOSED",
+            reason=f"Use proposal {replacement['proposal_id']} for a new manual decision. The original market order will not be retried.",
+        )
+        return str(replacement["proposal_id"])
+
     async def _update_trade_proposal_state(
         self, proposal_id: str, state: str, *, reason: str | None = None, command_id: str | None = None,
     ) -> None:
@@ -1398,6 +1423,16 @@ class ProductionASGI(OrchestrationASGI):
                 elif proposal_status == "rejected":
                     state = "REJECTED"
                 await self._update_trade_proposal_state(parts[1], state, reason=str(exc))
+                if command == "/approve":
+                    try:
+                        replacement_id = await self._offer_limit_replacement(parts[1], actor=user_id, ownership_check=ownership_check)
+                        if replacement_id:
+                            return (
+                                f"The market order was blocked. Limit proposal {replacement_id} is available for a new manual decision.\n"
+                                "Review its entry, SL/TP and remaining expiry, then choose Approve or Reject. No replacement order has been sent."
+                            )
+                    except (FTMOMasterError, ValueError, RuntimeError) as replacement_error:
+                        return f"Monatise FTMO BLOCKED\nReason: {exc}\nLimit replacement unavailable: {replacement_error}\nNo replacement order was sent."
             return f"Monatise FTMO BLOCKED\nReason: {exc}\nNo order was sent."
         return "Unknown FTMO command. Use /help."
 
@@ -1449,6 +1484,16 @@ class ProductionASGI(OrchestrationASGI):
                 result = await service.acknowledge(match.group(1), parsed)
                 if result.get("notification_required", True):
                     await self._notify_ftmo_command_result(result)
+                if result.get("limit_replacement_eligible") is True:
+                    try:
+                        await self._offer_limit_replacement(str(result["proposal_id"]))
+                    except Exception as exc:
+                        # A Telegram/quote failure must not cause broker acknowledgement retries.
+                        LOGGER.warning("Limit replacement publication failed", extra={"error_type": type(exc).__name__, "proposal_id": result["proposal_id"]})
+                        await self._send_ftmo_notification([
+                            "LIMIT REPLACEMENT UNAVAILABLE", f"Proposal: {result['proposal_id']}",
+                            f"Reason: {exc}", "No replacement order was sent.",
+                        ])
                 return 200, {"status": "accepted", "command_status": result["status"]}
             return 404, {"status": "not_found"}
         except FTMOMasterError as exc:

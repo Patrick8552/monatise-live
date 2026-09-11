@@ -1,5 +1,5 @@
 #property copyright "Monatise"
-#property version   "1.15"
+#property version   "1.16"
 #property strict
 #property description "Account-bound FTMO bridge. Telegram never talks directly to the broker."
 
@@ -25,7 +25,7 @@ input int    InpMaximumSpreadTicks     = 80;
 input int    InpMaximumDeviationPoints = 20;
 input long   InpMagicNumber            = 26082501;
 
-string EA_VERSION = "1.15";
+string EA_VERSION = "1.16";
 string JOURNAL_FILE = "monatise-ftmo-command-journal.csv";
 string DynamicSymbols = "";
 CTrade Trade;
@@ -345,6 +345,8 @@ string OrdersJson()
              + "\",\"type\":" + IntegerToString((int)OrderGetInteger(ORDER_TYPE))
              + ",\"volume\":\"" + DoubleToString(OrderGetDouble(ORDER_VOLUME_CURRENT), 8)
              + "\",\"price_open\":\"" + DoubleToString(OrderGetDouble(ORDER_PRICE_OPEN), 8)
+             + "\",\"sl\":\"" + DoubleToString(OrderGetDouble(ORDER_SL), 8)
+             + "\",\"tp\":\"" + DoubleToString(OrderGetDouble(ORDER_TP), 8)
              + "\",\"comment\":\"" + JsonEscape(OrderGetString(ORDER_COMMENT)) + "\"}";
    }
    return result + "]";
@@ -377,6 +379,20 @@ bool CurrentOpenRisk(double &risk, string &reason)
       risk += MathAbs(PositionGetDouble(POSITION_PRICE_OPEN) - stop) / tick_size
             * tick_value * PositionGetDouble(POSITION_VOLUME);
    }
+   for(int index = 0; index < OrdersTotal(); index++)
+   {
+      ulong ticket = OrderGetTicket(index);
+      if(ticket == 0) continue;
+      string symbol = OrderGetString(ORDER_SYMBOL);
+      double stop = OrderGetDouble(ORDER_SL);
+      if(stop <= 0) { reason = "a pending order has no protective stop"; return false; }
+      double tick_size = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
+      double tick_value = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE_LOSS);
+      if(tick_value <= 0) tick_value = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
+      if(tick_size <= 0 || tick_value <= 0) { reason = "pending-order symbol risk cannot be calculated"; return false; }
+      risk += MathAbs(OrderGetDouble(ORDER_PRICE_OPEN) - stop) / tick_size
+            * tick_value * OrderGetDouble(ORDER_VOLUME_CURRENT);
+   }
    return true;
 }
 
@@ -404,6 +420,19 @@ string HeartbeatSymbols()
       StringTrimLeft(requested[index]); StringTrimRight(requested[index]);
       if(requested[index] != "" && !CsvContainsSymbol(result, requested[index]))
          result += "," + requested[index];
+   }
+   // Keep every exposed symbol priced even after its temporary quote demand ends.
+   for(int index = 0; index < PositionsTotal(); index++)
+   {
+      if(PositionGetTicket(index) == 0) continue;
+      string symbol = PositionGetString(POSITION_SYMBOL);
+      if(symbol != "" && !CsvContainsSymbol(result, symbol)) result += "," + symbol;
+   }
+   for(int index = 0; index < OrdersTotal(); index++)
+   {
+      if(OrderGetTicket(index) == 0) continue;
+      string symbol = OrderGetString(ORDER_SYMBOL);
+      if(symbol != "" && !CsvContainsSymbol(result, symbol)) result += "," + symbol;
    }
    return result;
 }
@@ -666,9 +695,14 @@ bool FinalOrderValidation(string execution_payload, string &reason)
    if(order_type == "limit" && ((side == "buy" && entry >= tick.ask) || (side == "sell" && entry <= tick.bid))) { reason = "pending limit price crossed the market"; return false; }
    if(order_type == "stop" && ((side == "buy" && entry <= tick.ask) || (side == "sell" && entry >= tick.bid))) { reason = "pending stop price crossed the market"; return false; }
    if((side == "buy" && !(stop < entry && entry < target)) || (side == "sell" && !(target < entry && entry < stop))) { reason = "SL/TP geometry is invalid at final quote"; return false; }
+   if(JsonString(execution_payload, "replacement_for_proposal_id") != ""
+      && ((side == "buy" && tick.ask >= target) || (side == "sell" && tick.bid <= target)))
+      { reason = "replacement target has already been reached"; return false; }
    double minimum_stop = MathMax((double)SymbolInfoInteger(symbol, SYMBOL_TRADE_STOPS_LEVEL),
                                  (double)SymbolInfoInteger(symbol, SYMBOL_TRADE_FREEZE_LEVEL)) * point;
    if(MathAbs(entry - stop) < minimum_stop) { reason = "SL distance is below the FTMO stop/freeze level"; return false; }
+   if(order_type != "market" && MathAbs(entry - (side == "buy" ? tick.ask : tick.bid)) < minimum_stop)
+      { reason = "pending entry is below the FTMO stop/freeze distance"; return false; }
    double actual_risk = (MathAbs(entry - stop) / tick_size) * tick_value * volume;
    double risk_limit = AccountInfoDouble(ACCOUNT_EQUITY) * MathMin(InpRiskFraction, 0.03);
    if(actual_risk > risk_limit + 0.01) { reason = "final risk exceeds configured limit"; return false; }
