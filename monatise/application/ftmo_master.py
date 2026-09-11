@@ -637,6 +637,11 @@ class FTMOMasterControlService:
         expiry = _utc(deadline)
         if expiry <= observed:
             raise FTMOMasterError("signal has already expired")
+        instrument = self._verified_instrument_mapping(ftmo_symbol)
+        await self.repository.request_execution_quote(
+            instrument.ftmo_symbol,
+            expires_at=min(expiry, observed + timedelta(seconds=60)),
+        )
         quote_request_id = self.quote_request_identity(analysis_id, ftmo_symbol)
         request = {
             "quote_request_id": quote_request_id,

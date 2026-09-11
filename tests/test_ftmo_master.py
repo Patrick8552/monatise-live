@@ -552,6 +552,7 @@ def test_durable_quote_request_survives_restart_and_creates_exactly_one_proposal
             canonical_instrument="XAU/USD", ftmo_symbol="XAU/USD", deadline=NOW + timedelta(minutes=30), now=NOW,
         )
         assert duplicate["quote_request_id"] == request["quote_request_id"]
+        assert await control.requested_execution_quote_symbols(now=NOW + timedelta(seconds=1)) == ("XAU/USD",)
         waiting, proposal = await control.process_quote_request(request["quote_request_id"], now=NOW)
         assert waiting["state"] == "WAITING_FOR_QUOTE"
         assert proposal is None
