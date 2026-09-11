@@ -60,6 +60,7 @@ def active_environment(**changes):
         "FTMO_EXECUTION_ENVIRONMENT": "master",
         "FTMO_MASTER_ACCOUNT_APPROVED": "true",
         "FTMO_TELEGRAM_EXECUTION_ARMED": "true",
+        "FTMO_TEMPORARY_ARM_REQUIRED": "true",
         "FTMO_AUTONOMOUS_EXECUTION": "false",
         "FTMO_TELEGRAM_CONFIRMATION_REQUIRED": "true",
         "FTMO_TELEGRAM_AUTHORIZED_USER_IDS": "42",
@@ -751,6 +752,44 @@ def test_approval_requires_kill_reset_temporary_arm_and_current_bridge_then_queu
     asyncio.run(scenario())
 
 
+def test_telegram_approval_replaces_temporary_arm_when_configured():
+    async def scenario():
+        control, _ = service(active_environment(FTMO_TEMPORARY_ARM_REQUIRED="false"))
+        await control.accept_bridge_heartbeat(heartbeat(), now=NOW)
+        await control.repository.update_control(kill_switch=False)
+        status = await control.status(now=NOW)
+        assert status["temporary_arm_required"] is False
+        assert status["armed"] is False
+        assert status["execution_ready"] is True
+        assert "temporary arm" not in control.execution_blockers(status)
+
+        proposal = await control.create_trade_proposal(
+            actor="42", symbol="XAUUSD", side="sell", order_type="market",
+            stop_loss="2510", take_profit="2480", now=NOW,
+        )
+        command = await control.approve(proposal["proposal_id"], "42", now=NOW)
+        assert command["status"] == CommandStatus.READY.value
+        assert command["approval"]["approved_by"] == "42"
+        assert command["execution_session"]["execution_session_armed"] is False
+        assert command["execution_session"]["authorization_mode"] == "telegram_approval_per_proposal"
+        with pytest.raises(FTMOMasterError, match="Telegram approval is the authorization step"):
+            await control.arm("42", now=NOW)
+
+    asyncio.run(scenario())
+
+
+def test_dynamic_execution_quote_demand_is_bounded_and_supports_verified_stocks():
+    async def scenario():
+        control, _ = service()
+        await control.request_execution_quote("NVDA", lifetime_seconds=15, now=NOW)
+        assert await control.requested_execution_quote_symbols(now=NOW + timedelta(seconds=1)) == ("NVDA",)
+        assert await control.requested_execution_quote_symbols(now=NOW + timedelta(seconds=16)) == ()
+        with pytest.raises(FTMOMasterError, match="verified FTMO symbol"):
+            await control.request_execution_quote("NOT_A_BROKER_SYMBOL", now=NOW)
+
+    asyncio.run(scenario())
+
+
 def test_live_approval_waits_for_next_authenticated_mt5_quote_then_revalidates():
     async def scenario():
         observed = datetime.now(timezone.utc)
@@ -842,10 +881,12 @@ def test_production_bridge_endpoint_requires_valid_hmac_and_rejects_replay():
         control, _ = service()
         runtime = type("Runtime", (), {"ftmo_master": control})()
         app = ProductionASGI(runtime)
+        observed = datetime.now(timezone.utc)
+        await control.request_execution_quote("NVDA", lifetime_seconds=15, now=observed)
         payload = heartbeat()
-        payload["quotes"]["XAUUSD"]["timestamp"] = datetime.now(timezone.utc).isoformat()
+        payload["quotes"]["XAUUSD"]["timestamp"] = observed.isoformat()
         body = json.dumps(payload, separators=(",", ":")).encode()
-        timestamp = str(int(datetime.now(timezone.utc).timestamp()))
+        timestamp = str(int(observed.timestamp()))
         nonce = secrets.token_hex(16)
         path = "/api/ftmo/bridge/heartbeat"
         signature = FTMOBridgeAuthenticator.sign(control.configuration.bridge_secret, "POST", path, timestamp, nonce, body)
@@ -861,7 +902,9 @@ def test_production_bridge_endpoint_requires_valid_hmac_and_rejects_replay():
         async def receive():
             return {"type": "http.request", "body": body, "more_body": False}
 
-        assert (await app._ftmo_bridge_request(scope, receive))[0] == 200
+        code, response = await app._ftmo_bridge_request(scope, receive)
+        assert code == 200
+        assert response["requested_symbols_csv"] == "NVDA"
         assert (await app._ftmo_bridge_request(scope, receive))[0] == 401
         bad = {**scope, "headers": [*scope["headers"][:-1], (b"x-monatise-signature", b"0" * 64)]}
         assert (await app._ftmo_bridge_request(bad, receive))[0] == 401
@@ -1340,7 +1383,7 @@ def test_telegram_does_not_publish_approval_controls_when_execution_is_already_b
 
 def test_mt5_bridge_reports_exact_symbol_diagnostics_and_the_actual_tick_timestamp():
     source = Path("mt5/Experts/MonatiseFTMOBridge.mq5").read_text()
-    assert '#property version   "1.13"' in source
+    assert '#property version   "1.14"' in source
     assert "ResolveBrokerSymbol" in source and "SymbolInfoTick(resolved_symbol, tick)" in source
     assert '\\",\\"submission_attempted\\\":' in source
     assert 'JsonEscape(broker_retcode)' in source

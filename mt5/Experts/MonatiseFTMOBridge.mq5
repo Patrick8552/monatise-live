@@ -1,5 +1,5 @@
 #property copyright "Monatise"
-#property version   "1.13"
+#property version   "1.14"
 #property strict
 #property description "Account-bound FTMO bridge. Telegram never talks directly to the broker."
 
@@ -24,8 +24,9 @@ input int    InpMaximumSpreadTicks     = 80;
 input int    InpMaximumDeviationPoints = 20;
 input long   InpMagicNumber            = 26082501;
 
-string EA_VERSION = "1.13";
+string EA_VERSION = "1.14";
 string JOURNAL_FILE = "monatise-ftmo-command-journal.csv";
+string DynamicSymbols = "";
 CTrade Trade;
 
 string IsoTime(datetime value)
@@ -378,13 +379,41 @@ bool CurrentOpenRisk(double &risk, string &reason)
    return true;
 }
 
+bool CsvContainsSymbol(string csv, string symbol)
+{
+   string values[];
+   int count = StringSplit(csv, ',', values);
+   string requested_key = SymbolKey(symbol);
+   for(int index = 0; index < count; index++)
+   {
+      StringTrimLeft(values[index]); StringTrimRight(values[index]);
+      if(SymbolKey(values[index]) == requested_key)
+         return true;
+   }
+   return false;
+}
+
+string HeartbeatSymbols()
+{
+   string result = InpSymbols;
+   string requested[];
+   int count = StringSplit(DynamicSymbols, ',', requested);
+   for(int index = 0; index < count; index++)
+   {
+      StringTrimLeft(requested[index]); StringTrimRight(requested[index]);
+      if(requested[index] != "" && !CsvContainsSymbol(result, requested[index]))
+         result += "," + requested[index];
+   }
+   return result;
+}
+
 string BuildHeartbeat()
 {
    datetime observed_utc = TimeGMT();
    string quotes = "{";
    string diagnostics = "{";
    string symbols[];
-   int count = StringSplit(InpSymbols, ',', symbols);
+   int count = StringSplit(HeartbeatSymbols(), ',', symbols);
    for(int index = 0; index < count; index++)
    {
       StringTrimLeft(symbols[index]); StringTrimRight(symbols[index]);
@@ -825,7 +854,10 @@ void SendHeartbeat()
    string response; int status;
    string body = BuildHeartbeat();
    if(!SignedRequest("POST", "/api/ftmo/bridge/heartbeat", body, response, status)) return;
-   if(status != 200) PrintFormat("Monatise heartbeat rejected HTTP %d: %s", status, response);
+   if(status != 200)
+      PrintFormat("Monatise heartbeat rejected HTTP %d: %s", status, response);
+   else
+      DynamicSymbols = JsonString(response, "requested_symbols_csv");
 }
 
 int OnInit()

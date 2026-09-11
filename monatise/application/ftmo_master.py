@@ -109,6 +109,7 @@ class FTMOMasterConfiguration:
     execution_enabled: bool
     master_account_approved: bool
     telegram_execution_armed_by_configuration: bool
+    temporary_arm_required: bool
     autonomous_execution: bool
     telegram_confirmation_required: bool
     execution_environment: str
@@ -139,6 +140,7 @@ class FTMOMasterConfiguration:
             execution_enabled=_true(_env(environment, "FTMO_EXECUTION_ENABLED", "false")),
             master_account_approved=_true(_env(environment, "FTMO_MASTER_ACCOUNT_APPROVED", "false")),
             telegram_execution_armed_by_configuration=_true(_env(environment, "FTMO_TELEGRAM_EXECUTION_ARMED", "false")),
+            temporary_arm_required=_true(_env(environment, "FTMO_TEMPORARY_ARM_REQUIRED", "false")),
             autonomous_execution=_true(_env(environment, "FTMO_AUTONOMOUS_EXECUTION", "false")),
             telegram_confirmation_required=_true(_env(environment, "FTMO_TELEGRAM_CONFIRMATION_REQUIRED", "true")),
             execution_environment=_env(environment, "FTMO_EXECUTION_ENVIRONMENT", "demo").casefold(),
@@ -208,6 +210,7 @@ class FTMOMasterConfiguration:
             "execution_enabled": self.execution_enabled,
             "master_account_approved": self.master_account_approved,
             "telegram_gate_enabled": self.telegram_execution_armed_by_configuration,
+            "temporary_arm_required": self.temporary_arm_required,
             "confirmation_required": self.telegram_confirmation_required,
             "autonomous_execution": False,
             "activation_configured": self.activation_configured,
@@ -274,6 +277,7 @@ class FTMOMasterRepository:
     TELEGRAM_REQUESTS = "telegram_analysis_requests"
     ANALYSES = "telegram_analyses"
     QUOTE_REQUESTS = "ftmo_quote_requests"
+    QUOTE_DEMANDS = "ftmo_quote_demands"
 
     def __init__(self, store: Any) -> None:
         self.store = store
@@ -504,6 +508,26 @@ class FTMOMasterRepository:
         value["updated_at"] = _utc().isoformat()
         await self._put(self.QUOTE_REQUESTS, quote_request_id, value, expected_version=record.version)
         return value
+
+    async def request_execution_quote(self, symbol: str, *, expires_at: datetime) -> None:
+        key = FTMOMasterControlService._symbol_key(symbol)
+        record = await self.store.get(self.QUOTE_DEMANDS, key)
+        value = {
+            "symbol": symbol,
+            "requested_at": _utc().isoformat(),
+            "expires_at": _utc(expires_at).isoformat(),
+        }
+        await self._put(self.QUOTE_DEMANDS, key, value, expected_version=record.version if record else 0)
+
+    async def requested_execution_quotes(self, *, now: datetime) -> tuple[str, ...]:
+        active: list[str] = []
+        for record in await self.store.list_namespace(self.QUOTE_DEMANDS):
+            try:
+                if _timestamp(record.value.get("expires_at"), "quote demand expiry") > now:
+                    active.append(str(record.value["symbol"]))
+            except (KeyError, TypeError, ValueError):
+                continue
+        return tuple(sorted(set(active), key=str.casefold))
 
     async def claim_quote_attempt(
         self, quote_request_id: str, *, now: datetime, lease_seconds: int = 30,
@@ -836,6 +860,19 @@ class FTMOMasterControlService:
 
     def authorized(self, user_id: str | None, chat_type: str | None) -> bool:
         return bool(user_id and chat_type == "private" and user_id in self.configuration.authorized_user_ids)
+
+    async def request_execution_quote(
+        self, symbol: str, *, lifetime_seconds: int = 15, now: datetime | None = None,
+    ) -> None:
+        observed = _utc(now)
+        instrument = self._verified_instrument_mapping(symbol)
+        await self.repository.request_execution_quote(
+            instrument.ftmo_symbol,
+            expires_at=observed + timedelta(seconds=max(5, min(60, lifetime_seconds))),
+        )
+
+    async def requested_execution_quote_symbols(self, *, now: datetime | None = None) -> tuple[str, ...]:
+        return await self.repository.requested_execution_quotes(now=_utc(now))
 
     @staticmethod
     def _symbol_key(value: str) -> str:
@@ -1329,7 +1366,7 @@ class FTMOMasterControlService:
             self.configuration.activation_configured
             and bridge_healthy
             and bridge and bridge.get("trade_allowed")
-            and armed
+            and (armed or not self.configuration.temporary_arm_required)
             and not kill_switch
             and not quote_clock_skew_detected
         )
@@ -1360,7 +1397,7 @@ class FTMOMasterControlService:
             ("activation configuration", not self.configuration.activation_configured),
             ("bridge", not status.get("bridge_healthy")),
             ("MT5 trade permission", not status.get("trade_allowed")),
-            ("temporary arm", not status.get("armed")),
+            ("temporary arm", self.configuration.temporary_arm_required and not status.get("armed")),
             ("kill switch", bool(status.get("kill_switch"))),
             ("quote clock skew", bool(status.get("quote_clock_skew_detected"))),
         ) if blocked)
@@ -1368,6 +1405,8 @@ class FTMOMasterControlService:
     async def arm(self, actor: str, seconds: int | None = None, *, now: datetime | None = None) -> dict[str, Any]:
         if actor not in self.configuration.authorized_user_ids:
             raise FTMOMasterError("Telegram user is not authorized")
+        if not self.configuration.temporary_arm_required:
+            raise FTMOMasterError("temporary arming is disabled; Telegram approval is the authorization step")
         status = await self.status(now=now)
         if status["kill_switch"]:
             raise FTMOMasterError("kill switch is active; reset it out-of-band before arming")
@@ -1782,6 +1821,9 @@ class FTMOMasterControlService:
                 "execution_session_id": readiness.get("execution_session_id"),
                 "execution_session_started_at": readiness.get("execution_session_started_at"),
                 "execution_session_expiry": readiness.get("execution_session_expiry"),
+                "temporary_arm_required": self.configuration.temporary_arm_required,
+                "authorization_mode": "temporary_arm_plus_telegram_approval"
+                if self.configuration.temporary_arm_required else "telegram_approval_per_proposal",
                 "kill_switch": readiness.get("kill_switch"),
                 "manual_master_execution_enabled": self.configuration.activation_configured,
                 "autonomous_execution_enabled": False,
@@ -2080,13 +2122,24 @@ def format_proposal(
 
 
 def format_status(status: Mapping[str, Any]) -> str:
+    arm_status = (
+        f"{'ACTIVE' if status.get('armed') else 'INACTIVE'}"
+        if status.get("temporary_arm_required")
+        else "NOT REQUIRED"
+    )
+    authorization = (
+        f"Execution session: {status.get('execution_session_id') or 'NONE'} | "
+        f"Expiry: {status.get('execution_session_expiry') or 'NONE'}"
+        if status.get("temporary_arm_required")
+        else "Authorization: EACH TELEGRAM APPROVAL"
+    )
     return "\n".join((
         "MONATISE FTMO STATUS",
         f"Account: {status.get('account') or 'not configured'} · {status.get('environment', 'unknown')}",
         f"Bridge: {'HEALTHY' if status.get('bridge_healthy') else 'OFFLINE/STALE'}",
         f"MT5 connected: {bool(status.get('terminal_connected'))} | EA: {bool(status.get('ea_attached'))} | Trade permission: {bool(status.get('trade_allowed'))}",
-        f"Kill switch: {'ON' if status.get('kill_switch') else 'OFF'} | Armed: {bool(status.get('armed'))}",
-        f"Execution session: {status.get('execution_session_id') or 'NONE'} | Expiry: {status.get('execution_session_expiry') or 'NONE'}",
+        f"Kill switch: {'ON' if status.get('kill_switch') else 'OFF'} | Temporary arm: {arm_status}",
+        authorization,
         f"Master gates: {'READY' if status.get('activation_configured') else 'BLOCKED'}",
         f"Execution: {'READY' if status.get('execution_ready') else 'BLOCKED'}",
     ))

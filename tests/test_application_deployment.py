@@ -279,6 +279,53 @@ def test_futures_signal_waits_for_fresh_mt5_quote_and_uses_broker_symbol_and_sca
     asyncio.run(scenario())
 
 
+def test_stock_signal_requests_dynamic_mt5_quote_and_publishes_approval_controls():
+    class FTMO:
+        def __init__(self):
+            self.requested, self.calls = [], []
+
+        async def request_execution_quote(self, symbol, *, lifetime_seconds):
+            self.requested.append((symbol, lifetime_seconds))
+
+        async def execution_symbol_for(self, instrument):
+            assert instrument.ftmo_symbol == "NVDA"
+            return "NVDA"
+
+        async def create_signal_proposal(self, **kwargs):
+            self.calls.append(kwargs)
+            return {
+                "kind": "open_trade", "proposal_id": "nvdaapproval", "symbol": kwargs["symbol"],
+                "side": "buy", "order_type": "market", "strategy": kwargs["strategy"],
+                "analysis_price": str(kwargs["analysis_entry"]), "entry": "184.25",
+                "stop_loss": "180", "take_profit": "192", "risk_amount": "100",
+                "risk_fraction": "0.01", "quote_bid": "184.24", "quote_ask": "184.25",
+                "expires_at": "2026-09-11T15:00:00+00:00", "conviction": kwargs["conviction"],
+            }
+
+    class Telegram:
+        def __init__(self): self.proposals = []
+        async def trade_proposal(self, message, proposal_id): self.proposals.append((message, proposal_id))
+
+    async def scenario():
+        runtime = OrchestrationRuntime(environment={})
+        runtime.ftmo_master, runtime.telegram = FTMO(), Telegram()
+        published = await runtime._publish_ftmo_signal_proposal({
+            "asset": "NVDA", "ftmo_symbol": "NVDA", "asset_class": "stock",
+            "direction": "LONG", "entry": "184", "stop_loss": "180", "target": "192",
+            "setup_status": "confirmed", "analysis_provider": "flashalpha",
+            "analysis_instrument": "NVDA", "exchange": "NASDAQ", "score": 8,
+            "publication_id": "nvda-qualified",
+        }, source="monatise.stock.scanner", quote_wait_seconds=7)
+
+        assert published is True
+        assert runtime.ftmo_master.requested == [("NVDA", 12)]
+        assert runtime.ftmo_master.calls[0]["symbol"] == "NVDA"
+        assert runtime.telegram.proposals[0][1] == "nvdaapproval"
+        assert runtime.telegram.proposals[0][0].startswith("MONATISE TRADE PROPOSAL")
+
+    asyncio.run(scenario())
+
+
 def test_telegram_transport_bounds_messages_to_provider_limit(monkeypatch):
     captured = {}
 

@@ -822,7 +822,7 @@ class ProductionASGI(OrchestrationASGI):
             "Alias: /gold | /analysis AAPL\n"
             "FTMO: /status /bridge /quotes /account /positions /orders\n"
             "Trade preview: /trade XAUUSD buy market sl=LEVEL tp=LEVEL [risk=PERCENT]\n"
-            "Control: /approve ID /reject ID /arm [seconds] /disarm /kill\n"
+            "Control: /approve ID /reject ID /kill\n"
             "Management previews: /close ID /cancel ID /sl ID LEVEL /tp ID LEVEL /breakeven ID"
         )
         if re.fullmatch(r"/(?:start|help)(?:@[A-Za-z0-9_]+)?", text, re.IGNORECASE):
@@ -1394,6 +1394,9 @@ class ProductionASGI(OrchestrationASGI):
                 raise FTMOMasterError("bridge request must contain a JSON object")
             if path == "/api/ftmo/bridge/heartbeat" and method == "POST":
                 result = await service.accept_bridge_heartbeat(parsed)
+                result["requested_symbols_csv"] = ",".join(
+                    await service.requested_execution_quote_symbols()
+                )
                 for event in result.get("lifecycle_events") or ():
                     await self._notify_ftmo_lifecycle(event)
                 return 200, result

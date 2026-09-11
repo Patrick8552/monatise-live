@@ -7,7 +7,7 @@ BRIDGE_SOURCE = Path(__file__).parents[1] / "mt5" / "Experts" / "MonatiseFTMOBri
 def test_mt5_bridge_enforces_expiry_price_volume_and_broker_symbol_constraints():
     source = BRIDGE_SOURCE.read_text(encoding="utf-8")
 
-    assert '#property version   "1.13"' in source
+    assert '#property version   "1.14"' in source
     assert 'InpSymbols                = "XAUUSD,US100.cash,US500.cash,AAPL,EURUSD,GBPUSD,USDJPY,USDCHF,AUDUSD,NZDUSD,USDCAD"' in source
     assert "BTCUSD" not in source.split("input string InpSymbols", 1)[1].split(";", 1)[0]
     assert "InpRiskFraction           = 0.03" in source
@@ -19,6 +19,8 @@ def test_mt5_bridge_enforces_expiry_price_volume_and_broker_symbol_constraints()
     assert 'JsonString(execution_payload, "pending_expires_epoch")' in source
     assert 'JsonString(execution_payload, "symbol")' in source
     assert "MathMin(InpHeartbeatSeconds, 2)" in source
+    assert 'DynamicSymbols = JsonString(response, "requested_symbols_csv")' in source
+    assert "StringSplit(HeartbeatSymbols(), ',', symbols)" in source
     assert "SYMBOL_TRADE_MODE_FULL" in source
     assert "SYMBOL_VOLUME_MIN" in source and "SYMBOL_VOLUME_MAX" in source and "SYMBOL_VOLUME_STEP" in source
     assert "SYMBOL_TRADE_STOPS_LEVEL" in source and "SYMBOL_TRADE_FREEZE_LEVEL" in source

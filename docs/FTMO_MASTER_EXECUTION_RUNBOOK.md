@@ -166,8 +166,6 @@ All control commands require the configured numeric user ID and a private chat. 
 /sl <position-ticket> <level>
 /tp <position-ticket> <level>
 /breakeven <position-ticket>
-/arm [seconds]
-/disarm
 /kill
 ```
 
@@ -179,8 +177,9 @@ inline buttons only while every execution gate is ready. A blocked proposal stat
 the exact gate and has no actionable controls. Telegram callback updates are authenticated by the webhook secret,
 restricted to the configured private chat and user ID, strictly parsed, durably
 deduplicated, and then routed through the same `/approve` or `/reject` service path.
-Approval never bypasses the kill switch, temporary arm, account binding, or fresh
-quote revalidation.
+Approval never bypasses the kill switch, account binding, or fresh quote
+revalidation. The approval is itself the one-proposal execution authorization;
+the production configuration does not require a separate timed arm.
 
 `/quotes` reports each exact broker symbol, live Bid/Ask, computed tick age, and
 the per-symbol diagnostic returned by the EA when a configured instrument cannot
@@ -199,11 +198,16 @@ FTMO_EXECUTION_ENABLED=true
 FTMO_EXECUTION_ENVIRONMENT=master
 FTMO_MASTER_ACCOUNT_APPROVED=true
 FTMO_TELEGRAM_EXECUTION_ARMED=true
+FTMO_TEMPORARY_ARM_REQUIRED=false
 FTMO_AUTONOMOUS_EXECUTION=false
 FTMO_TELEGRAM_CONFIRMATION_REQUIRED=true
 ```
 
-The EA also requires `InpExecutionEnabled=true` and `InpMasterAccountApproved=true`. A temporary `/arm` session is still mandatory. The durable kill switch defaults to ON; resetting it is an out-of-band administrative operation, never a Telegram command.
+The EA also requires `InpExecutionEnabled=true` and
+`InpMasterAccountApproved=true`. With
+`FTMO_TEMPORARY_ARM_REQUIRED=false`, one authenticated Telegram Approve action
+authorizes only that proposal. The durable kill switch defaults to ON; resetting
+it is an out-of-band administrative operation, never a Telegram command.
 
 The live per-trade ceiling is percentage-only: keep the EA at
 `InpRiskFraction=0.03` and `InpMaximumOpenExposures=1`. The obsolete `$5`
@@ -219,7 +223,8 @@ After every other gate is configured, the audited reset command is:
 python scripts/ftmo_control_admin.py reset-kill --actor <operator-id> --confirmation I_ACKNOWLEDGE_FTMO_KILL_RESET
 ```
 
-The reset leaves execution disarmed. `/arm` is still required and expires automatically.
+The reset changes only the durable kill switch. It does not approve a trade;
+each proposal still requires its own authenticated Telegram approval.
 
 ## Required shadow and demo evidence
 

@@ -1777,6 +1777,7 @@ class OrchestrationRuntime:
             outcome.setdefault("ftmo_symbol", candidate.ftmo_symbol or candidate.symbol)
             outcome.setdefault("underlying_symbol", candidate.underlying_symbol or candidate.symbol)
             outcome.setdefault("exchange", candidate.exchange)
+            outcome.setdefault("asset_class", FTMOAssetClass.STOCK.value)
             tradingview_reference = _select_tradingview_stock_reference(candidate, tradingview_alerts)
             if tradingview_reference is not None:
                 outcome["tradingview_reference"] = tradingview_reference
@@ -1803,7 +1804,13 @@ class OrchestrationRuntime:
                 notifier = getattr(self.telegram, "ftmo_stock_notification", self.telegram.stock_analysis_notification)
                 message = TelegramNotifier.format_market_stock_setup(outcome)
                 await notifier(message)
-                proposal_published += int(await self._publish_ftmo_signal_proposal(outcome, source="monatise.stock.scanner"))
+                proposal_published += int(await self._publish_ftmo_signal_proposal(
+                    outcome,
+                    source="monatise.stock.scanner",
+                    quote_wait_seconds=max(0.0, min(15.0, float(
+                        getattr(self, "environment", {}).get("MONATISE_FTMO_SCANNER_QUOTE_WAIT_SECONDS", "7")
+                    ))),
+                ))
                 published += 1
             except Exception as exc:
                 if previous_state:
@@ -2232,10 +2239,13 @@ class OrchestrationRuntime:
                 "analysis_id": proposal_arguments["analysis_id"], "signal_id": signal_id,
                 "ftmo_symbol": symbol, "source": source, "maximum_wait_seconds": quote_wait_seconds,
             })
+        request_quote = getattr(self.ftmo_master, "request_execution_quote", None)
+        if request_quote is not None and quote_wait_seconds > 0:
+            await request_quote(symbol, lifetime_seconds=max(10, math.ceil(quote_wait_seconds) + 5))
         deadline = asyncio.get_running_loop().time() + quote_wait_seconds
         while True:
             try:
-                if "futures" in source.casefold():
+                if "futures" in source.casefold() or "stock" in source.casefold():
                     registry = getattr(self, "ftmo_registry", FTMO_REGISTRY)
                     instrument = registry.resolve(symbol)
                     proposal_arguments["symbol"] = await self.ftmo_master.execution_symbol_for(instrument)
@@ -2262,9 +2272,13 @@ class OrchestrationRuntime:
                 })
             return proposal, None
 
-    async def _publish_ftmo_signal_proposal(self, analysis: Mapping[str, Any], *, source: str) -> bool:
+    async def _publish_ftmo_signal_proposal(
+        self, analysis: Mapping[str, Any], *, source: str, quote_wait_seconds: float = 0.0,
+    ) -> bool:
         """Publish a second, FTMO-native preview when the bridge can price it."""
-        proposal, _ = await self._create_ftmo_signal_proposal(analysis, source=source)
+        proposal, _ = await self._create_ftmo_signal_proposal(
+            analysis, source=source, quote_wait_seconds=quote_wait_seconds,
+        )
         if proposal is not None:
             publish = getattr(self.telegram, "trade_proposal", None)
             if publish is None:

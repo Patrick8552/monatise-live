@@ -109,10 +109,16 @@ executable Bid/Ask, symbol metadata, volume, and broker evidence.
 
 Confirmed setups receive a signal-bound inline approval proposal only when the
 identity-matched MT5 heartbeat can produce a fresh FTMO preview. Approval still
-requires the kill switch to permit execution, a temporary armed session, all
-manual/master gates, and another fresh price/session/risk revalidation. The
+requires the kill switch to permit execution, all manual/master gates, and
+another fresh price/session/risk revalidation. Each Telegram approval authorizes
+only its identified proposal; no temporary timed arm is required. The
 recommended risk is conviction-scaled below the 3% ceiling. Autonomous
 execution remains unsupported and OFF.
+
+For stocks outside the EA's always-on quote set, Render issues a short-lived
+symbol request in the authenticated heartbeat response. The EA selects that
+verified FTMO symbol and returns native Bid/Ask and contract specifications
+before any stock proposal receives Approve/Reject controls.
 
 The MT5 EA reports broker-server time, terminal-local time, and UTC observation
 time as separate fields. Render measures quote freshness from
