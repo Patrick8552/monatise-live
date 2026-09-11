@@ -545,6 +545,9 @@ class FTMOMasterRepository:
     async def request_execution_quote(self, symbol: str, *, expires_at: datetime) -> None:
         key = FTMOMasterControlService._symbol_key(symbol)
         record = await self.store.get(self.QUOTE_DEMANDS, key)
+        if record and _timestamp(record.value.get("expires_at"), "quote demand expiry") >= _utc(expires_at):
+            # A shorter approval refresh must not end another consumer's demand.
+            return
         value = {
             "symbol": symbol,
             "requested_at": _utc().isoformat(),
@@ -2143,12 +2146,14 @@ class FTMOMasterControlService:
         proposal_id: str,
         actor: str,
     ) -> tuple[dict[str, Any], Mapping[str, Any], datetime]:
-        """Wait briefly for the next authenticated MT5 heartbeat at approval.
+        """Request and wait for an authenticated MT5 quote at approval.
 
         The preview snapshot is never promoted to an execution quote after it
         becomes stale. Production approvals may wait for the outbound bridge's
-        next live tick; deterministic callers that supply ``now`` fail closed
-        immediately so tests and administrative checks never hide clock state.
+        next live tick. Dynamic symbols must be requested again after the
+        scanner's short quote demand expires. Deterministic callers supplying
+        ``now`` fail closed immediately so tests and administrative checks
+        never hide clock state.
         """
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self.configuration.approval_quote_wait_seconds
@@ -2183,11 +2188,24 @@ class FTMOMasterControlService:
                 or self.configuration.approval_quote_wait_seconds <= 0
                 or loop.time() >= deadline
             ):
+                await self.repository.audit("approval_quote_refresh_failed", proposal_id, {
+                    "actor": actor, "symbol": symbol,
+                    "quote_present": quote is not None,
+                    "last_quote_age_ms": int(max(0, quote_age) * 1000) if quote_age is not None else None,
+                    "refresh_requested": waiting_audited,
+                })
                 raise FTMOMasterError("FTMO quote remained stale after synchronous approval refresh")
             if not waiting_audited:
+                await self.request_execution_quote(
+                    symbol,
+                    lifetime_seconds=self.configuration.approval_quote_wait_seconds + 5,
+                    now=current,
+                )
                 await self.repository.audit("approval_quote_refresh_waiting", proposal_id, {
                     "actor": actor,
                     "symbol": symbol,
+                    "refresh_requested": True,
+                    "quote_present": quote is not None,
                     "last_quote_age_ms": int(max(0, quote_age) * 1000) if quote_age is not None else None,
                     "maximum_wait_seconds": self.configuration.approval_quote_wait_seconds,
                 })
