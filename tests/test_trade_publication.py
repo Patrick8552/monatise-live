@@ -303,3 +303,102 @@ def test_half_committed_approval_never_reaches_bridge(monkeypatch):
         assert len(await control.repository.pending_commands())==1
         assert await control.commands_for_bridge(now=NOW)==()
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('state,action', [
+    ('qualified', 'approve'), ('qualified', 'reject'),
+    ('stale_quote', None), ('unqualified', None),
+])
+def test_stock_universe_scanner_publishes_bound_controls_only_for_executable_proposals(monkeypatch, state, action):
+    from monatise.application.deployment import OrchestrationRuntime
+    from monatise.application.ftmo_registry import FTMO_REGISTRY
+    from monatise.application.stock_universe import StockUniverseConfiguration
+    from tests.test_stock_universe import Redis, snapshot
+
+    async def scenario():
+        control, _ = await setup(monkeypatch, 'AAPL')
+        market_time = NOW.replace(hour=15)
+        monkeypatch.setattr(master_module, '_utc', lambda value=None: value or market_time)
+        quote = dict(heartbeat()['quotes']['XAUUSD'], bid='200.00', ask='200.20',
+                     timestamp=(market_time - timedelta(seconds=6 if state == 'stale_quote' else 0)).isoformat())
+        await control.accept_bridge_heartbeat(heartbeat(quotes={'AAPL': quote}), now=market_time)
+        requests = []
+
+        class Response:
+            status = 200
+            def __enter__(self): return self
+            def __exit__(self, *_): pass
+            def read(self):
+                payload = requests[-1]
+                return json.dumps({'ok': True, 'result': {
+                    'message_id': len(requests), **({'reply_markup': payload['reply_markup']} if 'reply_markup' in payload else {}),
+                }}).encode()
+
+        def request(req, timeout):
+            requests.append(json.loads(req.data))
+            return Response()
+
+        class Alpaca:
+            def stock_snapshots(self, symbols):
+                assert symbols == ('AAPL',)
+                return {'AAPL': snapshot(200, 195, bid=199.95, ask=200.05)}
+
+        instrument = FTMO_REGISTRY.resolve('AAPL')
+        registry = SimpleNamespace(for_asset_class=lambda _: (instrument,), resolve=FTMO_REGISTRY.resolve)
+        runtime = OrchestrationRuntime(environment={'MONATISE_FTMO_SCANNER_QUOTE_WAIT_SECONDS': '0'})
+        runtime.ftmo_master, runtime.ftmo_registry = control, registry
+        runtime.alpaca, runtime.redis = Alpaca(), Redis()
+        runtime.telegram = TelegramNotifier(TelegramNotificationTransport(lambda: 'test'), '42', proposal_service=control)
+        monkeypatch.setattr('monatise.application.deployment.urlopen', request)
+
+        async def analyze(candidate, configuration, index):
+            return {
+                'asset': 'AAPL', 'company_name': 'Example stock', 'direction': 'LONG',
+                'decision': 'BUY_WATCH', 'score': 8, 'score_threshold': 7,
+                'setup_status': 'unconfirmed' if state == 'unqualified' else 'confirmed',
+                'current_price': 200, 'entry': 200, 'stop_loss': 198, 'target': 204,
+                'targets': [204], 'reward_risk': 2, 'additional_context': {},
+                'analysis_provider': 'flashalpha', 'analysis_instrument': 'AAPL',
+                'analysis_id': 'stock-analysis-test', 'publication_id': 'stock-signal-test',
+                'as_of': market_time.isoformat(), 'execution': {'enabled': False},
+            }
+
+        runtime._analyze_market_stock = analyze
+        result = await runtime._run_stock_universe_scan(StockUniverseConfiguration(), 3600, 'test')
+        assert result['failures'] == []
+        proposals = await control.repository.proposals()
+        if state == 'unqualified':
+            assert requests == [] and proposals == ()
+            assert result['qualified_count'] == 0
+            return
+        assert requests[0]['text'].startswith(CONTEXT_ONLY)
+        assert 'reply_markup' not in requests[0]
+        if state == 'stale_quote':
+            assert len(requests) == 1 and proposals == ()
+            assert result['proposal_published_count'] == 0
+            return
+        assert result['failures'] == [] and result['proposal_published_count'] == 1
+        assert len(proposals) == 1 and len(requests) == 2
+        p = proposals[0]
+        assert p['analysis_source'] == 'monatise.stock.scanner' and p['symbol'] == 'AAPL'
+        assert p['telegram_message_id'] == 2 and p['approval_keyboard_attached']
+        buttons = requests[1]['reply_markup']['inline_keyboard'][0]
+        assert [b['text'] for b in buttons] == ['✅ APPROVE TRADE', '❌ REJECT TRADE']
+        assert [b['callback_data'] for b in buttons] == [f"ftmo:approve:{p['proposal_id']}", f"ftmo:reject:{p['proposal_id']}"]
+        assert await control.commands_for_bridge(now=market_time) == ()
+        app = ProductionASGI(runtime)
+        app._telegram_command_context = {'user_id': '42', 'chat_id': '42', 'chat_type': 'private',
+                                         'message_id': 2, 'callback_query_id': 'stock-callback'}
+        await app._handle_ftmo_telegram_command(f"/{action} {p['proposal_id']}")
+        saved = (await control.repository.proposal(p['proposal_id']))[0]
+        assert saved['status'] == ('command_created' if action == 'approve' else 'rejected')
+        commands = await control.commands_for_bridge(now=market_time)
+        assert len(commands) == (1 if action == 'approve' else 0)
+        if commands:
+            assert commands[0]['payload']['symbol'] == 'AAPL'
+        assert requests[-1]['reply_markup'] == {'inline_keyboard': []}
+        again = await runtime._run_stock_universe_scan(StockUniverseConfiguration(), 3600, 'test')
+        assert again['proposal_published_count'] == 0
+        assert len(await control.repository.proposals()) == 1
+
+    asyncio.run(scenario())

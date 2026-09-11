@@ -11,3 +11,6 @@ node_modules/
 test-results/
 .lighthouseci/
 artifacts/
+# Operator reports stay outside the public source repository.
+private-reports/
+docs/telegram-trade-controls-2026-09-11.md
