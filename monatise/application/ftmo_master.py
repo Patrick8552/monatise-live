@@ -129,6 +129,7 @@ class FTMOMasterConfiguration:
     quote_future_tolerance_seconds: Decimal = Decimal("0")
     maximum_spread_ticks: Decimal = Decimal("80")
     maximum_entry_deviation_bps: Decimal = Decimal("50")
+    gold_maximum_adverse_price_deviation: Decimal = ZERO
     minimum_reward_risk: Decimal = Decimal("1")
 
     @classmethod
@@ -174,7 +175,13 @@ class FTMOMasterConfiguration:
                 "minimum reward/risk",
                 positive=True,
             ),
+            gold_maximum_adverse_price_deviation=_decimal(
+                _env(environment, "FTMO_GOLD_MAXIMUM_ADVERSE_PRICE_DEVIATION", "0"),
+                "gold adverse price deviation",
+            ),
         )
+        if configuration.gold_maximum_adverse_price_deviation < ZERO:
+            raise ValueError("gold adverse price deviation cannot be negative")
         if configuration.risk_fraction > MAX_RISK_FRACTION_PER_TRADE:
             raise ValueError("FTMO risk fraction cannot exceed 3%")
         if configuration.maximum_open_exposures < 1:
@@ -224,6 +231,7 @@ class FTMOMasterConfiguration:
             "risk_policy": "percentage_only_current_equity",
             "maximum_open_exposures": self.maximum_open_exposures,
             "maximum_entry_deviation_bps": str(self.maximum_entry_deviation_bps),
+            "gold_maximum_adverse_price_deviation": str(self.gold_maximum_adverse_price_deviation),
             "minimum_reward_risk": str(self.minimum_reward_risk),
         }
 
@@ -1054,6 +1062,8 @@ class FTMOMasterControlService:
         entry_zone_low: Any | None = None,
         entry_zone_high: Any | None = None,
         risk_fraction_limit: Any | None = None,
+        price_guard: Mapping[str, Any] | None = None,
+        initialize_price_guard: bool = False,
     ) -> dict[str, Any]:
         side = side.strip().casefold()
         order_type = order_type.strip().casefold()
@@ -1083,7 +1093,26 @@ class FTMOMasterControlService:
         if spread_ticks > self.configuration.maximum_spread_ticks:
             raise FTMOMasterError("FTMO spread exceeds policy")
         requested_entry = (ask if side == "buy" else bid) if order_type == "market" else _decimal(entry, "entry", positive=True)
-        if reference_entry is not None:
+        guard = dict(price_guard or {})
+        gold_market = self._symbol_key(instrument.ftmo_symbol) == "XAUUSD" and order_type == "market"
+        if initialize_price_guard and gold_market and self.configuration.gold_maximum_adverse_price_deviation > ZERO:
+            guard = {
+                "version": 1, "reference": str(requested_entry),
+                "maximum_adverse_deviation": str(self.configuration.gold_maximum_adverse_price_deviation),
+            }
+        if guard:
+            if not gold_market or guard.get("version") != 1:
+                raise FTMOMasterError("unsupported Gold price guard")
+            allowance = _decimal(guard.get("maximum_adverse_deviation"), "Gold price allowance", positive=True)
+            reference = _decimal(guard.get("reference"), "approved Gold reference", positive=True)
+            bridge_allowance = _decimal(bridge.get("gold_maximum_adverse_price_deviation", 0), "MT5 Gold price allowance")
+            if (allowance > self.configuration.gold_maximum_adverse_price_deviation
+                    or bridge.get("gold_price_guard_version") != 1 or allowance > bridge_allowance):
+                raise FTMOMasterError("Gold price guard requires matching server and MT5 policy")
+            adverse_move = requested_entry - reference if side == "buy" else reference - requested_entry
+            if adverse_move > allowance:
+                raise FTMOMasterError(PRICE_TOLERANCE_REASON)
+        elif reference_entry is not None:
             reference = _decimal(reference_entry, "reference entry", positive=True)
             deviation_bps = abs(requested_entry - reference) / reference * Decimal("10000")
             if deviation_bps > self.configuration.maximum_entry_deviation_bps:
@@ -1111,7 +1140,9 @@ class FTMOMasterControlService:
         if order_type != "market" and abs(requested_entry - (ask if side == "buy" else bid)) < minimum_stop:
             raise FTMOMasterError("pending entry is below the FTMO minimum distance from market")
         reward_distance = abs(target - requested_entry)
-        if reward_distance / stop_distance < self.configuration.minimum_reward_risk:
+        required_reward_risk = max(self.configuration.minimum_reward_risk,
+            _decimal(guard.get("minimum_reward_risk", self.configuration.minimum_reward_risk), "minimum reward/risk", positive=True))
+        if reward_distance / stop_distance < required_reward_risk:
             raise FTMOMasterError("reward/risk is below execution policy")
         equity = Decimal(str(bridge["equity"]))
         loss_today = max(ZERO, Decimal(str(bridge["daily_start_equity"])) - equity)
@@ -1144,18 +1175,32 @@ class FTMOMasterControlService:
         )
         requested_risk_fraction = min(requested_risk_fraction, self.configuration.risk_fraction, MAX_RISK_FRACTION_PER_TRADE)
         risk_budget = min(risk_ceiling(equity), equity * requested_risk_fraction, available_loss_capacity)
+        if guard.get("risk_budget") is not None:
+            risk_budget = min(risk_budget, _decimal(guard["risk_budget"], "approved risk budget", positive=True))
         if risk_budget <= ZERO:
             raise FTMOMasterError("FTMO daily/total loss capacity is exhausted")
         loss_per_lot = (stop_distance / tick_size) * tick_value
+        sizing_loss_per_lot = loss_per_lot
+        if guard:
+            worst_entry = reference + allowance if side == "buy" else reference - allowance
+            if worst_entry <= ZERO:
+                raise FTMOMasterError("Gold price allowance produces an invalid entry")
+            sizing_loss_per_lot = max(loss_per_lot, abs(worst_entry - stop) / tick_size * tick_value)
         step = Decimal(str(quote["volume_step"]))
-        volume = ((risk_budget / loss_per_lot) / step).to_integral_value(rounding=ROUND_FLOOR) * step
+        volume = ((risk_budget / sizing_loss_per_lot) / step).to_integral_value(rounding=ROUND_FLOOR) * step
         volume = min(volume, Decimal(str(quote["volume_max"])))
+        if guard.get("maximum_volume") is not None:
+            volume = min(volume, _decimal(guard["maximum_volume"], "approved maximum volume", positive=True))
         if volume < Decimal(str(quote["volume_min"])):
             raise FTMOMasterError("minimum FTMO volume would exceed the permitted risk")
         actual_risk = loss_per_lot * volume
-        if existing_open_risk + actual_risk > risk_ceiling(equity):
+        if existing_open_risk + sizing_loss_per_lot * volume > risk_ceiling(equity):
             raise FTMOMasterError("FTMO total open risk limit would be exceeded")
+        if guard:
+            guard.update(risk_budget=str(risk_budget), maximum_volume=str(volume),
+                         minimum_reward_risk=str(required_reward_risk))
         return {
+            **({"price_guard": guard} if guard else {}),
             "symbol": symbol,
             "side": side,
             "order_type": order_type,
@@ -1273,6 +1318,8 @@ class FTMOMasterControlService:
             "identity_match": identity_match,
             "terminal_build": str(payload.get("terminal_build") or ""),
             "ea_version": str(payload.get("ea_version") or ""),
+            "gold_price_guard_version": payload.get("gold_price_guard_version"),
+            "gold_maximum_adverse_price_deviation": str(payload.get("gold_maximum_adverse_price_deviation") or "0"),
             "positions": list(payload.get("positions") or [])[:256],
             "orders": list(payload.get("orders") or [])[:256],
             "quotes": normalized_quotes,
@@ -1588,6 +1635,7 @@ class FTMOMasterControlService:
             symbol=symbol, side=side, order_type=order_type, stop_loss=stop_loss,
             take_profit=take_profit, entry=entry, now=observed,
             risk_fraction_limit=risk_fraction_limit,
+            initialize_price_guard=True,
         )
         instrument = self._verified_instrument_mapping(symbol)
         session_context = classify_market_session(
@@ -1602,6 +1650,7 @@ class FTMOMasterControlService:
         if proposal_expiry <= observed:
             raise FTMOMasterError("signal has already expired")
         details = dict(metadata or {})
+        details.pop("price_guard", None)  # Only the control plane can define approval bounds.
         proposal = {
             "proposal_id": proposal_id,
             "kind": "open_trade",
@@ -1837,7 +1886,8 @@ class FTMOMasterControlService:
         if parent is None or parent.get("replacement_proposal_id") != proposal.get("proposal_id"):
             raise FTMOMasterError("replacement origin is no longer eligible; no order was sent")
         if (proposal.get("order_type") != "limit"
-                or any(proposal.get(key) != parent.get(key) for key in ("symbol", "side", "entry", "stop_loss", "take_profit", "expires_at"))):
+                or any(proposal.get(key) != parent.get(key) for key in ("symbol", "side", "stop_loss", "take_profit", "expires_at"))
+                or proposal.get("entry") != (parent.get("price_guard") or {}).get("reference", parent.get("entry"))):
             raise FTMOMasterError("replacement levels or expiry no longer match the original proposal")
 
     async def create_limit_replacement(
@@ -1865,7 +1915,8 @@ class FTMOMasterControlService:
             parent["symbol"], observed=_utc(now), wait_for_refresh=now is None,
             proposal_id=proposal_id, actor=actor,
         )
-        entry = _decimal(parent["entry"], "original entry", positive=True)
+        original_entry = (parent.get("price_guard") or {}).get("reference", parent["entry"])
+        entry = _decimal(original_entry, "original entry", positive=True)
         live_price = _decimal(quote["ask"] if parent["side"] == "buy" else quote["bid"], "market price", positive=True)
         target = _decimal(parent["take_profit"], "original target", positive=True)
         if ((parent["side"] == "buy" and live_price >= target)
@@ -1876,7 +1927,7 @@ class FTMOMasterControlService:
             raise FTMOMasterError("original entry is not a valid limit price on the current market")
         arguments = {
             "symbol": parent["symbol"], "side": parent["side"], "order_type": "limit",
-            "entry": parent["entry"], "stop_loss": parent["stop_loss"], "take_profit": parent["take_profit"],
+            "entry": original_entry, "stop_loss": parent["stop_loss"], "take_profit": parent["take_profit"],
             "risk_fraction_limit": parent.get("recommended_risk_fraction") or parent["risk_fraction"],
         }
         metadata = {key: parent[key] for key in (
@@ -2002,7 +2053,8 @@ class FTMOMasterControlService:
             if not session_allows_execution(approval_session):
                 raise FTMOMasterError("current market session does not permit execution")
             stop_loss, take_profit = proposal["stop_loss"], proposal["take_profit"]
-            if proposal.get("analysis_risk_fraction") and proposal.get("analysis_reward_fraction") and proposal.get("order_type") == "market":
+            if (not proposal.get("price_guard") and proposal.get("analysis_risk_fraction")
+                    and proposal.get("analysis_reward_fraction") and proposal.get("order_type") == "market"):
                 live_entry = Decimal(str(quote["ask"] if proposal["side"] == "buy" else quote["bid"]))
                 risk_fraction = Decimal(str(proposal["analysis_risk_fraction"]))
                 reward_fraction = Decimal(str(proposal["analysis_reward_fraction"]))
@@ -2029,6 +2081,7 @@ class FTMOMasterControlService:
                     entry_zone_low=proposal.get("entry_zone_low"), entry_zone_high=proposal.get("entry_zone_high"),
                     risk_fraction_limit=proposal.get("recommended_risk_fraction"),
                     avoid_reached_target=bool(proposal.get("replacement_for_proposal_id")),
+                    price_guard=proposal.get("price_guard"),
                 )
             except FTMOMasterError as exc:
                 reason = str(exc)
@@ -2127,6 +2180,16 @@ class FTMOMasterControlService:
             "expires_epoch": str(int(command_expires_at.timestamp())),
             "pending_expires_epoch": str(int(proposal_expires_at.timestamp())),
         })
+        if proposal.get("price_guard"):
+            guard = proposal["price_guard"]
+            command["payload"].update({
+                "gold_price_guard_version": "1",
+                "price_guard_reference": guard["reference"],
+                "maximum_adverse_price_deviation": guard["maximum_adverse_deviation"],
+                "approved_risk_budget": guard["risk_budget"],
+                "minimum_reward_risk": guard["minimum_reward_risk"],
+                **{key: proposal[key] for key in ("entry_zone_low", "entry_zone_high") if proposal.get(key) is not None},
+            })
         proposal.update({
             "status": ProposalStatus.APPROVED.value, "lifecycle_state": "APPROVAL_CLAIMED",
             "approval_status": "approved", "approved_by": actor, "approved_at": observed.isoformat(),
@@ -2200,6 +2263,7 @@ class FTMOMasterControlService:
             reference_entry=proposal["entry"], now=observed,
             risk_fraction_limit=proposal.get("recommended_risk_fraction"),
             avoid_reached_target=bool(proposal.get("replacement_for_proposal_id")),
+            price_guard=proposal.get("price_guard"),
         )
         session = classify_market_session(observed, instrument=self._verified_instrument_mapping(proposal["symbol"]),
                                          trade_mode=fields["execution_snapshot"]["trading_status"])
@@ -2539,6 +2603,10 @@ def format_proposal(
             f"Market: {'OPEN' if proposal.get('market_open') is True else 'CLOSED' if proposal.get('market_open') is False else 'UNKNOWN'} | Broker break: {proposal.get('broker_break_proximity') or 'UNKNOWN'}",
             f"Analysis reference price: {proposal.get('analysis_price') or proposal['entry']}",
             f"Executable entry: {proposal['entry']}",
+            *((
+                f"Gold price allowance: up to ${proposal['price_guard']['maximum_adverse_deviation']} per ounce worse than {proposal['price_guard']['reference']}; better prices allowed within the setup.",
+                f"Volume sized for that allowance; stop-risk budget ${proposal['price_guard']['risk_budget']}. Setup, spread and risk checks still apply.",
+            ) if proposal.get("price_guard") else ()),
             f"Proposed SL: {proposal['stop_loss']} | Proposed TP: {proposal['take_profit']}",
             f"Risk ceiling: {MAX_RISK_PERCENT_PER_TRADE:.2f}% | Recommended risk: {Decimal(str(proposal.get('recommended_risk_fraction') or proposal['risk_fraction'])) * 100:.2f}%",
             f"Preview calculated risk: {Decimal(str(proposal['risk_fraction'])) * 100:.2f}%",
@@ -2551,6 +2619,8 @@ def format_proposal(
             f"Approve: /approve {proposal['proposal_id']} | Reject: /reject {proposal['proposal_id']}",
             ("Approval authorizes a pending limit order at the stated entry after fresh quote and risk validation."
              if proposal.get("order_type") == "limit" else
+             "Approval permits a market order within the stated Gold price allowance after fresh quote and risk checks. Broker market fills can slip beyond the checked quote."
+             if proposal.get("price_guard") else
              "Approval authorizes revalidation at the current FTMO Bid/Ask; it does not authorize this preview price."),
             "No order has been sent.",
         ))
