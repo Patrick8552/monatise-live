@@ -30,6 +30,7 @@ from monatise.analysis.tradingview import TRADINGVIEW_FRESH_SECONDS, TRADINGVIEW
 from monatise.adapters.coinglass_production import CoinGlassProductionAdapter
 from monatise.application.deployment import OrchestrationASGI, OrchestrationRuntime, TelegramCommandTransition, TradingViewAlertDuplicate
 from monatise.application.ftmo_registry import FTMOAssetClass, FTMO_REGISTRY
+from monatise.application.trade_publication import failure_code
 from monatise.application.ftmo_master import (
     FTMOBridgeAuthenticator,
     FTMOMasterError,
@@ -423,6 +424,7 @@ class ProductionASGI(OrchestrationASGI):
             "text": text,
             "user_id": str(sender.get("id", "")),
             "chat_type": str(chat.get("type", "")),
+            "chat_id": str(chat.get("id", "")),
             "callback_query_id": callback_query_id,
         }, ttl_seconds=86_400)
         if not queued:
@@ -573,9 +575,10 @@ class ProductionASGI(OrchestrationASGI):
                         "analysis or quote request expired" if result.get("state") == "EXPIRED" else "unknown quote failure"
                     )
                     failure_message = "\n".join((
-                        "CONTEXT ONLY — MT5 EXECUTION QUOTE UNAVAILABLE",
+                        "CONTEXT ONLY — NOT AN EXECUTABLE TRADE",
                         f"FTMO symbol: {result.get('resolved_mt5_symbol') or result.get('ftmo_symbol') or 'unknown'}",
                         f"Quote request: {current_id}",
+                        f"approval_controls_omitted_reason={failure_code(str(reason))}",
                         f"Reason: {reason}",
                         "No executable proposal was created. No order was sent.",
                     ))
@@ -600,15 +603,11 @@ class ProductionASGI(OrchestrationASGI):
                 if claimed is None:
                     continue
                 try:
-                    if approval_available:
-                        message_id = await self._send_owned_trade_proposal(
-                            notifier, proposal_message, proposal["proposal_id"], None,
-                        )
-                    else:
-                        message_id = await self._send_owned_telegram_response(
-                            notifier, proposal_message, None,
-                        )
-                    if isinstance(message_id, int) and not isinstance(message_id, bool):
+                    message_id, proposal_message, approval_available = await self._publish_trade_proposal(
+                        notifier, service, proposal, None,
+                    )
+                    if (isinstance(message_id, int) and not isinstance(message_id, bool)
+                            and getattr(notifier, "_proposal_service", None) is not service):
                         await repository.attach_proposal_telegram_message(proposal["proposal_id"], message_id)
                 except Exception:
                     await repository.update_quote_request(current_id, {
@@ -620,10 +619,13 @@ class ProductionASGI(OrchestrationASGI):
             published_at = datetime.now(timezone.utc)
             await repository.update_quote_request(current_id, {
                 "state": "PROPOSAL_PUBLISHED", "telegram_message_id": message_id,
+                "publication_kind": "EXECUTABLE_PROPOSAL" if approval_available else "CONTEXT_ONLY",
+                "approval_keyboard_attached": approval_available,
                 "proposal_published_at": published_at.isoformat(),
             })
             await repository.update_telegram_analysis(str(claimed["analysis_id"]), {
-                "lifecycle_state": "PROPOSAL_PUBLISHED", "proposal_telegram_message_id": message_id,
+                "lifecycle_state": "PROPOSAL_PUBLISHED" if approval_available else "CONTEXT_ONLY",
+                "approval_keyboard_attached": approval_available, "proposal_telegram_message_id": message_id,
             })
             await repository.finish_telegram_analysis_request(str(claimed["telegram_request_id"]), {
                 "status": "completed", "proposal_state": "PROPOSAL_PUBLISHED",
@@ -654,6 +656,7 @@ class ProductionASGI(OrchestrationASGI):
             "message_id": payload.get("message_id"),
             "user_id": str(payload.get("user_id") or ""),
             "chat_type": str(payload.get("chat_type") or ""),
+            "chat_id": str(payload.get("chat_id") or ""),
             "callback_query_id": str(payload.get("callback_query_id") or ""),
         }
         try:
@@ -733,8 +736,9 @@ class ProductionASGI(OrchestrationASGI):
         proposal = stored[0]
         message_id = proposal.get("telegram_message_id")
         context = getattr(self, "_telegram_command_context", None) or {}
-        if isinstance(context.get("message_id"), int) and not isinstance(context.get("message_id"), bool):
-            message_id = context["message_id"]
+        if message_id is None and context.get("callback_query_id"):
+            # Legacy unbound messages may be retracted, but cannot authorize new orders.
+            message_id = context.get("message_id")
         if not isinstance(message_id, int) or isinstance(message_id, bool):
             return
         lines = [
@@ -789,7 +793,15 @@ class ProductionASGI(OrchestrationASGI):
         self, notifier: Any, service: Any, proposal: Mapping[str, Any], ownership_check: Any | None,
     ) -> tuple[int | Any, str, bool]:
         message, approval_available = await self._proposal_presentation(service, proposal)
-        if approval_available:
+        if getattr(notifier, "_proposal_service", None) is service:
+            message_id = await self._send_owned_trade_proposal(
+                notifier, message, str(proposal["proposal_id"]), ownership_check,
+            )
+            persisted = (await service.repository.proposal(str(proposal["proposal_id"])))[0]
+            approval_available = bool(persisted.get("approval_keyboard_attached"))
+            message = format_proposal(persisted, approval_available=approval_available,
+                                      blocking_reason=persisted.get("blocking_reason"))
+        elif approval_available:
             message_id = await self._send_owned_trade_proposal(
                 notifier, message, str(proposal["proposal_id"]), ownership_check,
             )
@@ -806,7 +818,8 @@ class ProductionASGI(OrchestrationASGI):
         message_id, _, _ = await self._publish_trade_proposal(
             notifier, service, proposal, ownership_check,
         )
-        if isinstance(message_id, int) and not isinstance(message_id, bool):
+        if (isinstance(message_id, int) and not isinstance(message_id, bool)
+                and getattr(notifier, "_proposal_service", None) is not service):
             attach = getattr(service.repository, "attach_proposal_telegram_message", None)
             if attach is not None:
                 await attach(str(proposal["proposal_id"]), message_id)
@@ -973,10 +986,7 @@ class ProductionASGI(OrchestrationASGI):
                     })
                     await self._send_owned_telegram_response(notifier, analysis_message, ownership_check)
                     if matching is not None:
-                        if approval_available:
-                            await self._send_owned_trade_proposal(notifier, proposal_message, matching["proposal_id"], ownership_check)
-                        else:
-                            await self._send_owned_telegram_response(notifier, proposal_message, ownership_check)
+                        await self._publish_trade_proposal(notifier, service, matching, ownership_check)
                     return
                 interrupted = (
                     f"ANALYSIS FAILED\nRequest: {request_id}\n"
@@ -1174,14 +1184,9 @@ class ProductionASGI(OrchestrationASGI):
         analysis_delivery = await self._send_owned_telegram_response(notifier, analysis_message, ownership_check)
         proposal_delivery = None
         if proposal is not None and proposal_message is not None:
-            if approval_available:
-                proposal_delivery = await self._send_owned_trade_proposal(
-                    notifier, proposal_message, proposal["proposal_id"], ownership_check,
-                )
-            else:
-                proposal_delivery = await self._send_owned_telegram_response(
-                    notifier, proposal_message, ownership_check,
-                )
+            proposal_delivery, proposal_message, approval_available = await self._publish_trade_proposal(
+                notifier, service, proposal, ownership_check,
+            )
         if repository is not None and hasattr(repository, "finish_telegram_analysis_request"):
             publication = {
                 "analysis_telegram_message_id": analysis_delivery if isinstance(analysis_delivery, int) and not isinstance(analysis_delivery, bool) else None,
@@ -1198,7 +1203,8 @@ class ProductionASGI(OrchestrationASGI):
                 await repository.update_telegram_analysis(analysis_id, {
                     "analysis_telegram_message_id": publication["analysis_telegram_message_id"],
                 })
-            if proposal is not None and isinstance(proposal_delivery, int) and not isinstance(proposal_delivery, bool):
+            if (proposal is not None and isinstance(proposal_delivery, int) and not isinstance(proposal_delivery, bool)
+                    and getattr(notifier, "_proposal_service", None) is not service):
                 attach = getattr(repository, "attach_proposal_telegram_message", None)
                 if attach is not None:
                     await attach(proposal["proposal_id"], proposal_delivery)
@@ -1220,6 +1226,14 @@ class ProductionASGI(OrchestrationASGI):
         command_text = re.sub(r"^(/\w+)@[A-Za-z0-9_]+", r"\1", text.strip())
         parts = command_text.split()
         command = parts[0].casefold()
+        if command in {"/approve", "/reject"} and len(parts) == 2 and context.get("callback_query_id"):
+            try:
+                await service.validate_telegram_proposal(
+                    parts[1], actor=user_id, chat_id=str(context.get("chat_id") or ""),
+                    message_id=context.get("message_id"),
+                )
+            except FTMOMasterError as exc:
+                return f"Monatise FTMO BLOCKED\nReason: {exc}\nNo order was sent."
         try:
             if command == "/status":
                 return format_ftmo_master_status(await service.status())

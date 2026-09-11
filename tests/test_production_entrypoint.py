@@ -275,6 +275,8 @@ def test_telegram_callback_approval_is_private_authorized_and_replay_safe():
     class FTMO:
         def __init__(self): self.approvals = []
         def authorized(self, user_id, chat_type): return user_id == "42" and chat_type == "private"
+        async def validate_telegram_proposal(self, proposal_id, *, actor, chat_id, message_id):
+            assert proposal_id == "a1b2c3d4e5f6" and actor == chat_id == "42" and message_id == 901
         async def approve(self, proposal_id, user_id):
             self.approvals.append((proposal_id, user_id))
             return {"command_id": "c" * 64}
@@ -288,7 +290,7 @@ def test_telegram_callback_approval_is_private_authorized_and_replay_safe():
         "update_id": 101,
         "callback_query": {
             "id": "callback-101", "from": {"id": 42}, "data": "ftmo:approve:a1b2c3d4e5f6",
-            "message": {"chat": {"id": 42, "type": "private"}},
+            "message": {"message_id": 901, "chat": {"id": 42, "type": "private"}},
         },
     }
     secret = telegram_webhook_secret("bot-token")
