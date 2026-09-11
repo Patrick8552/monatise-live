@@ -30,6 +30,8 @@ from monatise.application.risk_policy import MAX_RISK_FRACTION_PER_TRADE, MAX_RI
 
 ZERO = Decimal("0")
 DEFAULT_APPROVAL_WINDOW = timedelta(minutes=30)
+PRICE_TOLERANCE_REASON = "price moved outside the approved Monatise entry tolerance"
+EA_PRICE_TOLERANCE_REASON = "live FTMO price exceeded the approved deviation"
 LOGGER = logging.getLogger("monatise.ftmo_master")
 
 
@@ -1048,6 +1050,7 @@ class FTMOMasterControlService:
         entry: Any | None,
         now: datetime | None,
         reference_entry: Any | None = None,
+        avoid_reached_target: bool = False,
         entry_zone_low: Any | None = None,
         entry_zone_high: Any | None = None,
         risk_fraction_limit: Any | None = None,
@@ -1084,13 +1087,15 @@ class FTMOMasterControlService:
             reference = _decimal(reference_entry, "reference entry", positive=True)
             deviation_bps = abs(requested_entry - reference) / reference * Decimal("10000")
             if deviation_bps > self.configuration.maximum_entry_deviation_bps:
-                raise FTMOMasterError("price moved outside the approved Monatise entry tolerance")
+                raise FTMOMasterError(PRICE_TOLERANCE_REASON)
         if entry_zone_low is not None and requested_entry < _decimal(entry_zone_low, "entry zone low", positive=True):
             raise FTMOMasterError("price moved below the approved Monatise entry zone")
         if entry_zone_high is not None and requested_entry > _decimal(entry_zone_high, "entry zone high", positive=True):
             raise FTMOMasterError("price moved above the approved Monatise entry zone")
         stop = _decimal(stop_loss, "stop loss", positive=True)
         target = _decimal(take_profit, "take profit", positive=True)
+        if avoid_reached_target and ((side == "buy" and ask >= target) or (side == "sell" and bid <= target)):
+            raise FTMOMasterError("replacement target has already been reached; a new analysis is required")
         if side == "buy" and not stop < requested_entry < target:
             raise FTMOMasterError("buy levels require stop < entry < target")
         if side == "sell" and not target < requested_entry < stop:
@@ -1103,6 +1108,8 @@ class FTMOMasterControlService:
         stop_distance = abs(requested_entry - stop)
         if stop_distance < minimum_stop:
             raise FTMOMasterError("stop distance is below the FTMO symbol minimum")
+        if order_type != "market" and abs(requested_entry - (ask if side == "buy" else bid)) < minimum_stop:
+            raise FTMOMasterError("pending entry is below the FTMO minimum distance from market")
         reward_distance = abs(target - requested_entry)
         if reward_distance / stop_distance < self.configuration.minimum_reward_risk:
             raise FTMOMasterError("reward/risk is below execution policy")
@@ -1117,7 +1124,7 @@ class FTMOMasterControlService:
         if any(self._symbol_key(str(item.get("symbol") or "")) == self._symbol_key(symbol) for item in exposures):
             raise FTMOMasterError("a conflicting FTMO exposure already exists for the symbol")
         existing_open_risk = ZERO
-        for position in bridge.get("positions") or []:
+        for position in exposures:
             if not isinstance(position, Mapping):
                 continue
             position_symbol = str(position.get("symbol") or "")
@@ -1125,9 +1132,9 @@ class FTMOMasterControlService:
             position_quote = position_match[1] if position_match is not None else None
             position_stop = _decimal(position.get("sl", 0), "position stop")
             if position_stop <= ZERO:
-                raise FTMOMasterError("an open position has no protective stop; new risk is blocked")
+                raise FTMOMasterError("an open position or pending order has no protective stop; new risk is blocked")
             if position_quote is None:
-                raise FTMOMasterError("open-position risk cannot be priced from the FTMO heartbeat")
+                raise FTMOMasterError("open-position or pending-order risk cannot be priced from the FTMO heartbeat")
             position_entry = _decimal(position.get("price_open"), "position entry", positive=True)
             position_volume = _decimal(position.get("volume"), "position volume", positive=True)
             existing_open_risk += abs(position_entry - position_stop) / Decimal(str(position_quote["tick_size"])) * Decimal(str(position_quote.get("tick_value_loss", position_quote["tick_value"]))) * position_volume
@@ -1737,6 +1744,124 @@ class FTMOMasterControlService:
             raise FTMOMasterError("proposal persistence failed or identity collision")
         return proposal
 
+    async def _limit_replacement_parent(self, proposal_id: str, *, now: datetime | None = None) -> dict[str, Any] | None:
+        stored = await self.repository.proposal(proposal_id)
+        if stored is None:
+            return None
+        parent = stored[0]
+        if (parent.get("kind") != "open_trade" or parent.get("order_type") != "market"
+                or parent.get("replacement_for_proposal_id") or parent.get("superseded_by_signal_id")
+                or _timestamp(parent["expires_at"], "proposal expiry") <= _utc(now)):
+            return None
+        if (parent.get("status") == ProposalStatus.INVALIDATED.value
+                and parent.get("limit_replacement_eligible") is True and not parent.get("command_id")):
+            return parent
+        if parent.get("status") == ProposalStatus.EXECUTION_FAILED.value and parent.get("command_id"):
+            command = await self.repository.command(parent["command_id"])
+            if (command and command[0].get("status") == CommandStatus.REJECTED.value
+                    and command[0].get("limit_replacement_eligible") is True
+                    and command[0].get("submission_attempted") is False
+                    and not command[0].get("broker_ticket")):
+                return parent
+        return None
+
+    async def _validate_limit_replacement_origin(self, proposal: Mapping[str, Any], *, now: datetime | None = None) -> None:
+        parent = await self._limit_replacement_parent(str(proposal["replacement_for_proposal_id"]), now=now)
+        if parent is None or parent.get("replacement_proposal_id") != proposal.get("proposal_id"):
+            raise FTMOMasterError("replacement origin is no longer eligible; no order was sent")
+        if (proposal.get("order_type") != "limit"
+                or any(proposal.get(key) != parent.get(key) for key in ("symbol", "side", "entry", "stop_loss", "take_profit", "expires_at"))):
+            raise FTMOMasterError("replacement levels or expiry no longer match the original proposal")
+
+    async def create_limit_replacement(
+        self, proposal_id: str, *, actor: str | None = None, now: datetime | None = None,
+    ) -> dict[str, Any] | None:
+        """Offer one new proposal after a definitive pre-submission price refusal."""
+        parent = await self._limit_replacement_parent(proposal_id, now=now)
+        if parent is None:
+            return None
+        actor = actor or str(parent.get("approved_by") or parent.get("invalidated_by") or "")
+        if actor not in self.configuration.authorized_user_ids:
+            raise FTMOMasterError("Telegram user is not authorized")
+        replacement_id = hashlib.sha256(f"limit-replacement:{proposal_id}".encode()).hexdigest()[:12]
+        existing = await self.repository.proposal(replacement_id)
+        if existing is not None:
+            child = existing[0]
+            if child.get("replacement_for_proposal_id") != proposal_id:
+                raise FTMOMasterError("replacement proposal identity collision")
+            if child.get("telegram_message_id") or child.get("status") != ProposalStatus.PENDING.value:
+                return child
+        readiness = await self.status(now=now)
+        if not readiness["execution_ready"]:
+            raise FTMOMasterError("limit replacement blocked by: " + ", ".join(self.execution_blockers(readiness)))
+        _, quote, observed = await self._fresh_approval_quote(
+            parent["symbol"], observed=_utc(now), wait_for_refresh=now is None,
+            proposal_id=proposal_id, actor=actor,
+        )
+        entry = _decimal(parent["entry"], "original entry", positive=True)
+        live_price = _decimal(quote["ask"] if parent["side"] == "buy" else quote["bid"], "market price", positive=True)
+        target = _decimal(parent["take_profit"], "original target", positive=True)
+        if ((parent["side"] == "buy" and live_price >= target)
+                or (parent["side"] == "sell" and live_price <= target)):
+            raise FTMOMasterError("original target has already been reached; a new analysis is required")
+        if ((parent["side"] == "buy" and entry >= live_price)
+                or (parent["side"] == "sell" and entry <= live_price)):
+            raise FTMOMasterError("original entry is not a valid limit price on the current market")
+        arguments = {
+            "symbol": parent["symbol"], "side": parent["side"], "order_type": "limit",
+            "entry": parent["entry"], "stop_loss": parent["stop_loss"], "take_profit": parent["take_profit"],
+            "risk_fraction_limit": parent.get("recommended_risk_fraction") or parent["risk_fraction"],
+        }
+        metadata = {key: parent[key] for key in (
+            "analysis_source", "analysis_provider", "analysis_instrument", "analysis_exchange",
+            "analysis_price", "analysis_observed_at", "analysis_state", "confirmation_status",
+            "strategy", "timeframe", "conviction", "evidence_bundle", "mapping", "entry_zone_low", "entry_zone_high",
+        ) if key in parent}
+        metadata.update({
+            "analysis_id": f"limit-replacement:{proposal_id}", "signal_id": f"limit-replacement:{proposal_id}",
+            "replacement_for_proposal_id": proposal_id,
+            "original_analysis_id": parent.get("analysis_id"), "original_signal_id": parent.get("signal_id"),
+            "replacement_reason": "market price exceeded the approved tolerance",
+            "approval_controls_required": True,
+        })
+        if existing is None:
+            try:
+                child = await self.create_trade_proposal(
+                    actor=actor, _proposal_id=replacement_id, metadata=metadata,
+                    expires_at=_timestamp(parent["expires_at"], "original expiry"), now=now, **arguments,
+                )
+            except FTMOMasterError:
+                # Another callback may have created the same immutable child.
+                concurrent = await self.repository.proposal(replacement_id)
+                if concurrent is None or concurrent[0].get("replacement_for_proposal_id") != proposal_id:
+                    raise
+                child = concurrent[0]
+        else:
+            child, child_version = existing
+            fields = await self._validated_open_fields(now=now, **arguments)
+            child.update(fields)
+            await self.repository.update_proposal(replacement_id, child, child_version)
+        # Link before publication. Approval/publication both recheck the parent,
+        # so a crash or contradictory broker evidence cannot authorize an orphan.
+        for _ in range(5):
+            current = await self.repository.proposal(proposal_id)
+            if current is None or await self._limit_replacement_parent(proposal_id, now=now) is None:
+                raise FTMOMasterError("original proposal changed while preparing the limit replacement")
+            value, version = current
+            if value.get("replacement_proposal_id") == replacement_id:
+                return child
+            value["replacement_proposal_id"] = replacement_id
+            try:
+                await self.repository.update_proposal(proposal_id, value, version)
+                await self.repository.audit("limit_replacement_created", replacement_id, {
+                    "original_proposal_id": proposal_id, "actor": actor,
+                    "entry": str(entry), "expires_at": child["expires_at"], "manual_approval_required": True,
+                })
+                return child
+            except RuntimeError:
+                continue
+        raise FTMOMasterError("original proposal changed while linking the limit replacement")
+
     async def approve(self, proposal_id: str, actor: str, *, now: datetime | None = None) -> dict[str, Any]:
         observed = _utc(now)
         if actor not in self.configuration.authorized_user_ids:
@@ -1751,6 +1876,8 @@ class FTMOMasterControlService:
             raise FTMOMasterError("proposal publication was not durably completed")
         if proposal.get("superseded_by_signal_id"):
             raise FTMOMasterError("signal was superseded")
+        if proposal.get("replacement_for_proposal_id"):
+            await self._validate_limit_replacement_origin(proposal, now=now)
         await self.repository.audit("approval_received", proposal_id, {
             "actor": actor, "analysis_id": proposal.get("analysis_id"),
             "quote_request_id": proposal.get("quote_request_id"), "proposal_id": proposal_id,
@@ -1834,13 +1961,16 @@ class FTMOMasterControlService:
                     reference_entry=proposal.get("entry") if proposal["order_type"] == "market" else None,
                     entry_zone_low=proposal.get("entry_zone_low"), entry_zone_high=proposal.get("entry_zone_high"),
                     risk_fraction_limit=proposal.get("recommended_risk_fraction"),
+                    avoid_reached_target=bool(proposal.get("replacement_for_proposal_id")),
                 )
             except FTMOMasterError as exc:
                 reason = str(exc)
-                if any(fragment in reason for fragment in ("price moved", "reward/risk", "levels require")):
+                if any(fragment in reason for fragment in ("price moved", "reward/risk", "levels require", "target has already been reached")):
                     proposal.update({
                         "status": ProposalStatus.INVALIDATED.value, "lifecycle_state": "INVALIDATED",
                         "invalidated_at": observed.isoformat(), "invalidation_reason": reason,
+                        "limit_replacement_eligible": reason == PRICE_TOLERANCE_REASON and proposal.get("order_type") == "market",
+                        "invalidated_by": actor,
                     })
                     await self.repository.update_proposal(proposal_id, proposal, version)
                     await self.repository.audit("proposal_invalidated", proposal_id, {"actor": actor, "reason": reason})
@@ -1854,6 +1984,8 @@ class FTMOMasterControlService:
         observed = _utc(now)
         if _timestamp(proposal["expires_at"], "proposal expiry") <= observed:
             raise FTMOMasterError("proposal expired during approval validation")
+        if proposal.get("replacement_for_proposal_id"):
+            await self._validate_limit_replacement_origin(proposal, now=now)
         if proposal["kind"] == "open_trade":
             age = (observed - _timestamp(proposal["quote_timestamp"], "FTMO quote timestamp")).total_seconds()
             if age > self.configuration.quote_max_age_seconds:
@@ -1878,6 +2010,7 @@ class FTMOMasterControlService:
                 "symbol", "side", "order_type", "entry", "stop_loss", "take_profit", "volume", "target_id", "value",
                 "analysis_id", "quote_request_id", "signal_id",
                 "telegram_request_id",
+                "replacement_for_proposal_id",
             ) if proposal.get(key) is not None},
             "expected_account_id": self.configuration.account_id,
             "expected_server": self.configuration.server,
@@ -1970,6 +2103,8 @@ class FTMOMasterControlService:
             raise FTMOMasterError("proposal is not pending approval")
         if proposal.get("superseded_by_signal_id"):
             raise FTMOMasterError("signal was superseded")
+        if proposal.get("replacement_for_proposal_id"):
+            await self._validate_limit_replacement_origin(proposal, now=now)
         if _timestamp(proposal.get("expires_at"), "proposal expiry") <= observed:
             raise FTMOMasterError("proposal has expired")
         readiness = await self.status(now=observed)
@@ -1997,6 +2132,7 @@ class FTMOMasterControlService:
             entry=proposal.get("entry"), stop_loss=proposal["stop_loss"], take_profit=proposal["take_profit"],
             reference_entry=proposal["entry"], now=observed,
             risk_fraction_limit=proposal.get("recommended_risk_fraction"),
+            avoid_reached_target=bool(proposal.get("replacement_for_proposal_id")),
         )
         session = classify_market_session(observed, instrument=self._verified_instrument_mapping(proposal["symbol"]),
                                          trade_mode=fields["execution_snapshot"]["trading_status"])
@@ -2079,6 +2215,11 @@ class FTMOMasterControlService:
             if command["expected_account_id"] != self.configuration.account_id or command["expected_server"] != self.configuration.server:
                 await self.repository.update_command(command["command_id"], {"status": CommandStatus.REJECTED.value, "reason": "configured identity changed"})
                 continue
+            if approved.get("replacement_for_proposal_id"):
+                try:
+                    await self._validate_limit_replacement_origin(approved, now=now)
+                except FTMOMasterError:
+                    continue
             delivered = await self.repository.update_command(command["command_id"], {
                 "status": CommandStatus.DELIVERED.value,
                 "lifecycle_state": "EXECUTION_QUEUED",
@@ -2109,8 +2250,33 @@ class FTMOMasterControlService:
             if classified != CommandStatus.RECONCILED.value:
                 raw_status = classified
         submission_attempted = payload.get("submission_attempted")
+        submission_states = {CommandStatus.SUBMITTING.value, CommandStatus.ACCEPTED.value,
+                             CommandStatus.RECONCILED.value, CommandStatus.BROKER_UNCERTAIN.value}
+        submission_may_have_occurred = bool(
+            previous.get("submission_may_have_occurred") or previous.get("submission_attempted") is True
+            or submission_attempted is True or previous.get("status") in submission_states
+            or raw_status in submission_states
+        )
+        price_refusal = payload.get("message") == EA_PRICE_TOLERANCE_REASON or (
+            previous.get("limit_replacement_eligible") is True
+            and payload.get("message") == "duplicate delivery reconciled from EA journal"
+        )
+        replacement_eligible = bool(
+            price_refusal and raw_status == CommandStatus.REJECTED.value
+            and not submission_may_have_occurred
+            and submission_attempted is False
+            and previous.get("status") in {CommandStatus.READY.value, CommandStatus.DELIVERED.value, CommandStatus.REJECTED.value}
+            and previous.get("submission_attempted") is not True
+            and not any(payload.get(key) or previous.get(key) for key in (
+                "broker_ticket", "broker_retcode", "fill_price", "executed_volume",
+            ))
+            and previous.get("operation") == "open"
+            and (previous.get("payload") or {}).get("order_type") == "market"
+        )
         changes = {
             "status": raw_status,
+            "limit_replacement_eligible": replacement_eligible,
+            "submission_may_have_occurred": submission_may_have_occurred,
             "broker_ticket": str(payload.get("broker_ticket") or "") or None,
             "broker_retcode": str(payload.get("broker_retcode") or "") or None,
             "message": str(payload.get("message") or "")[:500],
@@ -2282,6 +2448,10 @@ def format_proposal(
         return "\n".join((
             "MONATISE TRADE PROPOSAL",
             f"ID: {proposal['proposal_id']}",
+            *((
+                f"Replacement for: {proposal['replacement_for_proposal_id']}",
+                "NEW LIMIT ORDER — separate manual approval required; original entry, SL/TP and deadline retained.",
+            ) if proposal.get("replacement_for_proposal_id") else ()),
             *((f"Signal: {proposal['signal_id']} | Analysis: {proposal.get('analysis_id') or 'unknown'}",) if proposal.get("signal_id") else ()),
             *((f"Telegram request: {proposal['telegram_request_id']}",) if proposal.get("telegram_request_id") else ()),
             f"Instrument: {proposal['symbol']}",
@@ -2301,7 +2471,9 @@ def format_proposal(
             *((f"Conviction: {proposal['conviction']}",) if proposal.get("conviction") is not None else ()),
             "Status: PENDING_APPROVAL",
             f"Approve: /approve {proposal['proposal_id']} | Reject: /reject {proposal['proposal_id']}",
-            "Approval authorizes revalidation at the current FTMO Bid/Ask; it does not authorize this preview price.",
+            ("Approval authorizes a pending limit order at the stated entry after fresh quote and risk validation."
+             if proposal.get("order_type") == "limit" else
+             "Approval authorizes revalidation at the current FTMO Bid/Ask; it does not authorize this preview price."),
             "No order has been sent.",
         ))
     return "\n".join((

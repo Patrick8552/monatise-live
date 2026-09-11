@@ -127,6 +127,15 @@ Temporary approval failures keep both buttons on an eligible pending request,
 so the operator can retry or reject before its deadline. Terminal outcomes and
 expired, invalidated, or superseded setups cannot regain approval controls.
 
+If a market order exceeds the approved price tolerance before submission,
+Telegram can offer one new Buy Limit or Sell Limit proposal at the original
+entry. It retains the original SL/TP, recommended risk, and remaining expiry,
+and requires its own manual approval. The original market command is not
+retried. Replacements are withheld when submission is uncertain, the entry
+is on the wrong side of the market, the original target has already been
+reached, or current identity/session/risk checks fail. Bridge 1.16 includes
+pending orders in aggregate risk and reports their stops and targets.
+
 For stocks outside the EA's always-on quote set, Render issues a short-lived
 symbol request in the authenticated heartbeat response. The EA selects that
 verified FTMO symbol and returns native Bid/Ask and contract specifications
