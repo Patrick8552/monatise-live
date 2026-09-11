@@ -94,6 +94,10 @@ def test_position_seen_before_receipt_is_reconciled_on_following_heartbeat(monke
     bridge_request(app, control, clock[0], 'POST', '/api/ftmo/bridge/heartbeat', payload)
     assert asyncio.run(control.repository.command(command['command_id']))[0]['status'] == 'reconciled'
     payload['positions'] = []
+    payload['terminal_connected'] = False
+    bridge_request(app, control, clock[0], 'POST', '/api/ftmo/bridge/heartbeat', payload)
+    assert asyncio.run(control.repository.proposal(proposal['proposal_id']))[0]['lifecycle_state'] == 'POSITION_OPEN'
+    payload['terminal_connected'] = True
     bridge_request(app, control, clock[0], 'POST', '/api/ftmo/bridge/heartbeat', payload)
     bridge_request(app, control, clock[0], 'POST', ack_path, receipt)
     saved = asyncio.run(control.repository.proposal(proposal['proposal_id']))[0]

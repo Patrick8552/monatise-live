@@ -1315,6 +1315,8 @@ class FTMOMasterControlService:
     async def _reconcile_proposals_from_heartbeat(
         self, snapshot: Mapping[str, Any], observed: datetime,
     ) -> tuple[dict[str, Any], ...]:
+        if not snapshot.get("terminal_connected") or not snapshot.get("ea_attached"):
+            return ()
         positions = tuple(item for item in snapshot.get("positions") or () if isinstance(item, Mapping))
         orders = tuple(item for item in snapshot.get("orders") or () if isinstance(item, Mapping))
         events: list[dict[str, Any]] = []

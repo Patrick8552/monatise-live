@@ -1550,7 +1550,7 @@ class ProductionASGI(OrchestrationASGI):
         if submission_attempted is not None:
             lines.append(f"Broker submission: {'ATTEMPTED' if submission_attempted else 'NOT ATTEMPTED'}")
         if awaiting_confirmation:
-            lines.append("Submission was attempted but the fill is not yet confirmed. Checking MT5; no automatic retry will be sent.")
+            lines.append("The broker result is not yet confirmed. Checking MT5; no automatic retry will be sent.")
         if status in {"EXECUTION_FAILED", "REJECTED", "BROKER_UNCERTAIN"} and command.get("message"):
             lines.append(f"Reason: {str(command['message'])[:500]}")
         await self._send_ftmo_notification(lines)
