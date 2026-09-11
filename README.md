@@ -115,6 +115,15 @@ only its identified proposal; no temporary timed arm is required. The
 recommended risk is conviction-scaled below the 3% ceiling. Autonomous
 execution remains unsupported and OFF.
 
+New operator trade and management requests, and scanner proposals without an
+explicit signal deadline, remain available for manual approval for 30 minutes.
+On-demand futures analysis also defaults to 30 minutes. The Telegram proposal
+shows its exact deadline; an explicit source expiry is preserved, and price,
+session, risk, or supersession checks can still invalidate a setup earlier.
+Approval refreshes the MT5 quote, and the resulting broker command expires
+within 30 seconds (or at the proposal deadline, if earlier). Rejecting a
+request creates no broker command; repeated clicks cannot create another order.
+
 For stocks outside the EA's always-on quote set, Render issues a short-lived
 symbol request in the authenticated heartbeat response. The EA selects that
 verified FTMO symbol and returns native Bid/Ask and contract specifications

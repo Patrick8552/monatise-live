@@ -739,7 +739,7 @@ def test_approval_requires_kill_reset_temporary_arm_and_current_bridge_then_queu
         assert command["status"] == CommandStatus.READY.value
         assert command["expires_at"] == (NOW + timedelta(seconds=30)).isoformat()
         assert command["payload"]["expires_epoch"] == str(int((NOW + timedelta(seconds=30)).timestamp()))
-        assert command["payload"]["pending_expires_epoch"] == str(int((NOW + timedelta(minutes=5)).timestamp()))
+        assert command["payload"]["pending_expires_epoch"] == str(int((NOW + timedelta(minutes=30)).timestamp()))
         assert command["execution_session"]["execution_session_id"] == armed["execution_session_id"]
         assert command["market_session"]["session_checked_at"] == NOW.isoformat()
         assert command["execution_session"]["autonomous_execution_enabled"] is False

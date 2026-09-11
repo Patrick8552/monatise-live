@@ -420,7 +420,7 @@ class FuturesMarketIntelligenceCoordinator:
             return result
 
         analysis = build_flashalpha_futures_analysis(context)
-        validity_minutes = max(5, int(self.environment.get("MONATISE_FUTURES_ON_DEMAND_VALIDITY_MINUTES", "15")))
+        validity_minutes = max(5, int(self.environment.get("MONATISE_FUTURES_ON_DEMAND_VALIDITY_MINUTES", "30")))
         analysis.update({
             "ftmo_symbol": instrument.ftmo_symbol,
             "underlying_market": instrument.underlying_market,
