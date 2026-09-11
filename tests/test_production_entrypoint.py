@@ -312,6 +312,7 @@ def test_ftmo_broker_and_position_lifecycle_are_reported_to_telegram():
         await app._notify_ftmo_command_result({
             "status": "reconciled", "lifecycle_state": "BROKER_ACCEPTED",
             "broker_ticket": "12345678", "broker_retcode": "10009",
+            "submission_attempted": True,
             "requested_price": "63128.40", "fill_price": "63128.50", "executed_volume": "0.01",
             "executed_stop_loss": "62980", "executed_take_profit": "63450",
             "payload": {"symbol": "BTCUSD", "side": "buy", "entry": "63128.40", "volume": "0.01"},
@@ -324,7 +325,8 @@ def test_ftmo_broker_and_position_lifecycle_are_reported_to_telegram():
         })
         await app._notify_ftmo_command_result({
             "status": "rejected", "lifecycle_state": "EXECUTION_FAILED",
-            "broker_retcode": "0", "message": "approved pending-order expiration has already passed",
+            "broker_retcode": None, "submission_attempted": False,
+            "message": "approved pending-order expiration has already passed",
             "payload": {"symbol": "US500.cash", "side": "buy", "entry": "7500.00", "volume": "0.20"},
         })
 
@@ -332,6 +334,8 @@ def test_ftmo_broker_and_position_lifecycle_are_reported_to_telegram():
         assert "Execution source: FTMO MT5 | Analysis source: coinglass + Monatise" in runtime.telegram.messages[0]
         assert runtime.telegram.messages[1].startswith("FTMO POSITION OPEN\nInstrument: BTCUSD | Direction: BUY")
         assert "Unrealized P/L: 1.20" in runtime.telegram.messages[1]
+        assert "Ticket: none | Retcode: NOT_SUBMITTED" in runtime.telegram.messages[2]
+        assert "Broker submission: NOT ATTEMPTED" in runtime.telegram.messages[2]
         assert "Reason: approved pending-order expiration has already passed" in runtime.telegram.messages[2]
 
     asyncio.run(scenario())

@@ -1032,6 +1032,7 @@ def test_rejection_duplicate_supersession_minimum_lot_and_broker_evidence_are_fa
         command = await control.approve(proposal["proposal_id"], "42", now=NOW)
         result = await control.acknowledge(command["command_id"], {
             "status": "reconciled", "broker_ticket": "12345678", "broker_retcode": "10009",
+            "submission_attempted": True,
             "requested_price": "2500.20", "fill_price": "2500.21", "slippage": "0.01",
             "executed_volume": command["payload"]["volume"],
             "executed_stop_loss": command["payload"]["stop_loss"],
@@ -1040,6 +1041,7 @@ def test_rejection_duplicate_supersession_minimum_lot_and_broker_evidence_are_fa
         })
         duplicate_result = await control.acknowledge(command["command_id"], {
             "status": "reconciled", "broker_ticket": "12345678", "broker_retcode": "10009",
+            "submission_attempted": True,
             "requested_price": "2500.20", "fill_price": "2500.21", "slippage": "0.01",
             "executed_volume": command["payload"]["volume"],
             "executed_stop_loss": command["payload"]["stop_loss"],
@@ -1052,6 +1054,7 @@ def test_rejection_duplicate_supersession_minimum_lot_and_broker_evidence_are_fa
         stored = (await control.repository.proposal(proposal["proposal_id"]))[0]
         assert stored["broker_ticket"] == "12345678"
         assert stored["execution_result"]["broker_retcode"] == "10009"
+        assert stored["execution_result"]["submission_attempted"] is True
         assert any(event["event"] == "bridge_acknowledgement" for event in store.streams[control.repository.AUDIT])
 
     asyncio.run(scenario())
@@ -1195,6 +1198,41 @@ def test_us500_us100_and_xau_share_one_exact_broker_symbol_resolution_path():
     asyncio.run(scenario())
 
 
+def test_scanner_command_scopes_execution_fields_away_from_conflicting_analysis_symbols():
+    async def scenario():
+        control, _ = service()
+        await control.accept_bridge_heartbeat(heartbeat(), now=NOW)
+        proposal = await control.create_signal_proposal(
+            signal_id="gold-symbol-scope", symbol="XAU/USD", direction="buy",
+            analysis_entry="3500", analysis_stop="3493.1", analysis_target="3514",
+            source="monatise.futures.scanner", analysis_state="LONG",
+            confirmation_status="confirmed", analysis_provider="flashalpha",
+            analysis_instrument="GC=F",
+            evidence_bundle={
+                "ftmo_execution_quote": {
+                    "provider": "ftmo_mt5", "status": "requested", "symbol": "XAU/USD",
+                },
+            },
+            now=NOW,
+        )
+        await control.repository.update_control(kill_switch=False)
+        await control.arm("42", now=NOW)
+        command = await control.approve(proposal["proposal_id"], "42", now=NOW)
+
+        assert command["payload"]["symbol"] == "XAUUSD"
+        assert command["payload"]["operation"] == "open"
+        assert command["payload"]["command_id"] == command["command_id"]
+        canonical = json.dumps(command, sort_keys=True, separators=(",", ":"))
+        assert canonical.index('"symbol":"XAU/USD"') < canonical.index('"symbol":"XAUUSD"')
+
+        source = Path("mt5/Experts/MonatiseFTMOBridge.mq5").read_text()
+        assert 'JsonTopLevelObject(command_json, "payload")' in source
+        assert 'FinalOrderValidation(execution_payload, reason)' in source
+        assert 'JsonString(execution_payload, "symbol")' in source
+
+    asyncio.run(scenario())
+
+
 def test_missing_mt5_quote_surfaces_the_bridge_symbol_diagnostic():
     async def scenario():
         control, _ = service()
@@ -1302,8 +1340,10 @@ def test_telegram_does_not_publish_approval_controls_when_execution_is_already_b
 
 def test_mt5_bridge_reports_exact_symbol_diagnostics_and_the_actual_tick_timestamp():
     source = Path("mt5/Experts/MonatiseFTMOBridge.mq5").read_text()
-    assert '#property version   "1.12"' in source
+    assert '#property version   "1.13"' in source
     assert "ResolveBrokerSymbol" in source and "SymbolInfoTick(resolved_symbol, tick)" in source
+    assert '\\",\\"submission_attempted\\\":' in source
+    assert 'JsonEscape(broker_retcode)' in source
     assert '\\"quote_diagnostics\\"' in source
     assert 'IsoTime(broker_time_utc)' in source
     assert '"quote_observed_at_utc\\\":\\\"" + IsoTime(observed_utc)' not in source

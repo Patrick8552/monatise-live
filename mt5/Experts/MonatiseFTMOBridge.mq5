@@ -1,5 +1,5 @@
 #property copyright "Monatise"
-#property version   "1.12"
+#property version   "1.13"
 #property strict
 #property description "Account-bound FTMO bridge. Telegram never talks directly to the broker."
 
@@ -24,7 +24,7 @@ input int    InpMaximumSpreadTicks     = 80;
 input int    InpMaximumDeviationPoints = 20;
 input long   InpMagicNumber            = 26082501;
 
-string EA_VERSION = "1.12";
+string EA_VERSION = "1.13";
 string JOURNAL_FILE = "monatise-ftmo-command-journal.csv";
 CTrade Trade;
 
@@ -450,6 +450,67 @@ string JsonString(string json, string key)
    return value;
 }
 
+string JsonTopLevelObject(string json, string key)
+{
+   int container_depth = 0;
+   int length = StringLen(json);
+   for(int index = 0; index < length; index++)
+   {
+      ushort character = StringGetCharacter(json, index);
+      if(character == 34)
+      {
+         int key_end = index + 1;
+         bool key_escaped = false;
+         for(; key_end < length; key_end++)
+         {
+            ushort key_character = StringGetCharacter(json, key_end);
+            if(key_escaped) { key_escaped = false; continue; }
+            if(key_character == 92) { key_escaped = true; continue; }
+            if(key_character == 34) break;
+         }
+         if(key_end >= length) return "";
+         string candidate = StringSubstr(json, index + 1, key_end - index - 1);
+         if(container_depth == 1 && candidate == key)
+         {
+            int value_start = key_end + 1;
+            while(value_start < length && StringGetCharacter(json, value_start) == 32) value_start++;
+            if(value_start >= length || StringGetCharacter(json, value_start) != 58) return "";
+            value_start++;
+            while(value_start < length && StringGetCharacter(json, value_start) == 32) value_start++;
+            if(value_start >= length || StringGetCharacter(json, value_start) != 123) return "";
+            int object_depth = 0;
+            bool object_string = false;
+            bool object_escaped = false;
+            for(int cursor = value_start; cursor < length; cursor++)
+            {
+               ushort value_character = StringGetCharacter(json, cursor);
+               if(object_string)
+               {
+                  if(object_escaped) { object_escaped = false; continue; }
+                  if(value_character == 92) { object_escaped = true; continue; }
+                  if(value_character == 34) object_string = false;
+                  continue;
+               }
+               if(value_character == 34) { object_string = true; continue; }
+               if(value_character == 123) object_depth++;
+               else if(value_character == 125)
+               {
+                  object_depth--;
+                  if(object_depth == 0)
+                     return StringSubstr(json, value_start, cursor - value_start + 1);
+               }
+            }
+            return "";
+         }
+         index = key_end;
+         continue;
+      }
+      if(character == 123 || character == 91) container_depth++;
+      else if(character == 125 || character == 93) container_depth--;
+   }
+   return "";
+}
+
 bool DecodeBase64(string encoded, string &decoded)
 {
    uchar source[], key[], result[];
@@ -489,12 +550,14 @@ void JournalAppend(string command_id, string status, string ticket, string messa
 }
 
 void AcknowledgeEvidence(string command_id, string status, string ticket, string message,
+                         bool submission_attempted, string broker_retcode,
                          string requested_price, string fill_price, string slippage,
                          string executed_volume, string executed_stop, string executed_target)
 {
    string body = "{\"status\":\"" + JsonEscape(status) + "\",\"broker_ticket\":\"" + JsonEscape(ticket)
-               + "\",\"broker_retcode\":\"" + IntegerToString((long)Trade.ResultRetcode())
-               + "\",\"requested_price\":\"" + JsonEscape(requested_price)
+               + "\",\"broker_retcode\":\"" + JsonEscape(broker_retcode)
+               + "\",\"submission_attempted\":" + (submission_attempted ? "true" : "false")
+               + ",\"requested_price\":\"" + JsonEscape(requested_price)
                + "\",\"fill_price\":\"" + JsonEscape(fill_price)
                + "\",\"slippage\":\"" + JsonEscape(slippage)
                + "\",\"executed_volume\":\"" + JsonEscape(executed_volume)
@@ -508,18 +571,18 @@ void AcknowledgeEvidence(string command_id, string status, string ticket, string
 
 void Acknowledge(string command_id, string status, string ticket, string message)
 {
-   AcknowledgeEvidence(command_id, status, ticket, message, "", "", "", "", "", "");
+   AcknowledgeEvidence(command_id, status, ticket, message, false, "", "", "", "", "", "", "");
 }
 
-bool FinalOrderValidation(string payload, string &reason)
+bool FinalOrderValidation(string execution_payload, string &reason)
 {
    if(!InpExecutionEnabled || !InpMasterAccountApproved) { reason = "local execution gates are disabled"; return false; }
    if(!IdentityMatches()) { reason = "account/server/currency mismatch"; return false; }
    if(!TradingPermission()) { reason = "MT5 trading permission is unavailable"; return false; }
-   string operation = JsonString(payload, "operation");
-   long expires_epoch = StringToInteger(JsonString(payload, "expires_epoch"));
+   string operation = JsonString(execution_payload, "operation");
+   long expires_epoch = StringToInteger(JsonString(execution_payload, "expires_epoch"));
    if(expires_epoch <= 0 || TimeGMT() >= (datetime)expires_epoch) { reason = "execution command has expired"; return false; }
-   string target_text = JsonString(payload, "target_id");
+   string target_text = JsonString(execution_payload, "target_id");
    ulong target_id = (ulong)StringToInteger(target_text);
    if(operation != "open")
    {
@@ -539,12 +602,12 @@ bool FinalOrderValidation(string payload, string &reason)
       reason = "maximum open position/pending-order exposure limit is reached";
       return false;
    }
-   string symbol = JsonString(payload, "symbol");
-   string side = JsonString(payload, "side");
-   string order_type = JsonString(payload, "order_type");
-   double volume = StringToDouble(JsonString(payload, "volume"));
-   double stop = StringToDouble(JsonString(payload, "stop_loss"));
-   double target = StringToDouble(JsonString(payload, "take_profit"));
+   string symbol = JsonString(execution_payload, "symbol");
+   string side = JsonString(execution_payload, "side");
+   string order_type = JsonString(execution_payload, "order_type");
+   double volume = StringToDouble(JsonString(execution_payload, "volume"));
+   double stop = StringToDouble(JsonString(execution_payload, "stop_loss"));
+   double target = StringToDouble(JsonString(execution_payload, "take_profit"));
    MqlTick tick;
    if(symbol == "" || !SymbolInfoTick(symbol, tick)) { reason = "FTMO quote is unavailable"; return false; }
    datetime command_quote_utc = BrokerTimeToUtc(tick.time);
@@ -553,8 +616,8 @@ bool FinalOrderValidation(string payload, string &reason)
    double tick_size = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
    double tick_value = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE_LOSS);
    if(tick_value <= 0) tick_value = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
-   double entry = order_type == "market" ? ((side == "buy") ? tick.ask : tick.bid) : StringToDouble(JsonString(payload, "entry"));
-   double approved_entry = StringToDouble(JsonString(payload, "entry"));
+   double entry = order_type == "market" ? ((side == "buy") ? tick.ask : tick.bid) : StringToDouble(JsonString(execution_payload, "entry"));
+   double approved_entry = StringToDouble(JsonString(execution_payload, "entry"));
    double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
    double volume_min = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
    double volume_max = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX);
@@ -632,33 +695,42 @@ bool ResolvePendingOrderExpiration(
    return false;
 }
 
-void ExecuteCommand(string payload)
+void ExecuteCommand(string command_json)
 {
-   string command_id = JsonString(payload, "command_id");
-   string operation = JsonString(payload, "operation");
+   string execution_payload = JsonTopLevelObject(command_json, "payload");
+   string command_id = JsonString(execution_payload, "command_id");
+   if(command_id == "") command_id = JsonString(command_json, "command_id");
    string previous_status, previous_ticket;
    if(command_id == "") return;
+   if(execution_payload == "")
+   {
+      string malformed_reason = "signed command has no top-level execution payload";
+      JournalAppend(command_id, "rejected", "", malformed_reason);
+      Acknowledge(command_id, "rejected", "", malformed_reason);
+      return;
+   }
+   string operation = JsonString(execution_payload, "operation");
    if(JournalLookup(command_id, previous_status, previous_ticket))
    {
       Acknowledge(command_id, previous_status, previous_ticket, "duplicate delivery reconciled from EA journal");
       return;
    }
    string reason;
-   if(!FinalOrderValidation(payload, reason))
+   if(!FinalOrderValidation(execution_payload, reason))
    {
       JournalAppend(command_id, "rejected", "", reason);
       Acknowledge(command_id, "rejected", "", reason);
       return;
    }
-   string symbol = JsonString(payload, "symbol");
-   string side = JsonString(payload, "side");
-   string order_type = JsonString(payload, "order_type");
-   double entry = StringToDouble(JsonString(payload, "entry"));
-   double stop = StringToDouble(JsonString(payload, "stop_loss"));
-   double target = StringToDouble(JsonString(payload, "take_profit"));
-   double volume = StringToDouble(JsonString(payload, "volume"));
-   ulong target_id = (ulong)StringToInteger(JsonString(payload, "target_id"));
-   datetime pending_expires_at = (datetime)StringToInteger(JsonString(payload, "pending_expires_epoch"));
+   string symbol = JsonString(execution_payload, "symbol");
+   string side = JsonString(execution_payload, "side");
+   string order_type = JsonString(execution_payload, "order_type");
+   double entry = StringToDouble(JsonString(execution_payload, "entry"));
+   double stop = StringToDouble(JsonString(execution_payload, "stop_loss"));
+   double target = StringToDouble(JsonString(execution_payload, "take_profit"));
+   double volume = StringToDouble(JsonString(execution_payload, "volume"));
+   ulong target_id = (ulong)StringToInteger(JsonString(execution_payload, "target_id"));
+   datetime pending_expires_at = (datetime)StringToInteger(JsonString(execution_payload, "pending_expires_epoch"));
    string comment = "MNT:" + StringSubstr(command_id, 0, 16);
    ENUM_ORDER_TYPE_TIME pending_order_time = ORDER_TIME_GTC;
    datetime pending_expiration = 0;
@@ -702,7 +774,7 @@ void ExecuteCommand(string payload)
       if(PositionSelectByTicket(target_id))
       {
          double current_sl = PositionGetDouble(POSITION_SL), current_tp = PositionGetDouble(POSITION_TP);
-         double value = StringToDouble(JsonString(payload, "value"));
+         double value = StringToDouble(JsonString(execution_payload, "value"));
          if(operation == "sl") current_sl = value;
          if(operation == "tp") current_tp = value;
          if(operation == "breakeven") current_sl = PositionGetDouble(POSITION_PRICE_OPEN);
@@ -719,6 +791,7 @@ void ExecuteCommand(string payload)
    double fill_price = Trade.ResultPrice();
    AcknowledgeEvidence(
       command_id, result_status, ticket, message,
+      true, IntegerToString((long)Trade.ResultRetcode()),
       DoubleToString(requested_price, digits), DoubleToString(fill_price, digits),
       DoubleToString(MathAbs(fill_price - requested_price), digits),
       DoubleToString(Trade.ResultVolume(), 8), DoubleToString(stop, digits), DoubleToString(target, digits)

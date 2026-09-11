@@ -7,15 +7,17 @@ BRIDGE_SOURCE = Path(__file__).parents[1] / "mt5" / "Experts" / "MonatiseFTMOBri
 def test_mt5_bridge_enforces_expiry_price_volume_and_broker_symbol_constraints():
     source = BRIDGE_SOURCE.read_text(encoding="utf-8")
 
-    assert '#property version   "1.12"' in source
+    assert '#property version   "1.13"' in source
     assert 'InpSymbols                = "XAUUSD,US100.cash,US500.cash,AAPL,EURUSD,GBPUSD,USDJPY,USDCHF,AUDUSD,NZDUSD,USDCAD"' in source
     assert "BTCUSD" not in source.split("input string InpSymbols", 1)[1].split(";", 1)[0]
     assert "InpRiskFraction           = 0.03" in source
     assert "InpMaximumRiskAmount" not in source
     assert "InpMaximumDailyLossAmount" not in source
     assert "MathMin(InpRiskFraction, 0.03)" in source
-    assert 'JsonString(payload, "expires_epoch")' in source
-    assert 'JsonString(payload, "pending_expires_epoch")' in source
+    assert 'JsonTopLevelObject(command_json, "payload")' in source
+    assert 'JsonString(execution_payload, "expires_epoch")' in source
+    assert 'JsonString(execution_payload, "pending_expires_epoch")' in source
+    assert 'JsonString(execution_payload, "symbol")' in source
     assert "MathMin(InpHeartbeatSeconds, 2)" in source
     assert "SYMBOL_TRADE_MODE_FULL" in source
     assert "SYMBOL_VOLUME_MIN" in source and "SYMBOL_VOLUME_MAX" in source and "SYMBOL_VOLUME_STEP" in source
@@ -42,6 +44,7 @@ def test_mt5_bridge_preserves_idempotency_and_returns_execution_evidence():
     for field in (
         "requested_price", "fill_price", "slippage", "executed_volume",
         "executed_stop_loss", "executed_take_profit", "broker_observed_at",
+        "submission_attempted",
     ):
         assert f'\\"{field}\\"' in source
 

@@ -1806,6 +1806,8 @@ class FTMOMasterControlService:
             },
         }
         command["payload"].update({
+            "command_id": command_id,
+            "operation": command["operation"],
             "approval_id": approval_id,
             "execution_id": execution_id,
             "expires_epoch": str(int(command_expires_at.timestamp())),
@@ -1890,6 +1892,7 @@ class FTMOMasterControlService:
         allowed = {item.value for item in CommandStatus} - {CommandStatus.READY.value, CommandStatus.DELIVERED.value}
         if raw_status not in allowed:
             raise FTMOMasterError("invalid bridge acknowledgement status")
+        submission_attempted = payload.get("submission_attempted")
         changes = {
             "status": raw_status,
             "broker_ticket": str(payload.get("broker_ticket") or "") or None,
@@ -1902,6 +1905,9 @@ class FTMOMasterControlService:
             "executed_volume": str(payload.get("executed_volume") or "") or None,
             "executed_stop_loss": str(payload.get("executed_stop_loss") or "") or None,
             "executed_take_profit": str(payload.get("executed_take_profit") or "") or None,
+            "submission_attempted": (
+                submission_attempted if isinstance(submission_attempted, bool) else None
+            ),
         }
         if raw_status == CommandStatus.BROKER_UNCERTAIN.value:
             changes["automatic_resend"] = False
@@ -1920,7 +1926,7 @@ class FTMOMasterControlService:
         evidence_keys = (
             "status", "lifecycle_state", "broker_ticket", "broker_retcode",
             "requested_price", "fill_price", "slippage", "executed_volume",
-            "executed_stop_loss", "executed_take_profit",
+            "executed_stop_loss", "executed_take_profit", "submission_attempted",
         )
         notification_required = any(previous.get(key) != changes.get(key) for key in evidence_keys)
         command = await self.repository.update_command(command_id, changes)

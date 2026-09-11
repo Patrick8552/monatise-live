@@ -1436,15 +1436,20 @@ class ProductionASGI(OrchestrationASGI):
         payload = command.get("payload") if isinstance(command.get("payload"), Mapping) else {}
         provenance = command.get("analysis_provenance") if isinstance(command.get("analysis_provenance"), Mapping) else {}
         title = "FTMO EXECUTION FAILED" if status in {"EXECUTION_FAILED", "REJECTED", "BROKER_UNCERTAIN"} else "FTMO EXECUTION CONFIRMATION"
+        submission_attempted = command.get("submission_attempted")
+        ticket = command.get("broker_ticket") or ("none" if submission_attempted is False else "pending")
+        retcode = command.get("broker_retcode") or ("NOT_SUBMITTED" if submission_attempted is False else "pending")
         lines = [
             title,
             f"Instrument: {payload.get('symbol') or 'unknown'} | Direction: {str(payload.get('side') or 'unknown').upper()}",
             f"Status: {status}",
             f"Requested: {command.get('requested_price') or payload.get('entry') or 'unknown'} | Fill: {command.get('fill_price') or 'pending'}",
             f"Volume: {command.get('executed_volume') or payload.get('volume') or 'unknown'} | SL: {command.get('executed_stop_loss') or payload.get('stop_loss') or 'unknown'} | TP: {command.get('executed_take_profit') or payload.get('take_profit') or 'unknown'}",
-            f"Ticket: {command.get('broker_ticket') or 'pending'} | Retcode: {command.get('broker_retcode') or 'pending'}",
+            f"Ticket: {ticket} | Retcode: {retcode}",
             f"Execution source: FTMO MT5 | Analysis source: {provenance.get('analysis_provider') or 'Monatise'} + Monatise",
         ]
+        if submission_attempted is not None:
+            lines.append(f"Broker submission: {'ATTEMPTED' if submission_attempted else 'NOT ATTEMPTED'}")
         if status in {"EXECUTION_FAILED", "REJECTED", "BROKER_UNCERTAIN"} and command.get("message"):
             lines.append(f"Reason: {str(command['message'])[:500]}")
         await self._send_ftmo_notification(lines)
