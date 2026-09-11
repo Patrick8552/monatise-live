@@ -136,6 +136,24 @@ is on the wrong side of the market, the original target has already been
 reached, or current identity/session/risk checks fail. Bridge 1.16 includes
 pending orders in aggregate risk and reports their stops and targets.
 
+Gold market proposals can opt into an allowance in USD per ounce with
+`FTMO_GOLD_MAXIMUM_ADVERSE_PRICE_DEVIATION` (default `0`, legacy behavior).
+Bridge 1.17 reports its independent `InpGoldMaximumAdversePriceDeviation`
+ceiling (default `10`). Both sides must support the requested allowance before
+a new Gold proposal is published. Telegram shows the original executable
+reference and allowance; the reference stays fixed through approval and delivery.
+Buys permit up to that amount above the reference, and sells below it. Better
+prices still need valid stops, targets, entry zones, spread and reward/risk.
+Sizing uses the worst price in the allowance and cannot increase the original
+volume or risk budget at approval. The EA rechecks price, risk budget and setup
+at its final quote. Other symbols, pending orders and existing proposals retain
+their original policy. A limit replacement keeps the original preview reference.
+
+This is a pre-submission market-price check, not a guaranteed fill cap. The EA
+also sends the remaining allowance in broker deviation points, but market
+execution does not promise that a broker will enforce it. See the official
+[MT5 trade request documentation](https://www.mql5.com/en/docs/constants/structures/mqltraderequest).
+
 If MT5 returns DONE for a market order without a usable fill price, Telegram
 shows confirmation pending. A fresh authenticated position heartbeat can
 resolve that receipt only when its account, ticket, command comment, symbol,

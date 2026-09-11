@@ -93,6 +93,8 @@ services:
         value: 1
       - key: FTMO_MAXIMUM_ENTRY_DEVIATION_BPS
         value: 50
+      - key: FTMO_GOLD_MAXIMUM_ADVERSE_PRICE_DEVIATION
+        sync: false
       - key: FTMO_MINIMUM_REWARD_RISK
         value: 1
       - key: FTMO_QUOTE_FUTURE_TOLERANCE_SECONDS

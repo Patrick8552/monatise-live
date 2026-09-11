@@ -1,5 +1,5 @@
 #property copyright "Monatise"
-#property version   "1.16"
+#property version   "1.17"
 #property strict
 #property description "Account-bound FTMO bridge. Telegram never talks directly to the broker."
 
@@ -23,9 +23,10 @@ input int    InpHeartbeatSeconds       = 2;
 input int    InpHttpTimeoutMs          = 10000;
 input int    InpMaximumSpreadTicks     = 80;
 input int    InpMaximumDeviationPoints = 20;
+input double InpGoldMaximumAdversePriceDeviation = 10.0; // Price units (USD/oz), signed Gold proposals only.
 input long   InpMagicNumber            = 26082501;
 
-string EA_VERSION = "1.16";
+string EA_VERSION = "1.17";
 string JOURNAL_FILE = "monatise-ftmo-command-journal.csv";
 string DynamicSymbols = "";
 CTrade Trade;
@@ -480,6 +481,8 @@ string BuildHeartbeat()
       + "\"ea_attached\":true,"
       + "\"terminal_build\":\"" + IntegerToString((int)TerminalInfoInteger(TERMINAL_BUILD)) + "\","
       + "\"ea_version\":\"" + EA_VERSION + "\","
+      + "\"gold_price_guard_version\":1,"
+      + "\"gold_maximum_adverse_price_deviation\":\"" + DoubleToString(MathMax(0, InpGoldMaximumAdversePriceDeviation), 8) + "\","
       + "\"observed_at_utc\":\"" + IsoTime(observed_utc) + "\","
       + "\"broker_time\":\"" + BrokerTime(TimeTradeServer()) + "\","
       + "\"broker_time_offset\":" + IntegerToString((int)BrokerUtcOffsetSeconds()) + ","
@@ -635,7 +638,27 @@ void Acknowledge(string command_id, string status, string ticket, string message
    AcknowledgeEvidence(command_id, status, ticket, message, false, "", "", "", "", "", "", "");
 }
 
-bool FinalOrderValidation(string execution_payload, string &reason)
+bool GoldPriceGuard(string payload, string symbol, string side, double entry, string &reason)
+{
+   string gold_symbol, mapping_reason;
+   double reference = StringToDouble(JsonString(payload, "price_guard_reference"));
+   double allowance = StringToDouble(JsonString(payload, "maximum_adverse_price_deviation"));
+   if(JsonString(payload, "gold_price_guard_version") != "1"
+      || !ResolveBrokerSymbol("XAUUSD", gold_symbol, mapping_reason) || symbol != gold_symbol
+      || (side != "buy" && side != "sell")
+      || !MathIsValidNumber(reference) || reference <= 0
+      || !MathIsValidNumber(allowance) || allowance <= 0
+      || !MathIsValidNumber(entry) || entry <= 0
+      || !MathIsValidNumber(InpGoldMaximumAdversePriceDeviation)
+      || allowance > InpGoldMaximumAdversePriceDeviation)
+      { reason = "Gold price guard is invalid or exceeds local policy"; return false; }
+   double adverse = side == "buy" ? entry - reference : reference - entry;
+   if(adverse > allowance + 1e-8)
+      { reason = "live FTMO price exceeded the approved deviation"; return false; }
+   return true;
+}
+
+bool FinalOrderValidation(string execution_payload, string &reason, double &validated_price)
 {
    if(!InpExecutionEnabled || !InpMasterAccountApproved) { reason = "local execution gates are disabled"; return false; }
    if(!IdentityMatches()) { reason = "account/server/currency mismatch"; return false; }
@@ -678,17 +701,20 @@ bool FinalOrderValidation(string execution_payload, string &reason)
    double tick_value = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE_LOSS);
    if(tick_value <= 0) tick_value = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
    double entry = order_type == "market" ? ((side == "buy") ? tick.ask : tick.bid) : StringToDouble(JsonString(execution_payload, "entry"));
+   validated_price = entry;
    double approved_entry = StringToDouble(JsonString(execution_payload, "entry"));
    double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
    double volume_min = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
    double volume_max = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX);
    double volume_step = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
-   if(tick_size <= 0 || tick_value <= 0 || volume <= 0) { reason = "symbol specification is invalid"; return false; }
+   if(tick_size <= 0 || tick_value <= 0 || point <= 0 || volume <= 0) { reason = "symbol specification is invalid"; return false; }
    if(SymbolInfoInteger(symbol, SYMBOL_TRADE_MODE) != SYMBOL_TRADE_MODE_FULL) { reason = "symbol is not fully enabled for trading"; return false; }
    if(volume < volume_min - 1e-8 || volume > volume_max + 1e-8 || volume_step <= 0
       || MathAbs(volume / volume_step - MathRound(volume / volume_step)) > 1e-8)
       { reason = "volume is outside the FTMO symbol specification"; return false; }
-   if(order_type == "market" && approved_entry > 0 && point > 0
+   bool gold_guard = JsonString(execution_payload, "gold_price_guard_version") != "";
+   if(gold_guard && (order_type != "market" || !GoldPriceGuard(execution_payload, symbol, side, entry, reason))) return false;
+   if(!gold_guard && order_type == "market" && approved_entry > 0 && point > 0
       && MathAbs(entry - approved_entry) / point > MathMax(0, InpMaximumDeviationPoints))
       { reason = "live FTMO price exceeded the approved deviation"; return false; }
    if((tick.ask - tick.bid) / tick_size > InpMaximumSpreadTicks) { reason = "spread exceeds policy"; return false; }
@@ -704,6 +730,20 @@ bool FinalOrderValidation(string execution_payload, string &reason)
    if(order_type != "market" && MathAbs(entry - (side == "buy" ? tick.ask : tick.bid)) < minimum_stop)
       { reason = "pending entry is below the FTMO stop/freeze distance"; return false; }
    double actual_risk = (MathAbs(entry - stop) / tick_size) * tick_value * volume;
+   if(gold_guard)
+   {
+      double budget = StringToDouble(JsonString(execution_payload, "approved_risk_budget"));
+      double minimum_rr = StringToDouble(JsonString(execution_payload, "minimum_reward_risk"));
+      if(!MathIsValidNumber(budget) || budget <= 0 || !MathIsValidNumber(minimum_rr) || minimum_rr <= 0)
+         { reason = "approved Gold risk policy is invalid"; return false; }
+      if(actual_risk > budget + 0.01) { reason = "final Gold risk exceeds approved budget"; return false; }
+      if(MathAbs(target - entry) / MathAbs(entry - stop) + 1e-8 < minimum_rr)
+         { reason = "final Gold reward/risk is below approved policy"; return false; }
+      string zone_low = JsonString(execution_payload, "entry_zone_low");
+      string zone_high = JsonString(execution_payload, "entry_zone_high");
+      if((zone_low != "" && entry < StringToDouble(zone_low)) || (zone_high != "" && entry > StringToDouble(zone_high)))
+         { reason = "final Gold price is outside the approved entry zone"; return false; }
+   }
    double risk_limit = AccountInfoDouble(ACCOUNT_EQUITY) * MathMin(InpRiskFraction, 0.03);
    if(actual_risk > risk_limit + 0.01) { reason = "final risk exceeds configured limit"; return false; }
    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
@@ -782,7 +822,8 @@ void ExecuteCommand(string command_json)
       return;
    }
    string reason;
-   if(!FinalOrderValidation(execution_payload, reason))
+   double requested_price = 0;
+   if(!FinalOrderValidation(execution_payload, reason, requested_price))
    {
       JournalAppend(command_id, "rejected", "", reason);
       Acknowledge(command_id, "rejected", "", reason);
@@ -822,14 +863,17 @@ void ExecuteCommand(string command_json)
    Trade.SetExpertMagicNumber(InpMagicNumber);
    Trade.SetAsyncMode(false);
    Trade.SetDeviationInPoints(MathMax(0, InpMaximumDeviationPoints));
+   if(operation == "open" && order_type == "market" && JsonString(execution_payload, "gold_price_guard_version") == "1")
+   {
+      double reference = StringToDouble(JsonString(execution_payload, "price_guard_reference"));
+      double allowance = StringToDouble(JsonString(execution_payload, "maximum_adverse_price_deviation"));
+      double remaining = side == "buy" ? reference + allowance - requested_price : requested_price - (reference - allowance);
+      Trade.SetDeviationInPoints((ulong)MathMax(0, MathFloor((remaining + 1e-8) / SymbolInfoDouble(symbol, SYMBOL_POINT))));
+   }
    bool ok = false;
-   double requested_price = entry;
    if(operation == "open")
    {
-      MqlTick execution_tick;
-      if(order_type == "market" && SymbolInfoTick(symbol, execution_tick))
-         requested_price = side == "buy" ? execution_tick.ask : execution_tick.bid;
-      if(order_type == "market") ok = side == "buy" ? Trade.Buy(volume, symbol, 0, stop, target, comment) : Trade.Sell(volume, symbol, 0, stop, target, comment);
+      if(order_type == "market") ok = side == "buy" ? Trade.Buy(volume, symbol, requested_price, stop, target, comment) : Trade.Sell(volume, symbol, requested_price, stop, target, comment);
       else if(order_type == "limit") ok = side == "buy" ? Trade.BuyLimit(volume, entry, symbol, stop, target, pending_order_time, pending_expiration, comment) : Trade.SellLimit(volume, entry, symbol, stop, target, pending_order_time, pending_expiration, comment);
       else if(order_type == "stop") ok = side == "buy" ? Trade.BuyStop(volume, entry, symbol, stop, target, pending_order_time, pending_expiration, comment) : Trade.SellStop(volume, entry, symbol, stop, target, pending_order_time, pending_expiration, comment);
    }
