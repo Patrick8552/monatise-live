@@ -1515,29 +1515,49 @@ class ProductionASGI(OrchestrationASGI):
 
     async def _notify_ftmo_command_result(self, command: Mapping[str, Any]) -> None:
         status = str(command.get("lifecycle_state") or command.get("status") or "MT5_RECEIVED").upper()
+        awaiting_confirmation = command.get("status") == "broker_uncertain"
+        if awaiting_confirmation:
+            status = "AWAITING_BROKER_CONFIRMATION"
         payload = command.get("payload") if isinstance(command.get("payload"), Mapping) else {}
+        management = command.get("operation") not in {None, "open"}
         provenance = command.get("analysis_provenance") if isinstance(command.get("analysis_provenance"), Mapping) else {}
-        title = "FTMO EXECUTION FAILED" if status in {"EXECUTION_FAILED", "REJECTED", "BROKER_UNCERTAIN"} else "FTMO EXECUTION CONFIRMATION"
+        title = ("FTMO EXECUTION CHECK PENDING" if awaiting_confirmation else
+                 "FTMO EXECUTION FAILED" if status in {"EXECUTION_FAILED", "REJECTED", "BROKER_UNCERTAIN"}
+                 else "FTMO EXECUTION CONFIRMATION")
         submission_attempted = command.get("submission_attempted")
         ticket = command.get("broker_ticket") or ("none" if submission_attempted is False else "pending")
         retcode = command.get("broker_retcode") or ("NOT_SUBMITTED" if submission_attempted is False else "pending")
+        fill_display = "pending" if awaiting_confirmation else "not returned"
+        try:
+            fill = Decimal(str(command.get("fill_price") or 0))
+            if fill.is_finite() and fill > 0:
+                fill_display = str(command["fill_price"])
+        except Exception:
+            pass
         lines = [
             title,
-            f"Instrument: {payload.get('symbol') or 'unknown'} | Direction: {str(payload.get('side') or 'unknown').upper()}",
+            (f"Operation: {str(command['operation']).upper()} | Target: {payload.get('target_id') or 'unknown'}"
+             if management else
+             f"Instrument: {payload.get('symbol') or 'unknown'} | Direction: {str(payload.get('side') or 'unknown').upper()}"),
             f"Status: {status}",
-            f"Requested: {command.get('requested_price') or payload.get('entry') or 'unknown'} | Fill: {command.get('fill_price') or 'pending'}",
-            f"Volume: {command.get('executed_volume') or payload.get('volume') or 'unknown'} | SL: {command.get('executed_stop_loss') or payload.get('stop_loss') or 'unknown'} | TP: {command.get('executed_take_profit') or payload.get('take_profit') or 'unknown'}",
+            (f"Fill: {fill_display}" if management else
+             f"Requested: {command.get('requested_price') or payload.get('entry') or 'unknown'} | Fill: {fill_display}"),
+            (f"Volume: {command.get('executed_volume') or payload.get('volume') or 'not returned'}" if management else
+             f"Volume: {command.get('executed_volume') or payload.get('volume') or 'unknown'} | SL: {command.get('executed_stop_loss') or payload.get('stop_loss') or 'unknown'} | TP: {command.get('executed_take_profit') or payload.get('take_profit') or 'unknown'}"),
             f"Ticket: {ticket} | Retcode: {retcode}",
             f"Execution source: FTMO MT5 | Analysis source: {provenance.get('analysis_provider') or 'Monatise'} + Monatise",
         ]
         if submission_attempted is not None:
             lines.append(f"Broker submission: {'ATTEMPTED' if submission_attempted else 'NOT ATTEMPTED'}")
+        if awaiting_confirmation:
+            lines.append("The broker result is not yet confirmed. Checking MT5; no automatic retry will be sent.")
         if status in {"EXECUTION_FAILED", "REJECTED", "BROKER_UNCERTAIN"} and command.get("message"):
             lines.append(f"Reason: {str(command['message'])[:500]}")
         await self._send_ftmo_notification(lines)
         proposal_id = str(command.get("proposal_id") or "")
         if proposal_id:
             terminal_state = (
+                "AWAITING BROKER CONFIRMATION" if awaiting_confirmation else
                 "EXECUTION FAILED"
                 if status in {"EXECUTION_FAILED", "REJECTED", "BROKER_UNCERTAIN"}
                 else "EXECUTED"
@@ -1547,7 +1567,8 @@ class ProductionASGI(OrchestrationASGI):
             await self._update_trade_proposal_state(
                 proposal_id,
                 terminal_state,
-                reason=str(command.get("message") or "") or None,
+                reason=("Waiting for MT5 position confirmation; no automatic retry will be sent."
+                        if awaiting_confirmation else str(command.get("message") or "") or None),
                 command_id=str(command.get("command_id") or "") or None,
             )
 
@@ -1562,6 +1583,12 @@ class ProductionASGI(OrchestrationASGI):
             f"Analysis source: {event.get('analysis_provider') or 'Monatise'} + Monatise | Status: {state}",
         ]
         await self._send_ftmo_notification(lines)
+        if event.get("execution_reconciled"):
+            await self._update_trade_proposal_state(
+                str(event["proposal_id"]), "EXECUTED — POSITION OPEN",
+                reason=f"MT5 confirmed fill {event.get('entry')} for {event.get('volume')} lots; ticket {event.get('broker_ticket')}.",
+                command_id=str(event.get("command_id") or ""),
+            )
 
     async def _telegram_asset_classification(self, symbol: str, requested_class: str | None) -> tuple[str, str]:
         stock = next((item for item in FTMO_REGISTRY.for_asset_class(FTMOAssetClass.STOCK)

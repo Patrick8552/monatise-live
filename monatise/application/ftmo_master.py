@@ -1315,6 +1315,8 @@ class FTMOMasterControlService:
     async def _reconcile_proposals_from_heartbeat(
         self, snapshot: Mapping[str, Any], observed: datetime,
     ) -> tuple[dict[str, Any], ...]:
+        if not snapshot.get("terminal_connected") or not snapshot.get("ea_attached"):
+            return ()
         positions = tuple(item for item in snapshot.get("positions") or () if isinstance(item, Mapping))
         orders = tuple(item for item in snapshot.get("orders") or () if isinstance(item, Mapping))
         events: list[dict[str, Any]] = []
@@ -1332,11 +1334,14 @@ class FTMOMasterControlService:
 
             position = next((item for item in positions if matches(item)), None)
             order = next((item for item in orders if matches(item)), None)
+            execution_reconciled = bool(position is not None and await self._reconcile_missing_market_fill(
+                proposal, position, snapshot, observed,
+            ))
             lifecycle = str(proposal.get("lifecycle_state") or "")
             next_state = "POSITION_OPEN" if position is not None else "BROKER_ACCEPTED" if order is not None else None
             if next_state is None and lifecycle in {"POSITION_OPEN", "PARTIAL_CLOSE"}:
                 next_state = "POSITION_CLOSED"
-            if next_state is None or next_state == lifecycle:
+            if next_state is None or (next_state == lifecycle and not execution_reconciled):
                 continue
             stored = await self.repository.proposal(str(proposal["proposal_id"]))
             if stored is None:
@@ -1364,8 +1369,70 @@ class FTMOMasterControlService:
                 "broker_ticket": evidence.get("ticket", broker_ticket),
                 "unrealized_profit": evidence.get("profit"),
                 "analysis_provider": value.get("analysis_provider"),
+                "execution_reconciled": execution_reconciled,
             })
         return tuple(events)
+
+    async def _reconcile_missing_market_fill(
+        self, proposal: Mapping[str, Any], position: Mapping[str, Any],
+        snapshot: Mapping[str, Any], observed: datetime,
+    ) -> bool:
+        """Confirm a DONE receipt with missing fill data from the matching live position."""
+        if (proposal.get("kind") != "open_trade" or not proposal.get("approved_by")
+                or not snapshot.get("identity_match") or not snapshot.get("terminal_connected")
+                or not snapshot.get("ea_attached")):
+            return False
+        command_id = str(proposal.get("command_id") or "")
+        stored = await self.repository.command(command_id)
+        if stored is None:
+            return False
+        command = stored[0]
+        payload = command.get("payload") or {}
+        if (command.get("status") != CommandStatus.BROKER_UNCERTAIN.value
+                or command.get("operation") != "open" or payload.get("order_type") != "market"
+                or command.get("broker_retcode") != "10009"
+                or command.get("submission_attempted") is not True
+                or command.get("proposal_id") != proposal.get("proposal_id")
+                or any(str(command.get(expected)) != str(snapshot.get(actual)) for expected, actual in (
+                    ("expected_account_id", "account_id"), ("expected_server", "server"),
+                    ("expected_currency", "currency"),
+                ))
+                or not command.get("broker_ticket")
+                or str(position.get("ticket")) != str(command["broker_ticket"])
+                or position.get("comment") != f"MNT:{command_id[:16]}"
+                or self._symbol_key(str(position.get("symbol") or "")) != self._symbol_key(str(payload.get("symbol") or ""))
+                or str(position.get("type")) != {"buy": "0", "sell": "1"}.get(payload.get("side"))):
+            return False
+        try:
+            captured = _timestamp(snapshot.get("ea_observed_at_utc"), "MT5 position observation")
+            age = (observed - captured).total_seconds()
+            if (age > self.configuration.heartbeat_max_age_seconds
+                    or age < -float(self.configuration.quote_future_tolerance_seconds)
+                    or captured < _timestamp(command["created_at"], "command creation").replace(microsecond=0)):
+                return False
+            fill = _decimal(position.get("price_open"), "position fill", positive=True)
+            volume = _decimal(position.get("volume"), "position volume", positive=True)
+            if volume != _decimal(payload.get("volume"), "approved volume", positive=True):
+                return False
+            stop = _decimal(position.get("sl"), "position stop")
+            target = _decimal(position.get("tp"), "position target")
+            requested = _decimal(command.get("requested_price") or payload.get("entry"), "requested entry", positive=True)
+        except (FTMOMasterError, ValueError, TypeError):
+            return False
+        await self.acknowledge(command_id, {
+            "status": CommandStatus.RECONCILED.value, "broker_ticket": command["broker_ticket"],
+            "broker_retcode": "10009", "submission_attempted": True,
+            "requested_price": str(requested), "fill_price": str(fill),
+            "executed_volume": str(volume), "slippage": str(abs(fill - requested)),
+            "executed_stop_loss": str(stop), "executed_take_profit": str(target),
+            "broker_observed_at": captured.isoformat(),
+            "message": "Fill confirmed from the authenticated MT5 position heartbeat",
+        }, reconciliation_source="mt5_position_heartbeat")
+        await self.repository.audit("market_fill_reconciled_from_position", command_id, {
+            "proposal_id": proposal["proposal_id"], "broker_ticket": command["broker_ticket"],
+            "fill_price": str(fill), "volume": str(volume), "observed_at": captured.isoformat(),
+        })
+        return True
 
     async def status(self, *, now: datetime | None = None) -> dict[str, Any]:
         bridge = await self.repository.bridge()
@@ -2229,7 +2296,9 @@ class FTMOMasterControlService:
             commands.append(delivered)
         return tuple(commands)
 
-    async def acknowledge(self, command_id: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+    async def acknowledge(
+        self, command_id: str, payload: Mapping[str, Any], *, reconciliation_source: str | None = None,
+    ) -> dict[str, Any]:
         raw_status = str(payload.get("status") or "").strip().casefold()
         allowed = {item.value for item in CommandStatus} - {CommandStatus.READY.value, CommandStatus.DELIVERED.value}
         if raw_status not in allowed:
@@ -2238,6 +2307,13 @@ class FTMOMasterControlService:
         if previous_record is None:
             raise FTMOMasterError("unknown bridge command")
         previous = previous_record[0]
+        if (previous.get("reconciliation_source") == "mt5_position_heartbeat"
+                and previous.get("status") == CommandStatus.RECONCILED.value):
+            # An older EA journal receipt cannot erase an independently observed fill.
+            await self.repository.audit("late_acknowledgement_after_position_confirmation", command_id, {
+                "received_status": raw_status, "broker_retcode": payload.get("broker_retcode"),
+            })
+            return {**previous, "notification_required": False}
         payload = dict(payload)
         if raw_status == previous.get("status") and not payload.get("broker_retcode") and previous.get("broker_retcode"):
             # An EA journal replay carries only status/ticket. Keep the durable
@@ -2291,6 +2367,8 @@ class FTMOMasterControlService:
                 submission_attempted if isinstance(submission_attempted, bool) else None
             ),
         }
+        if reconciliation_source is not None:
+            changes.update({"reconciliation_source": reconciliation_source, "reconciled_at": _utc().isoformat()})
         if raw_status == CommandStatus.BROKER_UNCERTAIN.value:
             changes["automatic_resend"] = False
         lifecycle = {

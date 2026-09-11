@@ -136,6 +136,13 @@ is on the wrong side of the market, the original target has already been
 reached, or current identity/session/risk checks fail. Bridge 1.16 includes
 pending orders in aggregate risk and reports their stops and targets.
 
+If MT5 returns DONE for a market order without a usable fill price, Telegram
+shows confirmation pending. A fresh authenticated position heartbeat can
+resolve that receipt only when its account, ticket, command comment, symbol,
+direction and full volume match. The actual position fill is then persisted
+and reported, without resending the order. Partial fills, unmatched positions
+and other uncertain broker outcomes still require reconciliation.
+
 For stocks outside the EA's always-on quote set, Render issues a short-lived
 symbol request in the authenticated heartbeat response. The EA selects that
 verified FTMO symbol and returns native Bid/Ask and contract specifications
