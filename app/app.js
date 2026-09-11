@@ -959,6 +959,17 @@ function saveSignalJournal(entries) {
   localStorage.setItem(signalJournalKey(), JSON.stringify(entries.slice(-80)));
 }
 
+async function responseError(response) {
+  const fallback = `Request failed (HTTP ${response.status || "unknown"})`;
+  try {
+    const payload = await response.json();
+    const detail = payload?.error || payload?.reason || payload?.message;
+    return typeof detail === "string" && detail ? detail : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 async function persistSignalRecord(entry) {
   if (!currentUser.authenticated || !entry?.id) return null;
   try {

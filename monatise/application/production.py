@@ -51,6 +51,7 @@ from monatise.application.telegram_analysis import (
 )
 from monatise.engines.market_data import MarketDataEngine, MarketDataRequest
 from monatise.core.models import Candle
+from monatise.live.emailer import send_feedback_email
 
 
 LOGGER = logging.getLogger("monatise.production")
@@ -175,6 +176,16 @@ class ProductionASGI(OrchestrationASGI):
             await self._lifespan(receive, send)
             return
         path = scope.get("path", "")
+        if scope.get("type") == "http" and path == "/api/feedback":
+            if scope.get("method", "GET").upper() != "POST":
+                await self._respond(send, 405, {"error": "method_not_allowed"})
+                return
+            if self._market_rate_limited(scope, maximum=8, bucket="feedback"):
+                await self._respond(send, 429, {"error": "Too many feedback requests"})
+                return
+            code, payload = await self._feedback(receive)
+            await self._respond(send, code, payload)
+            return
         if scope.get("type") == "http" and path == "/api/telegram/webhook":
             if scope.get("method", "GET").upper() != "POST":
                 await self._respond(send, 405, {"status": "method_not_allowed"})
@@ -1552,9 +1563,59 @@ class ProductionASGI(OrchestrationASGI):
             lines = [f"Monatise {direction}: {symbol}", f"Entry: {analysis.get('entry')}", f"Stop: {analysis.get('stop_loss')}", f"Target: {analysis.get('target')}", f"Score: {int(analysis.get('score') or 0):+d}/10"]
         lines.append("Execution: disabled")
         return "\n".join(lines)
-    def _market_rate_limited(self, scope: dict[str, Any], *, maximum: int = 120) -> bool:
+    async def _feedback(self, receive: Any) -> tuple[int, dict[str, Any]]:
+        body = bytearray()
+        while True:
+            message = await receive()
+            if message.get("type") == "http.disconnect":
+                return 400, {"error": "Request disconnected"}
+            body.extend(message.get("body", b""))
+            if len(body) > 8192:
+                return 413, {"error": "Feedback request is too large"}
+            if not message.get("more_body", False):
+                break
+        try:
+            payload = json.loads(body)
+            if not isinstance(payload, dict):
+                raise ValueError("Feedback must be an object")
+            rating = payload.get("rating")
+            category, message_text, page = (payload.get(key, "") for key in ("category", "message", "page"))
+            if type(rating) is not int or rating not in range(1, 6):
+                raise ValueError("Choose a rating from 1 to 5")
+            if not all(isinstance(value, str) for value in (category, message_text, page)):
+                raise ValueError("Feedback fields must be text")
+            category, message_text, page = category.strip().lower(), message_text.strip(), page.strip()[:300]
+            if category not in {"bug", "idea", "confusing", "praise", "other"}:
+                raise ValueError("Choose a valid feedback category")
+            if not 3 <= len(message_text) <= 1500:
+                raise ValueError("Feedback must contain 3 to 1,500 characters")
+        except (ValueError, UnicodeDecodeError) as exc:
+            return 400, {"error": str(exc)}
+        store = getattr(self.runtime, "document_store", None)
+        if store is None:
+            return 503, {"error": "Feedback storage is unavailable"}
+        feedback_id = secrets.randbits(63)
+        try:
+            await store.put("feedback", str(feedback_id), {
+                "id": feedback_id, "rating": rating, "category": category,
+                "message": message_text, "page": page, "user_id": None,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }, expected_version=0)
+        except Exception as exc:
+            LOGGER.warning("feedback persistence failed", extra={"error_type": type(exc).__name__})
+            return 503, {"error": "Feedback could not be saved"}
+        email_delivered = False
+        try:
+            await asyncio.to_thread(send_feedback_email, feedback_id=feedback_id, rating=rating,
+                                    category=category, message_text=message_text, page=page)
+            email_delivered = True
+        except Exception as exc:
+            LOGGER.warning("feedback email unavailable", extra={"error_type": type(exc).__name__})
+        return 200, {"accepted": True, "feedbackId": feedback_id, "emailDelivered": email_delivered}
+
+    def _market_rate_limited(self, scope: dict[str, Any], *, maximum: int = 120, bucket: str = "market") -> bool:
         client = scope.get("client") or ("unknown", 0)
-        address = str(client[0])
+        address = str(client[0]) if bucket == "market" else f"{bucket}:{client[0]}"
         window = int(time()) // 60
         previous_window, count = self._market_rate_windows.get(address, (window, 0))
         if previous_window != window:
@@ -1611,6 +1672,7 @@ class ProductionASGI(OrchestrationASGI):
         results = latest.get("results") if isinstance(latest, dict) else []
         if not isinstance(results, list):
             results = []
+        results = [refresh_setup_validity(item) for item in results if isinstance(item, dict)]
         return 200, {
             "status": "ready" if dependency.get("last_success_at") else "warming",
             "generated_at": dependency.get("last_success_at") or datetime.now(timezone.utc).isoformat(), "refresh_seconds": 120,

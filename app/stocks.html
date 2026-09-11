@@ -39,7 +39,7 @@
         <div class="filters">
           <label>Signal<select id="signalFilter"><option value="ALL">All</option><option>BUY_WATCH</option><option>SELL_WATCH</option><option>NO_TRADE</option></select></label>
           <label>Validity<select id="validityFilter"><option value="ALL">All</option><option>ACTIVE</option><option>EXPIRED</option><option>INVALIDATED</option><option>NO_TRADE</option></select></label>
-          <label>Timeframe<select id="timeframeFilter"><option value="ALL">All</option><option value="15M">15M trigger</option><option value="1H">1H structure</option></select></label>
+          <label>Timeframe<select id="timeframeFilter"><option value="ALL">All</option><option value="SNAPSHOT">Positioning snapshot</option><option value="15M">15M trigger</option><option value="1H">1H structure</option></select></label>
         </div>
         <p id="scannerStatus" class="status" role="status">Loading scanner…</p>
         <div class="table-wrap"><table><thead><tr><th>Symbol</th><th>Signal</th><th>Setup</th><th>Price / Entry</th><th>Risk</th><th>FlashAlpha</th><th>Validity</th><th>Reason</th></tr></thead><tbody id="scannerRows"></tbody></table></div>

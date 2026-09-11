@@ -100,17 +100,38 @@ def build_setup_lifecycle(
 def refresh_setup_validity(analysis: dict[str, Any], now: datetime | None = None) -> dict[str, Any]:
     """Return a cache-safe setup snapshot with validity derived from absolute expiry."""
     refreshed = dict(analysis)
+    if "setup_state" not in refreshed:
+        # Both current on-demand and scanner payloads use absolute expiry,
+        # but name it differently. Normalize without extending its lifetime.
+        expiry = _bar_time(refreshed.get("expires_at") or refreshed.get("valid_until"))
+        confirmed = refreshed.get("setup_status") == "confirmed" and refreshed.get("decision") in {"BUY_WATCH", "SELL_WATCH"}
+        refreshed.update({
+            "setup_state": "ACTIVE" if confirmed else "NO_TRADE",
+            "setup_expires_at": expiry.isoformat() if expiry else None,
+            "analysis_generated_at": refreshed.get("generated_at"),
+            "setup_created_at": refreshed.get("generated_at") if confirmed else None,
+            "market_data_as_of": refreshed.get("as_of"),
+            "analysis_timeframe": refreshed.get("analysis_timeframe") or "SNAPSHOT",
+            "trigger_timeframe": refreshed.get("trigger_timeframe") or "SNAPSHOT",
+        })
+        additional = dict(refreshed.get("additional_context") or {})
+        if "flashalpha" not in additional:
+            additional["flashalpha"] = {key: refreshed.get(key) for key in (
+                "gamma_flip", "call_wall", "put_wall", "net_gex", "net_gex_label", "as_of",
+            )}
+        refreshed["additional_context"] = additional
     expires_at = _bar_time(refreshed.get("setup_expires_at"))
-    if refreshed.get("setup_state") != "ACTIVE" or expires_at is None:
+    if refreshed.get("setup_state") != "ACTIVE":
         return refreshed
     current_time = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    remaining = max(0, int((expires_at - current_time).total_seconds()))
+    remaining = max(0, math.ceil((expires_at - current_time).total_seconds())) if expires_at else 0
     refreshed["validity_remaining_seconds"] = remaining
     if remaining == 0:
         refreshed.update({
             "setup_state": "EXPIRED", "expiry_reason": "SETUP_EXPIRED",
             "decision": "NO_TRADE", "reason_code": "SETUP_EXPIRED", "setup_status": "expired",
             "entry": None, "stop_loss": None, "target": None, "reward_risk": None,
+            "publication_valid": False, "freshness": "expired",
         })
     return refreshed
 

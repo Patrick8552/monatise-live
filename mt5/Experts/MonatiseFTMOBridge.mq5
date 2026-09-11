@@ -1,9 +1,10 @@
 #property copyright "Monatise"
-#property version   "1.14"
+#property version   "1.15"
 #property strict
 #property description "Account-bound FTMO bridge. Telegram never talks directly to the broker."
 
 #include <Trade/Trade.mqh>
+#include "MonatiseBrokerResults.mqh"
 
 input string InpControlPlaneUrl        = "https://monatise-live.onrender.com";
 input string InpBridgeSecret           = "";       // Set in MT5; never commit the value.
@@ -24,7 +25,7 @@ input int    InpMaximumSpreadTicks     = 80;
 input int    InpMaximumDeviationPoints = 20;
 input long   InpMagicNumber            = 26082501;
 
-string EA_VERSION = "1.14";
+string EA_VERSION = "1.15";
 string JOURNAL_FILE = "monatise-ftmo-command-journal.csv";
 string DynamicSymbols = "";
 CTrade Trade;
@@ -561,7 +562,9 @@ bool JournalLookup(string command_id, string &status, string &ticket)
       string stored_id = FileReadString(handle);
       string stored_status = FileReadString(handle);
       string stored_ticket = FileReadString(handle);
-      FileReadString(handle);
+      // Consume message and timestamp together, including any CSV delimiters
+      // in a broker message. The next read must start at the next record.
+      while(!FileIsEnding(handle) && !FileIsLineEnding(handle)) FileReadString(handle);
       if(stored_id == command_id) { status = stored_status; ticket = stored_ticket; found = true; }
    }
    FileClose(handle);
@@ -811,7 +814,9 @@ void ExecuteCommand(string command_json)
       }
    }
    string ticket = IntegerToString((long)(Trade.ResultOrder() > 0 ? Trade.ResultOrder() : Trade.ResultDeal()));
-   string result_status = ok ? "reconciled" : "rejected";
+   string result_status = BrokerResultStatus((int)Trade.ResultRetcode(), operation, order_type,
+                                             (long)StringToInteger(ticket), Trade.ResultPrice(), Trade.ResultVolume());
+   if(!ok && result_status == "reconciled") result_status = "broker_uncertain";
    string message = Trade.ResultRetcodeDescription();
    if(operation == "open" && order_type != "market")
       message += " | pending lifetime " + EnumToString(pending_order_time);

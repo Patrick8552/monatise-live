@@ -88,7 +88,7 @@ Primary references:
 4. Download desktop MT5 from the FTMO Client Area or MetaQuotes and verify the publisher signature.
 5. Sign in using the exact login, master password, and server shown in FTMO Account MetriX. FTMO confirms that the master password is required for trading and that the server must match exactly.
 6. Confirm the account currency and save a screenshot with the account number masked.
-7. Copy `mt5/Experts/MonatiseFTMOBridge.mq5` into the terminal's `MQL5\Experts\Monatise` directory and compile it in MetaEditor with zero errors and zero warnings.
+7. Copy `mt5/Experts/MonatiseFTMOBridge.mq5` and `mt5/Experts/MonatiseBrokerResults.mqh` into the terminal's `MQL5\Experts\Monatise` directory and compile the `.mq5` file in MetaEditor with zero errors and zero warnings.
 8. In MT5, add `https://monatise-live.onrender.com` to Tools -> Options -> Expert Advisors -> allowed WebRequest URLs.
 9. Attach the EA to a continuously quoted FTMO chart. Configure the expected account, server, currency, symbols, bridge secret, and loss limits. The default `InpSymbols` includes `XAUUSD`, `US100.cash`, and `US500.cash`, which cover the scheduled GC, NQ, and ES futures-linked scanner paths; preserve the broker's exact symbol spelling if it differs. Keep both EA execution inputs `false` for shadow testing.
 10. Install the watchdog scripts under `C:\Monatise` and run `Install-MonatiseWatchdog.ps1` as Administrator.
