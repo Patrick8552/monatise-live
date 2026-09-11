@@ -23,6 +23,7 @@ SYMBOLS = [('XAU/USD', 'XAUUSD'), ('US100.cash', 'US100.CASH'), ('US500.cash', '
 class Transport:
     def __init__(self):
         self.messages, self.proposals, self.retractions = [], [], []
+        self.retry_controls = []
 
     async def send_message(self, chat, text):
         self.messages.append((chat, text))
@@ -32,8 +33,9 @@ class Transport:
         self.proposals.append((chat, text, proposal_id))
         return 800 + len(self.proposals)
 
-    async def update_trade_proposal(self, chat, message_id, text):
+    async def update_trade_proposal(self, chat, message_id, text, *, proposal_id=None):
         self.retractions.append((chat, message_id, text))
+        self.retry_controls.append(proposal_id)
         return True
 
 

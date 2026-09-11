@@ -132,12 +132,22 @@ class TelegramNotifier:
             return None
         return await answer(callback_query_id, message)
 
-    async def update_trade_proposal(self, message_id: int, message: str) -> Any:
+    async def update_trade_proposal(self, message_id: int, message: str, *, proposal_id: str | None = None) -> Any:
         if not message.strip():
             raise ValueError("proposal-state message is required")
         update = getattr(self._transport, "update_trade_proposal", None)
         if update is None:
             return None
+        if proposal_id is not None:
+            service = self._proposal_service
+            if service is None:
+                raise ValueError("durable proposal service is required for approval retries")
+            stored = await service.repository.proposal(proposal_id)
+            if (stored is None or not service.approval_retry_available(stored[0])
+                    or stored[0].get("telegram_message_id") != message_id
+                    or str(stored[0].get("telegram_chat_id")) != str(self._chat_id)):
+                raise ValueError("proposal is not eligible for approval retry controls")
+            return await update(self._chat_id, message_id, message, proposal_id=proposal_id)
         return await update(self._chat_id, message_id, message)
 
     async def register_webhook(self, url: str, secret_token: str) -> bool:

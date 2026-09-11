@@ -29,6 +29,7 @@ from monatise.application.risk_policy import MAX_RISK_FRACTION_PER_TRADE, MAX_RI
 
 
 ZERO = Decimal("0")
+DEFAULT_APPROVAL_WINDOW = timedelta(minutes=30)
 LOGGER = logging.getLogger("monatise.ftmo_master")
 
 
@@ -1523,7 +1524,7 @@ class FTMOMasterControlService:
         if not session_allows_execution(session_context):
             raise FTMOMasterError("current market session does not permit an executable proposal")
         proposal_id = _proposal_id or secrets.token_hex(6)
-        proposal_expiry = _utc(expires_at) if expires_at is not None else observed + timedelta(minutes=5)
+        proposal_expiry = _utc(expires_at) if expires_at is not None else observed + DEFAULT_APPROVAL_WINDOW
         if proposal_expiry <= observed:
             raise FTMOMasterError("signal has already expired")
         details = dict(metadata or {})
@@ -1726,7 +1727,7 @@ class FTMOMasterControlService:
         proposal = {
             "proposal_id": proposal_id, "kind": "manage_trade", "status": ProposalStatus.PENDING.value,
             "actor": actor, "operation": operation, "target_id": target_id, "value": value,
-            "created_at": now.isoformat(), "expires_at": (now + timedelta(minutes=3)).isoformat(),
+            "created_at": now.isoformat(), "expires_at": (now + DEFAULT_APPROVAL_WINDOW).isoformat(),
             "confirmation_required": True,
         }
         proposal.setdefault("analysis_id", "operator:" + proposal_id)
@@ -2020,6 +2021,19 @@ class FTMOMasterControlService:
         ):
             raise FTMOMasterError("proposal publication was not durably completed")
 
+    @staticmethod
+    def approval_retry_available(proposal: Mapping[str, Any], *, now: datetime | None = None) -> bool:
+        try:
+            return bool(
+                proposal.get("status") == ProposalStatus.PENDING.value
+                and not proposal.get("superseded_by_signal_id")
+                and proposal.get("telegram_publish_status") == "published"
+                and proposal.get("approval_keyboard_attached")
+                and _timestamp(proposal.get("expires_at"), "proposal expiry") > _utc(now)
+            )
+        except ValueError:
+            return False
+
     async def reject(self, proposal_id: str, actor: str) -> dict[str, Any]:
         if actor not in self.configuration.authorized_user_ids:
             raise FTMOMasterError("Telegram user is not authorized")
@@ -2283,7 +2297,7 @@ def format_proposal(
             f"Estimated risk: ${proposal['risk_amount']} | Estimated volume: {proposal.get('volume') or 'RECALCULATE AT APPROVAL'} lots",
             f"FTMO preview Bid/Ask: {proposal['quote_bid']} / {proposal['quote_ask']}",
             f"FTMO quote observed UTC: {proposal.get('quote_observed_at_utc') or proposal.get('quote_timestamp') or 'UNKNOWN'} | Age: {proposal.get('quote_age_ms') or 'UNKNOWN'} ms",
-            f"Signal expires: {proposal['expires_at']}",
+            f"Approve or reject before: {proposal['expires_at']}",
             *((f"Conviction: {proposal['conviction']}",) if proposal.get("conviction") is not None else ()),
             "Status: PENDING_APPROVAL",
             f"Approve: /approve {proposal['proposal_id']} | Reject: /reject {proposal['proposal_id']}",
@@ -2295,6 +2309,7 @@ def format_proposal(
         f"ID: {proposal['proposal_id']}",
         f"Operation: {str(proposal['operation']).upper()} · target {proposal['target_id']}",
         *((f"Value: {proposal['value']}",) if proposal.get("value") else ()),
+        f"Approve or reject before: {proposal['expires_at']}",
         "Status: PENDING_APPROVAL",
         f"Approve: /approve {proposal['proposal_id']} | Reject: /reject {proposal['proposal_id']}",
         "No broker change has been sent.",

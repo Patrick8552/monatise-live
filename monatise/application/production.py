@@ -762,12 +762,19 @@ class ProductionASGI(OrchestrationASGI):
             lines.append(f"Execution intent: {command_id[:12]}")
         if reason:
             lines.append(f"Reason: {reason}")
+        retry_available = getattr(service, "approval_retry_available", lambda _: False)(proposal)
+        if retry_available:
+            lines.append(f"Approval deadline: {proposal['expires_at']}")
+            lines.append("You can retry Approve or choose Reject before the deadline. Every retry rechecks the current quote and risk.")
         lines.append("No duplicate order can be created from this proposal.")
         update = getattr(notifier, "update_trade_proposal", None)
         if update is None:
             return
         try:
-            updated = await update(message_id, "\n".join(lines))
+            if retry_available:
+                updated = await update(message_id, "\n".join(lines), proposal_id=proposal_id)
+            else:
+                updated = await update(message_id, "\n".join(lines))
             if updated is False:
                 raise RuntimeError("Telegram rejected the proposal-state update")
         except Exception as exc:
@@ -1384,6 +1391,8 @@ class ProductionASGI(OrchestrationASGI):
                 proposal_status = str((stored or ({}, 0))[0].get("status") or "")
                 if proposal_status == "expired":
                     state = "EXPIRED"
+                elif proposal_status == "invalidated":
+                    state = "INVALIDATED"
                 elif proposal_status in {"command_created", "approved"}:
                     state = "APPROVED — SUBMITTING"
                 elif proposal_status == "rejected":

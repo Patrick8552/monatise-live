@@ -189,6 +189,7 @@ def test_futures_coordinator_preserves_flashalpha_and_ftmo_separation():
     assert providers["flashalpha"]["status"] == "used"
     assert providers["ftmo_mt5"]["status"] == "not_requested"
     assert "bid" not in result and "ask" not in result
+    assert result["expires_at"] == (NOW + timedelta(minutes=30)).isoformat()
 
 
 def test_futures_provider_failure_returns_insufficient_market_data():
