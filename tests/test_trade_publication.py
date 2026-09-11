@@ -106,6 +106,72 @@ def test_complete_symbol_proposal_publication_callback_and_bridge_handoff(monkey
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize('refresh_state', ['missing', 'stale', 'wrong_symbol', 'future', 'expired', 'kill_switch'])
+def test_approval_refresh_still_requires_valid_quote_and_execution_gates(monkeypatch, refresh_state):
+    async def scenario():
+        control, store = await setup(monkeypatch, 'INTC', FTMO_APPROVAL_QUOTE_WAIT_SECONDS='1')
+        clock = [NOW.replace(hour=15)]
+        monkeypatch.setattr(master_module, '_utc', lambda value=None: value or clock[0])
+        quote = dict(heartbeat()['quotes']['XAUUSD'], timestamp=clock[0].isoformat())
+        await control.accept_bridge_heartbeat(heartbeat(quotes={'INTC': quote}), now=clock[0])
+        p = await control.create_trade_proposal(
+            actor='42', symbol='INTC', side='buy', order_type='market',
+            stop_loss='2490.20', take_profit='2520.20',
+        )
+        clock[0] += timedelta(seconds=20)
+        await control.accept_bridge_heartbeat(heartbeat(quotes={}), now=clock[0])
+
+        async def refresh():
+            async with asyncio.timeout(0.8):
+                while 'INTC' not in await control.requested_execution_quote_symbols():
+                    await asyncio.sleep(0.01)
+            if refresh_state == 'expired':
+                clock[0] += timedelta(days=1)
+            if refresh_state == 'kill_switch':
+                await control.repository.update_control(kill_switch=True)
+            tick_at = clock[0] + timedelta(seconds=10 if refresh_state == 'future' else -20 if refresh_state == 'stale' else 0)
+            fresh = dict(quote, timestamp=tick_at.isoformat())
+            quotes = {} if refresh_state == 'missing' else {'AAPL' if refresh_state == 'wrong_symbol' else 'INTC': fresh}
+            await control.accept_bridge_heartbeat(heartbeat(quotes=quotes), now=clock[0])
+
+        task = asyncio.create_task(refresh())
+        try:
+            with pytest.raises(FTMOMasterError):
+                await control.approve(p['proposal_id'], '42')
+            await task
+        finally:
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        assert await control.repository.pending_commands() == ()
+        assert (await control.repository.proposal(p['proposal_id']))[0].get('command_id') is None
+        if refresh_state in {'missing', 'stale', 'wrong_symbol'}:
+            event = next(e for e in store.streams[control.repository.AUDIT] if e['event'] == 'approval_quote_refresh_failed')
+            assert event['fields']['refresh_requested'] is True
+            assert event['fields']['quote_present'] is (refresh_state == 'stale')
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('blocked_by', ['unauthorized', 'expired', 'rejected', 'disabled', 'deterministic'])
+def test_ineligible_approval_does_not_request_dynamic_quotes(monkeypatch, blocked_by):
+    async def scenario():
+        control, _ = await setup(monkeypatch)
+        p = await proposal(control)
+        if blocked_by == 'rejected':
+            await control.reject(p['proposal_id'], '42')
+        if blocked_by == 'disabled':
+            await control.repository.update_control(kill_switch=True)
+        current = NOW + timedelta(days=1) if blocked_by == 'expired' else NOW
+        monkeypatch.setattr(master_module, '_utc', lambda value=None: value or current)
+        await control.accept_bridge_heartbeat(heartbeat(quotes={}), now=current)
+        with pytest.raises(FTMOMasterError):
+            await control.approve(p['proposal_id'], 'wrong-user' if blocked_by == 'unauthorized' else '42',
+                                  **({'now': current} if blocked_by == 'deterministic' else {}))
+        assert await control.requested_execution_quote_symbols() == ()
+        assert await control.repository.pending_commands() == ()
+    asyncio.run(scenario())
+
+
 def test_context_notification_is_explicit_and_has_no_controls():
     async def scenario():
         transport = Transport()
@@ -114,6 +180,63 @@ def test_context_notification_is_explicit_and_has_no_controls():
         assert CONTEXT_ONLY in transport.messages[0][1]
         assert 'approval_controls_omitted_reason=' in transport.messages[0][1]
         assert transport.proposals == []
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('symbol', ['INTC', 'AAPL', 'US500.cash'])
+@pytest.mark.parametrize('quote_state', ['missing', 'stale'])
+def test_approval_resubscribes_after_scanner_quote_demand_expires(monkeypatch, symbol, quote_state):
+    async def scenario():
+        control, _ = await setup(monkeypatch, symbol, FTMO_APPROVAL_QUOTE_WAIT_SECONDS='2')
+        clock = [NOW.replace(hour=15)]
+        monkeypatch.setattr(master_module, '_utc', lambda value=None: value or clock[0])
+        quote = dict(heartbeat()['quotes']['XAUUSD'], timestamp=clock[0].isoformat())
+        await control.request_execution_quote(symbol, lifetime_seconds=10)
+        await control.accept_bridge_heartbeat(heartbeat(quotes={symbol: quote}), now=clock[0])
+        p = await control.create_signal_proposal(
+            signal_id='delayed-approval', analysis_id='delayed-analysis', symbol=symbol,
+            direction='LONG', analysis_entry='2500', analysis_stop='2490', analysis_target='2520',
+            analysis_state='LONG', confirmation_status='confirmed', source='monatise.stock.scanner',
+        )
+        notifier = TelegramNotifier(Transport(), '42', proposal_service=control)
+        message_id = await notifier.trade_proposal('preview', p['proposal_id'])
+        clock[0] += timedelta(seconds=20)
+        assert await control.requested_execution_quote_symbols() == ()
+        quotes = {} if quote_state == 'missing' else {symbol: quote}
+        await control.accept_bridge_heartbeat(heartbeat(quotes=quotes), now=clock[0])
+        assert await control.commands_for_bridge(now=clock[0]) == ()
+
+        async def bridge_responds_only_to_demand():
+            # Model the EA: heartbeat response advertises requested symbols;
+            # only then can the next heartbeat report that instrument again.
+            async with asyncio.timeout(1):
+                while symbol not in await control.requested_execution_quote_symbols():
+                    await asyncio.sleep(0.01)
+            fresh = dict(quote, bid='2501.00', ask='2501.20', timestamp=clock[0].isoformat())
+            await control.accept_bridge_heartbeat(heartbeat(quotes={symbol: fresh}), now=clock[0])
+
+        refresh = asyncio.create_task(bridge_responds_only_to_demand())
+        app = ProductionASGI(SimpleNamespace(ftmo_master=control, telegram=notifier))
+        app._telegram_command_context = {
+            'user_id': '42', 'chat_id': '42', 'chat_type': 'private',
+            'message_id': message_id, 'callback_query_id': 'delayed-callback',
+        }
+        try:
+            await app._handle_ftmo_telegram_command('/approve ' + p['proposal_id'])
+            await refresh
+        finally:
+            if not refresh.done():
+                refresh.cancel()
+            await asyncio.gather(refresh, return_exceptions=True)
+        saved = (await control.repository.proposal(p['proposal_id']))[0]
+        assert saved['status'] == 'command_created'
+        commands = await control.commands_for_bridge(now=clock[0])
+        assert len(commands) == 1
+        assert commands[0]['execution_snapshot']['ftmo_ask'] == '2501.20'
+        assert commands[0]['approval']['approved_by'] == '42'
+        with pytest.raises(FTMOMasterError, match='already'):
+            await control.approve(p['proposal_id'], '42')
+        assert len(await control.repository.pending_commands()) == 1
     asyncio.run(scenario())
 
 

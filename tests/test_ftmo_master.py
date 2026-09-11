@@ -791,6 +791,16 @@ def test_dynamic_execution_quote_demand_is_bounded_and_supports_verified_stocks(
     asyncio.run(scenario())
 
 
+def test_quote_refresh_preserves_a_longer_existing_demand():
+    async def scenario():
+        control, _ = service()
+        await control.request_execution_quote('INTC', lifetime_seconds=60, now=NOW)
+        await control.request_execution_quote('INTC', lifetime_seconds=17, now=NOW + timedelta(seconds=1))
+        assert await control.requested_execution_quote_symbols(now=NOW + timedelta(seconds=59)) == ('INTC',)
+        assert await control.requested_execution_quote_symbols(now=NOW + timedelta(seconds=60)) == ()
+    asyncio.run(scenario())
+
+
 def test_live_approval_waits_for_next_authenticated_mt5_quote_then_revalidates():
     async def scenario():
         observed = datetime.now(timezone.utc)
