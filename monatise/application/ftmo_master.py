@@ -2021,6 +2021,19 @@ class FTMOMasterControlService:
         ):
             raise FTMOMasterError("proposal publication was not durably completed")
 
+    @staticmethod
+    def approval_retry_available(proposal: Mapping[str, Any], *, now: datetime | None = None) -> bool:
+        try:
+            return bool(
+                proposal.get("status") == ProposalStatus.PENDING.value
+                and not proposal.get("superseded_by_signal_id")
+                and proposal.get("telegram_publish_status") == "published"
+                and proposal.get("approval_keyboard_attached")
+                and _timestamp(proposal.get("expires_at"), "proposal expiry") > _utc(now)
+            )
+        except ValueError:
+            return False
+
     async def reject(self, proposal_id: str, actor: str) -> dict[str, Any]:
         if actor not in self.configuration.authorized_user_ids:
             raise FTMOMasterError("Telegram user is not authorized")

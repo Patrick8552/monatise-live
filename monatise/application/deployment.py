@@ -359,23 +359,26 @@ class TelegramNotificationTransport:
         return await asyncio.to_thread(self._send, chat_id, text)
 
     async def send_trade_proposal(self, chat_id: str, text: str, proposal_id: str) -> int:
+        return await asyncio.to_thread(self._send, chat_id, text, self._approval_keyboard(proposal_id))
+
+    @staticmethod
+    def _approval_keyboard(proposal_id: str) -> dict[str, Any]:
         if not re.fullmatch(r"[a-f0-9]{12}", proposal_id):
             raise ValueError("invalid FTMO proposal identity")
-        reply_markup = {
+        return {
             "inline_keyboard": [[
                 {"text": "✅ APPROVE TRADE", "callback_data": f"ftmo:approve:{proposal_id}"},
                 {"text": "❌ REJECT TRADE", "callback_data": f"ftmo:reject:{proposal_id}"},
             ]]
         }
-        return await asyncio.to_thread(self._send, chat_id, text, reply_markup)
 
     async def answer_callback_query(self, callback_query_id: str, text: str) -> bool:
         return await asyncio.to_thread(self._answer_callback_query, callback_query_id, text)
 
-    async def update_trade_proposal(self, chat_id: str, message_id: int, text: str) -> bool:
+    async def update_trade_proposal(self, chat_id: str, message_id: int, text: str, *, proposal_id: str | None = None) -> bool:
         if not isinstance(message_id, int) or isinstance(message_id, bool) or message_id <= 0:
             raise ValueError("invalid Telegram proposal message identity")
-        return await asyncio.to_thread(self._update_trade_proposal, chat_id, message_id, text)
+        return await asyncio.to_thread(self._update_trade_proposal, chat_id, message_id, text, proposal_id=proposal_id)
 
     async def set_webhook(self, url: str, secret_token: str) -> bool:
         return await asyncio.to_thread(self._set_webhook, url, secret_token)
@@ -444,7 +447,7 @@ class TelegramNotificationTransport:
         except Exception as exc:
             raise RuntimeError("Telegram callback acknowledgement failed") from exc
 
-    def _update_trade_proposal(self, chat_id: str, message_id: int, text: str) -> bool:
+    def _update_trade_proposal(self, chat_id: str, message_id: int, text: str, *, proposal_id: str | None = None) -> bool:
         token = self._token_provider()
         if not token:
             raise RuntimeError("Telegram credential is unavailable")
@@ -455,7 +458,7 @@ class TelegramNotificationTransport:
             "message_id": message_id,
             "text": _bold_telegram_labels(text),
             "parse_mode": "HTML",
-            "reply_markup": {"inline_keyboard": []},
+            "reply_markup": self._approval_keyboard(proposal_id) if proposal_id is not None else {"inline_keyboard": []},
         }, separators=(",", ":")).encode()
         request = Request(
             f"https://api.telegram.org/bot{token}/editMessageText",

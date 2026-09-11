@@ -15,6 +15,7 @@ import pytest
 
 import monatise.application.ftmo_master as master_module
 from monatise.application.ftmo_master import FTMOBridgeAuthenticator, FTMOMasterError
+from monatise.application.deployment import TelegramNotificationTransport
 from monatise.application.production import ProductionASGI, telegram_webhook_secret
 from monatise.application.workflows import TelegramNotifier
 from tests.test_ftmo_master import NOW, heartbeat
@@ -145,6 +146,63 @@ def test_delayed_approval_keeps_current_quote_and_price_validation(monkeypatch, 
     assert bridge_request(app, control, clock[0], 'GET', '/api/ftmo/bridge/commands')['count'] == 0
     assert asyncio.run(control.repository.pending_commands()) == ()
     assert any('BLOCKED' in text for _, text in transport.messages)
+    assert transport.retry_controls[-1] == (pending['proposal_id'] if failure == 'stale_quote' else None)
+
+
+@pytest.mark.parametrize('action', ['approve', 'reject'])
+def test_temporary_failure_keeps_buttons_for_a_later_manual_decision(monkeypatch, action):
+    app, control, _, pending, transport, message_id, clock = prepare(monkeypatch, 'scanner')
+    clock[0] += timedelta(minutes=20)
+    refresh_bridge(app, control, clock[0], stale=True)
+    assert callback(app, pending, message_id, 'approve')[0] == 200
+    assert asyncio.run(control.repository.pending_commands()) == ()
+    assert transport.retry_controls[-1] == pending['proposal_id']
+    assert pending['expires_at'] in transport.retractions[-1][2]
+    clock[0] = NOW + timedelta(minutes=29)
+    refresh_bridge(app, control, clock[0])
+    assert callback(app, pending, message_id, action, update_id=124)[0] == 200
+    result = bridge_request(app, control, clock[0], 'GET', '/api/ftmo/bridge/commands')
+    assert result['count'] == int(action == 'approve')
+    assert transport.retry_controls[-1] is None
+
+
+def test_retry_keyboard_is_preserved_in_the_actual_telegram_edit_payload(monkeypatch):
+    requests = []
+    class Response:
+        status = 200
+        def __enter__(self): return self
+        def __exit__(self, *_): pass
+        def read(self): return b'{"ok":true,"result":true}'
+    def send(request, timeout):
+        requests.append(json.loads(request.data))
+        return Response()
+    monkeypatch.setattr('monatise.application.deployment.urlopen', send)
+    transport = TelegramNotificationTransport(lambda: 'test')
+    asyncio.run(transport.update_trade_proposal('42', 901, 'Temporary quote failure', proposal_id='a1b2c3d4e5f6'))
+    buttons = requests[-1]['reply_markup']['inline_keyboard'][0]
+    assert [button['callback_data'] for button in buttons] == ['ftmo:approve:a1b2c3d4e5f6', 'ftmo:reject:a1b2c3d4e5f6']
+    asyncio.run(transport.update_trade_proposal('42', 901, 'Rejected'))
+    assert requests[-1]['reply_markup'] == {'inline_keyboard': []}
+
+
+@pytest.mark.parametrize('failure', ['expired', 'rejected', 'wrong_message', 'wrong_chat', 'superseded'])
+def test_retry_buttons_cannot_be_restored_for_ineligible_messages(monkeypatch, failure):
+    app, control, _, pending, transport, message_id, clock = prepare(monkeypatch, 'scanner')
+    if failure == 'expired':
+        clock[0] += timedelta(minutes=30)
+    elif failure == 'rejected':
+        asyncio.run(control.reject(pending['proposal_id'], '42'))
+    elif failure == 'wrong_message':
+        message_id += 1
+    elif failure == 'wrong_chat':
+        app.runtime.telegram._chat_id = '43'
+    else:
+        saved, version = asyncio.run(control.repository.proposal(pending['proposal_id']))
+        saved['superseded_by_signal_id'] = 'new-signal'
+        asyncio.run(control.repository.update_proposal(pending['proposal_id'], saved, version))
+    with pytest.raises(ValueError, match='not eligible'):
+        asyncio.run(app.runtime.telegram.update_trade_proposal(message_id, 'Retry', proposal_id=pending['proposal_id']))
+    assert transport.retractions == []
 
 
 def test_explicit_signal_expiry_is_not_extended_by_the_approval_default(monkeypatch):

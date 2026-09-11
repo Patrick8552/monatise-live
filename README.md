@@ -123,6 +123,9 @@ session, risk, or supersession checks can still invalidate a setup earlier.
 Approval refreshes the MT5 quote, and the resulting broker command expires
 within 30 seconds (or at the proposal deadline, if earlier). Rejecting a
 request creates no broker command; repeated clicks cannot create another order.
+Temporary approval failures keep both buttons on an eligible pending request,
+so the operator can retry or reject before its deadline. Terminal outcomes and
+expired, invalidated, or superseded setups cannot regain approval controls.
 
 For stocks outside the EA's always-on quote set, Render issues a short-lived
 symbol request in the authenticated heartbeat response. The EA selects that
