@@ -94,8 +94,12 @@ controlled Telegram checks must be reported separately from local simulation.
 
 No existing position was changed during investigation. Read-only records show
 XAUUSD ticket 291873315 was reported closed at 12:30:03 UTC on 11 September;
-there were zero Monatise close commands that day. Heartbeat disappearance does
-not establish the broker's closure reason.
+there were zero Monatise close commands that day. After the user reconnected
+the VPS, MT5 History confirmed the 0.05-lot buy opened at 4344.74 and closed
+at 4303.87 at 15:30:02 broker time (12:30:02 UTC). The exit deal comment was
+`[sl 4317.71]`: a broker stop-loss execution, with 13.84 adverse price slippage.
+Trading P/L was -204.35 USD, plus 0.15 USD commission on each side. The target
+was 4457.28. This was not a close instruction from this debugging session.
 
 Do not loosen spread/exposure gates to produce test buttons. Do not submit a
 live approval merely to validate a handoff. The local three-symbol tests prove
