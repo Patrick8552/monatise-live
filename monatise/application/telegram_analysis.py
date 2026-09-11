@@ -298,6 +298,8 @@ def format_analysis(analysis: Mapping[str, Any]) -> str:
     targets = analysis.get("targets") or []
     lines = [
         "MONATISE ANALYSIS",
+        "CONTEXT ONLY — NOT AN EXECUTABLE TRADE",
+        "approval_controls_omitted_reason=ANALYSIS_ONLY",
         f"Request: {analysis['request_id']} | Analysis: {analysis['analysis_id']}",
         f"Instrument: {analysis['canonical_instrument']} | Timeframe: {analysis['timeframe']}",
         f"UTC: {session.get('analysis_timestamp_utc') or analysis['analysis_completed_at']}",

@@ -46,6 +46,7 @@ from monatise.application.universe_discovery import rank_significant_futures_uni
 from monatise.application.ftmo_registry import FTMOAssetClass, FTMOInstrumentRegistry, FTMO_REGISTRY
 from monatise.application.ftmo_scanner import publication_allowed
 from monatise.application.ftmo_execution import FTMOExecutionConfiguration
+from monatise.application.trade_publication import context_message, failure_code, lifecycle_log
 from monatise.application.ftmo_master import FTMOMasterConfiguration, FTMOMasterControlService, FTMOMasterRepository, FTMOMasterError, format_proposal
 from monatise.application.telegram_analysis import recommended_risk_percent
 from monatise.analysis.tradingview import TRADINGVIEW_ALERT_LIMIT, TRADINGVIEW_FRESH_SECONDS, enrich_tradingview_alert, normalize_tradingview_alert
@@ -362,8 +363,8 @@ class TelegramNotificationTransport:
             raise ValueError("invalid FTMO proposal identity")
         reply_markup = {
             "inline_keyboard": [[
-                {"text": "APPROVE TRADE", "callback_data": f"ftmo:approve:{proposal_id}"},
-                {"text": "REJECT TRADE", "callback_data": f"ftmo:reject:{proposal_id}"},
+                {"text": "✅ APPROVE TRADE", "callback_data": f"ftmo:approve:{proposal_id}"},
+                {"text": "❌ REJECT TRADE", "callback_data": f"ftmo:reject:{proposal_id}"},
             ]]
         }
         return await asyncio.to_thread(self._send, chat_id, text, reply_markup)
@@ -386,10 +387,18 @@ class TelegramNotificationTransport:
         token = self._token_provider()
         if not token:
             raise RuntimeError("Telegram credential is unavailable")
+        actionable = any(marker in text for marker in (
+            "Status: PENDING_APPROVAL", "Status: AWAITING APPROVAL",
+            "EXECUTABLE — AWAITING TELEGRAM APPROVAL", "Approve: /approve ",
+        ))
+        if actionable and reply_markup is None:
+            raise RuntimeError("executable Telegram publication requires both approval controls")
+        if reply_markup is not None and len(text.encode("utf-16-le")) // 2 > 4096:
+            raise RuntimeError("executable proposal exceeds Telegram message limit")
         # Telegram limits messages to 4096 UTF-16 code units after entity
         # parsing.  1800 Unicode code points is safe even when every character
         # is represented by a surrogate pair.
-        if len(text) > 1800:
+        if reply_markup is None and len(text) > 1800:
             text = text[:1797].rstrip() + "..."
         payload = {
             "chat_id": chat_id,
@@ -406,8 +415,14 @@ class TelegramNotificationTransport:
                     raise RuntimeError("Telegram delivery was rejected")
                 payload = json.loads(response.read().decode())
                 message_id = payload.get("result", {}).get("message_id") if payload.get("ok") is True else None
-                if not isinstance(message_id, int):
+                if not isinstance(message_id, int) or isinstance(message_id, bool) or message_id <= 0:
                     raise RuntimeError("Telegram response did not include a message ID")
+                if reply_markup is not None and payload.get("result", {}).get("reply_markup") != reply_markup:
+                    self._update_trade_proposal(chat_id, message_id, context_message(
+                        "Telegram did not confirm both approval buttons. No order was sent.",
+                        "TELEGRAM_KEYBOARD_NOT_CONFIRMED",
+                    ))
+                    raise RuntimeError("Telegram response did not confirm the approval keyboard")
                 return message_id
         except Exception as exc:
             raise RuntimeError("Telegram notification delivery failed") from exc
@@ -2073,7 +2088,7 @@ class OrchestrationRuntime:
             candidates.append((instrument, analysis))
         candidates.sort(key=lambda item: (-abs(int(item[1].get("score") or 0)), item[0].ftmo_symbol))
         deep_limit = max(1, min(20, int(self.environment.get("MONATISE_FTMO_FUTURES_DEEP_ANALYSIS_LIMIT", "10"))))
-        published = suppressed = 0
+        published = executable_published = context_published = suppressed = 0
         for instrument, analysis in candidates[:deep_limit]:
             if not publication_allowed(analysis):
                 suppressed += 1
@@ -2123,9 +2138,13 @@ class OrchestrationRuntime:
                     message = TelegramNotifier.format_ftmo_futures_setup(analysis, proposal=proposal)
                     publish = getattr(self.telegram, "trade_proposal", None)
                     if publish is None:
-                        await notifier(message)
+                        raise FTMOMasterError("approval keyboard transport is unavailable")
+                    await publish(message, proposal["proposal_id"])
+                    stored = await self.ftmo_master.repository.proposal(proposal["proposal_id"])
+                    if stored and stored[0].get("approval_keyboard_attached"):
+                        executable_published += 1
                     else:
-                        await publish(message, proposal["proposal_id"])
+                        context_published += 1
                 else:
                     unavailable = self._transient_ftmo_quote_error(quote_error or "")
                     analysis["ftmo_execution_quote"] = {
@@ -2138,7 +2157,9 @@ class OrchestrationRuntime:
                             item.update({
                                 "status": "failed", "failure_reason": analysis["ftmo_execution_quote"]["reason"],
                             })
-                    await notifier(TelegramNotifier.format_ftmo_futures_setup(analysis))
+                    await notifier(context_message(TelegramNotifier.format_ftmo_futures_setup(analysis),
+                                                   failure_code(quote_error or "quote unavailable")))
+                    context_published += 1
                 published += 1
             except Exception as exc:
                 failures.append({"symbol": instrument.ftmo_symbol, "error_type": type(exc).__name__})
@@ -2151,7 +2172,9 @@ class OrchestrationRuntime:
             "provider_roots_quota_deferred": len(all_unique_roots) - len(unique_roots), "flashalpha_scheduled_capacity": scheduled_capacity,
             "provider_contexts": len(contexts),
             "ranked_candidates": len(candidates), "deep_analysis_attempted": min(len(candidates), deep_limit),
-            "telegram_published": published, "suppressed": suppressed, "failures": failures, "execution_enabled": False,
+            "telegram_published": published, "executable_proposals_published": executable_published,
+            "context_only_published": context_published,
+            "suppressed": suppressed, "failures": failures, "execution_enabled": False,
         }
 
     @staticmethod
@@ -2181,6 +2204,7 @@ class OrchestrationRuntime:
             analysis.get("publication_id") or analysis.get("setup_id") or analysis.get("valid_until")
             or hashlib.sha256(json.dumps({
                 "symbol": symbol, "direction": direction, "entry": entry, "stop": stop, "target": target, "source": source,
+                "observed_at": analysis.get("as_of") or analysis.get("generated_at") or analysis.get("observed_at"),
             }, sort_keys=True, default=str).encode()).hexdigest()
         )
         asset_class = str(analysis.get("asset_class") or "").casefold()
@@ -2216,7 +2240,7 @@ class OrchestrationRuntime:
             "analysis_provider": provider,
             "analysis_instrument": provider_instrument,
             "analysis_exchange": str(analysis.get("analysis_exchange") or analysis.get("exchange") or ""),
-            "analysis_observed_at": timestamp(analysis.get("analysis_observed_at") or analysis.get("observed_at")),
+            "analysis_observed_at": timestamp(analysis.get("analysis_observed_at") or analysis.get("observed_at") or analysis.get("as_of")),
             "signal_expires_at": timestamp(analysis.get("valid_until") or analysis.get("expires_at")),
             "entry_zone_low": analysis.get("entry_zone_low"), "entry_zone_high": analysis.get("entry_zone_high"),
             "order_type": str(analysis.get("order_type") or "market"),
@@ -2239,6 +2263,7 @@ class OrchestrationRuntime:
                 "analysis_id": proposal_arguments["analysis_id"], "signal_id": signal_id,
                 "ftmo_symbol": symbol, "source": source, "maximum_wait_seconds": quote_wait_seconds,
             })
+        lifecycle_log(proposal_arguments, quote_status="requested", telegram_publish_status="not_published")
         request_quote = getattr(self.ftmo_master, "request_execution_quote", None)
         if request_quote is not None and quote_wait_seconds > 0:
             await request_quote(symbol, lifetime_seconds=max(10, math.ceil(quote_wait_seconds) + 5))
@@ -2258,8 +2283,10 @@ class OrchestrationRuntime:
                         await audit("scanner_quote_rejected", request_id, {
                             "analysis_id": proposal_arguments["analysis_id"], "signal_id": signal_id,
                             "ftmo_symbol": symbol, "reason": reason,
+                            "approval_controls_omitted_reason": failure_code(reason),
                         })
-                    LOGGER.info("FTMO-native scanner proposal withheld", extra={"symbol": symbol, "reason": reason})
+                    lifecycle_log({**proposal_arguments, "ftmo_symbol": symbol},
+                        failure_reason=reason, approval_controls_omitted_reason=failure_code(reason))
                     return None, reason
                 await asyncio.sleep(min(0.5, remaining))
                 continue
@@ -2270,6 +2297,7 @@ class OrchestrationRuntime:
                     "quote_observed_at_utc": proposal.get("quote_observed_at_utc"),
                     "quote_age_ms": proposal.get("quote_age_ms"),
                 })
+            lifecycle_log(proposal, telegram_publish_status="ready_to_publish")
             return proposal, None
 
     async def _publish_ftmo_signal_proposal(
@@ -2282,9 +2310,11 @@ class OrchestrationRuntime:
         if proposal is not None:
             publish = getattr(self.telegram, "trade_proposal", None)
             if publish is None:
-                await self.telegram.command_response(format_proposal(proposal))
-            else:
-                await publish(format_proposal(proposal), proposal["proposal_id"])
+                raise FTMOMasterError("approval keyboard transport is unavailable")
+            await publish(format_proposal(proposal), proposal["proposal_id"])
+            if getattr(self.telegram, "_proposal_service", None) is self.ftmo_master:
+                stored = await self.ftmo_master.repository.proposal(proposal["proposal_id"])
+                return bool(stored and stored[0].get("approval_keyboard_attached"))
             return True
         return False
 
@@ -2446,7 +2476,7 @@ class OrchestrationRuntime:
                 }
             if telegram_transport_enabled(self.environment) and telegram_token and telegram_chat:
                 secrets = EnvironmentSecretBoundary(self.environment)
-                self.telegram = TelegramNotifier(TelegramNotificationTransport(lambda: secrets.get("MONATISE_TELEGRAM_BOT_TOKEN")), telegram_chat)
+                self.telegram = TelegramNotifier(TelegramNotificationTransport(lambda: secrets.get("MONATISE_TELEGRAM_BOT_TOKEN")), telegram_chat, proposal_service=self.ftmo_master)
             x_token = self.environment.get("MONATISE_X_BEARER_TOKEN", "")
             if x_token:
                 secrets = EnvironmentSecretBoundary(self.environment)

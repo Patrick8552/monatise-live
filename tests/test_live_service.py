@@ -1,3 +1,19 @@
+from datetime import datetime, timezone
+
+import pytest
+
+from monatise.live.sessions import economic_release_guard
+
+
+@pytest.fixture(autouse=True)
+def fixed_non_event_clock(monkeypatch):
+    # These service tests exercise pricing/risk, not today's economic calendar.
+    # Run the real calendar guard at a fixed non-event time; event-specific tests
+    # in test_sessions continue to exercise the actual blackout policy.
+    moment = datetime(2026, 8, 25, 12, tzinfo=timezone.utc)
+    monkeypatch.setattr("monatise.live.service.economic_release_guard", lambda: economic_release_guard(moment))
+
+
 from monatise.adapters.hyperliquid import HyperliquidAdapter
 from monatise.core.models import Order, OrderSide
 from monatise.live.config import RuntimeConfig

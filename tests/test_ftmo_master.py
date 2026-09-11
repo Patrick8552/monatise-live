@@ -222,7 +222,7 @@ def test_manual_telegram_trade_applies_risk_ceiling_and_publishes_approval_contr
         assert proposal["risk_amount"] == "10.00"
         assert proposal["telegram_message_id"] == 201
         assert "Recommended risk: 0.10%" in message
-        assert "Status: AWAITING APPROVAL" in message
+        assert "Status: PENDING_APPROVAL" in message
 
         response = await app._handle_ftmo_telegram_command(
             "/trade XAUUSD buy market sl=2499.20 tp=2502.20 risk=3.1"
@@ -1418,7 +1418,7 @@ def test_terminal_quote_failure_is_published_once_with_the_exact_reason():
         app = ProductionASGI(runtime)
         assert await app._process_quote_request_once(request["quote_request_id"]) is True
         assert len(runtime.telegram.messages) == 1
-        assert "CONTEXT ONLY — MT5 EXECUTION QUOTE UNAVAILABLE" in runtime.telegram.messages[0]
+        assert "CONTEXT ONLY — NOT AN EXECUTABLE TRADE" in runtime.telegram.messages[0]
         assert "FTMO bridge has never connected" in runtime.telegram.messages[0]
         assert await app._process_quote_request_once(request["quote_request_id"]) is True
         assert len(runtime.telegram.messages) == 1
