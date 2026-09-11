@@ -23,6 +23,7 @@ from typing import Any, Mapping
 
 from monatise.application.market_session import classify_market_session, session_allows_execution
 from monatise.application.ftmo_registry import FTMOAssetClass, FTMOInstrument, FTMO_REGISTRY
+from monatise.application.trade_publication import CONTEXT_ONLY, failure_code
 from monatise.application.risk_policy import MAX_RISK_FRACTION_PER_TRADE, MAX_RISK_PERCENT_PER_TRADE, risk_ceiling
 
 
@@ -276,6 +277,7 @@ class FTMOMasterRepository:
     AUDIT = "ftmo_master_audit"
     TELEGRAM_REQUESTS = "telegram_analysis_requests"
     ANALYSES = "telegram_analyses"
+    SIGNALS = "ftmo_signals"
     QUOTE_REQUESTS = "ftmo_quote_requests"
     QUOTE_DEMANDS = "ftmo_quote_demands"
 
@@ -337,6 +339,33 @@ class FTMOMasterRepository:
         record = await self.store.get(self.PROPOSALS, proposal_id)
         return (dict(record.value), record.version) if record else None
 
+    async def persist_proposal_sources(self, proposal: Mapping[str, Any]) -> None:
+        """Commit provenance before the proposal can enter the publisher."""
+        analysis_id, signal_id = str(proposal["analysis_id"]), str(proposal["signal_id"])
+        analysis = await self.telegram_analysis(analysis_id)
+        if analysis is None:
+            if not await self.save_telegram_analysis({
+                "analysis_id": analysis_id, "qualified": True,
+                "decision": proposal.get("analysis_state") or proposal.get("side"),
+                "symbol": proposal.get("symbol"), "source": proposal.get("analysis_source") or "operator",
+                "entry": proposal.get("analysis_entry") or proposal.get("entry"),
+                "stop_loss": proposal.get("analysis_stop") or proposal.get("stop_loss"),
+                "target": proposal.get("analysis_target") or proposal.get("take_profit"),
+                "created_at": proposal["created_at"], "expires_at": proposal["expires_at"],
+            }):
+                raise FTMOMasterError("analysis persistence failed")
+        signal = {
+            "signal_id": signal_id, "analysis_id": analysis_id, "symbol": proposal.get("symbol"),
+            "direction": proposal.get("side"), "status": "qualified", "proposal_id": proposal["proposal_id"],
+            "created_at": proposal["created_at"], "expires_at": proposal["expires_at"],
+        }
+        existing = await self.store.get(self.SIGNALS, signal_id)
+        if existing is not None:
+            if any(existing.value.get(key) != signal[key] for key in ("analysis_id", "symbol", "direction", "proposal_id")):
+                raise FTMOMasterError("persisted signal identity collision")
+        else:
+            await self._put(self.SIGNALS, signal_id, signal, expected_version=0)
+
     async def proposals(self) -> tuple[dict[str, Any], ...]:
         records = await self.store.list_namespace(self.PROPOSALS)
         values = [dict(record.value) for record in records]
@@ -354,10 +383,14 @@ class FTMOMasterRepository:
             raise KeyError("unknown FTMO proposal")
         value, version = stored
         previous = value.get("telegram_message_id")
+        if value.get("approval_controls_required") and value.get("status") != ProposalStatus.PENDING.value:
+            raise FTMOMasterError("proposal changed before Telegram publication completed")
         if previous is not None and previous != message_id:
             raise RuntimeError("FTMO proposal Telegram identity is already immutable")
         value["telegram_message_id"] = message_id
         value["telegram_published_at"] = _utc().isoformat()
+        value["telegram_publish_status"] = "published"
+        value["approval_keyboard_attached"] = bool(value.get("approval_controls_required"))
         await self.update_proposal(proposal_id, value, version)
         await self.audit("telegram_proposal_published", proposal_id, {
             "telegram_message_id": message_id,
@@ -1500,8 +1533,11 @@ class FTMOMasterControlService:
             "execution_id": None,
             "broker_ticket": None,
         }
+        proposal.setdefault("analysis_id", "operator:" + proposal_id)
+        proposal.setdefault("signal_id", "operator:" + proposal_id)
+        await self.repository.persist_proposal_sources(proposal)
         if not await self.repository.save_proposal(proposal):
-            raise FTMOMasterError("proposal identity collision")
+            raise FTMOMasterError("proposal persistence failed or identity collision")
         return proposal
 
     async def create_signal_proposal(
@@ -1680,8 +1716,11 @@ class FTMOMasterControlService:
             "created_at": now.isoformat(), "expires_at": (now + timedelta(minutes=3)).isoformat(),
             "confirmation_required": True,
         }
+        proposal.setdefault("analysis_id", "operator:" + proposal_id)
+        proposal.setdefault("signal_id", "operator:" + proposal_id)
+        await self.repository.persist_proposal_sources(proposal)
         if not await self.repository.save_proposal(proposal):
-            raise FTMOMasterError("proposal identity collision")
+            raise FTMOMasterError("proposal persistence failed or identity collision")
         return proposal
 
     async def approve(self, proposal_id: str, actor: str, *, now: datetime | None = None) -> dict[str, Any]:
@@ -1692,6 +1731,12 @@ class FTMOMasterControlService:
         if stored is None:
             raise FTMOMasterError("unknown proposal")
         proposal, version = stored
+        if proposal.get("approval_controls_required") and (
+            proposal.get("telegram_publish_status") != "published" or not proposal.get("approval_keyboard_attached")
+        ):
+            raise FTMOMasterError("proposal publication was not durably completed")
+        if proposal.get("superseded_by_signal_id"):
+            raise FTMOMasterError("signal was superseded")
         await self.repository.audit("approval_received", proposal_id, {
             "actor": actor, "analysis_id": proposal.get("analysis_id"),
             "quote_request_id": proposal.get("quote_request_id"), "proposal_id": proposal_id,
@@ -1860,8 +1905,18 @@ class FTMOMasterControlService:
             "expires_epoch": str(int(command_expires_at.timestamp())),
             "pending_expires_epoch": str(int(proposal_expires_at.timestamp())),
         })
+        proposal.update({
+            "status": ProposalStatus.APPROVED.value, "lifecycle_state": "APPROVAL_CLAIMED",
+            "approval_status": "approved", "approved_by": actor, "approved_at": observed.isoformat(),
+            "approval_id": approval_id, "command_id": command_id, "execution_id": execution_id,
+        })
+        try:
+            await self.repository.update_proposal(proposal_id, proposal, version)
+        except RuntimeError as exc:
+            raise FTMOMasterError("proposal changed during approval; no order was sent") from exc
+        version += 1
         if not await self.repository.save_command(command):
-            raise FTMOMasterError("duplicate execution command")
+            raise FTMOMasterError("duplicate execution command; reconciliation required")
         proposal.update({
             "status": ProposalStatus.COMMAND_CREATED.value, "lifecycle_state": "EXECUTION_QUEUED",
             "approval_status": "approved",
@@ -1886,6 +1941,63 @@ class FTMOMasterControlService:
                 "approved_at": observed.isoformat(),
             })
         return command
+
+    async def validate_proposal_publication(self, proposal: Mapping[str, Any], *, now: datetime | None = None) -> None:
+        observed = _utc(now)
+        if proposal.get("status") != ProposalStatus.PENDING.value:
+            raise FTMOMasterError("proposal is not pending approval")
+        if proposal.get("superseded_by_signal_id"):
+            raise FTMOMasterError("signal was superseded")
+        if _timestamp(proposal.get("expires_at"), "proposal expiry") <= observed:
+            raise FTMOMasterError("proposal has expired")
+        readiness = await self.status(now=observed)
+        if not readiness.get("execution_ready"):
+            raise FTMOMasterError("execution gates blocked: " + ", ".join(self.execution_blockers(readiness)))
+        if proposal.get("kind") != "open_trade":
+            return
+        required = ("analysis_id", "signal_id", "symbol", "side", "entry", "stop_loss", "take_profit",
+                    "risk_amount", "risk_fraction", "volume", "created_at", "quote_timestamp")
+        if any(proposal.get(key) in (None, "") for key in required):
+            raise FTMOMasterError("durable proposal is incomplete")
+        if await self.repository.telegram_analysis(str(proposal["analysis_id"])) is None:
+            raise FTMOMasterError("durable analysis is missing")
+        signal = await self.repository.store.get(self.repository.SIGNALS, str(proposal["signal_id"]))
+        if signal is None or signal.value.get("proposal_id") != proposal["proposal_id"]:
+            raise FTMOMasterError("durable signal is missing or mismatched")
+        quote_at = _timestamp(proposal["quote_timestamp"], "proposal quote timestamp")
+        age = (observed - quote_at).total_seconds()
+        if age > self.configuration.quote_max_age_seconds:
+            raise FTMOMasterError("proposal MT5 quote is stale")
+        if age < -float(self.configuration.quote_future_tolerance_seconds):
+            raise FTMOMasterError("proposal quote timestamp is in the future")
+        fields = await self._validated_open_fields(
+            symbol=proposal["symbol"], side=proposal["side"], order_type=proposal["order_type"],
+            entry=proposal.get("entry"), stop_loss=proposal["stop_loss"], take_profit=proposal["take_profit"],
+            reference_entry=proposal["entry"], now=observed,
+            risk_fraction_limit=proposal.get("recommended_risk_fraction"),
+        )
+        session = classify_market_session(observed, instrument=self._verified_instrument_mapping(proposal["symbol"]),
+                                         trade_mode=fields["execution_snapshot"]["trading_status"])
+        if not session_allows_execution(session):
+            raise FTMOMasterError("market session does not permit execution")
+
+    async def validate_telegram_proposal(self, proposal_id: str, *, actor: str, chat_id: str,
+                                         message_id: int | None = None) -> None:
+        if actor not in self.configuration.authorized_user_ids:
+            raise FTMOMasterError("Telegram user is not authorized")
+        stored = await self.repository.proposal(proposal_id)
+        if stored is None:
+            raise FTMOMasterError("unknown proposal")
+        proposal = stored[0]
+        if str(proposal.get("telegram_chat_id") or "") != str(chat_id):
+            raise FTMOMasterError("proposal belongs to another Telegram chat")
+        if (not isinstance(message_id, int) or isinstance(message_id, bool) or message_id <= 0
+                or proposal.get("telegram_message_id") != message_id):
+            raise FTMOMasterError("callback message does not match the persisted proposal")
+        if proposal.get("approval_controls_required") and (
+            proposal.get("telegram_publish_status") != "published" or not proposal.get("approval_keyboard_attached")
+        ):
+            raise FTMOMasterError("proposal publication was not durably completed")
 
     async def reject(self, proposal_id: str, actor: str) -> dict[str, Any]:
         if actor not in self.configuration.authorized_user_ids:
@@ -1921,6 +2033,13 @@ class FTMOMasterControlService:
         for command in await self.repository.pending_commands(limit):
             if datetime.fromisoformat(command["expires_at"]) <= observed:
                 await self.repository.update_command(command["command_id"], {"status": CommandStatus.REJECTED.value, "reason": "expired before delivery"})
+                continue
+            stored_proposal = await self.repository.proposal(command["proposal_id"])
+            approved = stored_proposal[0] if stored_proposal else {}
+            if (approved.get("status") != ProposalStatus.COMMAND_CREATED.value
+                    or approved.get("command_id") != command["command_id"]
+                    or approved.get("approval_id") != command.get("approval_id")
+                    or not approved.get("approved_by")):
                 continue
             if command["expected_account_id"] != self.configuration.account_id or command["expected_server"] != self.configuration.server:
                 await self.repository.update_command(command["command_id"], {"status": CommandStatus.REJECTED.value, "reason": "configured identity changed"})
@@ -2080,6 +2199,14 @@ class FTMOMasterControlService:
 def format_proposal(
     proposal: Mapping[str, Any], *, approval_available: bool = True, blocking_reason: str | None = None,
 ) -> str:
+    if not approval_available:
+        return "\n".join((
+            CONTEXT_ONLY,
+            f"Proposal: {proposal['proposal_id']} | Instrument: {proposal.get('symbol') or 'management'}",
+            f"Status: BLOCKED — {blocking_reason or 'execution gates are not ready'}",
+            f"approval_controls_omitted_reason={failure_code(blocking_reason or 'execution gates blocked')}",
+            "No executable levels are active. No order has been sent.",
+        ))
     if proposal.get("kind") == "open_trade":
         return "\n".join((
             "MONATISE TRADE PROPOSAL",
@@ -2092,6 +2219,7 @@ def format_proposal(
             f"Session: {proposal.get('market_session') or 'UNKNOWN'} | Checked: {proposal.get('session_checked_at') or 'UNKNOWN'}",
             f"Market: {'OPEN' if proposal.get('market_open') is True else 'CLOSED' if proposal.get('market_open') is False else 'UNKNOWN'} | Broker break: {proposal.get('broker_break_proximity') or 'UNKNOWN'}",
             f"Analysis reference price: {proposal.get('analysis_price') or proposal['entry']}",
+            f"Executable entry: {proposal['entry']}",
             f"Proposed SL: {proposal['stop_loss']} | Proposed TP: {proposal['take_profit']}",
             f"Risk ceiling: {MAX_RISK_PERCENT_PER_TRADE:.2f}% | Recommended risk: {Decimal(str(proposal.get('recommended_risk_fraction') or proposal['risk_fraction'])) * 100:.2f}%",
             f"Preview calculated risk: {Decimal(str(proposal['risk_fraction'])) * 100:.2f}%",
@@ -2100,13 +2228,8 @@ def format_proposal(
             f"FTMO quote observed UTC: {proposal.get('quote_observed_at_utc') or proposal.get('quote_timestamp') or 'UNKNOWN'} | Age: {proposal.get('quote_age_ms') or 'UNKNOWN'} ms",
             f"Signal expires: {proposal['expires_at']}",
             *((f"Conviction: {proposal['conviction']}",) if proposal.get("conviction") is not None else ()),
-            *( (
-                "Status: AWAITING APPROVAL",
-                f"Approve: /approve {proposal['proposal_id']} | Reject: /reject {proposal['proposal_id']}",
-            ) if approval_available else (
-                f"Status: BLOCKED — {blocking_reason or 'execution gates are not ready'}",
-                "Approval controls are withheld until every independent execution gate is ready.",
-            )),
+            "Status: PENDING_APPROVAL",
+            f"Approve: /approve {proposal['proposal_id']} | Reject: /reject {proposal['proposal_id']}",
             "Approval authorizes revalidation at the current FTMO Bid/Ask; it does not authorize this preview price.",
             "No order has been sent.",
         ))
@@ -2115,13 +2238,8 @@ def format_proposal(
         f"ID: {proposal['proposal_id']}",
         f"Operation: {str(proposal['operation']).upper()} · target {proposal['target_id']}",
         *((f"Value: {proposal['value']}",) if proposal.get("value") else ()),
-        *( (
-            "Status: AWAITING APPROVAL",
-            f"Approve: /approve {proposal['proposal_id']} | Reject: /reject {proposal['proposal_id']}",
-        ) if approval_available else (
-            f"Status: BLOCKED — {blocking_reason or 'execution gates are not ready'}",
-            "Approval controls are withheld until every independent execution gate is ready.",
-        )),
+        "Status: PENDING_APPROVAL",
+        f"Approve: /approve {proposal['proposal_id']} | Reject: /reject {proposal['proposal_id']}",
         "No broker change has been sent.",
     ))
 

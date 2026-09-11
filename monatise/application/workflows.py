@@ -10,6 +10,7 @@ from datetime import timedelta
 from typing import Any, Awaitable, Callable, Protocol
 
 from monatise.application.models import AnalysisRun, PipelineResult
+from monatise.application.trade_publication import context_message, publish_proposal
 from monatise.application.orchestrator import PipelineOrchestrator
 from monatise.application.production_analysis import build_directional_plan, build_moving_grid_plan, build_setup_validity, strongest_confirmation_signal
 from monatise.application.registry import CANONICAL_ENGINE_ORDER, PRODUCTION_ENGINE_ORDER
@@ -23,10 +24,11 @@ class TelegramTransport(Protocol):
 
 
 class TelegramNotifier:
-    def __init__(self, transport: TelegramTransport, chat_id: str) -> None:
+    def __init__(self, transport: TelegramTransport, chat_id: str, *, proposal_service: Any = None) -> None:
         if not isinstance(chat_id, str) or not chat_id.strip():
             raise ValueError("Telegram chat_id is required")
         self._transport, self._chat_id = transport, chat_id
+        self._proposal_service = proposal_service
 
     async def deliver(self, result: PipelineResult) -> Any:
         text = self.format(result)
@@ -107,12 +109,12 @@ class TelegramNotifier:
     async def ftmo_stock_notification(self, message: str) -> Any:
         if not message.strip():
             raise ValueError("notification message is required")
-        return await self._transport.send_message(self._chat_id, message)
+        return await self._transport.send_message(self._chat_id, context_message(message))
 
     async def ftmo_futures_notification(self, message: str) -> Any:
         if not message.strip():
             raise ValueError("notification message is required")
-        return await self._transport.send_message(self._chat_id, message)
+        return await self._transport.send_message(self._chat_id, context_message(message))
 
     async def command_response(self, message: str) -> Any:
         if not message.strip():
@@ -122,10 +124,7 @@ class TelegramNotifier:
     async def trade_proposal(self, message: str, proposal_id: str) -> Any:
         if not message.strip() or not proposal_id.strip():
             raise ValueError("trade proposal and identity are required")
-        send = getattr(self._transport, "send_trade_proposal", None)
-        if send is None:
-            return await self._transport.send_message(self._chat_id, message)
-        return await send(self._chat_id, message, proposal_id)
+        return await publish_proposal(self._transport, self._chat_id, self._proposal_service, proposal_id)
 
     async def answer_callback_query(self, callback_query_id: str, message: str = "Processed securely") -> Any:
         answer = getattr(self._transport, "answer_callback_query", None)
@@ -556,7 +555,8 @@ class TelegramNotifier:
                 f"Quote status: {status}",
                 f"Reason: {reason}",
                 "FTMO executable entry/stop/target: WITHHELD.",
-                "Status: CONTEXT ONLY — MT5 EXECUTION QUOTE UNAVAILABLE.",
+                "Status: CONTEXT ONLY — NOT AN EXECUTABLE TRADE",
+                "MT5 execution validation failed.",
                 "No trade was executed.",
             ))
         return "\n".join(lines)
