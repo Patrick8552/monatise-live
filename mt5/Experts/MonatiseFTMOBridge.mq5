@@ -1,10 +1,13 @@
 #property copyright "Monatise"
-#property version   "1.17"
+#property version   "1.18"
 #property strict
 #property description "Account-bound FTMO bridge. Telegram never talks directly to the broker."
 
 #include <Trade/Trade.mqh>
 #include "MonatiseBrokerResults.mqh"
+#include "MonatiseMultiTP.mqh"
+
+input bool InpMultiTPEnabled = false; // Must match server rollout; no autonomous trading.
 
 input string InpControlPlaneUrl        = "https://monatise-live.onrender.com";
 input string InpBridgeSecret           = "";       // Set in MT5; never commit the value.
@@ -26,7 +29,7 @@ input int    InpMaximumDeviationPoints = 20;
 input double InpGoldMaximumAdversePriceDeviation = 10.0; // Price units (USD/oz), signed Gold proposals only.
 input long   InpMagicNumber            = 26082501;
 
-string EA_VERSION = "1.17";
+string EA_VERSION = "1.18";
 string JOURNAL_FILE = "monatise-ftmo-command-journal.csv";
 string DynamicSymbols = "";
 CTrade Trade;
@@ -320,6 +323,7 @@ string PositionsJson()
       if(ticket == 0) continue;
       if(result != "[") result += ",";
       result += "{\"ticket\":\"" + IntegerToString((long)ticket) + "\",\"symbol\":\"" + JsonEscape(PositionGetString(POSITION_SYMBOL))
+             + "\",\"identifier\":\"" + IntegerToString(PositionGetInteger(POSITION_IDENTIFIER))
              + "\",\"magic\":\"" + IntegerToString(PositionGetInteger(POSITION_MAGIC))
              + "\",\"type\":" + IntegerToString((int)PositionGetInteger(POSITION_TYPE))
              + ",\"volume\":\"" + DoubleToString(PositionGetDouble(POSITION_VOLUME), 8)
@@ -332,6 +336,189 @@ string PositionsJson()
    }
    return result + "]";
 }
+
+
+string ManagementDealJson(ulong deal)
+{
+   long entry = HistoryDealGetInteger(deal, DEAL_ENTRY);
+   if(entry != DEAL_ENTRY_IN && entry != DEAL_ENTRY_OUT && entry != DEAL_ENTRY_OUT_BY) return "";
+   long reason = HistoryDealGetInteger(deal, DEAL_REASON);
+   string label = reason == DEAL_REASON_TP ? "TP" : reason == DEAL_REASON_SL ? "SL" :
+                  reason == DEAL_REASON_CLIENT ? "CLIENT" : reason == DEAL_REASON_MOBILE ? "MOBILE" :
+                  reason == DEAL_REASON_WEB ? "WEB" : reason == DEAL_REASON_EXPERT ? "EXPERT" : "UNKNOWN";
+   return "{\"deal_id\":\"" + IntegerToString((long)deal)
+      + "\",\"position_id\":\"" + IntegerToString(HistoryDealGetInteger(deal, DEAL_POSITION_ID))
+      + "\",\"order_id\":\"" + IntegerToString(HistoryDealGetInteger(deal, DEAL_ORDER))
+      + "\",\"entry\":\"" + (entry == DEAL_ENTRY_IN ? "in" : "out") + "\",\"reason\":\"" + label
+      + "\",\"time\":\"" + IsoTime(BrokerTimeToUtc((datetime)HistoryDealGetInteger(deal, DEAL_TIME)))
+      + "\",\"volume\":\"" + DoubleToString(HistoryDealGetDouble(deal, DEAL_VOLUME), 8)
+      + "\",\"profit\":\"" + DoubleToString(HistoryDealGetDouble(deal, DEAL_PROFIT), 8)
+      + "\",\"commission\":\"" + DoubleToString(HistoryDealGetDouble(deal, DEAL_COMMISSION), 8)
+      + "\",\"swap\":\"" + DoubleToString(HistoryDealGetDouble(deal, DEAL_SWAP), 8)
+      + "\",\"fee\":\"" + DoubleToString(HistoryDealGetDouble(deal, DEAL_FEE), 8)
+      + "\",\"price\":\"" + DoubleToString(HistoryDealGetDouble(deal, DEAL_PRICE), 8)
+      + "\",\"comment\":\"" + JsonEscape(HistoryDealGetString(deal, DEAL_COMMENT)) + "\"}";
+}
+
+string ManagementDealsJson()
+{
+   // Query full history for each open owned position, plus recent closed ones.
+   // Bounded transport: missing history is detected by the server and stops management.
+   string result = "[";
+   int count = 0;
+   for(int p=0; p<PositionsTotal() && count<768; p++)
+   {
+      ulong ticket = PositionGetTicket(p);
+      if(ticket == 0 || PositionGetInteger(POSITION_MAGIC) != InpMagicNumber) continue;
+      ulong identifier = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
+      if(!HistorySelectByPosition(identifier)) continue;
+      int total = HistoryDealsTotal();
+      for(int i=0; i<total && count<768; i++)
+      {
+         string row = ManagementDealJson(HistoryDealGetTicket(i));
+         if(row == "") continue;
+         if(result != "[") result += ",";
+         result += row; count++;
+      }
+   }
+   if(HistorySelect(TimeTradeServer()-30*86400, TimeTradeServer()))
+   {
+      for(int i=HistoryDealsTotal()-1; i>=0 && count<1024; i--)
+      {
+         ulong deal = HistoryDealGetTicket(i);
+         // Include manual exits too: their magic can be zero. The server binds
+         // position identifiers to previously approved owned opening trades.
+         string row = ManagementDealJson(deal);
+         if(row == "") continue;
+         if(result != "[") result += ",";
+         result += row; count++;
+      }
+   }
+   return result + "]";
+}
+
+bool ValidateProfitIntent(string payload, string &reason)
+{
+   string operation = JsonString(payload, "operation");
+   if(operation == "open" && JsonString(payload, "multi_tp_version") == "") return true;
+   bool managed = JsonString(payload, "managed_trade_id") != "";
+   if(operation != "open" && !managed && operation != "partial_close" && operation != "modify_targets") return true;
+   if(!InpMultiTPEnabled && operation != "close" && operation != "sl" && operation != "breakeven") { reason = "local multi-target gate is disabled"; return false; }
+   if(operation == "open")
+   {
+      int count = (int)StringToInteger(JsonString(payload, "target_count"));
+      if(JsonString(payload, "multi_tp_version") != "1" || count < 1 || count > 4)
+         { reason = "unsupported target plan"; return false; }
+      string symbol = JsonString(payload, "symbol");
+      MqlTick quote;
+      if(!SymbolInfoTick(symbol, quote)) { reason = "target quote unavailable"; return false; }
+      bool buy = JsonString(payload, "side") == "buy";
+      double entry = JsonString(payload, "order_type") == "market" ? (buy ? quote.ask : quote.bid) : StringToDouble(JsonString(payload, "entry"));
+      double stop = StringToDouble(JsonString(payload, "stop_loss"));
+      double tick = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
+      double minimum = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN), step = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
+      double rr = StringToDouble(JsonString(payload, "minimum_target_rr"));
+      double increment = StringToDouble(JsonString(payload, "minimum_target_increment_r"));
+      if(rr <= 0 || increment <= 0 || minimum <= 0 || step <= 0) { reason = "invalid target policy"; return false; }
+      double distance = MathMax((double)SymbolInfoInteger(symbol, SYMBOL_TRADE_STOPS_LEVEL), (double)SymbolInfoInteger(symbol, SYMBOL_TRADE_FREEZE_LEVEL))*SymbolInfoDouble(symbol, SYMBOL_POINT);
+      double total = 0, previous = entry;
+      for(int i=0; i<count; i++)
+      {
+         double price = StringToDouble(JsonString(payload, "tp_"+IntegerToString(i)+"_price"));
+         double volume = StringToDouble(JsonString(payload, "tp_"+IntegerToString(i)+"_volume"));
+         if(!MultiTPLevelValid(entry, stop, price, previous, buy, tick, distance, rr, increment, i==0)
+            || !MathIsValidNumber(volume) || volume < minimum-1e-8 || MathAbs(volume/step-MathRound(volume/step))>1e-8)
+            { reason = "invalid target geometry/allocation at final quote"; return false; }
+         total += volume; previous = price;
+      }
+      if(MathAbs(total-StringToDouble(JsonString(payload, "volume")))>1e-8
+         || MathAbs(previous-StringToDouble(JsonString(payload, "take_profit")))>1e-8)
+         { reason = "ladder volume or final TP mismatch"; return false; }
+      return true;
+   }
+   ulong ticket = (ulong)StringToInteger(JsonString(payload, "target_id"));
+   if(!managed || !PositionSelectByTicket(ticket) || PositionGetInteger(POSITION_MAGIC) != InpMagicNumber
+      || IntegerToString(PositionGetInteger(POSITION_IDENTIFIER)) != JsonString(payload, "position_identifier")
+      || MathAbs(PositionGetDouble(POSITION_VOLUME)-StringToDouble(JsonString(payload, "expected_remaining_volume")))>1e-8)
+      { reason = "managed position identity/volume changed"; return false; }
+   string symbol = PositionGetString(POSITION_SYMBOL);
+   if(JsonString(payload, "symbol") != symbol) { reason = "managed symbol mismatch"; return false; }
+   MqlTick quote;
+   if(!SymbolInfoTick(symbol, quote) || TimeGMT()-BrokerTimeToUtc(quote.time)>5)
+      { reason = "management quote is stale"; return false; }
+   bool buy = PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY;
+   if(operation == "partial_close")
+   {
+      double tick_size = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
+      if(tick_size <= 0 || quote.ask <= quote.bid || (quote.ask-quote.bid)/tick_size > InpMaximumSpreadTicks)
+         { reason = "partial spread exceeds policy"; return false; }
+      double final_target = PositionGetDouble(POSITION_TP);
+      if(final_target > 0 && (buy ? quote.bid >= final_target : quote.ask <= final_target))
+         { reason = "final broker target already reached; await deal reconciliation"; return false; }
+      double volume = StringToDouble(JsonString(payload, "volume"));
+      double trigger = StringToDouble(JsonString(payload, "trigger_price"));
+      if(trigger <= 0 || !MathIsValidNumber(trigger) || (buy ? quote.bid<trigger : quote.ask>trigger)
+         || !MultiTPVolumeValid(volume, PositionGetDouble(POSITION_VOLUME), SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN), SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP)))
+         { reason = "partial target/volume is no longer executable"; return false; }
+   }
+   if(operation == "sl" || operation == "breakeven" || operation == "modify_targets")
+   {
+      double level = StringToDouble(JsonString(payload, "value"));
+      if(operation == "breakeven") level = PositionGetDouble(POSITION_PRICE_OPEN);
+      double distance = MathMax((double)SymbolInfoInteger(symbol, SYMBOL_TRADE_STOPS_LEVEL), (double)SymbolInfoInteger(symbol, SYMBOL_TRADE_FREEZE_LEVEL))*SymbolInfoDouble(symbol, SYMBOL_POINT);
+      double old = PositionGetDouble(POSITION_SL);
+      bool target = operation == "modify_targets";
+      if(level <= 0 || !MathIsValidNumber(level)
+         || (target && (buy ? level-quote.bid : quote.ask-level)<distance)
+         || (!target && ((buy ? quote.bid-level : level-quote.ask)<distance || (old>0 && (buy ? level<old : level>old)))))
+         { reason = "managed modification worsens stop or violates stop/freeze distance"; return false; }
+   }
+   return true;
+}
+
+void ExecutePartialProfit(string payload, string command_id)
+{
+   string reason;
+   // Validate again at the broker boundary; an opposite netting deal must never reverse.
+   if(!ValidateProfitIntent(payload, reason))
+   {
+      JournalAppend(command_id, "rejected", "", reason); Acknowledge(command_id, "rejected", "", reason); return;
+   }
+   ulong ticket = (ulong)StringToInteger(JsonString(payload, "target_id"));
+   MqlTradeRequest request = {};
+   MqlTradeResult result = {};
+   MqlTradeCheckResult check = {};
+   request.action = TRADE_ACTION_DEAL;
+   request.position = ticket; // Required for hedging, also binds the netting reduction.
+   request.symbol = PositionGetString(POSITION_SYMBOL);
+   request.magic = InpMagicNumber;
+   request.volume = StringToDouble(JsonString(payload, "volume"));
+   request.type = PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;
+   MqlTick quote;
+   if(!SymbolInfoTick(request.symbol, quote)) { Acknowledge(command_id, "broker_uncertain", "", "partial quote unavailable"); return; }
+   request.price = request.type == ORDER_TYPE_SELL ? quote.bid : quote.ask;
+   request.deviation = MathMax(0, InpMaximumDeviationPoints);
+   request.comment = "MNT:" + StringSubstr(command_id, 0, 16);
+   long filling = SymbolInfoInteger(request.symbol, SYMBOL_FILLING_MODE);
+   if((filling & SYMBOL_FILLING_FOK) != 0) request.type_filling = ORDER_FILLING_FOK;
+   else if((filling & SYMBOL_FILLING_IOC) != 0) request.type_filling = ORDER_FILLING_IOC;
+   else { JournalAppend(command_id, "rejected", "", "unsupported partial filling mode"); Acknowledge(command_id, "rejected", "", "unsupported partial filling mode"); return; }
+   if(!OrderCheck(request, check))
+   {
+      JournalAppend(command_id, "rejected", "", check.comment); AcknowledgeEvidence(command_id, "rejected", "", check.comment, false, IntegerToString((int)check.retcode), "", "", "", "", "", ""); return;
+   }
+   if(!ValidateProfitIntent(payload, reason))
+   {
+      JournalAppend(command_id, "rejected", "", reason); Acknowledge(command_id, "rejected", "", reason); return;
+   }
+   bool sent = OrderSend(request, result);
+   string status = BrokerResultStatus((int)result.retcode, "partial_close", "market", (long)result.order, result.price, result.volume);
+   if(!sent && status == "reconciled") status = "broker_uncertain";
+   string order = IntegerToString((long)result.order);
+   JournalAppend(command_id, status, order, result.comment);
+   AcknowledgeEvidence(command_id, status, order, result.comment, true, IntegerToString((int)result.retcode), DoubleToString(request.price, 8), DoubleToString(result.price, 8), DoubleToString(result.price-request.price, 8), DoubleToString(result.volume, 8), "", "");
+}
+
 
 string OrdersJson()
 {
@@ -481,6 +668,9 @@ string BuildHeartbeat()
       + "\"ea_attached\":true,"
       + "\"terminal_build\":\"" + IntegerToString((int)TerminalInfoInteger(TERMINAL_BUILD)) + "\","
       + "\"ea_version\":\"" + EA_VERSION + "\","
+      + "\"multi_tp_version\":" + (InpMultiTPEnabled ? "1" : "0") + ","
+      + "\"account_margin_mode\":" + IntegerToString(AccountInfoInteger(ACCOUNT_MARGIN_MODE)) + ","
+      + "\"deals\":" + (InpMultiTPEnabled ? ManagementDealsJson() : "[]") + ","
       + "\"gold_price_guard_version\":1,"
       + "\"gold_maximum_adverse_price_deviation\":\"" + DoubleToString(MathMax(0, InpGoldMaximumAdversePriceDeviation), 8) + "\","
       + "\"observed_at_utc\":\"" + IsoTime(observed_utc) + "\","
@@ -829,6 +1019,8 @@ void ExecuteCommand(string command_json)
       Acknowledge(command_id, "rejected", "", reason);
       return;
    }
+   if(!ValidateProfitIntent(execution_payload, reason))
+   { JournalAppend(command_id, "rejected", "", reason); Acknowledge(command_id, "rejected", "", reason); return; }
    string symbol = JsonString(execution_payload, "symbol");
    string side = JsonString(execution_payload, "side");
    string order_type = JsonString(execution_payload, "order_type");
@@ -860,6 +1052,7 @@ void ExecuteCommand(string command_json)
       }
    }
    JournalAppend(command_id, "broker_uncertain", "", "submission began; reconcile before any retry");
+   if(operation == "partial_close") { ExecutePartialProfit(execution_payload, command_id); return; }
    Trade.SetExpertMagicNumber(InpMagicNumber);
    Trade.SetAsyncMode(false);
    Trade.SetDeviationInPoints(MathMax(0, InpMaximumDeviationPoints));
@@ -879,14 +1072,14 @@ void ExecuteCommand(string command_json)
    }
    else if(operation == "close") ok = Trade.PositionClose(target_id);
    else if(operation == "cancel") ok = Trade.OrderDelete(target_id);
-   else if(operation == "sl" || operation == "tp" || operation == "breakeven")
+   else if(operation == "sl" || operation == "tp" || operation == "breakeven" || operation == "modify_targets")
    {
       if(PositionSelectByTicket(target_id))
       {
          double current_sl = PositionGetDouble(POSITION_SL), current_tp = PositionGetDouble(POSITION_TP);
          double value = StringToDouble(JsonString(execution_payload, "value"));
          if(operation == "sl") current_sl = value;
-         if(operation == "tp") current_tp = value;
+         if(operation == "tp" || operation == "modify_targets") current_tp = value;
          if(operation == "breakeven") current_sl = PositionGetDouble(POSITION_PRICE_OPEN);
          ok = Trade.PositionModify(target_id, current_sl, current_tp);
       }

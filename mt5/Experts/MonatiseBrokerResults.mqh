@@ -14,7 +14,7 @@ string BrokerResultStatus(int code, string operation, string order_type,
       if(operation == "open" && (order_type == "limit" || order_type == "stop") && ticket > 0)
          return "reconciled";
    }
-   else if(code == 10025 && (operation == "sl" || operation == "tp" || operation == "breakeven"))
+   else if(code == 10025 && (operation == "sl" || operation == "tp" || operation == "breakeven" || operation == "modify_targets"))
       return "reconciled"; // TRADE_RETCODE_NO_CHANGES
    switch(code)
    {

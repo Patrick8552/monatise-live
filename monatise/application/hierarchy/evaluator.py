@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from monatise.application.take_profit import MultiTPConfiguration, TakeProfitPlan, build_plan
+from monatise.application.target_evidence import crypto_layer_candidates
+
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from math import isfinite
 from typing import Any, Mapping
@@ -54,6 +57,8 @@ class ShadowEvaluation:
     watching: bool
     reasons: tuple[str, ...]
     execution_enabled: bool = False
+    take_profit_plan: TakeProfitPlan | None = None
+    management_structure: dict[str, Any] | None = None
 
 
 @dataclass
@@ -74,7 +79,8 @@ def _confidence(value: float) -> float:
 class HierarchyLayerEvaluator:
     """Runs existing analytical engines as evidence producers, never as a publisher."""
 
-    def __init__(self, *, configuration: HierarchyConfiguration | None = None, risk_builder: StructuralRiskInputBuilder | None = None) -> None:
+    def __init__(self, *, configuration: HierarchyConfiguration | None = None, risk_builder: StructuralRiskInputBuilder | None = None, multi_tp: MultiTPConfiguration | None = None) -> None:
+        self.multi_tp = multi_tp or MultiTPConfiguration()
         self.configuration = configuration or HierarchyConfiguration()
         self.regime_engine = RegimeEngine()
         self.liquidity_engine = LiquidityEngine()
@@ -164,6 +170,8 @@ class HierarchyLayerEvaluator:
 
         bundle = None
         validation = None
+        target_plan = None
+        management_structure = None
         if "5m" in snapshots and state.setup_context is not None and state.setup_context.state is SetupState.SETUP_CONFIRMED and state.regime_assessment is not None:
             layer = self._analyse_structure(snapshots["5m"], state.regime_assessment)
             if layer is None:
@@ -187,6 +195,16 @@ class HierarchyLayerEvaluator:
                             reasons.append("15m_stop_structure_unavailable")
                             raise ValueError("15m stop structure is unavailable")
                         risk = self._risk(layer, state.trigger_context, evaluated_at, entry_layer=entry_layer, stop_layer=stop_layer)
+                        if self.multi_tp.permits("crypto"):
+                            lows, highs = layer.structure.swing_lows, layer.structure.swing_highs
+                            management_structure = {"source": "monatise.crypto.hierarchy", "confirmed": True, "direction": state.trigger_context.direction, "observed_at": state.trigger_context.source_close_time.isoformat(), "confirmed_higher_low": lows[-1][1] if len(lows)>1 and lows[-1][1]>lows[-2][1] else None, "confirmed_lower_high": highs[-1][1] if len(highs)>1 and highs[-1][1]<highs[-2][1] else None, "atr": self._atr(layer.market.candles), "protective_liquidity_level": layer.liquidity.nearest_sell_side.price if state.trigger_context.direction=="long" and layer.liquidity.nearest_sell_side else layer.liquidity.nearest_buy_side.price if state.trigger_context.direction=="short" and layer.liquidity.nearest_buy_side else None}
+                            candidates = []
+                            for tf, snap in state.snapshots.items():
+                                evidence_layer = self._analyse_structure(snap, state.regime_assessment)
+                                if evidence_layer is not None:
+                                    candidates.extend(crypto_layer_candidates(evidence_layer, timeframe=tf, observed=snap.latest_finalized.scheduled_close_time))
+                            target_plan = build_plan(candidates=candidates, direction=state.trigger_context.direction, entry=risk.reference_entry, stop=risk.final_stop, now=evaluated_at, expires_at=risk.expires_at, config=self.multi_tp)
+                            risk = replace(risk, target_liquidity=float(target_plan.targets[0].price), calculated_reward_to_risk=float(target_plan.targets[0].rr), minimum_reward_to_risk=float(target_plan.minimum_rr))
                         bundle = EvidenceBundle.create(
                             symbol=normalized, created_at=evaluated_at, macro_context=state.macro_context,
                             regime_4h=state.regime_context, strategy_1h=state.strategy_context,
@@ -195,9 +213,11 @@ class HierarchyLayerEvaluator:
                         )
                         validation = self.adapter.validate(HierarchicalAnalysisRequest(normalized, bundle, evaluated_at))
                     except (TypeError, ValueError) as exc:
+                        target_plan = None
+                        management_structure = None
                         reasons.append(f"risk_proposal_rejected:{type(exc).__name__}")
 
-        return ShadowEvaluation(normalized, evaluated_at, state.macro_context, state.regime_context, state.strategy_context, state.setup_context, state.trigger_context, bundle, validation, self.watching(normalized), tuple(reasons))
+        return ShadowEvaluation(normalized, evaluated_at, state.macro_context, state.regime_context, state.strategy_context, state.setup_context, state.trigger_context, bundle, validation, self.watching(normalized), tuple(reasons), take_profit_plan=target_plan, management_structure=management_structure)
 
     @staticmethod
     def _expire_state(state: _SymbolState, now: datetime) -> None:

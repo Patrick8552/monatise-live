@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from monatise.application.take_profit import MultiTPConfiguration, route_for
+from monatise.application.target_evidence import apply_flashalpha_plan, apply_crypto_output_plan, format_crypto_output_plan
+
 import asyncio
 import hashlib
 import html
@@ -1346,11 +1349,12 @@ class OrchestrationRuntime:
             if self.telegram is None:
                 raise RuntimeError("Telegram publisher is unavailable")
             result = await self.telegram.hierarchy_shadow_notification(message)
-            await self._publish_ftmo_signal_from_message(message, source="monatise.crypto.hierarchy")
+            if not MultiTPConfiguration.from_environment(self.environment).permits("crypto"):
+                await self._publish_ftmo_signal_from_message(message, source="monatise.crypto.hierarchy")
             return result
         publisher = publisher if self.telegram is not None else None
         current_price_provider = getattr(self.coinglass, "latest_current_price", None)
-        self.hierarchy_service = ShadowHierarchyService(self.hierarchy, HierarchyLayerEvaluator(configuration=configuration), repository, publisher=publisher, current_price_provider=current_price_provider)
+        self.hierarchy_service = ShadowHierarchyService(self.hierarchy, HierarchyLayerEvaluator(configuration=configuration, multi_tp=MultiTPConfiguration.from_environment(self.environment)), repository, publisher=publisher, current_price_provider=current_price_provider, plan_publisher=lambda analysis: self._publish_ftmo_signal_proposal(analysis, source="monatise.crypto.hierarchy"))
         scheduler = self.application.infrastructure.scheduler
         job_ids: list[str] = []
         scheduled = scheduled_analysis_configuration({**self.environment, "MONATISE_SCHEDULED_ANALYSIS_ENABLED": "true"})
@@ -1961,7 +1965,7 @@ class OrchestrationRuntime:
             "suppression_reasons": [] if result.get("setup_status") == "confirmed" else [str(result.get("setup_status") or "not_qualified")],
             "ftmo_execution_quote": {"provider": "ftmo_mt5", "status": "not_requested", "reason": "awaiting_qualification" if result.get("setup_status") == "confirmed" else "analysis_not_qualified"},
         })
-        return result
+        return apply_flashalpha_plan(result, flashalpha_context, config=MultiTPConfiguration.from_environment(self.environment), route="stocks", now=observed, bars=hourly if alpaca_error is None else ())
 
     async def _register_ftmo_futures_scanner(self) -> tuple[str, ...]:
         api_key_configured = bool(self.environment.get("FLASHALPHA_API_KEY", "").strip())
@@ -2088,6 +2092,7 @@ class OrchestrationRuntime:
             tradingview_reference = _select_tradingview_futures_reference(instrument, tradingview_alerts)
             if tradingview_reference is not None:
                 analysis["tradingview_reference"] = tradingview_reference
+            analysis = apply_flashalpha_plan(analysis, context, config=MultiTPConfiguration.from_environment(self.environment), route=route_for(instrument), now=datetime.now(timezone.utc))
             candidates.append((instrument, analysis))
         candidates.sort(key=lambda item: (-abs(int(item[1].get("score") or 0)), item[0].ftmo_symbol))
         deep_limit = max(1, min(20, int(self.environment.get("MONATISE_FTMO_FUTURES_DEEP_ANALYSIS_LIMIT", "10"))))
@@ -2198,6 +2203,9 @@ class OrchestrationRuntime:
         """Acquire and validate a native FTMO quote before creating a proposal."""
         if self.ftmo_master is None or self.telegram is None:
             return None, "FTMO bridge or Telegram notifier is unavailable"
+        from monatise.application.position_management import PositionManagementService
+        if analysis.get("management_structure") and self.ftmo_master is not None:
+            await PositionManagementService(self.ftmo_master).record_structure(str(analysis.get("ftmo_symbol") or analysis.get("asset")), analysis["management_structure"], analysis_entry=analysis.get("entry"))
         direction = str(analysis.get("direction") or "")
         symbol = str(analysis.get("ftmo_symbol") or analysis.get("asset") or "")
         entry, stop, target = analysis.get("entry"), analysis.get("stop_loss"), analysis.get("target")
@@ -2238,6 +2246,7 @@ class OrchestrationRuntime:
         proposal_arguments = {
             "signal_id": signal_id, "symbol": symbol, "direction": direction,
             "analysis_entry": entry, "analysis_stop": stop, "analysis_target": target, "source": source,
+            "take_profit_plan": analysis.get("take_profit_plan"),
             "analysis_state": analysis_state, "confirmation_status": confirmation_status,
             "analysis_id": str(analysis.get("analysis_id") or analysis.get("run_id") or signal_id),
             "analysis_provider": provider,
@@ -2640,6 +2649,10 @@ class OrchestrationRuntime:
             asset = await asyncio.to_thread(self.coinglass.resolve_futures_asset, normalized)
             normalized = asset.base_asset
         result = await self.application.orchestrator.run(build_production_analysis_run(normalized, interval=interval, correlation_id=correlation_id, source=source, verified_dynamic=verified_dynamic))
+        multi_tp = MultiTPConfiguration.from_environment(self.environment)
+        analysis = apply_crypto_output_plan(sanitized_result(result), result.context.outputs, config=multi_tp, now=datetime.now(timezone.utc))
+        if analysis.get("take_profit_plan"):
+            result.context.outputs["take_profit_plan"] = analysis["take_profit_plan"]
         should_notify = notify and self.telegram is not None
         notification_state = None
         if should_notify and notification_policy == "qualified_changes":
@@ -2662,7 +2675,11 @@ class OrchestrationRuntime:
         if should_notify:
             try:
                 cancellation_reason = (notification_state or {}).get("cancellation_reason")
-                if (notification_state or {}).get("replaces_confirmed_grid"):
+                if multi_tp.permits("crypto"):
+                    message_id = await self.telegram.hierarchy_shadow_notification(format_crypto_output_plan(analysis))
+                    if analysis.get("take_profit_plan"):
+                        await self._publish_ftmo_signal_proposal({**analysis, "asset": normalized, "asset_class": "crypto", "stop_loss": analysis["invalidation"], "setup_status": "confirmed", "publication_id": result.run_id}, source=source)
+                elif (notification_state or {}).get("replaces_confirmed_grid"):
                     message_id = await self.telegram.deliver_grid_replacement(result)
                 elif (notification_state or {}).get("expires_directional_setup"):
                     message_id = await self.telegram.deliver_setup_expiry(result, notification_state["expired_at"])
@@ -2700,7 +2717,7 @@ class OrchestrationRuntime:
                 )
             except Exception as exc:
                 LOGGER.warning("decision snapshot recording failed", extra={"error_type": type(exc).__name__, "run_id": result.run_id})
-        return sanitized_result(result)
+        return analysis
 
     async def _record_decision_snapshot(self, result: Any, *, interval: str, source: str) -> None:
         """Persist everything the decision engine saw and decided this cycle.
@@ -2879,7 +2896,8 @@ class OrchestrationRuntime:
         result = await self.application.orchestrator.run(
             build_production_analysis_run(asset.base_asset, interval=interval, source=source, verified_dynamic=True)
         )
-        return finalize_dynamic_analysis(sanitized_result(result), result, asset)
+        analysis = finalize_dynamic_analysis(sanitized_result(result), result, asset)
+        return apply_crypto_output_plan(analysis, result.context.outputs, config=MultiTPConfiguration.from_environment(self.environment), now=datetime.now(timezone.utc))
 
     async def analyse_stock(self, symbol: str, *, instrument: Any | None = None) -> dict[str, Any]:
         """Run capability-aware, analysis-only stock intelligence."""

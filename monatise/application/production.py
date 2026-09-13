@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from monatise.application.position_management import PositionManagementService
+
 import hashlib
 import hmac
 import base64
@@ -879,12 +881,12 @@ class ProductionASGI(OrchestrationASGI):
             "FTMO: /status /bridge /quotes /account /positions /orders\n"
             "Trade preview: /trade XAUUSD buy market sl=LEVEL tp=LEVEL [risk=PERCENT]\n"
             "Control: /approve ID /reject ID /kill\n"
-            "Management previews: /close ID /cancel ID /sl ID LEVEL /tp ID LEVEL /breakeven ID"
+            "Management previews: /close ID /cancel ID /sl ID LEVEL /tp ID LEVEL /breakeven ID; /targets ID /management ID /tp1 ID LEVEL /tp2 ID LEVEL /tp3 ID LEVEL /finaltp ID LEVEL"
         )
         if re.fullmatch(r"/(?:start|help)(?:@[A-Za-z0-9_]+)?", text, re.IGNORECASE):
             await self._send_owned_telegram_response(notifier, help_text, ownership_check)
             return
-        if re.match(r"^/(?:status|bridge|quotes|account|positions|orders|trade|close|cancel|sl|tp|breakeven|approve|reject|arm|disarm|kill)(?:@|\s|$)", text, re.IGNORECASE):
+        if re.match(r"^/(?:status|bridge|quotes|account|positions|orders|targets|management|trade|close|cancel|sl|tp|tp1|tp2|tp3|finaltp|breakeven|approve|reject|arm|disarm|kill)(?:@|\s|$)", text, re.IGNORECASE):
             if re.match(r"^/approve(?:@|\s|$)", text, re.IGNORECASE):
                 service = getattr(self.runtime, "ftmo_master", None)
                 context = getattr(self, "_telegram_command_context", None) or {}
@@ -895,7 +897,7 @@ class ProductionASGI(OrchestrationASGI):
                         ownership_check,
                     )
             proposal_command = bool(re.match(
-                r"^/(?:trade|close|cancel|sl|tp|breakeven)(?:@|\s|$)", text, re.IGNORECASE,
+                r"^/(?:trade|close|cancel|sl|tp|tp1|tp2|tp3|finaltp|breakeven)(?:@|\s|$)", text, re.IGNORECASE,
             ))
             response = await self._handle_ftmo_telegram_command(
                 text, publish_proposal=proposal_command, ownership_check=ownership_check,
@@ -1128,6 +1130,8 @@ class ProductionASGI(OrchestrationASGI):
                     await repository.audit("analysis_persisted", analysis_id, {
                         "analysis_id": analysis_id, "telegram_request_id": request_id,
                     })
+            if analysis.get("management_structure") and service is not None:
+                await PositionManagementService(service).record_structure(resolved.execution_registry_symbol, analysis["management_structure"], analysis_entry=analysis.get("entry"))
             analysis_message = format_analysis(analysis)
             proposal = None
             quote_request = None
@@ -1175,7 +1179,8 @@ class ProductionASGI(OrchestrationASGI):
                     proposal = await service.create_signal_proposal(
                         telegram_request_id=request_id, analysis_id=analysis_id, signal_id=signal_id,
                         symbol=execution_symbol, direction=analysis["bias"], analysis_entry=analysis["entry"],
-                        analysis_stop=analysis["stop_loss"], analysis_target=analysis["targets"][0],
+                        analysis_stop=analysis["stop_loss"], analysis_target=analysis["targets"][-1] if analysis.get("take_profit_plan") else analysis["targets"][0],
+                        take_profit_plan=analysis.get("take_profit_plan"),
                         source="monatise.telegram.on_demand", analysis_state=analysis["bias"],
                         confirmation_status="confirmed", analysis_provider=analysis["analysis_provider"],
                         analysis_instrument=analysis["analysis_instrument"], analysis_exchange=resolved.instrument.exchange,
@@ -1364,7 +1369,11 @@ class ProductionASGI(OrchestrationASGI):
                     await self._publish_operator_proposal(service, proposal, ownership_check)
                     return None
                 return (await self._proposal_presentation(service, proposal))[0]
-            if command in {"/sl", "/tp"}:
+            if command in {"/targets", "/management"}:
+                if len(parts) != 2:
+                    raise FTMOMasterError(f"use {command} TICKET")
+                return await PositionManagementService(service).describe(parts[1])
+            if command in {"/sl", "/tp", "/tp1", "/tp2", "/tp3", "/finaltp"}:
                 if len(parts) != 3:
                     raise FTMOMasterError(f"use {command} TICKET LEVEL")
                 proposal = await service.create_management_proposal(
@@ -1466,6 +1475,10 @@ class ProductionASGI(OrchestrationASGI):
                 result["requested_symbols_csv"] = ",".join(
                     await service.requested_execution_quote_symbols()
                 )
+                for proposal_id in result.get("management_proposal_ids") or ():
+                    managed = await service.repository.proposal(proposal_id)
+                    if managed:
+                        await self._publish_operator_proposal(service, managed[0], None)
                 for event in result.get("lifecycle_events") or ():
                     await self._notify_ftmo_lifecycle(event)
                 return 200, result

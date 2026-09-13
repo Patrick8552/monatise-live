@@ -247,6 +247,8 @@ def normalize_analysis(
         "entry_zone": dict(entry_zone) if entry_zone else None,
         "stop_loss": stop,
         "targets": targets,
+        "take_profit_plan": raw.get("take_profit_plan"),
+        "management_structure": raw.get("management_structure"),
         "reward_risk": raw.get("reward_risk"),
         "score": score,
         "score_threshold": int(raw.get("score_threshold") or 7),
@@ -319,7 +321,10 @@ def format_analysis(analysis: Mapping[str, Any]) -> str:
         lines.append(f"Entry reference: {analysis['entry']}")
     if analysis.get("stop_loss") is not None:
         lines.append(f"Structural invalidation / SL: {analysis['stop_loss']}")
-    if targets:
+    if analysis.get("take_profit_plan"):
+        from monatise.application.take_profit import TakeProfitPlan, format_targets
+        lines.extend(format_targets(TakeProfitPlan.from_dict(analysis["take_profit_plan"])))
+    elif targets:
         lines.append("Targets: " + " / ".join(map(str, targets[:3])))
     lines.extend((
         f"Conviction: {analysis.get('conviction')}/10 | Threshold: {analysis.get('score_threshold')}",

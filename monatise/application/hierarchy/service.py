@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from monatise.application.take_profit import format_targets
 import asyncio
 import logging
 from typing import Any, Awaitable, Callable
@@ -18,12 +19,13 @@ LOGGER = logging.getLogger("monatise.hierarchy")
 class ShadowHierarchyService:
     """Coordinates shadow analysis and optional notification-only publication."""
 
-    def __init__(self, coordinator: ShadowHierarchyCoordinator, evaluator: HierarchyLayerEvaluator, repository: HierarchyRepository, *, publisher: Callable[[str], Awaitable[Any]] | None = None, current_price_provider: Callable[[str], float] | None = None) -> None:
+    def __init__(self, coordinator: ShadowHierarchyCoordinator, evaluator: HierarchyLayerEvaluator, repository: HierarchyRepository, *, publisher: Callable[[str], Awaitable[Any]] | None = None, current_price_provider: Callable[[str], float] | None = None, plan_publisher: Callable[[dict[str, Any]], Awaitable[Any]] | None = None) -> None:
         self.coordinator = coordinator
         self.evaluator = evaluator
         self.repository = repository
         self.publisher = publisher
         self.current_price_provider = current_price_provider
+        self.plan_publisher = plan_publisher
 
     async def tick(self, symbol: str, *, observed_at: datetime | None = None, macro_degraded: bool = True, market_context: dict[str, Any] | None = None) -> dict[str, Any]:
         now = observed_at or datetime.now(timezone.utc)
@@ -31,6 +33,8 @@ class ShadowHierarchyService:
         if not snapshots:
             return self._result(symbol, (), None, duplicate=False)
         evaluation = self.evaluator.evaluate(symbol, snapshots, evaluated_at=now, macro_degraded=macro_degraded)
+        if evaluation.take_profit_plan is not None and evaluation.bundle is not None:
+            await self.repository.store.put("hierarchy_target_plans_v1", evaluation.bundle.bundle_id, {"take_profit_plan": evaluation.take_profit_plan.to_dict(), "management_structure": evaluation.management_structure})
         for context in (
             evaluation.macro_context,
             evaluation.regime_4h if "4h" in snapshots else None,
@@ -72,6 +76,10 @@ class ShadowHierarchyService:
             try:
                 delivery_result = await self.publisher(self._format_notification(evaluation, publication_id=trigger_id, current_price=current_price, price_observed_at=now, market_context=market_context))
                 telegram_message_id = self._telegram_message_id(delivery_result)
+                if evaluation.take_profit_plan is not None and self.plan_publisher is not None:
+                    plan = evaluation.take_profit_plan
+                    instrument = (market_context or {}).get("ftmo_instrument") or {}
+                    await self.plan_publisher({"publication_id": trigger_id, "ftmo_symbol": instrument.get("ftmo_symbol", symbol), "asset_class": "crypto", "asset": symbol, "direction": plan.direction, "entry": str(plan.entry), "stop_loss": str(plan.stop), "target": str(plan.legacy_take_profit), "take_profit_plan": plan.to_dict(), "management_structure": evaluation.management_structure, "setup_status": "confirmed", "expires_at": plan.expires_at.isoformat(), "analysis_provider": "coinglass"})
             except Exception as exc:
                 publication_failed = True
                 try:
@@ -108,6 +116,7 @@ class ShadowHierarchyService:
         signal_core = self._signal_core_evidence(evaluation)
         return {
             "symbol": symbol.upper(),
+            "take_profit_plan": evaluation.take_profit_plan.to_dict() if evaluation and evaluation.take_profit_plan else None,
             "layers_observed": list(layers),
             "watching": evaluation.watching if evaluation else False,
             "setup_state": evaluation.setup_15m.state.value if evaluation and evaluation.setup_15m else None,
@@ -164,8 +173,9 @@ class ShadowHierarchyService:
             f"Signal Core CONFIRMED {signal_core['score']}/4 | {core_labels}\n"
             f"1H direction | 15M location | 5M confirmation | 1M entry refined\n"
             f"Current CoinGlass price: {current} | source {price_source} | observed {observed}\n"
-            f"Entry {risk.reference_entry:.8g} | Stop {risk.final_stop:.8g} | Target {risk.target_liquidity:.8g} | R:R {risk.calculated_reward_to_risk:.2f}\n"
-            f"{evidence}\n"
+            f"Entry {risk.reference_entry:.8g} | Stop {risk.final_stop:.8g} | Target {float(evaluation.take_profit_plan.legacy_take_profit) if evaluation.take_profit_plan else risk.target_liquidity:.8g} | {'TP1 R:R' if evaluation.take_profit_plan else 'R:R'} {risk.calculated_reward_to_risk:.2f}\n"
+            + ("\n".join(format_targets(evaluation.take_profit_plan)) + "\n" if evaluation.take_profit_plan else "")
+            + f"{evidence}\n"
             f"Expires {expiry} | Valid for {validity_minutes} min\n"
             f"Strategy {bundle.strategy_version} | Evidence {bundle.bundle_id[:12]} | Publication {publication_id[:16]}\n"
             f"Analysis only — no trade executed"

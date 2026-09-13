@@ -62,6 +62,10 @@ class FlashAlphaAdapter:
             "call_wall": _level_value(levels.get("call_wall") or levels_payload.get("call_wall") or payload.get("call_wall")),
             "put_wall": _level_value(levels.get("put_wall") or levels_payload.get("put_wall") or payload.get("put_wall")),
             "zero_dte_magnet": levels.get("zero_dte_magnet"),
+            "max_positive_gamma": _level_value(levels.get("max_positive_gamma")),
+            "max_negative_gamma": _level_value(levels.get("max_negative_gamma")),
+            "highest_oi_strike": _level_value(levels.get("highest_oi_strike")),
+            "positioning_levels": {key: levels.get(key, levels_payload.get(key, [])) for key in ("resistance_levels", "support_levels", "gamma_levels")},
             "net_gex": payload.get("net_gex"),
             "net_gex_label": payload.get("net_gex_label"),
         }
