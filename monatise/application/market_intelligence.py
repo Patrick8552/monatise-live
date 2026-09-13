@@ -7,6 +7,9 @@ Bid/Ask from an analytical price.
 
 from __future__ import annotations
 
+from monatise.application.take_profit import MultiTPConfiguration, route_for
+from monatise.application.target_evidence import apply_flashalpha_plan
+
 import asyncio
 import math
 from datetime import datetime, timedelta, timezone
@@ -363,7 +366,7 @@ class StockMarketIntelligenceCoordinator:
             "publication_valid": analysis.get("setup_status") == "confirmed",
             "ftmo_execution_quote": {"provider": "ftmo_mt5", "status": "not_requested", "reason": "awaiting_qualification" if analysis.get("setup_status") == "confirmed" else "analysis_not_qualified"},
         })
-        return analysis
+        return apply_flashalpha_plan(analysis, flashalpha, config=MultiTPConfiguration.from_environment(self.environment), route="stocks", now=observed, bars=hourly if alpaca_error is None else ())
 
 
 class FuturesMarketIntelligenceCoordinator:
@@ -441,4 +444,4 @@ class FuturesMarketIntelligenceCoordinator:
             "data_quality": {"flashalpha_snapshot": {"latest_timestamp": as_of.isoformat(), "quality": "valid"}},
             "ftmo_execution_quote": {"provider": "ftmo_mt5", "status": "not_requested", "reason": "awaiting_qualification" if analysis.get("setup_status") == "confirmed" else "analysis_not_qualified"},
         })
-        return analysis
+        return apply_flashalpha_plan(analysis, context, config=MultiTPConfiguration.from_environment(self.environment), route=route_for(instrument), now=observed)

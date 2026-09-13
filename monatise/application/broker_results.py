@@ -36,7 +36,7 @@ def broker_result_status(operation: str, order_type: str, evidence: Mapping[str,
     elif code == 10008:  # TRADE_RETCODE_PLACED, not proof of a market fill
         if operation == "open" and order_type in {"limit", "stop"} and _positive(evidence.get("broker_ticket")):
             return "reconciled"
-    elif code == 10025 and operation in {"sl", "tp", "breakeven"}:  # NO_CHANGES
+    elif code == 10025 and operation in {"sl", "tp", "breakeven", "modify_targets"}:  # NO_CHANGES
         return "reconciled"
     elif code in REJECTION_CODES:
         return "rejected"

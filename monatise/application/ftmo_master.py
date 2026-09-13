@@ -15,11 +15,14 @@ import hmac
 import json
 import logging
 import secrets
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_FLOOR
 from enum import StrEnum
 from typing import Any, Mapping
+
+from monatise.application.take_profit import MultiTPConfiguration, TakeProfitPlan, allocate_volume, convert_plan, revalidate_plan, route_for, format_targets
+from monatise.application.position_management import PositionManagementService
 
 from monatise.application.market_session import classify_market_session, session_allows_execution
 from monatise.application.broker_results import broker_result_status
@@ -120,6 +123,7 @@ class FTMOMasterConfiguration:
     execution_environment: str
     bridge_secret: str | None
     authorized_user_ids: frozenset[str]
+    multi_tp: MultiTPConfiguration = field(default_factory=MultiTPConfiguration)
     risk_fraction: Decimal = MAX_RISK_FRACTION_PER_TRADE
     maximum_open_exposures: int = 1
     arm_max_seconds: int = 900
@@ -152,6 +156,7 @@ class FTMOMasterConfiguration:
             execution_environment=_env(environment, "FTMO_EXECUTION_ENVIRONMENT", "demo").casefold(),
             bridge_secret=_env(environment, "FTMO_BRIDGE_SECRET") or None,
             authorized_user_ids=users,
+            multi_tp=MultiTPConfiguration.from_environment(environment),
             risk_fraction=_decimal(_env(environment, "FTMO_RISK_FRACTION", str(MAX_RISK_FRACTION_PER_TRADE)), "risk fraction", positive=True),
             maximum_open_exposures=int(_env(environment, "FTMO_MAXIMUM_OPEN_EXPOSURES", "1")),
             arm_max_seconds=max(60, min(3600, int(_env(environment, "FTMO_ARM_MAX_SECONDS", "900")))),
@@ -363,6 +368,7 @@ class FTMOMasterRepository:
                 "entry": proposal.get("analysis_entry") or proposal.get("entry"),
                 "stop_loss": proposal.get("analysis_stop") or proposal.get("stop_loss"),
                 "target": proposal.get("analysis_target") or proposal.get("take_profit"),
+                "take_profit_plan": proposal.get("analysis_take_profit_plan") or proposal.get("take_profit_plan"),
                 "created_at": proposal["created_at"], "expires_at": proposal["expires_at"],
             }):
                 raise FTMOMasterError("analysis persistence failed")
@@ -845,7 +851,8 @@ class FTMOMasterControlService:
                     telegram_request_id=analysis["telegram_request_id"], analysis_id=analysis_id,
                     quote_request_id=quote_request_id, signal_id=analysis["signal_id"], symbol=execution_symbol,
                     direction=analysis["bias"], analysis_entry=analysis["entry"],
-                    analysis_stop=analysis["stop_loss"], analysis_target=analysis["targets"][0],
+                    analysis_stop=analysis["stop_loss"], analysis_target=analysis["targets"][-1] if analysis.get("take_profit_plan") else analysis["targets"][0],
+                    take_profit_plan=analysis.get("take_profit_plan"),
                     source="monatise.telegram.on_demand", analysis_state=analysis["bias"],
                     confirmation_status="confirmed", analysis_provider=analysis["analysis_provider"],
                     analysis_instrument=analysis["analysis_instrument"], analysis_exchange=instrument.exchange,
@@ -1320,6 +1327,9 @@ class FTMOMasterControlService:
             "ea_version": str(payload.get("ea_version") or ""),
             "gold_price_guard_version": payload.get("gold_price_guard_version"),
             "gold_maximum_adverse_price_deviation": str(payload.get("gold_maximum_adverse_price_deviation") or "0"),
+            "multi_tp_version": payload.get("multi_tp_version"),
+            "account_margin_mode": payload.get("account_margin_mode"),
+            "deals": list(payload.get("deals") or [])[:1024],
             "positions": list(payload.get("positions") or [])[:256],
             "orders": list(payload.get("orders") or [])[:256],
             "quotes": normalized_quotes,
@@ -1341,8 +1351,13 @@ class FTMOMasterControlService:
                 extra={"symbol_count": len(skewed_symbols), "symbols": skewed_symbols},
             )
         lifecycle_events: tuple[dict[str, Any], ...] = ()
+        management_proposals = []
         if identity_match:
             lifecycle_events = await self._reconcile_proposals_from_heartbeat(snapshot, observed)
+            try:
+                management_proposals = await PositionManagementService(self).reconcile(snapshot, observed)
+            except (ValueError, RuntimeError, ArithmeticError) as exc:
+                await self.repository.audit("multi_tp_management_blocked", "heartbeat", {"reason": str(exc)})
         await self.repository.audit("bridge_heartbeat", _mask_account(account_id) or "unknown", {
             "identity_match": identity_match, "terminal_connected": snapshot["terminal_connected"],
             "trade_allowed": snapshot["trade_allowed"], "quote_count": len(normalized_quotes),
@@ -1357,6 +1372,7 @@ class FTMOMasterControlService:
             "status": "accepted", "identity_match": True,
             "execution_enabled": self.configuration.activation_configured,
             "lifecycle_events": list(lifecycle_events),
+            "management_proposal_ids": management_proposals,
         }
 
     async def _reconcile_proposals_from_heartbeat(
@@ -1651,6 +1667,19 @@ class FTMOMasterControlService:
             raise FTMOMasterError("signal has already expired")
         details = dict(metadata or {})
         details.pop("price_guard", None)  # Only the control plane can define approval bounds.
+        if details.get("take_profit_plan"):
+            if not self.configuration.multi_tp.permits(route_for(instrument)):
+                raise FTMOMasterError("multi-target execution route is disabled")
+            plan = TakeProfitPlan.from_dict(details["take_profit_plan"])
+            if plan.minimum_rr < self.configuration.multi_tp.minimum_rr:
+                raise FTMOMasterError("target qualification is weaker than configured policy")
+            if plan.management_mode == "APPROVED_PLAN" and not self.configuration.multi_tp.auto_partial_close:
+                raise FTMOMasterError("automatic partial exits are not enabled")
+            quote = self._quote_match(await self._healthy_bridge(observed), fields["symbol"])[1]
+            plan = allocate_volume(plan, volume=fields["volume"], minimum=quote["volume_min"], step=quote["volume_step"])
+            details["take_profit_plan"] = plan.to_dict()
+            details["preview_plan_digest"] = plan.digest()
+            fields["take_profit"] = str(plan.legacy_take_profit)
         proposal = {
             "proposal_id": proposal_id,
             "kind": "open_trade",
@@ -1706,6 +1735,7 @@ class FTMOMasterControlService:
         telegram_request_id: str | None = None,
         quote_request_id: str | None = None,
         recommended_risk_percent: Any | None = None,
+        take_profit_plan: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Translate external structure into FTMO-native levels.
 
@@ -1819,6 +1849,29 @@ class FTMOMasterControlService:
             "level_conversion": "external_relative_structure_to_ftmo_bid_ask",
             "approval_level_conversion": "analysis_relative_structure_to_current_ftmo_bid_ask",
         }
+        if take_profit_plan is not None:
+            if not self.configuration.multi_tp.permits(route_for(instrument)):
+                raise FTMOMasterError("multi-target execution route is disabled")
+            if bridge.get("multi_tp_version") != 1:
+                raise FTMOMasterError("multi-target capable MT5 EA is required")
+            original_plan = TakeProfitPlan.from_dict(take_profit_plan)
+            if original_plan.management_mode == "APPROVED_PLAN" and not self.configuration.multi_tp.auto_partial_close:
+                raise FTMOMasterError("automatic partial exits are not authorized by configuration")
+            if original_plan.breakeven_policy != "NONE" and not self.configuration.multi_tp.auto_breakeven:
+                raise FTMOMasterError("breakeven management is not authorized by configuration")
+            if original_plan.trail_policy != "OFF" and not self.configuration.multi_tp.auto_trailing:
+                raise FTMOMasterError("trailing management is not authorized by configuration")
+            if signal_expires_at is None:
+                signal_expires_at = original_plan.expires_at
+            if original_plan.direction != ("long" if side == "buy" else "short") or original_plan.entry != entry or original_plan.stop != stop:
+                raise FTMOMasterError("analysis ladder disagrees with entry/stop/direction")
+            if signal_expires_at is not None and original_plan.expires_at != _utc(signal_expires_at):
+                raise FTMOMasterError("target ladder expiry differs from setup expiry")
+            converted = convert_plan(original_plan, broker_entry=ftmo_entry, broker_stop=ftmo_stop, tick_size=tick,
+                minimum_distance=max(Decimal(str(quote.get("stops_level", 0))), Decimal(str(quote.get("freeze_level", 0)))) * Decimal(str(quote.get("point", tick))), now=observed)
+            ftmo_target = converted.legacy_take_profit
+            metadata.update(take_profit_plan=converted.to_dict(), analysis_take_profit_plan=original_plan.to_dict())
+            await self.repository.audit("target_conversion", proposal_id, {"analysis": original_plan.to_dict(), "broker": converted.to_dict()})
         proposal = await self.create_trade_proposal(
             actor="monatise-scanner", symbol=execution_symbol, side=side, order_type=order_type,
             entry=ftmo_entry if order_type != "market" else None,
@@ -1835,6 +1888,8 @@ class FTMOMasterControlService:
     async def create_management_proposal(self, *, actor: str, operation: str, target_id: str, value: str | None = None) -> dict[str, Any]:
         if actor not in self.configuration.authorized_user_ids:
             raise FTMOMasterError("Telegram user is not authorized")
+        if operation != "cancel" and await PositionManagementService(self).for_ticket(target_id):
+            return await PositionManagementService(self).manual_proposal(actor=actor, ticket=target_id, operation=operation, value=value, now=_utc())
         if operation not in {"close", "cancel", "sl", "tp", "breakeven"}:
             raise FTMOMasterError("unsupported position-management operation")
         if not target_id.isdigit() or int(target_id) <= 0:
@@ -1889,6 +1944,12 @@ class FTMOMasterControlService:
                 or any(proposal.get(key) != parent.get(key) for key in ("symbol", "side", "stop_loss", "take_profit", "expires_at"))
                 or proposal.get("entry") != (parent.get("price_guard") or {}).get("reference", parent.get("entry"))):
             raise FTMOMasterError("replacement levels or expiry no longer match the original proposal")
+        if parent.get("take_profit_plan"):
+            original = TakeProfitPlan.from_dict(parent["take_profit_plan"])
+            replacement = TakeProfitPlan.from_dict(proposal.get("take_profit_plan") or {})
+            if ([(t.name, t.price, t.allocation_pct, t.source, t.evidence_type) for t in original.targets]
+                    != [(t.name, t.price, t.allocation_pct, t.source, t.evidence_type) for t in replacement.targets]):
+                raise FTMOMasterError("replacement target ladder no longer matches the original thesis")
 
     async def create_limit_replacement(
         self, proposal_id: str, *, actor: str | None = None, now: datetime | None = None,
@@ -1934,6 +1995,7 @@ class FTMOMasterControlService:
             "analysis_source", "analysis_provider", "analysis_instrument", "analysis_exchange",
             "analysis_price", "analysis_observed_at", "analysis_state", "confirmation_status",
             "strategy", "timeframe", "conviction", "evidence_bundle", "mapping", "entry_zone_low", "entry_zone_high",
+            "take_profit_plan", "analysis_take_profit_plan", "preview_plan_digest",
         ) if key in parent}
         metadata.update({
             "analysis_id": f"limit-replacement:{proposal_id}", "signal_id": f"limit-replacement:{proposal_id}",
@@ -2053,7 +2115,7 @@ class FTMOMasterControlService:
             if not session_allows_execution(approval_session):
                 raise FTMOMasterError("current market session does not permit execution")
             stop_loss, take_profit = proposal["stop_loss"], proposal["take_profit"]
-            if (not proposal.get("price_guard") and proposal.get("analysis_risk_fraction")
+            if (not proposal.get("take_profit_plan") and not proposal.get("price_guard") and proposal.get("analysis_risk_fraction")
                     and proposal.get("analysis_reward_fraction") and proposal.get("order_type") == "market"):
                 live_entry = Decimal(str(quote["ask"] if proposal["side"] == "buy" else quote["bid"]))
                 risk_fraction = Decimal(str(proposal["analysis_risk_fraction"]))
@@ -2097,6 +2159,27 @@ class FTMOMasterControlService:
                 if "exposure limit" in reason:
                     raise FTMOMasterError(reason + " at approval") from exc
                 raise
+            if proposal.get("take_profit_plan"):
+                if not self.configuration.multi_tp.permits(route_for(instrument)) or bridge.get("multi_tp_version") != 1:
+                    raise FTMOMasterError("multi-target execution gate or EA capability is disabled")
+                plan = TakeProfitPlan.from_dict(proposal["take_profit_plan"])
+                if proposal.get("preview_plan_digest") != plan.digest():
+                    raise FTMOMasterError("approved target thesis changed")
+                if (plan.minimum_rr < self.configuration.multi_tp.minimum_rr
+                        or plan.minimum_increment_r < self.configuration.multi_tp.minimum_increment_r):
+                    raise FTMOMasterError("target plan no longer meets current risk policy")
+                try:
+                    plan = revalidate_plan(plan, entry=refreshed["entry"], stop=refreshed["stop_loss"], tick_size=quote["tick_size"],
+                        minimum_distance=max(Decimal(quote.get("stops_level", "0")), Decimal(quote.get("freeze_level", "0"))) * Decimal(quote.get("point", quote["tick_size"])), now=observed)
+                    if Decimal(refreshed["volume"]) > plan.original_position_size:
+                        ratio = plan.original_position_size / Decimal(refreshed["volume"])
+                        refreshed["risk_amount"] = str(Decimal(refreshed["risk_amount"]) * ratio)
+                        refreshed["risk_fraction"] = str(Decimal(refreshed["risk_fraction"]) * ratio)
+                        refreshed["volume"] = str(plan.original_position_size)
+                    plan = allocate_volume(plan, volume=refreshed["volume"], minimum=quote["volume_min"], step=quote["volume_step"])
+                except ValueError as exc:
+                    raise FTMOMasterError("PRICE_MOVED_BEYOND_VALIDATION: " + str(exc)) from exc
+                proposal["take_profit_plan"] = plan.to_dict()
             proposal.update(refreshed)
             proposal["approval_execution_snapshot"] = refreshed["execution_snapshot"]
             proposal["approval_session_context"] = approval_session.to_dict()
@@ -2110,6 +2193,12 @@ class FTMOMasterControlService:
             age = (observed - _timestamp(proposal["quote_timestamp"], "FTMO quote timestamp")).total_seconds()
             if age > self.configuration.quote_max_age_seconds:
                 raise FTMOMasterError("FTMO quote became stale during approval validation")
+
+        if proposal.get("managed_trade_id"):
+            try:
+                await PositionManagementService(self).validate_intent(proposal, now=observed)
+            except ValueError as exc:
+                raise FTMOMasterError(str(exc)) from exc
 
         approval_id = hashlib.sha256(f"approval:{proposal_id}:{actor}:{observed.isoformat()}".encode()).hexdigest()
         command_id = hashlib.sha256(f"{proposal_id}:{proposal['kind']}:{proposal.get('operation', 'open')}".encode()).hexdigest()
@@ -2130,7 +2219,9 @@ class FTMOMasterControlService:
                 "symbol", "side", "order_type", "entry", "stop_loss", "take_profit", "volume", "target_id", "value",
                 "analysis_id", "quote_request_id", "signal_id",
                 "telegram_request_id",
-                "replacement_for_proposal_id",
+                "replacement_for_proposal_id", "take_profit_plan", "managed_trade_id", "managed_target",
+                "expected_remaining_volume", "position_identifier", "trigger_price", "plan_digest", "modified_plan",
+                "scope_approval_id", "automatic_management",
             ) if proposal.get(key) is not None},
             "expected_account_id": self.configuration.account_id,
             "expected_server": self.configuration.server,
@@ -2180,6 +2271,11 @@ class FTMOMasterControlService:
             "expires_epoch": str(int(command_expires_at.timestamp())),
             "pending_expires_epoch": str(int(proposal_expires_at.timestamp())),
         })
+        if proposal.get("take_profit_plan"):
+            plan = TakeProfitPlan.from_dict(proposal["take_profit_plan"])
+            command["payload"].update(multi_tp_version="1", target_count=str(len(plan.targets)), minimum_target_rr=str(plan.minimum_rr), minimum_target_increment_r=str(plan.minimum_increment_r))
+            for index, target in enumerate(plan.targets):
+                command["payload"].update({f"tp_{index}_price": str(target.price), f"tp_{index}_volume": str(target.allocated_volume)})
         if proposal.get("price_guard"):
             guard = proposal["price_guard"]
             command["payload"].update({
@@ -2241,6 +2337,8 @@ class FTMOMasterControlService:
         if not readiness.get("execution_ready"):
             raise FTMOMasterError("execution gates blocked: " + ", ".join(self.execution_blockers(readiness)))
         if proposal.get("kind") != "open_trade":
+            if proposal.get("managed_trade_id"):
+                await PositionManagementService(self).validate_intent(proposal, now=observed)
             return
         required = ("analysis_id", "signal_id", "symbol", "side", "entry", "stop_loss", "take_profit",
                     "risk_amount", "risk_fraction", "volume", "created_at", "quote_timestamp")
@@ -2265,6 +2363,16 @@ class FTMOMasterControlService:
             avoid_reached_target=bool(proposal.get("replacement_for_proposal_id")),
             price_guard=proposal.get("price_guard"),
         )
+        if proposal.get("take_profit_plan"):
+            plan = TakeProfitPlan.from_dict(proposal["take_profit_plan"])
+            if plan.digest() != proposal.get("preview_plan_digest"):
+                raise FTMOMasterError("preview target plan changed")
+            bridge = await self._healthy_bridge(observed)
+            if bridge.get("multi_tp_version") != 1 or not self.configuration.multi_tp.permits(route_for(self._verified_instrument_mapping(proposal["symbol"]))):
+                raise FTMOMasterError("multi-target execution gate or bridge capability disabled")
+            quote = self._quote_match(bridge, proposal["symbol"])[1]
+            revalidate_plan(plan, entry=fields["entry"], stop=fields["stop_loss"], tick_size=quote["tick_size"], now=observed,
+                minimum_distance=max(Decimal(quote.get("stops_level", "0")), Decimal(quote.get("freeze_level", "0"))) * Decimal(quote.get("point", quote["tick_size"])))
         session = classify_market_session(observed, instrument=self._verified_instrument_mapping(proposal["symbol"]),
                                          trade_mode=fields["execution_snapshot"]["trading_status"])
         if not session_allows_execution(session):
@@ -2350,6 +2458,11 @@ class FTMOMasterControlService:
                 try:
                     await self._validate_limit_replacement_origin(approved, now=now)
                 except FTMOMasterError:
+                    continue
+            if approved.get("managed_trade_id"):
+                try:
+                    await PositionManagementService(self).validate_intent(approved, now=observed)
+                except (ValueError, FTMOMasterError):
                     continue
             delivered = await self.repository.update_command(command["command_id"], {
                 "status": CommandStatus.DELIVERED.value,
@@ -2607,7 +2720,9 @@ def format_proposal(
                 f"Gold price allowance: up to ${proposal['price_guard']['maximum_adverse_deviation']} per ounce worse than {proposal['price_guard']['reference']}; better prices allowed within the setup.",
                 f"Volume sized for that allowance; stop-risk budget ${proposal['price_guard']['risk_budget']}. Setup, spread and risk checks still apply.",
             ) if proposal.get("price_guard") else ()),
-            f"Proposed SL: {proposal['stop_loss']} | Proposed TP: {proposal['take_profit']}",
+            *((f"Proposed SL: {proposal['stop_loss']}", *format_targets(TakeProfitPlan.from_dict(proposal["take_profit_plan"])),
+               f"Partial exits: {TakeProfitPlan.from_dict(proposal['take_profit_plan']).management_mode} | BE: {TakeProfitPlan.from_dict(proposal['take_profit_plan']).breakeven_policy} | Trail: {TakeProfitPlan.from_dict(proposal['take_profit_plan']).trail_policy}")
+              if proposal.get("take_profit_plan") else (f"Proposed SL: {proposal['stop_loss']} | Proposed TP: {proposal['take_profit']}",)),
             f"Risk ceiling: {MAX_RISK_PERCENT_PER_TRADE:.2f}% | Recommended risk: {Decimal(str(proposal.get('recommended_risk_fraction') or proposal['risk_fraction'])) * 100:.2f}%",
             f"Preview calculated risk: {Decimal(str(proposal['risk_fraction'])) * 100:.2f}%",
             f"Estimated risk: ${proposal['risk_amount']} | Estimated volume: {proposal.get('volume') or 'RECALCULATE AT APPROVAL'} lots",
@@ -2629,6 +2744,8 @@ def format_proposal(
         f"ID: {proposal['proposal_id']}",
         f"Operation: {str(proposal['operation']).upper()} · target {proposal['target_id']}",
         *((f"Value: {proposal['value']}",) if proposal.get("value") else ()),
+        *(format_targets(TakeProfitPlan.from_dict(proposal["modified_plan"])) if proposal.get("modified_plan") else ()),
+        *((f"{proposal['managed_target'].upper()}: close {proposal['volume']} lots; expected remaining {proposal['expected_remaining_volume']}",) if proposal.get("managed_target") else ()),
         f"Approve or reject before: {proposal['expires_at']}",
         "Status: PENDING_APPROVAL",
         f"Approve: /approve {proposal['proposal_id']} | Reject: /reject {proposal['proposal_id']}",
