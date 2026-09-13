@@ -677,11 +677,7 @@ class PositionManagementService:
                 existing = await self.repository.proposal(state.pending_proposal_id)
             if existing is not None:
                 if existing[0]["status"] == "pending_confirmation":
-                    if (
-                        existing[0]["operation"] == "partial_close"
-                        and state.plan.management_mode == "APPROVED_PLAN"
-                        and self.control.configuration.multi_tp.auto_partial_close
-                    ):
+                    if self.automatic_intent_enabled(state, existing[0]):
                         await self.control.approve(
                             existing[0]["proposal_id"], parent["approved_by"], now=now
                         )
@@ -700,7 +696,12 @@ class PositionManagementService:
         else:
             stop_proposal = await self.maybe_protect(state, version, parent, quote, now)
             if stop_proposal:
-                return stop_proposal
+                stored_stop = await self.repository.proposal(stop_proposal)
+                return (
+                    None
+                    if stored_stop[0].get("automatic_management")
+                    else stop_proposal
+                )
         target = next((t for t in state.plan.targets if t.status == "PENDING"), None)
         if target is None:
             return None
@@ -762,6 +763,38 @@ class PositionManagementService:
             return None
         return proposal_id
 
+    def stop_policy_enabled(self, state: ManagedPosition, policy: str) -> bool:
+        config = self.control.configuration.multi_tp
+        hit = [target for target in state.plan.targets if target.status == "HIT"]
+        if policy == state.plan.trail_policy and policy != "OFF":
+            return config.auto_trailing and len(hit) >= 2
+        if policy == state.plan.breakeven_policy and policy != "NONE":
+            required = 2 if policy == "AFTER_TP2" else 1
+            return bool(
+                config.auto_breakeven
+                and len(hit) >= required
+                and hit[0].rr >= config.breakeven_minimum_rr
+            )
+        return False
+
+    def automatic_intent_enabled(
+        self, state: ManagedPosition, proposal: Mapping[str, Any]
+    ) -> bool:
+        if not proposal.get("automatic_management"):
+            return False
+        if proposal["operation"] == "partial_close":
+            return (
+                state.plan.management_mode == "APPROVED_PLAN"
+                and self.control.configuration.multi_tp.auto_partial_close
+            )
+        return bool(
+            proposal["operation"] == "sl"
+            and state.plan.automatic_stop_management
+            and self.stop_policy_enabled(
+                state, str(proposal.get("management_policy", "")).split(":", 1)[0]
+            )
+        )
+
     async def maybe_protect(
         self,
         state: ManagedPosition,
@@ -814,14 +847,16 @@ class PositionManagementService:
             value=str(price),
             management_policy=identity,
             structure_evidence=dict(evidence),
+            scope_approval_id=parent.get("approval_id"),
+            automatic_management=state.plan.automatic_stop_management,
         )
         state.pending_proposal_id = proposal_id
         state.pending_intent = dict(proposal)
         state.event("protective_stop_pending", now, price=price, policy=identity)
         await self.save(state, version)
         await self.repository.save_proposal(proposal)
-        # Stop changes still use their own Telegram approval in v1. A trailing
-        # policy is not permission to silently broaden the approved trade.
+        if self.automatic_intent_enabled(state, proposal):
+            await self.control.approve(proposal_id, parent["approved_by"], now=now)
         return proposal_id
 
     @staticmethod
@@ -971,6 +1006,37 @@ class PositionManagementService:
             and proposal["scope_approval_id"] != original[0]["approval_id"]
         ):
             raise ValueError("partial exit approval scope mismatch")
+        if proposal.get("automatic_management"):
+            from monatise.application.take_profit import route_for
+
+            original_plan = TakeProfitPlan.from_dict(original[0]["take_profit_plan"])
+            if (
+                proposal.get("scope_approval_id") != original[0]["approval_id"]
+                or proposal.get("actor") != original[0]["approved_by"]
+            ):
+                raise ValueError(
+                    "automatic management requires the original approval scope"
+                )
+            if not self.control.configuration.multi_tp.permits(
+                route_for(self.control._verified_instrument_mapping(proposal["symbol"]))
+            ) or not self.automatic_intent_enabled(state, proposal):
+                raise ValueError(
+                    "automatic management gate or target milestone is disabled"
+                )
+            if proposal["operation"] == "sl":
+                if (
+                    not original_plan.automatic_stop_management
+                    or original_plan.breakeven_policy != state.plan.breakeven_policy
+                    or original_plan.trail_policy != state.plan.trail_policy
+                    or not proposal.get("structure_evidence")
+                ):
+                    raise ValueError(
+                        "automatic stop is outside the originally approved policy"
+                    )
+            elif original_plan.management_mode != "APPROVED_PLAN":
+                raise ValueError(
+                    "automatic partial is outside the originally approved policy"
+                )
         if state.state in {
             "POSITION_CLOSED",
             "RECONCILIATION_REQUIRED",
@@ -1086,6 +1152,7 @@ class PositionManagementService:
                     modified.management_mode,
                     modified.breakeven_policy,
                     modified.trail_policy,
+                    modified.automatic_stop_management,
                 ) != (
                     state.plan.entry,
                     state.plan.stop,
@@ -1094,6 +1161,7 @@ class PositionManagementService:
                     state.plan.management_mode,
                     state.plan.breakeven_policy,
                     state.plan.trail_policy,
+                    state.plan.automatic_stop_management,
                 ):
                     raise ValueError(
                         "target override cannot change the approved management policy"
@@ -1127,6 +1195,14 @@ class PositionManagementService:
                         )
             if proposal.get("structure_evidence"):
                 policy = str(proposal["management_policy"]).split(":", 1)[0]
+                if proposal.get("automatic_management"):
+                    latest = await self.repository.store.get(
+                        "ftmo_management_structure_v1", str(proposal["symbol"]).upper()
+                    )
+                    if latest is None or latest.value != proposal["structure_evidence"]:
+                        raise ValueError(
+                            "protective structure changed since the automatic proposal"
+                        )
                 expected = protective_stop(
                     state,
                     policy=policy,

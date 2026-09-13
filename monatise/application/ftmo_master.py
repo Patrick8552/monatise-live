@@ -2721,7 +2721,10 @@ def format_proposal(
                 f"Volume sized for that allowance; stop-risk budget ${proposal['price_guard']['risk_budget']}. Setup, spread and risk checks still apply.",
             ) if proposal.get("price_guard") else ()),
             *((f"Proposed SL: {proposal['stop_loss']}", *format_targets(TakeProfitPlan.from_dict(proposal["take_profit_plan"])),
-               f"Partial exits: {TakeProfitPlan.from_dict(proposal['take_profit_plan']).management_mode} | BE: {TakeProfitPlan.from_dict(proposal['take_profit_plan']).breakeven_policy} | Trail: {TakeProfitPlan.from_dict(proposal['take_profit_plan']).trail_policy}")
+               f"Partial exits: {TakeProfitPlan.from_dict(proposal['take_profit_plan']).management_mode} | BE: {TakeProfitPlan.from_dict(proposal['take_profit_plan']).breakeven_policy} | Trail: {TakeProfitPlan.from_dict(proposal['take_profit_plan']).trail_policy}",
+               "Stop management: automatic within this approved policy; fresh structure and tighter stops required"
+               if TakeProfitPlan.from_dict(proposal['take_profit_plan']).automatic_stop_management
+               else "Stop management: separate Telegram approval")
               if proposal.get("take_profit_plan") else (f"Proposed SL: {proposal['stop_loss']} | Proposed TP: {proposal['take_profit']}",)),
             f"Risk ceiling: {MAX_RISK_PERCENT_PER_TRADE:.2f}% | Recommended risk: {Decimal(str(proposal.get('recommended_risk_fraction') or proposal['risk_fraction'])) * 100:.2f}%",
             f"Preview calculated risk: {Decimal(str(proposal['risk_fraction'])) * 100:.2f}%",

@@ -98,7 +98,7 @@ Previews show TP1/TP2/TP3/Final where present, R, planned percentages, executabl
 
 Default `APPROVAL_PER_EXIT` requires a fresh Telegram approval for each intermediate partial exit. If `AUTO_PARTIAL_CLOSE_ENABLED=true` before the original plan is created, `APPROVED_PLAN` includes the exact bounded exit schedule in the original preview. Subsequent partials reuse the approved scope through the existing authorization/signing gates. Disabling its route or automatic gate blocks queued automatic delivery.
 
-Breakeven modes: `NONE`, `AFTER_TP1`, `AFTER_TP2`, `STRUCTURE_BASED`. Trailing modes: `OFF`, `STRUCTURE_TRAIL`, `ATR_TRAIL`, `LIQUIDITY_TRAIL`. Fresh, aligned, uninvalidated structure and broker distance are required; stops cannot worsen. Trailing starts after TP2. In version 1, the BE/trailing flags enable generation of protective proposals; each still requires separate Telegram approval. They do not silently change stops. This conservative approval choice is explicit.
+Breakeven modes: `NONE`, `AFTER_TP1`, `AFTER_TP2`, `STRUCTURE_BASED`. Trailing modes: `OFF`, `STRUCTURE_TRAIL`, `ATR_TRAIL`, `LIQUIDITY_TRAIL`. Fresh, aligned, uninvalidated structure and broker distance are required; stops cannot worsen. Trailing starts after TP2. New plans explicitly include automatic stop-management authority when an enabled BE or trailing policy is selected. The initial Telegram preview states this authority; the trader must approve the original entry and policy. After confirmed fills reach the specified milestone, qualifying protective stops reuse that exact approval scope. Every approval and bridge delivery rechecks the route, corresponding automatic gate, original scope, position identity/volume, fresh quote, latest structure and tighter-stop/broker-distance constraints. Durable reservations recover after restart without duplicate commands. Older plans omit this authority and keep separate Telegram approvals; their serialized digests are preserved. Manual target edits cannot add automatic stop authority. Automatic partial exits and automatic stops are independently gated.
 
 ## Rollout and rollback
 
@@ -107,7 +107,7 @@ Use `deploy/multi-tp.env.example`. All nine server flags are false by default: g
 1. Deploy code with every new gate disabled. Existing single-TP behavior continues.
 2. Enable global + one route in an isolated analysis/demo environment, with auto flags off. Review real provider ladders, source freshness, blocked weak TP1 examples and mapping.
 3. Run EA 1.18 on the intended demo account with its local input enabled. Verify netting/hedging mode, volume/filling rules, stop/freeze distances, gap handling, manual/SL races, loss of connectivity, restarts and complete deal recovery. The code does not assume multiple positions per symbol.
-4. Use per-exit approvals first. Enable automatic partial scope only through explicit deployment configuration after broker acceptance. BE/trailing remain separately approved proposals.
+4. Use per-exit approvals first. Enable automatic partial scope only through explicit deployment configuration after broker acceptance. Enable automatic BE/trailing only for policies explicitly included in newly approved plans; existing plans retain their original authority.
 5. Expand routes gradually after reviewing logs, allocations, latency and broker results.
 
 For rollback, disable new plan generation and automatic partial gates first. Preserve server accounting and EA history reporting while managed positions exist; keep native SL/final TP. Reconcile or explicitly manage open positions before downgrading the EA or disabling its capability input. Never delete pending records to resolve an uncertain fill.
@@ -129,3 +129,7 @@ Limits before activation: no live or demo orders were submitted during developme
 - [MQL5 trade request](https://www.mql5.com/en/docs/constants/structures/mqltraderequest): position-bound requests and broker operations.
 - [MQL5 trade return codes](https://www.mql5.com/en/docs/constants/errorswarnings/enum_trade_return_codes): definitive rejection and closed/invalid-volume responses.
 - [MetaEditor compiler integration](https://www.metatrader5.com/en/metaeditor/help/beginning/integration_ide): native compiler verification.
+
+## Conditional automatic rollout
+
+The requested production policy enables automatic partials, breakeven and trailing for new approved multi-TP plans. Set `AUTO_PARTIAL_CLOSE_ENABLED=true`, `AUTO_BREAKEVEN_ENABLED=true`, `AUTO_TRAILING_ENABLED=true`, `MULTI_TP_BREAKEVEN_MODE=AFTER_TP1` and `MULTI_TP_TRAIL_MODE=STRUCTURE_TRAIL`. Breakeven also requires TP1 to meet the configured minimum R (default 1R), confirmed fill accounting and fresh aligned structure. Structure trailing starts after TP2 and can only tighten the remaining position’s stop. No new entries are automated by these settings.
