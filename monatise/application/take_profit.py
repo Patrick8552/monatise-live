@@ -260,6 +260,7 @@ class TakeProfitPlan:
     version: int = 1
     rejection_log: tuple[str, ...] = ()
     qualification_policy: str = "REJECT_WEAK_FIRST_OBJECTIVE"
+    automatic_stop_management: bool = False
 
     @property
     def blended_expected_rr(self) -> Decimal:
@@ -283,7 +284,11 @@ class TakeProfitPlan:
         return self.targets[-1].price
 
     def to_dict(self) -> dict[str, Any]:
-        return encode(asdict(self))
+        value = encode(asdict(self))
+        # Preserve the signed digest of plans created before automatic stops.
+        if not self.automatic_stop_management:
+            value.pop("automatic_stop_management")
+        return value
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "TakeProfitPlan":
@@ -328,6 +333,12 @@ class TakeProfitPlan:
             raise ValueError("unsupported target plan")
         if (
             self.management_mode not in {"APPROVAL_PER_EXIT", "APPROVED_PLAN"}
+            or type(self.automatic_stop_management) is not bool
+            or (
+                self.automatic_stop_management
+                and self.breakeven_policy == "NONE"
+                and self.trail_policy == "OFF"
+            )
             or self.breakeven_policy
             not in {"NONE", "AFTER_TP1", "AFTER_TP2", "STRUCTURE_BASED"}
             or self.trail_policy
@@ -543,6 +554,10 @@ def build_plan(
         else "APPROVAL_PER_EXIT",
         breakeven_policy=config.breakeven_mode if config.auto_breakeven else "NONE",
         trail_policy=config.trail_mode if config.auto_trailing else "OFF",
+        automatic_stop_management=(
+            (config.auto_breakeven and config.breakeven_mode != "NONE")
+            or (config.auto_trailing and config.trail_mode != "OFF")
+        ),
         rejection_log=tuple(rejected),
     )
     try:
