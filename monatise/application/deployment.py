@@ -2074,7 +2074,8 @@ class OrchestrationRuntime:
             if not publication_allowed(analysis):
                 suppressed += 1
                 analysis["pipeline_stage"] = "DATA_REJECTED" if analysis.get("decision") == "INSUFFICIENT_MARKET_DATA" else "REJECTED"
-                for reason in analysis.get("reasons") or [analysis.get("reason_code") or "not_qualified"]:
+                analysis["reasons"] = analysis.get("reasons") or analysis.get("suppression_reasons") or [analysis.get("reason_code") or analysis.get("setup_status") or "not_qualified"]
+                for reason in analysis["reasons"]:
                     suppressions[reason] = suppressions.get(reason, 0) + 1
                 continue
             qualified += 1

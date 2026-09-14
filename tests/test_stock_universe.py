@@ -185,6 +185,7 @@ def test_runtime_scans_dynamic_universe_publishes_only_qualified_and_dedupes(mon
         return
     assert first["telegram_published"] == 2
     if production_quote_failure:
+        assert second["pipeline_status"] == "degraded"
         assert second["telegram_published"] == 2
         assert second["suppressions"].get("duplicate_unchanged", 0) == 0
         assert second["proposal_published_count"] == 0

@@ -159,6 +159,7 @@ def test_invalid_flashalpha_primary_payload_fails_stock_analysis_closed(mutation
     assert result["decision"] == "INSUFFICIENT_MARKET_DATA"
     assert result["reason_code"] == reason_code
     assert result["analysis_provider"] == "alpaca"
+    assert result["reason_detail"] == ("provider_stale: futures intelligence is stale" if mutation == "stale" else "provider_incomplete: invalid call_wall")
 
 
 def test_non_flashalpha_stock_is_rejected_without_calling_supporting_providers():

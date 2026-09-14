@@ -219,6 +219,7 @@ class StockMarketIntelligenceCoordinator:
             else asyncio.sleep(0, result=(None, "cycle_quota_reserved")),
         )
         context, error = flash
+        error_detail = None
         # Providers can stamp a response while the request is in flight. Compare
         # against receipt time, never the earlier request-start time. An explicit
         # clock remains fixed for deterministic replay and future-data rejection.
@@ -229,16 +230,17 @@ class StockMarketIntelligenceCoordinator:
                     maximum_age=timedelta(minutes=max(5, int(self.environment.get("MONATISE_FLASHALPHA_MAX_AGE_MINUTES", "60")))))
             except ValueError as exc:
                 error = str(exc).split(":", 1)[0]
+                error_detail = str(exc)  # Fixed validation messages, never a provider exception.
         sources = [
             _source("flashalpha", "positioning_context", "failed" if error else "used", ticker,
-                    evidence=[] if error else ["verified positioning context at shared analysis layer"], failure_reason=error),
+                    evidence=[] if error else ["verified positioning context at shared analysis layer"], failure_reason=error_detail or error),
             _source("quiver", "supplemental_intelligence", "used" if quiver[0] and quiver[0].get("available") else "degraded", ticker, failure_reason=quiver[1]),
             _source("finnhub", "supplemental_intelligence", "used" if finnhub[0] and not finnhub[0].get("unavailable") else "degraded", ticker, failure_reason=finnhub[1]),
             _source("ftmo_mt5", "execution_pricing", "not_requested", instrument.ftmo_symbol, requested=False),
         ]
         if error:
             await self.hierarchy.invalidate(instrument)
-            return {**_insufficient(ticker, "stock", sources, error, now=observed), **POLICY.metadata(), "analysis_provider": "alpaca", "analysis_instrument": ticker}
+            return {**_insufficient(ticker, "stock", sources, error, now=observed), "reason_detail": error_detail, **POLICY.metadata(), "analysis_provider": "alpaca", "analysis_instrument": ticker}
         quiver_score = int((((quiver[0] or {}).get("summary") or {}).get("score") or 0))
         result = await self.hierarchy.analyse(instrument, context={**context, "quiver_score": quiver_score}, now=now)
         result["analysis_sources"] += sources
@@ -284,6 +286,7 @@ class FuturesMarketIntelligenceCoordinator:
         context, error = await _optional_call(lambda: self.flashalpha.context(provider_symbol))
         observed = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
         reason = error
+        reason_detail = None
         as_of = None
         if reason is None:
             try:
@@ -293,6 +296,7 @@ class FuturesMarketIntelligenceCoordinator:
                 )
             except ValueError as validation_error:
                 reason = "provider_stale" if str(validation_error).startswith("provider_stale") else "provider_incomplete"
+                reason_detail = str(validation_error)
 
         sources = [
             _source("alpaca", "market_data", "not_applicable", None, requested=False, failure_reason="provider_unsupported"),
@@ -301,7 +305,7 @@ class FuturesMarketIntelligenceCoordinator:
             _source(
                 "flashalpha", "specialist_futures_intelligence", "used" if reason is None else "failed", provider_symbol,
                 evidence=["options-on-futures gamma exposure", "gamma flip", "call/put walls"] if reason is None else [],
-                affected_score=reason is None, failure_reason=reason,
+                affected_score=reason is None, failure_reason=reason_detail or reason,
                 timeframes={"snapshot": {"latest_timestamp": as_of.isoformat() if as_of else None, "quality": "valid" if reason is None else "rejected"}},
             ),
             _source("ftmo_mt5", "execution_pricing", "not_requested", instrument.ftmo_symbol, requested=False, failure_reason="analysis_not_qualified"),
@@ -310,6 +314,7 @@ class FuturesMarketIntelligenceCoordinator:
             if is_index(instrument):
                 await self.hierarchy.invalidate(instrument)
             result = _insufficient(instrument.ftmo_symbol, FTMOAssetClass.FUTURES_LINKED.value, sources, reason, now=observed)
+            result["reason_detail"] = reason_detail
             result.update({
                 "ftmo_symbol": instrument.ftmo_symbol,
                 "underlying_market": instrument.underlying_market,
