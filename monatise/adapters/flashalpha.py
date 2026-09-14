@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import threading
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -31,6 +33,7 @@ class FlashAlphaAdapter:
     base_url: str = "https://lab.flashalpha.com"
     timeout: float = 10
     telemetry: dict[str, Any] = field(default_factory=dict, compare=False, repr=False)
+    _context_lock: Any = field(default_factory=threading.Lock, compare=False, repr=False)
 
     @classmethod
     def from_env(cls) -> "FlashAlphaAdapter":
@@ -44,6 +47,12 @@ class FlashAlphaAdapter:
         return bool(self.api_key)
 
     def context(self, symbol: str) -> dict[str, Any]:
+        # Scheduled stocks and futures share this adapter. Avoid bursting two
+        # requests per symbol concurrently against the provider's rate limit.
+        with self._context_lock:
+            return self._context(symbol)
+
+    def _context(self, symbol: str) -> dict[str, Any]:
         ticker = normalize_flashalpha_symbol(symbol)
         encoded = quote(ticker, safe="")
         gex = self._get(f"/v1/exposure/gex/{encoded}")
@@ -143,8 +152,17 @@ class FlashAlphaAdapter:
         return {"configured": self.configured, **self.telemetry}
 
     def _get(self, path: str, query: dict[str, Any] | None = None) -> Any:
-        payload, _metadata = self._get_with_metadata(path, query)
-        return payload
+        for attempt in range(3):
+            try:
+                payload, _metadata = self._get_with_metadata(path, query)
+                return payload
+            except FlashAlphaAdapterError as exc:
+                wait = exc.rate_limit.get("retry_after_seconds", 1)
+                if (exc.status_code != 429 or attempt == 2
+                        or exc.rate_limit.get("remaining") == 0
+                        or not isinstance(wait, int) or not 0 <= wait <= 5):
+                    raise
+                time.sleep(max(1, wait))
 
     def _get_with_metadata(self, path: str, query: dict[str, Any] | None = None) -> tuple[Any, dict[str, Any]]:
         if not self.configured:

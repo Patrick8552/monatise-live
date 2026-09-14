@@ -49,6 +49,7 @@ from monatise.application.stock_universe import StockCandidate, StockUniverseCon
 from monatise.application.universe_discovery import rank_significant_futures_universe
 from monatise.application.ftmo_registry import FTMOAssetClass, FTMOInstrumentRegistry, FTMO_REGISTRY
 from monatise.application.ftmo_scanner import publication_allowed
+from monatise.application.scan_audit import audited_scan, stamp_analysis
 from monatise.application.ftmo_execution import FTMOExecutionConfiguration
 from monatise.application.trade_publication import context_message, failure_code, lifecycle_log
 from monatise.application.ftmo_master import FTMOMasterConfiguration, FTMOMasterControlService, FTMOMasterRepository, FTMOMasterError, format_proposal
@@ -1497,7 +1498,8 @@ class OrchestrationRuntime:
         minimum_open_interest = max(0.0, float(self.environment.get("MONATISE_FTMO_CRYPTO_MIN_OPEN_INTEREST_USD", "1000000")))
         ranked_key = f"{namespace}:ftmo:crypto:ranked:v1"
 
-        async def monitor() -> dict[str, Any]:
+        @audited_scan("crypto")
+        async def scan(_runtime) -> dict[str, Any]:
             started_at = datetime.now(timezone.utc)
             self.dependencies["ftmo_crypto_scan"].update({"last_started_at": started_at.isoformat(), "last_error": None})
             try:
@@ -1557,17 +1559,21 @@ class OrchestrationRuntime:
                             analysis_failures.append({"symbol": candidate.symbol, "error_type": type(outcome).__name__})
                             continue
                         analyzed += 1
+                        stamp_analysis(outcome, by_underlying[candidate.symbol].ftmo_symbol)
                         hierarchy_results.append(outcome)
                 result = {
                     "registry_version": ftmo_instruments[0].registry_version if ftmo_instruments else None,
                     "ftmo_universe_size": len(ftmo_instruments), "provider_supported": len(eligible), "ranked_candidates": len(ranked),
                     "deep_analysis_attempted": min(len(ranked), analysis_cap), "deep_analysis_completed": analyzed,
-                    "deep_analysis_failures": analysis_failures,
+                    "deep_analysis_failures": analysis_failures, "failures": analysis_failures,
+                    "results": hierarchy_results,
                     "telegram_published": sum(bool(item.get("telegram_published")) for item in hierarchy_results),
                     "candidates": serialized_candidates, "execution_enabled": False,
                 }
                 self.dependencies["ftmo_crypto_scan"].update({
                     "last_success_at": datetime.now(timezone.utc).isoformat(), "last_result": result, "last_error": None,
+                    "pipeline_status": result.get("pipeline_status"),
+                    "status": "degraded" if result.get("pipeline_status") == "degraded" else "ok",
                 })
                 return result
             except Exception as exc:
@@ -1575,6 +1581,14 @@ class OrchestrationRuntime:
                     "last_failure_at": datetime.now(timezone.utc).isoformat(), "last_error": type(exc).__name__,
                 })
                 raise
+
+        async def monitor() -> dict[str, Any]:
+            result = await scan(self)
+            self.dependencies["ftmo_crypto_scan"].update(
+                pipeline_status=result["pipeline_status"],
+                status="degraded" if result["pipeline_status"] == "degraded" else "ok",
+            )
+            return result
 
         job_id = "ftmo-crypto-scanner-telegram"
         await self.application.infrastructure.scheduler.register(JobDefinition(
@@ -1658,7 +1672,9 @@ class OrchestrationRuntime:
                     "last_succeeded_at": completed_at.isoformat(),
                     "next_expected_at": (completed_at + timedelta(seconds=interval_seconds)).isoformat(),
                     "last_cycle_duration_ms": duration_ms,
-                    "last_cycle_status": "succeeded",
+                    "last_cycle_status": "degraded" if result.get("pipeline_status") == "degraded" else "succeeded",
+                    "status": "degraded" if result.get("pipeline_status") == "degraded" else "ok",
+                    "pipeline_status": result.get("pipeline_status"),
                     "running": False,
                     "last_result": result,
                     "last_error": None,
@@ -1726,6 +1742,7 @@ class OrchestrationRuntime:
         }
         return (job_id,)
 
+    @audited_scan("stocks")
     async def _run_stock_universe_scan(self, configuration: StockUniverseConfiguration, cooldown_seconds: int, namespace: str) -> dict[str, Any]:
         alpaca = getattr(self, "alpaca", None) or AlpacaMarketDataAdapter.from_env()
         self.alpaca = alpaca
@@ -1773,7 +1790,7 @@ class OrchestrationRuntime:
 
         batch_results = await asyncio.gather(*(fetch_batch(batch) for batch in snapshot_batches))
         snapshots = {symbol: snapshot for batch in batch_results for symbol, snapshot in batch.items()}
-        longs, shorts, snapshot_exclusions = rank_stock_universe(assets, snapshots, configuration)
+        longs, shorts, snapshot_exclusions = rank_stock_universe(alpaca_assets, snapshots, configuration)
         for reason, count in snapshot_exclusions.items(): exclusions[reason] = exclusions.get(reason, 0) + count
         shortlisted = _interleave_stock_candidates(
             longs[:configuration.shortlist_per_side],
@@ -1787,7 +1804,7 @@ class OrchestrationRuntime:
             shortlisted = shortlisted[:scheduled_capacity]
             exclusions["flashalpha_quota_reserved_for_on_demand"] = quota_deferred
         outcomes = await asyncio.gather(*(self._analyze_market_stock(candidate, configuration, index) for index, candidate in enumerate(shortlisted)), return_exceptions=True)
-        analyzed = qualified = published = proposal_published = suppressed = 0
+        analyzed = qualified = published = proposal_published = suppressed = analysis_failed = 0
         scan_results: list[dict[str, Any]] = []
         failures: list[dict[str, str]] = []
         suppressions: dict[str, int] = {}
@@ -1796,7 +1813,11 @@ class OrchestrationRuntime:
             if isinstance(outcome, Exception):
                 failures.append({"symbol": candidate.symbol, "error_type": type(outcome).__name__})
                 continue
-            analyzed += 1
+            stamp_analysis(outcome, candidate.ftmo_symbol or candidate.symbol)
+            if outcome.get("decision") == "INSUFFICIENT_MARKET_DATA":
+                analysis_failed += 1
+            else:
+                analyzed += 1
             outcome.setdefault("ftmo_symbol", candidate.ftmo_symbol or candidate.symbol)
             outcome.setdefault("underlying_symbol", candidate.underlying_symbol or candidate.symbol)
             outcome.setdefault("exchange", candidate.exchange)
@@ -1806,42 +1827,68 @@ class OrchestrationRuntime:
                 outcome["tradingview_reference"] = tradingview_reference
             scan_results.append(outcome)
             additional = outcome.get("additional_context") or {}
-            if not (additional.get("quiver") or {}).get("available"): provider_degraded["quiver"] += 1
-            if (additional.get("flashalpha") or {}).get("unavailable"): provider_degraded["flashalpha"] += 1
-            if (additional.get("finnhub") or {}).get("unavailable"): provider_degraded["finnhub"] += 1
+            source_states = {s.get("provider"): s.get("status") for s in outcome.get("analysis_sources", [])}
+            for provider in provider_degraded:
+                if source_states.get(provider) in {"failed", "degraded"}:
+                    provider_degraded[provider] += 1
             if outcome.get("setup_status") != "confirmed":
                 suppressed += 1
-                for reason in outcome.get("suppression_reasons") or ["not_qualified"]:
+                outcome["pipeline_stage"] = "DATA_REJECTED" if outcome.get("decision") == "INSUFFICIENT_MARKET_DATA" else "REJECTED"
+                for reason in outcome.get("suppression_reasons") or outcome.get("reasons") or [outcome.get("reason_code") or "not_qualified"]:
                     suppressions[reason] = suppressions.get(reason, 0) + 1
                 continue
             qualified += 1
+            outcome["pipeline_stage"] = "QUALIFIED"
             alert_state = _setup_alert_state(outcome)
             dedupe_key = f"{namespace}:stock-setup-alert:{candidate.symbol}"
             previous_state = await self.redis.get(dedupe_key)
             if previous_state and not _setup_materially_changed(previous_state, alert_state):
                 suppressed += 1
                 suppressions["duplicate_unchanged"] = suppressions.get("duplicate_unchanged", 0) + 1
+                outcome.update(pipeline_stage="DEDUPLICATED", suppression_reasons=["duplicate_unchanged"])
                 continue
             await self.redis.set(dedupe_key, json.dumps(alert_state, separators=(",", ":"), sort_keys=True), ex=cooldown_seconds)
             try:
                 notifier = getattr(self.telegram, "ftmo_stock_notification", self.telegram.stock_analysis_notification)
                 message = TelegramNotifier.format_market_stock_setup(outcome)
                 await notifier(message)
-                proposal_published += int(await self._publish_ftmo_signal_proposal(
+                approval_published = await self._publish_ftmo_signal_proposal(
                     outcome,
                     source="monatise.stock.scanner",
                     quote_wait_seconds=max(0.0, min(15.0, float(
                         getattr(self, "environment", {}).get("MONATISE_FTMO_SCANNER_QUOTE_WAIT_SECONDS", "7")
                     ))),
-                ))
+                )
+                proposal_published += int(approval_published)
                 published += 1
+                outcome["pipeline_stage"] = "APPROVAL_SENT" if approval_published else "CONTEXT_ONLY"
+                if not approval_published and self.ftmo_master is not None:
+                    if previous_state:
+                        await self.redis.set(dedupe_key, previous_state, ex=cooldown_seconds)
+                    else:
+                        await self.redis.delete(dedupe_key)
             except Exception as exc:
                 if previous_state:
                     await self.redis.set(dedupe_key, previous_state, ex=cooldown_seconds)
                 else:
                     await self.redis.delete(dedupe_key)
                 failures.append({"symbol": candidate.symbol, "error_type": type(exc).__name__})
+                outcome["pipeline_stage"] = "PUBLICATION_FAILED"
+        universe_audit = []
+        shortlisted_symbols = {c.symbol for c in shortlisted}
+        for asset in assets:
+            symbol = str(asset["symbol"]).upper()
+            if asset not in alpaca_assets:
+                reason = "provider_unavailable_fail_closed"
+            else:
+                _, _, reasons = rank_stock_universe([asset], snapshots, configuration)
+                reason = next(iter(reasons), None)
+            universe_audit.append({"symbol": asset["ftmo_symbol"], "provider_symbol": symbol,
+                "snapshot_received": symbol in snapshots, "shortlisted": symbol in shortlisted_symbols,
+                "reason": reason or ("shortlisted" if symbol in shortlisted_symbols else "outside_shortlist")})
         return {
+            "universe_audit": universe_audit,
+            "analysis_failure_count": analysis_failed + len([f for f in failures if f.get("symbol") not in {r.get("asset") for r in scan_results}]),
             "universe_source": universe_source, "registry_version": instruments[0].registry_version if instruments else None,
             "universe_size": len(assets), "snapshots_received": len(snapshots),
             "snapshot_batch_failures": snapshot_failures, "excluded": exclusions,
@@ -1890,6 +1937,8 @@ class OrchestrationRuntime:
                 result = await self._analyze_ftmo_futures(instruments, cooldown_seconds, namespace)
                 self.dependencies["ftmo_futures_scan"].update({
                     "last_success_at": datetime.now(timezone.utc).isoformat(), "last_result": result, "last_error": None,
+                    "pipeline_status": result.get("pipeline_status"),
+                    "status": "degraded" if result.get("pipeline_status") == "degraded" else "ok",
                 })
                 return result
             except Exception as exc:
@@ -1918,6 +1967,7 @@ class OrchestrationRuntime:
         }
         return (job_id,)
 
+    @audited_scan("futures_indices")
     async def _analyze_ftmo_futures(self, instruments: tuple[Any, ...], cooldown_seconds: int, namespace: str) -> dict[str, Any]:
         adapter = getattr(self, "flashalpha", None) or FlashAlphaAdapter.from_env()
         self.flashalpha = adapter
@@ -1948,7 +1998,9 @@ class OrchestrationRuntime:
                 try:
                     contexts[root] = await asyncio.to_thread(adapter.context, f"{root}=F")
                 except Exception as exc:
-                    failures.append({"symbol": root, "error_type": type(exc).__name__})
+                    failures.append({"symbol": root, "error_type": type(exc).__name__,
+                                     "reason_code": getattr(exc, "code", "provider_unavailable"),
+                                     "http_status": getattr(exc, "status_code", None)})
                 finally:
                     queue.task_done()
 
@@ -1956,9 +2008,17 @@ class OrchestrationRuntime:
         if workers:
             await asyncio.gather(*workers)
         candidates: list[tuple[Any, dict[str, Any]]] = []
+        rejected_inputs = []
         for instrument in instruments:
             context = contexts.get(instrument.futures_symbol)
             if context is None:
+                failure = next((f for f in failures if f["symbol"] == instrument.futures_symbol), {})
+                rejected_inputs.append(stamp_analysis({"ftmo_symbol": instrument.ftmo_symbol,
+                    "pipeline_stage": "DATA_REJECTED", "decision": "INSUFFICIENT_MARKET_DATA",
+                    "reason_code": failure.get("reason_code", "provider_quota_deferred"),
+                    "reasons": [failure.get("reason_code", "provider_quota_deferred")],
+                    "analysis_sources": [{"provider": "flashalpha", "status": "failed",
+                        "failure_reason": failure.get("reason_code", "provider_quota_deferred")}]}, instrument.ftmo_symbol))
                 if is_index(instrument) and instrument.futures_symbol in unique_roots:
                     await self._shared_asset_hierarchy().invalidate(instrument)
                 continue
@@ -1969,7 +2029,10 @@ class OrchestrationRuntime:
                     maximum_age=timedelta(minutes=max(5, int(self.environment.get("MONATISE_FLASHALPHA_MAX_AGE_MINUTES", "60")))),
                 )
             except ValueError as exc:
-                failures.append({"symbol": instrument.ftmo_symbol, "error_type": str(exc).split(":", 1)[0]})
+                failures.append({"symbol": instrument.ftmo_symbol, "error_type": str(exc).split(":", 1)[0], "reason_code": str(exc).split(":", 1)[0]})
+                rejected_inputs.append(stamp_analysis({"ftmo_symbol": instrument.ftmo_symbol,
+                    "pipeline_stage": "DATA_REJECTED", "decision": "INSUFFICIENT_MARKET_DATA",
+                    "reason_code": str(exc).split(":", 1)[0], "reasons": [str(exc)]}, instrument.ftmo_symbol))
                 if is_index(instrument):
                     await self._shared_asset_hierarchy().invalidate(instrument)
                 continue
@@ -1978,6 +2041,7 @@ class OrchestrationRuntime:
                 analysis.update({"futures_symbol": instrument.futures_symbol, "micro_futures_symbol": instrument.micro_futures_symbol,
                                  "underlying_market": instrument.underlying_market, "provider_consensus": "PARTIAL",
                                  "fallback_status": "no_snapshot_only_fallback"})
+                stamp_analysis(analysis, instrument.ftmo_symbol)
                 candidates.append((instrument, analysis))
                 continue
             analysis = build_flashalpha_futures_analysis(context)
@@ -2000,19 +2064,28 @@ class OrchestrationRuntime:
             if tradingview_reference is not None:
                 analysis["tradingview_reference"] = tradingview_reference
             analysis = apply_flashalpha_plan(analysis, context, config=MultiTPConfiguration.from_environment(self.environment), route=route_for(instrument), now=datetime.now(timezone.utc))
+            stamp_analysis(analysis, instrument.ftmo_symbol)
             candidates.append((instrument, analysis))
         candidates.sort(key=lambda item: (-abs(int(item[1].get("score") or 0)), item[0].ftmo_symbol))
         deep_limit = max(1, min(20, int(self.environment.get("MONATISE_FTMO_FUTURES_DEEP_ANALYSIS_LIMIT", "10"))))
-        published = executable_published = context_published = suppressed = 0
+        published = executable_published = context_published = suppressed = qualified = 0
+        suppressions = {}
         for instrument, analysis in candidates[:deep_limit]:
             if not publication_allowed(analysis):
                 suppressed += 1
+                analysis["pipeline_stage"] = "DATA_REJECTED" if analysis.get("decision") == "INSUFFICIENT_MARKET_DATA" else "REJECTED"
+                for reason in analysis.get("reasons") or [analysis.get("reason_code") or "not_qualified"]:
+                    suppressions[reason] = suppressions.get(reason, 0) + 1
                 continue
+            qualified += 1
+            analysis["pipeline_stage"] = "QUALIFIED"
             alert_state = _setup_alert_state(analysis)
             cooldown_key = f"{namespace}:ftmo:futures-alert:{instrument.ftmo_symbol}"
             previous_state = await self.redis.get(cooldown_key)
             if previous_state and not _setup_materially_changed(previous_state, alert_state):
                 suppressed += 1
+                analysis.update(pipeline_stage="DEDUPLICATED", suppression_reasons=["duplicate_unchanged"])
+                suppressions["duplicate_unchanged"] = suppressions.get("duplicate_unchanged", 0) + 1
                 continue
             await self.redis.set(cooldown_key, json.dumps(alert_state, separators=(",", ":"), sort_keys=True), ex=cooldown_seconds)
             try:
@@ -2058,8 +2131,15 @@ class OrchestrationRuntime:
                     stored = await self.ftmo_master.repository.proposal(proposal["proposal_id"])
                     if stored and stored[0].get("approval_keyboard_attached"):
                         executable_published += 1
+                        analysis.update(pipeline_stage="APPROVAL_SENT", proposal_id=proposal["proposal_id"],
+                            telegram_message_id=stored[0].get("telegram_message_id"), telegram_publish_status="published")
                     else:
                         context_published += 1
+                        analysis["pipeline_stage"] = "CONTEXT_ONLY"
+                        if previous_state:
+                            await self.redis.set(cooldown_key, previous_state, ex=cooldown_seconds)
+                        else:
+                            await self.redis.delete(cooldown_key)
                 else:
                     unavailable = self._transient_ftmo_quote_error(quote_error or "")
                     analysis["ftmo_execution_quote"] = {
@@ -2075,14 +2155,25 @@ class OrchestrationRuntime:
                     await notifier(context_message(TelegramNotifier.format_ftmo_futures_setup(analysis),
                                                    failure_code(quote_error or "quote unavailable")))
                     context_published += 1
+                    analysis["pipeline_stage"] = "CONTEXT_ONLY"
+                    # A missing executable quote must not consume the setup cooldown.
+                    if previous_state:
+                        await self.redis.set(cooldown_key, previous_state, ex=cooldown_seconds)
+                    else:
+                        await self.redis.delete(cooldown_key)
                 published += 1
             except Exception as exc:
                 failures.append({"symbol": instrument.ftmo_symbol, "error_type": type(exc).__name__})
+                analysis["pipeline_stage"] = "PUBLICATION_FAILED"
                 if previous_state:
                     await self.redis.set(cooldown_key, previous_state, ex=cooldown_seconds)
                 else:
                     await self.redis.delete(cooldown_key)
         return {
+            "results": rejected_inputs + [row for _, row in candidates],
+            "qualified_count": qualified, "suppressions": suppressions,
+            "analysis_completed_count": sum(row.get("decision") != "INSUFFICIENT_MARKET_DATA" for _, row in candidates),
+            "analysis_failure_count": len(rejected_inputs) + sum(row.get("decision") == "INSUFFICIENT_MARKET_DATA" for _, row in candidates),
             "universe_size": len(instruments), "provider_roots": len(unique_roots), "provider_roots_total": len(all_unique_roots),
             "provider_roots_quota_deferred": len(all_unique_roots) - len(unique_roots), "flashalpha_scheduled_capacity": scheduled_capacity,
             "provider_contexts": len(contexts),
@@ -2149,7 +2240,7 @@ class OrchestrationRuntime:
             "fibonacci", "order_flow", "trigger", "open_interest", "funding_rate", "liquidations",
             "cvd", "long_short_ratio", "provider_observed_at", "analysis_sources",
             "timeframe_policy", "analysis_timeframe", "setup_timeframe", "confirmation_timeframe", "trigger_timeframe", "entry_timeframe", "evidence_bundle",
-            "market_price_observation", "crypto_contexts", "structural_invalidation",
+            "market_price_observation", "crypto_contexts", "structural_invalidation", "scanner_run_id",
             "provider_consensus", "fallback_status", "data_quality", "ftmo_execution_quote",
         ) if analysis.get(key) is not None}
         if "market_price_observation" not in evidence and analysis.get("current_reference_price") is not None:
@@ -2210,6 +2301,8 @@ class OrchestrationRuntime:
                         })
                     lifecycle_log({**proposal_arguments, "ftmo_symbol": symbol},
                         failure_reason=reason, approval_controls_omitted_reason=failure_code(reason))
+                    if isinstance(analysis, dict):
+                        analysis["ftmo_execution_quote"] = {"status": "rejected", "reason": reason}
                     return None, reason
                 await asyncio.sleep(min(0.5, remaining))
                 continue
@@ -2220,6 +2313,9 @@ class OrchestrationRuntime:
                     "quote_observed_at_utc": proposal.get("quote_observed_at_utc"),
                     "quote_age_ms": proposal.get("quote_age_ms"),
                 })
+            if isinstance(analysis, dict):
+                analysis.update(proposal_id=proposal["proposal_id"], ftmo_execution_quote={"status": "validated",
+                    "symbol": proposal["symbol"], "observed_at": proposal.get("quote_observed_at_utc")})
             lifecycle_log(proposal, telegram_publish_status="ready_to_publish")
             return proposal, None
 
@@ -2237,6 +2333,9 @@ class OrchestrationRuntime:
             await publish(format_proposal(proposal), proposal["proposal_id"])
             if getattr(self.telegram, "_proposal_service", None) is self.ftmo_master:
                 stored = await self.ftmo_master.repository.proposal(proposal["proposal_id"])
+                if isinstance(analysis, dict) and stored:
+                    analysis.update(telegram_publish_status=stored[0].get("telegram_publish_status"),
+                                    telegram_message_id=stored[0].get("telegram_message_id"))
                 return bool(stored and stored[0].get("approval_keyboard_attached"))
             return True
         return False

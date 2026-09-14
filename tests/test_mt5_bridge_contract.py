@@ -7,7 +7,7 @@ BRIDGE_SOURCE = Path(__file__).parents[1] / "mt5" / "Experts" / "MonatiseFTMOBri
 def test_mt5_bridge_enforces_expiry_price_volume_and_broker_symbol_constraints():
     source = BRIDGE_SOURCE.read_text(encoding="utf-8")
 
-    assert '#property version   "1.21"' in source
+    assert '#property version   "1.22"' in source
     assert 'InpSymbols                = "XAUUSD,US100.cash,US500.cash,AAPL,EURUSD,GBPUSD,USDJPY,USDCHF,AUDUSD,NZDUSD,USDCAD"' in source
     assert "BTCUSD" not in source.split("input string InpSymbols", 1)[1].split(";", 1)[0]
     assert "InpRiskFraction           = 0.03" in source
@@ -79,3 +79,17 @@ def test_mt5_quote_time_contract_separates_broker_time_from_utc_and_rejects_skew
     assert "command_quote_age < -1 || command_quote_age > 5" in source
     assert '\\"quote_observed_at_utc\\":\\\"" + IsoTime(broker_time_utc)' in source
     assert '"timestamp":"" + IsoTime((datetime)(tick.time_msc / 1000))' not in source
+
+
+def test_broker_history_covers_entire_positions_independently_of_multi_tp():
+    source = BRIDGE_SOURCE.read_text(encoding="utf-8")
+    body = source.split("string ManagementDealsJson()", 1)[1].split("bool ValidateProfitIntent", 1)[0]
+    assert "HistorySelectByPosition(identifiers[p])" in body
+    assert "included==total" in body
+    heartbeat = source.split("string BuildHeartbeat()", 1)[1].split("string JsonString", 1)[0]
+    assert "string deals = ManagementDealsJson();" in heartbeat
+    assert 'InpMultiTPEnabled ? ManagementDealsJson()' not in heartbeat
+    for field in ("deal_history_coverage", "deal_history_version"):
+        assert field in heartbeat
+    for field in ("DEAL_PROFIT", "DEAL_COMMISSION", "DEAL_SWAP", "DEAL_FEE", "DEAL_POSITION_ID", "DEAL_SL", "DEAL_TP"):
+        assert field in source

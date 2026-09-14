@@ -122,3 +122,27 @@ def test_flashalpha_probe_distinguishes_real_429_and_retry_headers(monkeypatch):
         "status": "rate_limited", "symbol": "AAPL", "http_status": 429,
         "rate_limit": {"daily_limit": 5, "remaining": 0, "reset_epoch": 1787875200, "retry_after_seconds": 3600},
     }
+
+
+def test_brief_http_rate_limit_retries_with_bounded_provider_delay(monkeypatch):
+    calls=[];waits=[]
+    def request(req,timeout=10):
+        calls.append(req)
+        if len(calls)==1:
+            raise HTTPError(req.full_url,429,'Too Many Requests',{'Retry-After':'1','X-RateLimit-Remaining':'100'},None)
+        return Response({'underlying_price':100,'net_gex':1})
+    monkeypatch.setattr(flashalpha_module,'urlopen',request)
+    monkeypatch.setattr(flashalpha_module.time,'sleep',waits.append)
+    assert FlashAlphaAdapter('token')._get('/v1/exposure/gex/AAPL')['underlying_price']==100
+    assert len(calls)==2 and waits==[1]
+
+
+def test_exhausted_daily_provider_quota_is_not_retried(monkeypatch):
+    calls=[]
+    def request(req,timeout=10):
+        calls.append(req)
+        raise HTTPError(req.full_url,429,'Too Many Requests',{'Retry-After':'1','X-RateLimit-Remaining':'0'},None)
+    monkeypatch.setattr(flashalpha_module,'urlopen',request)
+    with pytest.raises(FlashAlphaAdapterError):
+        FlashAlphaAdapter('token')._get('/v1/exposure/gex/AAPL')
+    assert len(calls)==1

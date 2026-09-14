@@ -1339,6 +1339,8 @@ class FTMOMasterControlService:
             "terminal_build": str(payload.get("terminal_build") or ""),
             "ea_version": str(payload.get("ea_version") or ""),
             "history_version": payload.get("history_version"),
+            "deal_history_version": payload.get("deal_history_version"),
+            "deal_history_coverage": dict(payload.get("deal_history_coverage") or {}),
             "pending_entry_version": payload.get("pending_entry_version"),
             "gold_price_guard_version": payload.get("gold_price_guard_version"),
             "gold_maximum_adverse_price_deviation": str(payload.get("gold_maximum_adverse_price_deviation") or "0"),
@@ -1368,11 +1370,18 @@ class FTMOMasterControlService:
         lifecycle_events: tuple[dict[str, Any], ...] = ()
         management_proposals = []
         if identity_match:
+            previously_closed = {p["proposal_id"] for p in await self.repository.proposals()
+                                 if p.get("lifecycle_state") == "POSITION_CLOSED"}
             lifecycle_events = await self._reconcile_proposals_from_heartbeat(snapshot, observed)
             try:
                 management_proposals = await PositionManagementService(self).reconcile(snapshot, observed)
             except (ValueError, RuntimeError, ArithmeticError) as exc:
                 await self.repository.audit("multi_tp_management_blocked", "heartbeat", {"reason": str(exc)})
+            from monatise.application.trade_accounting import TradeAccountingService
+            try:
+                await TradeAccountingService(self).reconcile(snapshot, observed, previously_closed=previously_closed)
+            except (ValueError, RuntimeError, ArithmeticError) as exc:
+                await self.repository.audit("trade_accounting_blocked", "heartbeat", {"error_type": type(exc).__name__})
         await self.repository.audit("bridge_heartbeat", _mask_account(account_id) or "unknown", {
             "identity_match": identity_match, "terminal_connected": snapshot["terminal_connected"],
             "trade_allowed": snapshot["trade_allowed"], "quote_count": len(normalized_quotes),

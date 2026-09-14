@@ -219,6 +219,10 @@ class StockMarketIntelligenceCoordinator:
             else asyncio.sleep(0, result=(None, "cycle_quota_reserved")),
         )
         context, error = flash
+        # Providers can stamp a response while the request is in flight. Compare
+        # against receipt time, never the earlier request-start time. An explicit
+        # clock remains fixed for deterministic replay and future-data rejection.
+        observed = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
         if error is None:
             try:
                 validate_flashalpha_context(context, provider_symbol=ticker, now=observed,
@@ -278,6 +282,7 @@ class FuturesMarketIntelligenceCoordinator:
             raise ValueError("instrument is not a verified futures-linked FTMO CFD")
         provider_symbol = f"{instrument.futures_symbol}=F"
         context, error = await _optional_call(lambda: self.flashalpha.context(provider_symbol))
+        observed = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
         reason = error
         as_of = None
         if reason is None:

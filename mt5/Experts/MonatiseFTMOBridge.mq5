@@ -1,5 +1,5 @@
 #property copyright "Monatise"
-#property version   "1.21"
+#property version   "1.22"
 #property strict
 #property description "Account-bound FTMO bridge. Telegram never talks directly to the broker."
 
@@ -29,9 +29,10 @@ input int    InpMaximumDeviationPoints = 20;
 input double InpGoldMaximumAdversePriceDeviation = 10.0; // Price units (USD/oz), signed Gold proposals only.
 input long   InpMagicNumber            = 26082501;
 
-string EA_VERSION = "1.21";
+string EA_VERSION = "1.22";
 string JOURNAL_FILE = "monatise-ftmo-command-journal.csv";
 string DynamicSymbols = "";
+string DealHistoryCoverage = "{}";
 string LastRequestNonce = "";
 CTrade Trade;
 
@@ -343,15 +344,24 @@ string PositionsJson()
 string ManagementDealJson(ulong deal)
 {
    long entry = HistoryDealGetInteger(deal, DEAL_ENTRY);
-   if(entry != DEAL_ENTRY_IN && entry != DEAL_ENTRY_OUT && entry != DEAL_ENTRY_OUT_BY) return "";
+   long kind = HistoryDealGetInteger(deal, DEAL_TYPE);
+   bool trade_deal = kind == DEAL_TYPE_BUY || kind == DEAL_TYPE_SELL;
+   if(HistoryDealGetInteger(deal, DEAL_POSITION_ID) <= 0) return "";
+
    long reason = HistoryDealGetInteger(deal, DEAL_REASON);
    string label = reason == DEAL_REASON_TP ? "TP" : reason == DEAL_REASON_SL ? "SL" :
                   reason == DEAL_REASON_CLIENT ? "CLIENT" : reason == DEAL_REASON_MOBILE ? "MOBILE" :
-                  reason == DEAL_REASON_WEB ? "WEB" : reason == DEAL_REASON_EXPERT ? "EXPERT" : "UNKNOWN";
+                  reason == DEAL_REASON_WEB ? "WEB" : reason == DEAL_REASON_EXPERT ? "EXPERT" :
+                  reason == DEAL_REASON_SO ? "SO" : reason == DEAL_REASON_ROLLOVER ? "ROLLOVER" :
+                  reason == DEAL_REASON_VMARGIN ? "VMARGIN" : "UNKNOWN";
    return "{\"deal_id\":\"" + IntegerToString((long)deal)
       + "\",\"position_id\":\"" + IntegerToString(HistoryDealGetInteger(deal, DEAL_POSITION_ID))
       + "\",\"order_id\":\"" + IntegerToString(HistoryDealGetInteger(deal, DEAL_ORDER))
-      + "\",\"entry\":\"" + (entry == DEAL_ENTRY_IN ? "in" : "out") + "\",\"reason\":\"" + label
+      + "\",\"entry\":\"" + (!trade_deal ? "charge" : entry == DEAL_ENTRY_IN ? "in" : entry == DEAL_ENTRY_OUT_BY ? "out_by" : entry == DEAL_ENTRY_INOUT ? "inout" : "out") + "\",\"reason\":\"" + label
+      + "\",\"symbol\":\"" + JsonEscape(HistoryDealGetString(deal, DEAL_SYMBOL))
+      + "\",\"deal_type\":\"" + IntegerToString(kind)
+      + "\",\"sl\":\"" + DoubleToString(HistoryDealGetDouble(deal, DEAL_SL), 8)
+      + "\",\"tp\":\"" + DoubleToString(HistoryDealGetDouble(deal, DEAL_TP), 8)
       + "\",\"time\":\"" + IsoTime(BrokerTimeToUtc((datetime)HistoryDealGetInteger(deal, DEAL_TIME)))
       + "\",\"volume\":\"" + DoubleToString(HistoryDealGetDouble(deal, DEAL_VOLUME), 8)
       + "\",\"profit\":\"" + DoubleToString(HistoryDealGetDouble(deal, DEAL_PROFIT), 8)
@@ -362,41 +372,49 @@ string ManagementDealJson(ulong deal)
       + "\",\"comment\":\"" + JsonEscape(HistoryDealGetString(deal, DEAL_COMMENT)) + "\"}";
 }
 
+void AddHistoryPosition(ulong &identifiers[], ulong identifier)
+{
+   if(identifier == 0 || ArraySize(identifiers) >= 128) return;
+   for(int i=0; i<ArraySize(identifiers); i++) if(identifiers[i] == identifier) return;
+   int n=ArraySize(identifiers); ArrayResize(identifiers,n+1); identifiers[n]=identifier;
+}
+
 string ManagementDealsJson()
 {
-   // Query full history for each open owned position, plus recent closed ones.
-   // Bounded transport: missing history is detected by the server and stops management.
-   string result = "[";
-   int count = 0;
-   for(int p=0; p<PositionsTotal() && count<768; p++)
+   // Read full position history for open and recently active positions. This
+   // includes opening commission even when the entry is older than 30 days.
+   ulong identifiers[];
+   for(int p=0; p<PositionsTotal(); p++)
    {
-      ulong ticket = PositionGetTicket(p);
-      if(ticket == 0 || PositionGetInteger(POSITION_MAGIC) != InpMagicNumber) continue;
-      ulong identifier = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
-      if(!HistorySelectByPosition(identifier)) continue;
-      int total = HistoryDealsTotal();
-      for(int i=0; i<total && count<768; i++)
-      {
-         string row = ManagementDealJson(HistoryDealGetTicket(i));
-         if(row == "") continue;
-         if(result != "[") result += ",";
-         result += row; count++;
-      }
+      if(PositionGetTicket(p) == 0) continue;
+      AddHistoryPosition(identifiers, (ulong)PositionGetInteger(POSITION_IDENTIFIER));
    }
    if(HistorySelect(TimeTradeServer()-30*86400, TimeTradeServer()))
-   {
-      for(int i=HistoryDealsTotal()-1; i>=0 && count<1024; i--)
+      for(int i=HistoryDealsTotal()-1; i>=0; i--)
       {
-         ulong deal = HistoryDealGetTicket(i);
-         // Include manual exits too: their magic can be zero. The server binds
-         // position identifiers to previously approved owned opening trades.
-         string row = ManagementDealJson(deal);
-         if(row == "") continue;
-         if(result != "[") result += ",";
-         result += row; count++;
+         ulong deal=HistoryDealGetTicket(i);
+         AddHistoryPosition(identifiers, (ulong)HistoryDealGetInteger(deal, DEAL_POSITION_ID));
       }
+   string result="[", coverage="{";
+   int count=0;
+   for(int p=0; p<ArraySize(identifiers); p++)
+   {
+      bool selected=HistorySelectByPosition(identifiers[p]);
+      int total=selected ? HistoryDealsTotal() : 0, included=0;
+      for(int i=0; selected && i<total && count<1024; i++)
+      {
+         string row=ManagementDealJson(HistoryDealGetTicket(i));
+         if(row == "") continue;
+         if(result != "[") result+=",";
+         result+=row; count++; included++;
+      }
+      if(coverage != "{") coverage+=",";
+      coverage+="\""+IntegerToString((long)identifiers[p])+"\":{\"complete\":"
+         +(selected && total>0 && included==total ? "true" : "false")
+         +",\"deal_count\":"+IntegerToString(total)+"}";
    }
-   return result + "]";
+   DealHistoryCoverage=coverage+"}";
+   return result+"]";
 }
 
 bool ValidateProfitIntent(string payload, string &reason)
@@ -631,6 +649,7 @@ string HeartbeatSymbols()
 string BuildHeartbeat()
 {
    datetime observed_utc = TimeGMT();
+   string deals = ManagementDealsJson(); // Accounting is independent of optional multi-TP management.
    string quotes = "{";
    string diagnostics = "{";
    string symbols[];
@@ -672,9 +691,10 @@ string BuildHeartbeat()
       + "\"history_version\":1,\"pending_entry_version\":2,"
       + "\"terminal_build\":\"" + IntegerToString((int)TerminalInfoInteger(TERMINAL_BUILD)) + "\","
       + "\"ea_version\":\"" + EA_VERSION + "\","
+      + "\"deal_history_version\":1,\"deal_history_coverage\":" + DealHistoryCoverage + ","
       + "\"multi_tp_version\":" + (InpMultiTPEnabled ? "1" : "0") + ","
       + "\"account_margin_mode\":" + IntegerToString(AccountInfoInteger(ACCOUNT_MARGIN_MODE)) + ","
-      + "\"deals\":" + (InpMultiTPEnabled ? ManagementDealsJson() : "[]") + ","
+      + "\"deals\":" + deals + ","
       + "\"gold_price_guard_version\":1,"
       + "\"gold_maximum_adverse_price_deviation\":\"" + DoubleToString(MathMax(0, InpGoldMaximumAdversePriceDeviation), 8) + "\","
       + "\"observed_at_utc\":\"" + IsoTime(observed_utc) + "\","
