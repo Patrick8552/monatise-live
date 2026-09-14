@@ -16,3 +16,6 @@ def entry_order_type(*, side: str, planned: Decimal, executable: Decimal,
 
 
 PENDING_LEASE_SECONDS = 20
+# Broker fallback expiry is separate from the short local eligibility lease.
+PENDING_ORDER_LIFETIME_SECONDS = 30 * 60
+PENDING_ENTRY_VERSION = 2

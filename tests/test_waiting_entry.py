@@ -21,7 +21,7 @@ async def prepare(monkeypatch, *, symbol='AAPL', side='buy', price='105', capabi
     await control.repository.update_control(kill_switch=False)
     quote = dict(heartbeat()['quotes']['XAUUSD'], bid=str(Decimal(price) - Decimal('.02')), ask=price,
                  timestamp=NOW.isoformat(), expiration_mode=4, stops_level=minimum)
-    payload = heartbeat(quotes={symbol: quote}, pending_entry_version=1 if capability else None)
+    payload = heartbeat(quotes={symbol: quote}, pending_entry_version=2 if capability else None)
     await control.accept_bridge_heartbeat(payload, now=NOW)
     stop, target = ('90', '125') if side == 'buy' else ('110', '75')
     proof = await persist_proof(control, symbol, NOW, entry='100', stop=stop, target=target,
@@ -62,7 +62,7 @@ def test_waiting_entry_four_pending_types_keep_approval_and_real_price(monkeypat
             assert command['payload'][key] == before[key]
         assert Decimal(command['risk_policy']['actual_risk_amount']) <= Decimal(before['risk_amount'])
         assert command['payload']['pending_expires_epoch'] == str(int((NOW + timedelta(minutes=10)).timestamp()))
-        assert command['payload']['pending_entry_version'] == '1'
+        assert command['payload']['pending_entry_version'] == '2'
         with pytest.raises(FTMOMasterError):
             await control.approve(proposal['proposal_id'], '42', now=NOW)
         assert len(await control.commands_for_bridge(now=NOW)) == 1
@@ -75,11 +75,11 @@ async def submitted(monkeypatch):
     await control.commands_for_bridge(now=NOW)
     payload['orders'] = [dict(ticket='7788', symbol=proposal['symbol'], magic='26082501', type=2,
         comment='MNP:' + command['command_id'][:16], price_open=proposal['entry'], sl=proposal['stop_loss'],
-        tp=proposal['take_profit'], volume=proposal['volume'])]
+        tp=proposal['take_profit'], volume=proposal['volume'], expiration_epoch=command['payload']['pending_native_expires_epoch'])]
     return control, store, proposal, payload, command
 
 
-@pytest.mark.parametrize('failure', ['expiry','hierarchy','kill','signal','analysis','target','stop','stale','spread','risk','size','protection','capability','type','session','superseded'])
+@pytest.mark.parametrize('failure', ['expiry','hierarchy','kill','signal','analysis','target','stop','stale','spread','risk','size','protection','capability','type','session','superseded','native_expired','native_extended','native_missing'])
 def test_pending_lease_revoked_on_loss_of_eligibility_and_never_restored(monkeypatch, failure):
     async def scenario():
         control, store, proposal, payload, command = await submitted(monkeypatch)
@@ -102,6 +102,9 @@ def test_pending_lease_revoked_on_loss_of_eligibility_and_never_restored(monkeyp
         elif failure == 'size': bad['orders'][0]['volume'] = '50'
         elif failure == 'protection': bad['orders'][0]['sl'] = '89'
         elif failure == 'capability': bad['pending_entry_version'] = 0
+        elif failure == 'native_expired': bad['orders'][0]['expiration_epoch'] = str(int(NOW.timestamp()))
+        elif failure == 'native_extended': bad['orders'][0]['expiration_epoch'] = str(int(command['payload']['pending_native_expires_epoch']) + 1)
+        elif failure == 'native_missing': bad['orders'][0].pop('expiration_epoch')
         elif failure == 'type': bad['orders'][0]['type'] = 4
         elif failure == 'session': bad['quotes']['AAPL']['trade_mode'] = 'disabled'
         elif failure == 'superseded':
@@ -135,7 +138,7 @@ def test_waiting_controls_survive_temporary_placement_block(monkeypatch, failure
     async def scenario():
         control, _, p, _, _ = await prepare(monkeypatch, capability=failure!='old_ea', minimum='1000' if failure=='minimum_distance' else '0')
         await control.validate_proposal_publication(p, now=NOW)
-        with pytest.raises(FTMOMasterError, match='EA 1.20|minimum distance'):
+        with pytest.raises(FTMOMasterError, match='EA 1.21|minimum distance'):
             await control.approve(p['proposal_id'], '42', now=NOW)
         assert (await control.repository.proposal(p['proposal_id']))[0]['status'] == 'pending_confirmation'
         assert await control.repository.pending_commands() == ()
@@ -213,7 +216,7 @@ def test_early_structural_invalidation_cancels_before_buffered_stop(monkeypatch)
         await control.commands_for_bridge(now=NOW)
         payload['orders'] = [dict(ticket='7799', symbol=proposal['symbol'], magic='26082501', type=2,
             comment='MNP:' + command['command_id'][:16], price_open=proposal['entry'], sl=proposal['stop_loss'],
-            tp=proposal['take_profit'], volume=proposal['volume'])]
+            tp=proposal['take_profit'], volume=proposal['volume'], expiration_epoch=command['payload']['pending_native_expires_epoch'])]
         payload['quotes']['AAPL'].update(bid='94', ask='94.02')
         result = await control.accept_bridge_heartbeat(payload, now=NOW)
         assert result['pending_entry_leases'] == ''
@@ -226,7 +229,41 @@ def test_pending_lease_never_outlives_shortened_analysis_expiry(monkeypatch):
         control, _, p, payload, _ = await submitted(monkeypatch)
         await control.repository.update_telegram_analysis(p['analysis_id'], {'expires_at': (NOW + timedelta(seconds=8)).isoformat()})
         result = await control.accept_bridge_heartbeat(payload, now=NOW)
-        assert result['pending_entry_leases'] == '7788|' + str(int((NOW + timedelta(seconds=8)).timestamp()))
+        stamp = str(int((NOW + timedelta(seconds=8)).timestamp()))
+        assert result['pending_entry_leases'] == '7788|' + stamp + '|' + stamp
+    asyncio.run(scenario())
+
+
+def test_thirty_minute_broker_expiry_is_separate_from_freshness_and_never_renewed(monkeypatch):
+    async def scenario():
+        control, _, _, payload, kwargs = await prepare(monkeypatch, symbol='BTCUSD')
+        kwargs.update(signal_id='thirty-minute', signal_expires_at=NOW + timedelta(hours=1))
+        proposal = await control.create_signal_proposal(**kwargs)
+        command = await control.approve(proposal['proposal_id'], '42', now=NOW)
+        native = str(int((NOW + timedelta(minutes=30)).timestamp()))
+        assert command['payload']['pending_native_expires_epoch'] == native
+        assert command['payload']['pending_lease_epoch'] == str(int((NOW + timedelta(seconds=20)).timestamp()))
+        assert command['expires_at'] == (NOW + timedelta(seconds=30)).isoformat()
+        assert command['payload']['pending_entry_version'] == '2'
+        await control.commands_for_bridge(now=NOW)
+        payload['orders'] = [dict(ticket='7788', symbol=proposal['symbol'], magic='26082501', type=2,
+            comment='MNP:' + command['command_id'][:16], price_open=proposal['entry'], sl=proposal['stop_loss'],
+            tp=proposal['take_profit'], volume=proposal['volume'], expiration_epoch=native)]
+        later = NOW + timedelta(seconds=10)
+        payload['quotes']['BTCUSD']['timestamp'] = later.isoformat()
+        result = await control.accept_bridge_heartbeat(payload, now=later)
+        assert result['pending_entry_leases'] == f"7788|{int((later + timedelta(seconds=20)).timestamp())}|{native}"
+        assert (await control.repository.command(command['command_id']))[0]['payload']['pending_native_expires_epoch'] == native
+    asyncio.run(scenario())
+
+
+def test_pending_native_expiry_respects_earlier_source_deadline_at_approval(monkeypatch):
+    async def scenario():
+        control, _, proposal, _, _ = await prepare(monkeypatch)
+        deadline = NOW + timedelta(seconds=90)
+        await control.repository.update_telegram_analysis(proposal['analysis_id'], {'expires_at': deadline.isoformat()})
+        command = await control.approve(proposal['proposal_id'], '42', now=NOW)
+        assert command['payload']['pending_native_expires_epoch'] == str(int(deadline.timestamp()))
     asyncio.run(scenario())
 
 
@@ -301,7 +338,7 @@ def test_late_price_refusal_offers_fixed_pending_entry_with_fresh_approval(monke
         assert saved['approval_keyboard_attached']
         child_command = await control.approve(child['proposal_id'], '42', now=NOW)
         assert child_command['command_id'] != command['command_id']
-        assert child_command['payload']['pending_entry_version'] == '1'
+        assert child_command['payload']['pending_entry_version'] == '2'
         assert child_command['payload']['order_type'] == kind
     asyncio.run(scenario())
 

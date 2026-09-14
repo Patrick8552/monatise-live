@@ -251,8 +251,8 @@ int main() {
  f["gold_price_guard_version"]=""; ask=4300.21; if(FinalOrderValidation("",reason,validated)) return 9;
  ask=4300.19; if(!FinalOrderValidation("",reason,validated)) return 10;
  f["expires_epoch"]="999"; if(FinalOrderValidation("",reason,validated)) return 11;
- f["expires_epoch"]="2000"; f["entry_policy_version"]="1"; f["pending_entry_version"]="1";
- f["entry_zone_low"]="4299"; f["entry_zone_high"]="4301"; f["pending_lease_epoch"]="1015"; f["pending_expires_epoch"]="1100";
+ f["expires_epoch"]="2000"; f["entry_policy_version"]="1"; f["pending_entry_version"]="2";
+ f["entry_zone_low"]="4299"; f["entry_zone_high"]="4301"; f["pending_lease_epoch"]="1015"; f["pending_expires_epoch"]="3000"; f["pending_native_expires_epoch"]="2800";
  f["order_type"]="limit"; ask=4305;
  if(!FinalOrderValidation("",reason,validated) || validated!=4300) return 12;
  f["order_type"]="stop"; ask=4295;
@@ -264,6 +264,14 @@ int main() {
  f["entry_zone_high"]="4299"; if(FinalOrderValidation("",reason,validated)) return 16;
  f["entry_zone_high"]="4301"; f["pending_lease_epoch"]="999"; if(FinalOrderValidation("",reason,validated)) return 17;
  f["pending_lease_epoch"]="1015"; f["setup_invalidation_price"]="4304"; if(FinalOrderValidation("",reason,validated)) return 18;
+ f["setup_invalidation_price"]=""; f["pending_native_expires_epoch"]="2801";
+ if(FinalOrderValidation("",reason,validated)) return 19;
+ f["pending_native_expires_epoch"]="2800"; f["pending_lease_epoch"]="1021";
+ if(FinalOrderValidation("",reason,validated)) return 20;
+ f["pending_lease_epoch"]="1015"; f["pending_expires_epoch"]="2799";
+ if(FinalOrderValidation("",reason,validated)) return 21;
+ f["pending_expires_epoch"]="3000"; f["pending_entry_version"]="1";
+ if(FinalOrderValidation("",reason,validated)) return 22;
  return 0;
 }
 ''')

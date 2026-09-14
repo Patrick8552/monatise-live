@@ -1,5 +1,5 @@
 #property copyright "Monatise"
-#property version   "1.20"
+#property version   "1.21"
 #property strict
 #property description "Account-bound FTMO bridge. Telegram never talks directly to the broker."
 
@@ -29,7 +29,7 @@ input int    InpMaximumDeviationPoints = 20;
 input double InpGoldMaximumAdversePriceDeviation = 10.0; // Price units (USD/oz), signed Gold proposals only.
 input long   InpMagicNumber            = 26082501;
 
-string EA_VERSION = "1.20";
+string EA_VERSION = "1.21";
 string JOURNAL_FILE = "monatise-ftmo-command-journal.csv";
 string DynamicSymbols = "";
 string LastRequestNonce = "";
@@ -537,6 +537,7 @@ string OrdersJson()
              + "\",\"price_open\":\"" + DoubleToString(OrderGetDouble(ORDER_PRICE_OPEN), 8)
              + "\",\"sl\":\"" + DoubleToString(OrderGetDouble(ORDER_SL), 8)
              + "\",\"tp\":\"" + DoubleToString(OrderGetDouble(ORDER_TP), 8)
+             + "\",\"expiration_epoch\":\"" + IntegerToString((long)BrokerTimeToUtc((datetime)OrderGetInteger(ORDER_TIME_EXPIRATION)))
              + "\",\"comment\":\"" + JsonEscape(OrderGetString(ORDER_COMMENT)) + "\"}";
    }
    return result + "]";
@@ -668,7 +669,7 @@ string BuildHeartbeat()
       + "\"terminal_connected\":" + (TerminalInfoInteger(TERMINAL_CONNECTED) ? "true" : "false") + ","
       + "\"trade_allowed\":" + (TradingPermission() ? "true" : "false") + ","
       + "\"ea_attached\":true,"
-      + "\"history_version\":1,\"pending_entry_version\":1,"
+      + "\"history_version\":1,\"pending_entry_version\":2,"
       + "\"terminal_build\":\"" + IntegerToString((int)TerminalInfoInteger(TERMINAL_BUILD)) + "\","
       + "\"ea_version\":\"" + EA_VERSION + "\","
       + "\"multi_tp_version\":" + (InpMultiTPEnabled ? "1" : "0") + ","
@@ -944,8 +945,10 @@ bool FinalOrderValidation(string execution_payload, string &reason, double &vali
       {
          long lease = StringToInteger(JsonString(execution_payload, "pending_lease_epoch"));
          long deadline = StringToInteger(JsonString(execution_payload, "pending_expires_epoch"));
-         if(JsonString(execution_payload, "pending_entry_version") != "1" || lease <= (long)TimeGMT()
-            || lease > (long)TimeGMT() + 20 || lease > deadline
+         long native_deadline = StringToInteger(JsonString(execution_payload, "pending_native_expires_epoch"));
+         if(JsonString(execution_payload, "pending_entry_version") != "2" || lease <= (long)TimeGMT()
+            || lease > (long)TimeGMT() + 20 || lease > native_deadline
+            || native_deadline > deadline || native_deadline > (long)TimeGMT() + 1800
             || (SymbolInfoInteger(symbol, SYMBOL_EXPIRATION_MODE) & SYMBOL_EXPIRATION_SPECIFIED) == 0)
             { reason = "pending entry requires a current lease and exact broker expiry"; return false; }
       }
@@ -1060,7 +1063,9 @@ void ExecuteCommand(string command_json)
    double volume = StringToDouble(JsonString(execution_payload, "volume"));
    ulong target_id = (ulong)StringToInteger(JsonString(execution_payload, "target_id"));
    datetime pending_expires_at = (datetime)StringToInteger(JsonString(execution_payload, "pending_expires_epoch"));
-   bool managed_pending = JsonString(execution_payload, "pending_entry_version") == "1";
+   bool managed_pending = JsonString(execution_payload, "pending_entry_version") == "2";
+   datetime native_pending_expires_at = (datetime)StringToInteger(JsonString(execution_payload, "pending_native_expires_epoch"));
+   datetime pending_lease_until = (datetime)StringToInteger(JsonString(execution_payload, "pending_lease_epoch"));
    string comment = (managed_pending ? "MNP:" : "MNT:") + StringSubstr(command_id, 0, 16);
    ENUM_ORDER_TYPE_TIME pending_order_time = ORDER_TIME_GTC;
    datetime pending_expiration = 0;
@@ -1074,7 +1079,7 @@ void ExecuteCommand(string command_json)
          return;
       }
       if(order_type != "market" && !ResolvePendingOrderExpiration(
-         symbol, managed_pending ? (datetime)StringToInteger(JsonString(execution_payload, "pending_lease_epoch")) : pending_expires_at, pending_order_time, pending_expiration, reason
+         symbol, managed_pending ? native_pending_expires_at : pending_expires_at, pending_order_time, pending_expiration, reason
       ))
       {
          JournalAppend(command_id, "rejected", "", reason);
@@ -1082,7 +1087,7 @@ void ExecuteCommand(string command_json)
          return;
       }
    }
-   if(managed_pending && (!PreparePendingEntry(comment, pending_expires_at)
+   if(managed_pending && (!PreparePendingEntry(comment, native_pending_expires_at, pending_lease_until)
       || pending_order_time != ORDER_TIME_SPECIFIED))
    { Acknowledge(command_id, "rejected", "", "durable pending deadline or native specified expiry unavailable"); return; }
    JournalAppend(command_id, "broker_uncertain", "", "submission began; reconcile before any retry");
@@ -1124,7 +1129,8 @@ void ExecuteCommand(string command_json)
    if(!ok && result_status == "reconciled") result_status = "broker_uncertain";
    string message = Trade.ResultRetcodeDescription();
    if(operation == "open" && order_type != "market")
-      message += " | pending lifetime " + EnumToString(pending_order_time);
+      message += " | pending lifetime " + EnumToString(Trade.RequestTypeTime())
+         + " | broker expiry " + TimeToString(Trade.RequestExpiration(), TIME_DATE|TIME_SECONDS);
    JournalAppend(command_id, result_status, ticket, message);
    int digits = symbol == "" ? 8 : (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
    double fill_price = Trade.ResultPrice();
@@ -1289,5 +1295,7 @@ void OnTimer()
 {
    GuardPendingEntries(false);
    SendHeartbeat();
+   GuardPendingEntries(false); // Recheck a lease after a potentially blocking request.
    PollCommands();
+   GuardPendingEntries(false);
 }
