@@ -1,5 +1,23 @@
 #property strict
+#include <Trade/Trade.mqh>
 // Read-only diagnostic: OrderCheck only. No orders or account changes.
+// Capture the same CTrade request construction used by the bridge, without
+// forwarding to CTrade::OrderSend or the broker submission function.
+class ExpiryCheckTrade : public CTrade
+{
+protected:
+   virtual bool OrderSend(const MqlTradeRequest &request,MqlTradeResult &result)
+   {
+      MqlTradeCheckResult check={};
+      ResetLastError();
+      bool ok=::OrderCheck(request,check);
+      PrintFormat("EXPIRY_CAPTURE submitted=false action=%s time_mode=%s expiry=%s server=%s remaining=%d fill=%s ok=%s retcode=%u error=%d comment=%s",
+         EnumToString(request.action),EnumToString(request.type_time),TimeToString(request.expiration,TIME_DATE|TIME_SECONDS),
+         TimeToString(TimeTradeServer(),TIME_DATE|TIME_SECONDS),(int)(request.expiration-TimeTradeServer()),
+         EnumToString(request.type_filling),ok?"true":"false",check.retcode,GetLastError(),check.comment);
+      return false;
+   }
+};
 void OnStart()
 {
    string s="XAUUSD";
@@ -27,5 +45,10 @@ void OnStart()
       bool ok=OrderCheck(r,c);
       PrintFormat("EXPIRY_CHECK seconds=%d expiry=%s ok=%s retcode=%u error=%d comment=%s",horizons[i],TimeToString(r.expiration,TIME_DATE|TIME_SECONDS),ok?"true":"false",c.retcode,GetLastError(),c.comment);
    }
+   ExpiryCheckTrade probe;
+   probe.SetTypeFillingBySymbol(s);
+   datetime utc_lease=TimeGMT()+20;
+   datetime broker_expiry=(datetime)((long)utc_lease+(long)TimeTradeServer()-(long)TimeGMT());
+   probe.BuyLimit(r.volume,r.price,s,r.sl,r.tp,ORDER_TIME_SPECIFIED,broker_expiry,"EXPIRY_CHECK_ONLY");
    PrintFormat("EXPIRY_CHECK finished positions=%d orders=%d",PositionsTotal(),OrdersTotal());
 }
