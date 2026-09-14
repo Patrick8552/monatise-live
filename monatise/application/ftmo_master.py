@@ -12,10 +12,9 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
-import json
 import logging
 import secrets
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_FLOOR
 from enum import StrEnum
@@ -24,6 +23,7 @@ from typing import Any, Mapping
 from monatise.application.take_profit import MultiTPConfiguration, TakeProfitPlan, allocate_volume, convert_plan, revalidate_plan, route_for, format_targets
 from monatise.application.position_management import PositionManagementService
 
+from monatise.application.hierarchy.approval import requires_shared_hierarchy, validate_shared_evidence
 from monatise.application.market_session import classify_market_session, session_allows_execution
 from monatise.application.broker_results import broker_result_status
 from monatise.application.ftmo_registry import FTMOAssetClass, FTMOInstrument, FTMO_REGISTRY
@@ -866,7 +866,7 @@ class FTMOMasterControlService:
                         "provider_consensus": analysis.get("provider_consensus"),
                         "liquidity": analysis["liquidity"], "market_structure": analysis["structure"],
                         "supply_demand": analysis["supply_demand"], "fibonacci": analysis["fibonacci"],
-                        "order_flow": analysis["order_flow"],
+                        "order_flow": analysis["order_flow"], "evidence_bundle": analysis.get("evidence_bundle"),
                     }, now=observed,
                 )
             except FTMOMasterError as exc:
@@ -1325,6 +1325,7 @@ class FTMOMasterControlService:
             "identity_match": identity_match,
             "terminal_build": str(payload.get("terminal_build") or ""),
             "ea_version": str(payload.get("ea_version") or ""),
+            "history_version": payload.get("history_version"),
             "gold_price_guard_version": payload.get("gold_price_guard_version"),
             "gold_maximum_adverse_price_deviation": str(payload.get("gold_maximum_adverse_price_deviation") or "0"),
             "multi_tp_version": payload.get("multi_tp_version"),
@@ -1770,6 +1771,20 @@ class FTMOMasterControlService:
             analysis_provider=analysis_provider,
             analysis_instrument=analysis_instrument,
         )
+        if requires_shared_hierarchy(instrument):
+            try:
+                proof = await validate_shared_evidence(self.repository.store, instrument, evidence_bundle, observed)
+                if proof.get("take_profit_plan") != take_profit_plan:
+                    raise ValueError("target plan differs from the shared hierarchy")
+                if (str(proof["direction"]).casefold() != ("long" if side == "buy" else "short")
+                    or _decimal(proof["entry"], "hierarchy entry") != entry
+                    or _decimal(proof["stop"], "hierarchy stop") != stop
+                    or _decimal(proof["target"], "hierarchy target") != target):
+                    raise ValueError("signal levels differ from the shared hierarchy")
+                proof_expiry = _timestamp(proof["expires_at"], "hierarchy expiry")
+                signal_expires_at = min(signal_expires_at, proof_expiry) if signal_expires_at else proof_expiry
+            except ValueError as exc:
+                raise FTMOMasterError(str(exc)) from exc
         execution_symbol = await self.execution_symbol_for(instrument, now=observed)
         bridge = await self._healthy_bridge(observed)
         quote_match = self._quote_match(bridge, execution_symbol)
@@ -2109,6 +2124,11 @@ class FTMOMasterControlService:
                 analysis_provider=proposal.get("analysis_provider"),
                 analysis_instrument=proposal.get("analysis_instrument"),
             )
+            if proposal.get("analysis_risk_fraction") and requires_shared_hierarchy(instrument):
+                try:
+                    await validate_shared_evidence(self.repository.store, instrument, proposal.get("evidence_bundle"), observed)
+                except ValueError as exc:
+                    raise FTMOMasterError(str(exc)) from exc
             approval_session = classify_market_session(
                 observed, instrument=instrument, trade_mode=quote.get("trade_mode"),
             )
@@ -2373,7 +2393,13 @@ class FTMOMasterControlService:
             quote = self._quote_match(bridge, proposal["symbol"])[1]
             revalidate_plan(plan, entry=fields["entry"], stop=fields["stop_loss"], tick_size=quote["tick_size"], now=observed,
                 minimum_distance=max(Decimal(quote.get("stops_level", "0")), Decimal(quote.get("freeze_level", "0"))) * Decimal(quote.get("point", quote["tick_size"])))
-        session = classify_market_session(observed, instrument=self._verified_instrument_mapping(proposal["symbol"]),
+        instrument = self._verified_instrument_mapping(proposal["symbol"])
+        if proposal.get("analysis_risk_fraction") and requires_shared_hierarchy(instrument):
+            try:
+                await validate_shared_evidence(self.repository.store, instrument, proposal.get("evidence_bundle"), observed)
+            except ValueError as exc:
+                raise FTMOMasterError(str(exc)) from exc
+        session = classify_market_session(observed, instrument=instrument,
                                          trade_mode=fields["execution_snapshot"]["trading_status"])
         if not session_allows_execution(session):
             raise FTMOMasterError("market session does not permit execution")
@@ -2454,6 +2480,14 @@ class FTMOMasterControlService:
             if command["expected_account_id"] != self.configuration.account_id or command["expected_server"] != self.configuration.server:
                 await self.repository.update_command(command["command_id"], {"status": CommandStatus.REJECTED.value, "reason": "configured identity changed"})
                 continue
+            if approved.get("analysis_risk_fraction"):
+                try:
+                    instrument = self._verified_instrument_mapping(approved["symbol"])
+                    if requires_shared_hierarchy(instrument):
+                        await validate_shared_evidence(self.repository.store, instrument, approved.get("evidence_bundle"), observed)
+                except (ValueError, FTMOMasterError) as exc:
+                    await self.repository.update_command(command["command_id"], {"status": CommandStatus.REJECTED.value, "reason": str(exc)})
+                    continue
             if approved.get("replacement_for_proposal_id"):
                 try:
                     await self._validate_limit_replacement_origin(approved, now=now)
@@ -2691,6 +2725,8 @@ class FTMOMasterControlService:
 def format_proposal(
     proposal: Mapping[str, Any], *, approval_available: bool = True, blocking_reason: str | None = None,
 ) -> str:
+    evidence = proposal.get("evidence_bundle") or {}
+    hierarchy = evidence.get("evidence_bundle") or evidence
     if not approval_available:
         return "\n".join((
             CONTEXT_ONLY,
@@ -2712,6 +2748,8 @@ def format_proposal(
             f"Instrument: {proposal['symbol']}",
             f"Direction: {str(proposal['side']).upper()} | Type: {str(proposal['order_type']).upper()}",
             f"Strategy: {proposal.get('strategy') or 'Operator preview'}",
+            *((f"Hierarchy: {hierarchy['context_timeframe']} context | {hierarchy['analysis_timeframe']} analysis | {hierarchy['setup_timeframe']} setup/SL | {hierarchy['confirmation_timeframe']} confirmation | {hierarchy['entry_timeframe']} entry",)
+              if hierarchy.get("timeframe_policy") else ()),
             f"Session: {proposal.get('market_session') or 'UNKNOWN'} | Checked: {proposal.get('session_checked_at') or 'UNKNOWN'}",
             f"Market: {'OPEN' if proposal.get('market_open') is True else 'CLOSED' if proposal.get('market_open') is False else 'UNKNOWN'} | Broker break: {proposal.get('broker_break_proximity') or 'UNKNOWN'}",
             f"Analysis reference price: {proposal.get('analysis_price') or proposal['entry']}",

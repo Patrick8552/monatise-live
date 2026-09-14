@@ -23,6 +23,7 @@ def bars(minutes: int, *, count: int = 80, end: datetime = NOW - timedelta(minut
             "h": 101 + index * 0.1,
             "l": 99 + index * 0.1,
             "c": 100.5 + index * 0.1,
+            "v": 1000 + index,
         }
         for index in range(count)
     ]
@@ -36,7 +37,11 @@ class Alpaca:
         self.calls.append(("bars", symbol, timeframe, limit))
         if self.failure:
             raise self.failure
-        return self.hourly if timeframe == "1Hour" else self.trigger
+        minutes = {"4Hour": 240, "1Hour": 60, "15Min": 15, "5Min": 5, "1Min": 1}[timeframe]
+        return bars(minutes, end=NOW - timedelta(minutes=minutes * 2))
+
+    def market_calendar(self, day):
+        return [{"date": day, "open": "09:30", "close": "16:00"}]
 
     def stock_snapshot(self, symbol):
         self.calls.append(("snapshot", symbol))
@@ -93,44 +98,45 @@ def test_stock_coordinator_uses_verified_roles_and_never_yahoo():
     assert providers["alpaca"]["status"] == "used"
     assert providers["quiver"]["affected_score"] is False
     assert providers["finnhub"]["role"] == "supplemental_intelligence"
-    assert providers["flashalpha"]["role"] == "primary_analysis"
-    assert providers["flashalpha"]["affected_score"] is True
-    assert providers["alpaca"]["role"] == "technical_confirmation"
-    assert providers["alpaca"]["affected_score"] is False
+    assert providers["flashalpha"]["role"] == "positioning_context"
+    assert providers["flashalpha"]["affected_score"] is False
+    assert providers["alpaca"]["role"] == "primary_candle_analysis"
+    assert providers["alpaca"]["affected_score"] is True
     assert providers["ftmo_mt5"]["status"] == "not_requested"
     assert "yahoo" not in str(result).casefold()
-    assert result["analysis_provider"] == "flashalpha"
-    assert result["data_quality"]["alpaca"]["1h"]["candle_count"] == 80
+    assert result["analysis_provider"] == "alpaca"
+    assert providers["alpaca"]["timeframes"]["1h"]["candle_count"] == 80
+    assert result["analysis_timeframe"] == "1h" and result["trigger_timeframe"] == "5m"
 
 
-def test_alpaca_failure_degrades_support_when_flashalpha_is_valid():
+def test_alpaca_failure_blocks_snapshot_only_stock_analysis():
     coordinator = StockMarketIntelligenceCoordinator(
         Alpaca(failure=RuntimeError("Alpaca HTTP 429")), Quiver(), Finnhub(), FlashAlpha(), environment={},
     )
     result = asyncio.run(coordinator.analyse("AAPL", instrument=FTMO_REGISTRY.resolve("AAPL"), now=NOW))
     providers = {item["provider"]: item for item in result["analysis_sources"]}
-    assert result["decision"] != "INSUFFICIENT_MARKET_DATA"
-    assert result["analysis_provider"] == "flashalpha"
-    assert providers["alpaca"]["status"] == "degraded"
-    assert providers["alpaca"]["failure_reason"] == "provider_rate_limited"
+    assert result["decision"] == "INSUFFICIENT_MARKET_DATA"
+    assert result["analysis_provider"] == "alpaca"
+    assert result["publication_valid"] is False
+    assert "429" in result["reason_code"]
     assert result["ftmo_execution_quote"]["status"] == "not_requested"
 
 
-def test_supporting_failure_degrades_without_replacing_flashalpha_primary_data():
+def test_optional_context_failure_degrades_without_replacing_candle_analysis():
     coordinator = StockMarketIntelligenceCoordinator(
-        Alpaca(failure=TimeoutError()), Quiver(available=False), Finnhub(failure=TimeoutError()), FlashAlpha(), environment={},
+        Alpaca(), Quiver(available=False), Finnhub(failure=TimeoutError()), FlashAlpha(), environment={},
     )
     result = asyncio.run(coordinator.analyse("AAPL", instrument=FTMO_REGISTRY.resolve("AAPL"), now=NOW))
     providers = {item["provider"]: item for item in result["analysis_sources"]}
     assert result["decision"] != "INSUFFICIENT_MARKET_DATA"
-    assert providers["alpaca"]["status"] == "degraded"
+    assert providers["alpaca"]["status"] == "used"
     assert providers["quiver"]["status"] == "degraded"
     assert providers["finnhub"]["status"] == "degraded"
     assert providers["flashalpha"]["status"] == "used"
     assert result["provider_consensus"] == "PARTIAL"
 
 
-def test_flashalpha_failure_is_the_only_primary_stock_data_gate():
+def test_required_positioning_context_failure_still_fails_closed():
     coordinator = StockMarketIntelligenceCoordinator(
         Alpaca(), Quiver(), Finnhub(), FlashAlpha(failure=RuntimeError("FlashAlpha HTTP 429")), environment={},
     )
@@ -152,7 +158,7 @@ def test_invalid_flashalpha_primary_payload_fails_stock_analysis_closed(mutation
     result = asyncio.run(coordinator.analyse("AAPL", instrument=FTMO_REGISTRY.resolve("AAPL"), now=NOW))
     assert result["decision"] == "INSUFFICIENT_MARKET_DATA"
     assert result["reason_code"] == reason_code
-    assert result["analysis_provider"] == "flashalpha"
+    assert result["analysis_provider"] == "alpaca"
 
 
 def test_non_flashalpha_stock_is_rejected_without_calling_supporting_providers():
@@ -181,10 +187,10 @@ def test_candle_quality_rejects_invalid_series(mutation):
 
 def test_futures_coordinator_preserves_flashalpha_and_ftmo_separation():
     coordinator = FuturesMarketIntelligenceCoordinator(FlashAlpha(), environment={})
-    result = asyncio.run(coordinator.analyse(FTMO_REGISTRY.resolve("US500.cash"), now=NOW))
+    result = asyncio.run(coordinator.analyse(FTMO_REGISTRY.resolve("XAU/USD"), now=NOW))
     providers = {item["provider"]: item for item in result["analysis_sources"]}
     assert result["analysis_provider"] == "flashalpha"
-    assert result["analysis_instrument"] == "ES=F"
+    assert result["analysis_instrument"] == "GC=F"
     assert result["provider_consensus"] == "PARTIAL"
     assert providers["flashalpha"]["status"] == "used"
     assert providers["ftmo_mt5"]["status"] == "not_requested"

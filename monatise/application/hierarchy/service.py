@@ -113,8 +113,10 @@ class ShadowHierarchyService:
         return self._result(symbol, tuple(snapshots), evaluation, duplicate=duplicate, published=published, publication_failed=publication_failed, publication_id=trigger_id, telegram_message_id=telegram_message_id)
 
     def _result(self, symbol: str, layers: tuple[str, ...], evaluation: ShadowEvaluation | None, *, duplicate: bool, published: bool = False, publication_failed: bool = False, publication_id: str | None = None, telegram_message_id: int | None = None) -> dict[str, Any]:
+        from monatise.application.hierarchy.policy import SHARED_TIMEFRAME_POLICY
         signal_core = self._signal_core_evidence(evaluation)
         return {
+            **SHARED_TIMEFRAME_POLICY.metadata(),
             "symbol": symbol.upper(),
             "take_profit_plan": evaluation.take_profit_plan.to_dict() if evaluation and evaluation.take_profit_plan else None,
             "layers_observed": list(layers),

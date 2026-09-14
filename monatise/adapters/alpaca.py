@@ -53,6 +53,12 @@ class AlpacaMarketDataAdapter:
         # analysis engine expects chronological order for ATR and breakouts.
         return list(reversed([row for row in rows if isinstance(row, dict)]))
 
+    def market_calendar(self, day: str) -> list[dict[str, Any]]:
+        payload = self._get_absolute(f"{self.trading_base_url}/v2/calendar?{urlencode({'start': day, 'end': day})}")
+        if not isinstance(payload, list):
+            raise AlpacaAdapterError("Alpaca calendar returned an invalid payload")
+        return [row for row in payload if isinstance(row, dict)]
+
     def active_stock_assets(self) -> list[dict[str, Any]]:
         payload = self._get_absolute(
             f"{self.trading_base_url}/v2/assets?{urlencode({'status': 'active', 'asset_class': 'us_equity'})}"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from tests.shared_hierarchy_fixtures import persist_proof
 import asyncio
 import json
 import secrets
@@ -458,6 +459,7 @@ def test_es_short_uses_ftmo_us500_bid_and_native_symbol_specification():
         assert await control.execution_symbol_for(instrument, now=NOW) == "US500.CASH"
 
         proposal = await control.create_signal_proposal(
+            evidence_bundle=await persist_proof(control, "US500.CASH", NOW, entry="7000", stop="7020", target="6960", direction="SHORT"),
             signal_id="es-short-7", symbol="US500.CASH", direction="short",
             analysis_entry="7000", analysis_stop="7020", analysis_target="6960",
             source="monatise.futures.scanner", analysis_state="SHORT",
@@ -627,7 +629,9 @@ def test_production_telegram_analysis_publishes_waiting_then_durable_ftmo_propos
         async def analyse_stock(self, symbol, **kwargs):
             assert symbol == "AAPL"
             assert kwargs["instrument"].ftmo_symbol == "AAPL"
+            evidence = await persist_proof(self.ftmo_master, "AAPL", datetime.now(timezone.utc), entry="200.0", stop="195.0", target="210.0")
             return {
+                **evidence,
                 "asset": "AAPL", "decision": "BUY_WATCH", "direction": "LONG",
                 "setup_status": "confirmed", "entry": 200.00, "stop_loss": 195.00,
                 "target": 210.00, "targets": [210.00], "timeframe": "1h regime / 15m trigger",
@@ -1236,6 +1240,7 @@ def test_us500_us100_and_xau_share_one_exact_broker_symbol_resolution_path():
             instrument = control._verified_instrument_mapping(requested)
             assert await control.execution_symbol_for(instrument, now=NOW) == actual
             proposal = await control.create_signal_proposal(
+                evidence_bundle=await persist_proof(control, requested, NOW, entry="100", stop="99", target="102"),
                 signal_id=f"central-{underlying}", symbol=requested, direction="long",
                 analysis_entry="100", analysis_stop="99", analysis_target="102",
                 source="monatise.centralized.quote", analysis_state="LONG",
@@ -1395,7 +1400,7 @@ def test_telegram_does_not_publish_approval_controls_when_execution_is_already_b
 
 def test_mt5_bridge_reports_exact_symbol_diagnostics_and_the_actual_tick_timestamp():
     source = Path("mt5/Experts/MonatiseFTMOBridge.mq5").read_text()
-    assert '#property version   "1.18"' in source
+    assert '#property version   "1.19"' in source
     assert "ResolveBrokerSymbol" in source and "SymbolInfoTick(resolved_symbol, tick)" in source
     assert '\\",\\"submission_attempted\\\":' in source
     assert 'JsonEscape(broker_retcode)' in source

@@ -9,7 +9,7 @@ from monatise.application.hierarchy.models import BoundaryStatus, NormalizedCand
 from monatise.core.models import Candle
 
 
-INTERVAL_SECONDS = {"1m": 60, "5m": 300, "15m": 900, "1h": 3600, "4h": 14400}
+from monatise.application.hierarchy.policy import INTERVAL_SECONDS
 
 
 def interval_duration(interval: str) -> timedelta:

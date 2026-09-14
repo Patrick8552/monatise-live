@@ -11,6 +11,7 @@ from monatise.application.hierarchy.candles import next_boundary
 from monatise.application.hierarchy.lifecycle import HierarchyRepository
 from monatise.application.hierarchy.models import EvidenceBundle, EvidenceContext, NormalizedCandle, Provenance, RiskProposal
 from monatise.core.models import Candle
+from monatise.application.hierarchy.policy import SHARED_TIMEFRAME_POLICY
 
 
 class CandleProvider(Protocol):
@@ -91,7 +92,7 @@ class ShadowComparison:
 class ShadowHierarchyCoordinator:
     """Collects and versions evidence without granting execution capability."""
 
-    TIMEFRAMES = ("4h", "1h", "15m", "5m", "1m")
+    TIMEFRAMES = SHARED_TIMEFRAME_POLICY.timeframes
 
     def __init__(self, provider: CandleProvider, repository: HierarchyRepository, *, configuration: HierarchyConfiguration | None = None, provenance: Provenance | None = None) -> None:
         self.provider = provider
@@ -118,7 +119,7 @@ class ShadowHierarchyCoordinator:
         if not self.configuration.enabled:
             raise RuntimeError("hierarchical shadow coordinator is disabled")
         now = observed_at or datetime.now(timezone.utc)
-        candidates = ("4h", "1h", "15m") + (("5m", "1m") if watching or self.configuration.always_collect_5m else ())
+        candidates = SHARED_TIMEFRAME_POLICY.parent_timeframes + (SHARED_TIMEFRAME_POLICY.entry_timeframes if watching or self.configuration.always_collect_5m else ())
         due = [timeframe for timeframe in candidates if now >= self._next_due.get((symbol.upper(), timeframe), datetime.min.replace(tzinfo=timezone.utc))]
         if len(due) > self.configuration.maximum_provider_requests_per_cycle:
             raise RuntimeError("hierarchy provider request budget exceeded")
@@ -158,7 +159,7 @@ class ShadowHierarchyCoordinator:
         await self.repository.record_shadow_comparison(asdict(comparison))
 
     async def claim_closed_trigger(self, *, trigger: EvidenceContext, setup_id: str, trigger_type: str) -> tuple[bool, str]:
-        if trigger.identity.source_timeframe != "5m":
+        if trigger.identity.source_timeframe != SHARED_TIMEFRAME_POLICY.confirmation:
             raise ValueError("trigger evidence must use 5m")
         if trigger.source_close_time is None:
             raise ValueError("trigger evidence requires a source close time")

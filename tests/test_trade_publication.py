@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from tests.shared_hierarchy_fixtures import persist_proof
 import asyncio
 import copy
 import json
@@ -57,7 +58,7 @@ async def proposal(control, symbol='XAUUSD', signal='signal-1', **kwargs):
         signal_id=signal, analysis_id='analysis-' + signal, symbol=symbol, direction='LONG',
         analysis_entry='2500', analysis_stop='2490', analysis_target='2520',
         analysis_state='LONG', confirmation_status='confirmed', source='monatise.futures.scanner',
-        now=NOW, **kwargs,
+        now=NOW, evidence_bundle=await persist_proof(control, symbol, NOW, identity=signal), **kwargs,
     )
 
 
@@ -196,6 +197,7 @@ def test_approval_resubscribes_after_scanner_quote_demand_expires(monkeypatch, s
         await control.request_execution_quote(symbol, lifetime_seconds=10)
         await control.accept_bridge_heartbeat(heartbeat(quotes={symbol: quote}), now=clock[0])
         p = await control.create_signal_proposal(
+            evidence_bundle=await persist_proof(control, symbol, clock[0]),
             signal_id='delayed-approval', analysis_id='delayed-analysis', symbol=symbol,
             direction='LONG', analysis_entry='2500', analysis_stop='2490', analysis_target='2520',
             analysis_state='LONG', confirmation_status='confirmed', source='monatise.stock.scanner',
@@ -477,7 +479,9 @@ def test_stock_universe_scanner_publishes_bound_controls_only_for_executable_pro
         monkeypatch.setattr('monatise.application.deployment.urlopen', request)
 
         async def analyze(candidate, configuration, index):
+            evidence = await persist_proof(control, 'AAPL', market_time, entry='200', stop='198', target='204')
             return {
+                **evidence,
                 'asset': 'AAPL', 'company_name': 'Example stock', 'direction': 'LONG',
                 'decision': 'BUY_WATCH', 'score': 8, 'score_threshold': 7,
                 'setup_status': 'unconfirmed' if state == 'unqualified' else 'confirmed',

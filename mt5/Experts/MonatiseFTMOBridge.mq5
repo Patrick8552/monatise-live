@@ -1,5 +1,5 @@
 #property copyright "Monatise"
-#property version   "1.18"
+#property version   "1.19"
 #property strict
 #property description "Account-bound FTMO bridge. Telegram never talks directly to the broker."
 
@@ -29,7 +29,7 @@ input int    InpMaximumDeviationPoints = 20;
 input double InpGoldMaximumAdversePriceDeviation = 10.0; // Price units (USD/oz), signed Gold proposals only.
 input long   InpMagicNumber            = 26082501;
 
-string EA_VERSION = "1.18";
+string EA_VERSION = "1.19";
 string JOURNAL_FILE = "monatise-ftmo-command-journal.csv";
 string DynamicSymbols = "";
 CTrade Trade;
@@ -666,6 +666,7 @@ string BuildHeartbeat()
       + "\"terminal_connected\":" + (TerminalInfoInteger(TERMINAL_CONNECTED) ? "true" : "false") + ","
       + "\"trade_allowed\":" + (TradingPermission() ? "true" : "false") + ","
       + "\"ea_attached\":true,"
+      + "\"history_version\":1,"
       + "\"terminal_build\":\"" + IntegerToString((int)TerminalInfoInteger(TERMINAL_BUILD)) + "\","
       + "\"ea_version\":\"" + EA_VERSION + "\","
       + "\"multi_tp_version\":" + (InpMultiTPEnabled ? "1" : "0") + ","
@@ -1125,6 +1126,90 @@ void PollCommands()
    }
 }
 
+// Read-only history transport. This code never enters ExecuteCommand or CTrade.
+bool CandleSessionOpen(string symbol, datetime &close_utc)
+{
+   datetime broker_now = TimeTradeServer();
+   MqlDateTime parts; TimeToStruct(broker_now, parts);
+   datetime midnight = broker_now - parts.hour * 3600 - parts.min * 60 - parts.sec;
+   for(int day_back = 0; day_back <= 1; day_back++)
+   {
+      ENUM_DAY_OF_WEEK weekday = (ENUM_DAY_OF_WEEK)((parts.day_of_week - day_back + 7) % 7);
+      for(uint session = 0; session < 16; session++)
+      {
+         datetime from, until;
+         if(!SymbolInfoSessionTrade(symbol, weekday, session, from, until)) break;
+         datetime start = (datetime)((long)midnight - day_back * 86400 + (long)from);
+         datetime end = (datetime)((long)midnight - day_back * 86400 + (long)until);
+         if(end <= start) end += 86400;
+         if(broker_now >= start && broker_now < end)
+         {
+            close_utc = BrokerTimeToUtc(end);
+            return true;
+         }
+      }
+   }
+   return false;
+}
+
+void SendRequestedCandles(string request)
+{
+   if(request == "" || !IdentityMatches()) return;
+   string parts[];
+   if(StringSplit(request, '|', parts) != 4 || StringLen(parts[0]) != 32) return;
+   string symbol, reason;
+   if(!ResolveBrokerSymbol(parts[1], symbol, reason) || !SymbolSelect(symbol, true)) return;
+   int limit = (int)StringToInteger(parts[2]);
+   if(limit < 50 || limit > 240) return;
+   string labels[];
+   int layer_count = StringSplit(parts[3], ',', labels);
+   if(layer_count < 1 || layer_count > 5) return;
+   string series = "";
+   long offset = (long)MathRound((double)BrokerUtcOffsetSeconds() / 60.0) * 60;
+   for(int tf = 0; tf < layer_count; tf++)
+   {
+      MqlRates rates[];
+      ArraySetAsSeries(rates, false);
+      ENUM_TIMEFRAMES frame;
+      if(labels[tf] == "1m") frame = PERIOD_M1;
+      else if(labels[tf] == "5m") frame = PERIOD_M5;
+      else if(labels[tf] == "15m") frame = PERIOD_M15;
+      else if(labels[tf] == "1h") frame = PERIOD_H1;
+      else if(labels[tf] == "4h") frame = PERIOD_H4;
+      else return;
+      int count = CopyRates(symbol, frame, 0, limit, rates);
+      // CopyRates initiates missing-history download. Retry on a later heartbeat.
+      if(count < 50) return;
+      string rows = "";
+      for(int i = 0; i < count; i++)
+      {
+         if(i > 0) rows += ",";
+         rows += "{\"t\":\"" + IsoTime((datetime)((long)rates[i].time - offset)) + "\","
+              + "\"o\":" + DoubleToString(rates[i].open, 10) + ","
+              + "\"h\":" + DoubleToString(rates[i].high, 10) + ","
+              + "\"l\":" + DoubleToString(rates[i].low, 10) + ","
+              + "\"c\":" + DoubleToString(rates[i].close, 10) + ","
+              + "\"v\":" + IntegerToString((long)rates[i].tick_volume) + "}";
+      }
+      if(tf > 0) series += ",";
+      series += "\"" + labels[tf] + "\":[" + rows + "]";
+   }
+   datetime session_close = 0;
+   bool session_open = CandleSessionOpen(symbol, session_close);
+   string body = "{\"request_id\":\"" + parts[0] + "\","
+       + "\"account_id\":\"" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + "\","
+       + "\"server\":\"" + JsonEscape(AccountInfoString(ACCOUNT_SERVER)) + "\","
+       + "\"symbol\":\"" + JsonEscape(symbol) + "\","
+       + "\"captured_at\":\"" + IsoTime(TimeGMT()) + "\","
+       + "\"trade_mode\":\"" + IntegerToString(SymbolInfoInteger(symbol, SYMBOL_TRADE_MODE)) + "\","
+       + "\"session_open\":" + (session_open ? "true" : "false") + ","
+       + "\"session_close\":\"" + IsoTime(session_close) + "\","
+       + "\"broker_time_offset\":" + IntegerToString(offset) + ","
+       + "\"timeframes\":{" + series + "}}";
+   string response; int status;
+   SignedRequest("POST", "/api/ftmo/bridge/candles", body, response, status);
+}
+
 void SendHeartbeat()
 {
    string response; int status;
@@ -1133,7 +1218,10 @@ void SendHeartbeat()
    if(status != 200)
       PrintFormat("Monatise heartbeat rejected HTTP %d: %s", status, response);
    else
+   {
       DynamicSymbols = JsonString(response, "requested_symbols_csv");
+      SendRequestedCandles(JsonString(response, "candle_request"));
+   }
 }
 
 int OnInit()

@@ -1475,6 +1475,8 @@ class ProductionASGI(OrchestrationASGI):
                 result["requested_symbols_csv"] = ",".join(
                     await service.requested_execution_quote_symbols()
                 )
+                from monatise.application.hierarchy.broker_candles import BrokerCandleService
+                result["candle_request"] = await BrokerCandleService(service).next_request()
                 for proposal_id in result.get("management_proposal_ids") or ():
                     managed = await service.repository.proposal(proposal_id)
                     if managed:
@@ -1482,6 +1484,9 @@ class ProductionASGI(OrchestrationASGI):
                 for event in result.get("lifecycle_events") or ():
                     await self._notify_ftmo_lifecycle(event)
                 return 200, result
+            if path == "/api/ftmo/bridge/candles" and method == "POST":
+                from monatise.application.hierarchy.broker_candles import BrokerCandleService
+                return 200, await BrokerCandleService(service).accept(parsed)
             if path == "/api/ftmo/bridge/commands" and method == "GET":
                 commands = await service.commands_for_bridge(limit=5)
                 signed = []

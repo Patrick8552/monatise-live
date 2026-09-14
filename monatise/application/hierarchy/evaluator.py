@@ -22,6 +22,7 @@ from monatise.application.hierarchy.models import (
 )
 from monatise.application.hierarchy.risk import StructuralRiskInputBuilder
 from monatise.core.models import Candle
+from monatise.application.hierarchy.policy import SHARED_TIMEFRAME_POLICY as POLICY
 from monatise.engines.liquidity import LiquidityEngine, LiquidityRequest
 from monatise.engines.liquidity_sweep import LiquiditySweepEngine, SweepRequest
 from monatise.engines.market_data.models import DataQuality, DataStatus, MarketSnapshot
@@ -79,7 +80,8 @@ def _confidence(value: float) -> float:
 class HierarchyLayerEvaluator:
     """Runs existing analytical engines as evidence producers, never as a publisher."""
 
-    def __init__(self, *, configuration: HierarchyConfiguration | None = None, risk_builder: StructuralRiskInputBuilder | None = None, multi_tp: MultiTPConfiguration | None = None) -> None:
+    def __init__(self, *, configuration: HierarchyConfiguration | None = None, risk_builder: StructuralRiskInputBuilder | None = None, multi_tp: MultiTPConfiguration | None = None, asset_route: str = "crypto") -> None:
+        self.asset_route = asset_route
         self.multi_tp = multi_tp or MultiTPConfiguration()
         self.configuration = configuration or HierarchyConfiguration()
         self.regime_engine = RegimeEngine()
@@ -112,8 +114,8 @@ class HierarchyLayerEvaluator:
             state.macro_context = self._macro_context(normalized, evaluated_at, macro_degraded, self._provenance(snapshots))
 
         regime_changed = False
-        if macro_changed or "4h" in snapshots:
-            regime_snapshot = state.snapshots.get("4h")
+        if macro_changed or POLICY.context in snapshots:
+            regime_snapshot = state.snapshots.get(POLICY.context)
             market = self._market(regime_snapshot) if regime_snapshot is not None else None
             if market is None:
                 reasons.append("4h_closed_candle_unavailable")
@@ -124,7 +126,7 @@ class HierarchyLayerEvaluator:
                 previous_regime_id = state.regime_context.identity.context_id if state.regime_context else None
                 state.regime_context = self._context(
                     "regime", regime_snapshot, state.macro_context, strategic,
-                    self._direction(strategic), self._regime_confidence(assessment), evaluated_at, timedelta(hours=5),
+                    self._direction(strategic), self._regime_confidence(assessment), evaluated_at, POLICY.context_lifetime,
                     {"regime": assessment.state.value, "score": assessment.score, "reasons": list(assessment.reasons)},
                 )
                 regime_changed = previous_regime_id != state.regime_context.identity.context_id
@@ -134,8 +136,8 @@ class HierarchyLayerEvaluator:
                     state.trigger_context = None
 
         strategy_changed = False
-        if (regime_changed or "1h" in snapshots) and state.regime_context is not None and state.regime_assessment is not None:
-            strategy_snapshot = state.snapshots.get("1h")
+        if (regime_changed or POLICY.analysis in snapshots) and state.regime_context is not None and state.regime_assessment is not None:
+            strategy_snapshot = state.snapshots.get(POLICY.analysis)
             layer = self._analyse_structure(strategy_snapshot, state.regime_assessment) if strategy_snapshot is not None else None
             if layer is None:
                 reasons.append("1h_closed_candle_unavailable")
@@ -144,7 +146,7 @@ class HierarchyLayerEvaluator:
                 previous_strategy_id = state.strategy_context.identity.context_id if state.strategy_context else None
                 state.strategy_context = self._context(
                     "strategy", strategy_snapshot, state.regime_context, strategic,
-                    self._direction(strategic), layer.structure.confidence, evaluated_at, timedelta(hours=2),
+                    self._direction(strategic), layer.structure.confidence, evaluated_at, POLICY.analysis_lifetime,
                     self._layer_evidence(layer),
                 )
                 strategy_changed = previous_strategy_id != state.strategy_context.identity.context_id
@@ -152,8 +154,8 @@ class HierarchyLayerEvaluator:
                     state.setup_context = None
                     state.trigger_context = None
 
-        if (strategy_changed or "15m" in snapshots) and state.strategy_context is not None and state.regime_assessment is not None:
-            setup_snapshot = state.snapshots.get("15m")
+        if (strategy_changed or POLICY.setup in snapshots) and state.strategy_context is not None and state.regime_assessment is not None:
+            setup_snapshot = state.snapshots.get(POLICY.setup)
             layer = self._analyse_structure(setup_snapshot, state.regime_assessment) if setup_snapshot is not None else None
             if layer is None:
                 reasons.append("15m_closed_candle_unavailable")
@@ -162,7 +164,7 @@ class HierarchyLayerEvaluator:
                 previous_setup_id = state.setup_context.identity.context_id if state.setup_context else None
                 state.setup_context = self._context(
                     "setup", setup_snapshot, state.strategy_context, setup_state,
-                    direction, layer.structure.confidence, evaluated_at, timedelta(minutes=45),
+                    direction, layer.structure.confidence, evaluated_at, POLICY.setup_lifetime,
                     self._layer_evidence(layer),
                 )
                 if previous_setup_id != state.setup_context.identity.context_id:
@@ -172,37 +174,37 @@ class HierarchyLayerEvaluator:
         validation = None
         target_plan = None
         management_structure = None
-        if "5m" in snapshots and state.setup_context is not None and state.setup_context.state is SetupState.SETUP_CONFIRMED and state.regime_assessment is not None:
-            layer = self._analyse_structure(snapshots["5m"], state.regime_assessment)
+        if POLICY.confirmation in snapshots and state.setup_context is not None and state.setup_context.state is SetupState.SETUP_CONFIRMED and state.regime_assessment is not None:
+            layer = self._analyse_structure(snapshots[POLICY.confirmation], state.regime_assessment)
             if layer is None:
                 reasons.append("5m_closed_candle_unavailable")
             else:
                 trigger_state = self._trigger_state(layer, state.setup_context.direction)
                 state.trigger_context = self._context(
-                    "trigger", snapshots["5m"], state.setup_context, trigger_state,
-                    state.setup_context.direction, layer.structure.confidence, evaluated_at, timedelta(minutes=15),
+                    "trigger", snapshots[POLICY.confirmation], state.setup_context, trigger_state,
+                    state.setup_context.direction, layer.structure.confidence, evaluated_at, POLICY.confirmation_lifetime,
                     self._layer_evidence(layer),
                 )
                 if trigger_state is TriggerState.TRIGGER_CONFIRMED:
                     try:
-                        entry_layer = self._analyse_structure(snapshots["1m"], state.regime_assessment) if "1m" in snapshots else None
+                        entry_layer = self._analyse_structure(snapshots[POLICY.entry], state.regime_assessment) if POLICY.entry in snapshots else None
                         if entry_layer is None:
                             reasons.append("1m_closed_candle_unavailable")
                             raise ValueError("1m entry refinement is unavailable")
-                        setup_snapshot = state.snapshots.get("15m") if state.snapshots is not None else None
+                        setup_snapshot = state.snapshots.get(POLICY.setup) if state.snapshots is not None else None
                         stop_layer = self._analyse_structure(setup_snapshot, state.regime_assessment) if setup_snapshot is not None else None
                         if stop_layer is None:
                             reasons.append("15m_stop_structure_unavailable")
                             raise ValueError("15m stop structure is unavailable")
                         risk = self._risk(layer, state.trigger_context, evaluated_at, entry_layer=entry_layer, stop_layer=stop_layer)
-                        if self.multi_tp.permits("crypto"):
+                        if self.multi_tp.permits(self.asset_route):
                             lows, highs = layer.structure.swing_lows, layer.structure.swing_highs
-                            management_structure = {"source": "monatise.crypto.hierarchy", "confirmed": True, "direction": state.trigger_context.direction, "observed_at": state.trigger_context.source_close_time.isoformat(), "confirmed_higher_low": lows[-1][1] if len(lows)>1 and lows[-1][1]>lows[-2][1] else None, "confirmed_lower_high": highs[-1][1] if len(highs)>1 and highs[-1][1]<highs[-2][1] else None, "atr": self._atr(layer.market.candles), "protective_liquidity_level": layer.liquidity.nearest_sell_side.price if state.trigger_context.direction=="long" and layer.liquidity.nearest_sell_side else layer.liquidity.nearest_buy_side.price if state.trigger_context.direction=="short" and layer.liquidity.nearest_buy_side else None}
+                            management_structure = {"source": f"monatise.{self.asset_route}.hierarchy", "confirmed": True, "direction": state.trigger_context.direction, "observed_at": state.trigger_context.source_close_time.isoformat(), "confirmed_higher_low": lows[-1][1] if len(lows)>1 and lows[-1][1]>lows[-2][1] else None, "confirmed_lower_high": highs[-1][1] if len(highs)>1 and highs[-1][1]<highs[-2][1] else None, "atr": self._atr(layer.market.candles), "protective_liquidity_level": layer.liquidity.nearest_sell_side.price if state.trigger_context.direction=="long" and layer.liquidity.nearest_sell_side else layer.liquidity.nearest_buy_side.price if state.trigger_context.direction=="short" and layer.liquidity.nearest_buy_side else None}
                             candidates = []
                             for tf, snap in state.snapshots.items():
                                 evidence_layer = self._analyse_structure(snap, state.regime_assessment)
                                 if evidence_layer is not None:
-                                    candidates.extend(crypto_layer_candidates(evidence_layer, timeframe=tf, observed=snap.latest_finalized.scheduled_close_time))
+                                    candidates.extend(crypto_layer_candidates(evidence_layer, timeframe=tf, observed=snap.latest_finalized.scheduled_close_time, provider=f"monatise_{self.asset_route}"))
                             target_plan = build_plan(candidates=candidates, direction=state.trigger_context.direction, entry=risk.reference_entry, stop=risk.final_stop, now=evaluated_at, expires_at=risk.expires_at, config=self.multi_tp)
                             risk = replace(risk, target_liquidity=float(target_plan.targets[0].price), calculated_reward_to_risk=float(target_plan.targets[0].rr), minimum_reward_to_risk=float(target_plan.minimum_rr))
                         bundle = EvidenceBundle.create(
@@ -339,7 +341,7 @@ class HierarchyLayerEvaluator:
         low, high = (zone.lower_bound, zone.upper_bound) if zone is not None else (price * 0.999, price * 1.001)
         atr = self._atr(refinement.market.candles)
         reference_entry = min(max(price, low), high)
-        return self.risk_builder.build(direction=direction, entry_zone_low=low, entry_zone_high=high, structural_invalidation=swing, target_liquidity=target, atr=atr, movement_tolerance_pct=0.002, expires_at=now + timedelta(minutes=15), reference_entry=reference_entry)
+        return self.risk_builder.build(direction=direction, entry_zone_low=low, entry_zone_high=high, structural_invalidation=swing, target_liquidity=target, atr=atr, movement_tolerance_pct=0.002, expires_at=now + POLICY.signal_lifetime, reference_entry=reference_entry)
 
     @staticmethod
     def _atr(candles: tuple[Candle, ...], window: int = 14) -> float:

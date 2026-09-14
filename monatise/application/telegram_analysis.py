@@ -216,6 +216,9 @@ def normalize_analysis(
         except (KeyError, TypeError, ValueError):
             reference_in_zone = False
     executable = bool(qualified and confirmed and entry is not None and stop is not None and targets and expires_at and reference_in_zone)
+    if asset_class is not FTMOAssetClass.CRYPTO and raw.get("timeframe_policy") and raw.get("publication_valid") is not True:
+        qualified = confirmed = executable = False
+        decision = "NO_TRADE"
     if qualified and not reference_in_zone:
         decision = f"QUALIFIED {direction.upper()} — WAITING FOR ENTRY ZONE"
 
@@ -233,7 +236,8 @@ def normalize_analysis(
         "requested_at": requested_at.isoformat(),
         "analysis_started_at": started_at.isoformat(),
         "analysis_completed_at": completed_at.isoformat(),
-        "timeframe": raw.get("interval") or raw.get("timeframe") or "15m",
+        "timeframe": raw.get("analysis_timeframe") or raw.get("interval") or raw.get("timeframe") or "15m",
+        **{key: raw[key] for key in ("timeframe_policy", "context_timeframe", "analysis_timeframe", "setup_timeframe", "confirmation_timeframe", "trigger_timeframe", "entry_timeframe", "stop_timeframe", "evidence_bundle", "score_scale", "signal_core_score") if key in raw},
         "session": dict(session),
         "market_state": raw.get("market_state") or raw.get("market_regime") or classification.upper(),
         "bias": direction.upper(),
@@ -315,6 +319,8 @@ def format_analysis(analysis: Mapping[str, Any]) -> str:
         f"Fibonacci: {_compact(analysis.get('fibonacci'))}",
         f"Order flow: {_compact(analysis.get('order_flow'))}",
     ]
+    if analysis.get("timeframe_policy"):
+        lines.append(f"Hierarchy: {analysis['context_timeframe']} context | {analysis['analysis_timeframe']} direction | {analysis['setup_timeframe']} setup/SL | {analysis['confirmation_timeframe']} confirmation | {analysis['entry_timeframe']} entry")
     if zone:
         lines.append(f"Entry zone: {zone.get('low')}–{zone.get('high')}")
     elif analysis.get("entry") is not None:
