@@ -330,7 +330,7 @@ def test_approval_requires_durable_current_hierarchy(mutation):
     asyncio.run(scenario())
 
 
-def directional_layers(monkeypatch):
+def directional_layers(monkeypatch, *, entry_top=140.2):
     """Deterministic engine assessments; keep real coordination/risk/TP/scoring."""
     from dataclasses import replace
     from monatise.application.hierarchy.evaluator import LayerAnalysis
@@ -366,7 +366,7 @@ def directional_layers(monkeypatch):
         zone = SupplyDemandZone(
             ZoneType.DEMAND,
             ZoneDirection.RALLY_BASE_RALLY,
-            140.2,
+            entry_top,
             139.2,
             90,
             88,
@@ -723,6 +723,30 @@ def test_concurrent_invalidation_cannot_be_overwritten_by_older_analysis(monkeyp
         monkeypatch.setattr(engine, "_analyse", interrupted)
         result = await engine.analyse(instrument, now=NOW)
         assert result["publication_valid"] is False
+        assert (await store.get(CURRENT, instrument.ftmo_symbol)).value[
+            "state"
+        ] == "invalidated"
+
+    asyncio.run(scenario())
+
+
+def test_closed_m1_price_outside_entry_zone_cannot_be_replaced_by_clamped_entry(
+    monkeypatch,
+):
+    directional_layers(monkeypatch, entry_top=140.0)
+
+    async def scenario():
+        control, store = service()
+        engine = AssetHierarchyAnalysis(alpaca=Alpaca(), master=control)
+        instrument = FTMO_REGISTRY.resolve("AAPL")
+        for seconds in (0, 6, 12, 18):
+            result = await engine.analyse(
+                instrument, now=NOW + timedelta(seconds=seconds)
+            )
+        assert result["publication_valid"] is False
+        assert result["setup_status"] == "awaiting_entry_zone"
+        assert result["current_price"] == pytest.approx(140.2)
+        assert result.get("entry") is None
         assert (await store.get(CURRENT, instrument.ftmo_symbol)).value[
             "state"
         ] == "invalidated"

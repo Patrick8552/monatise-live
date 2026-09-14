@@ -192,27 +192,6 @@ def _insufficient(
     }
 
 
-def _stock_technical_bias(hourly: list[dict[str, Any]], trigger: list[dict[str, Any]]) -> str:
-    if len(hourly) < 50 or len(trigger) < 20:
-        return "NONE"
-
-    def ema(values: list[float], period: int) -> float:
-        value, alpha = values[0], 2 / (period + 1)
-        for item in values[1:]:
-            value = item * alpha + value * (1 - alpha)
-        return value
-
-    hourly_closes = [float(row["c"]) for row in hourly]
-    trigger_closes = [float(row["c"]) for row in trigger]
-    fast, slow = ema(hourly_closes, 20), ema(hourly_closes, 50)
-    trigger_fast = ema(trigger_closes, 20)
-    if fast > slow and hourly_closes[-1] > fast and trigger_closes[-1] > trigger_fast:
-        return "LONG"
-    if fast < slow and hourly_closes[-1] < fast and trigger_closes[-1] < trigger_fast:
-        return "SHORT"
-    return "NONE"
-
-
 class StockMarketIntelligenceCoordinator:
     """Use crypto's candle hierarchy; retain verified provider context gates."""
 
@@ -281,7 +260,7 @@ class StockMarketIntelligenceCoordinator:
 
 
 class FuturesMarketIntelligenceCoordinator:
-    """Coordinate FlashAlpha's verified options-on-futures intelligence."""
+    """Coordinate shared index candles and other futures positioning analysis."""
 
     def __init__(self, flashalpha: FlashAlphaAdapter, *, environment: Mapping[str, str], hierarchy: AssetHierarchyAnalysis | None = None) -> None:
         self.flashalpha = flashalpha

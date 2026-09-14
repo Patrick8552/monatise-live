@@ -564,6 +564,14 @@ class AssetHierarchyAnalysis:
                 self._engines.pop(symbol, None)
                 return result
             risk = bundle.risk_inputs
+            current_price = state.snapshots[POLICY.entry].latest_finalized.close
+            result["current_price"] = current_price
+            if not risk.entry_zone_low <= current_price <= risk.entry_zone_high:
+                result.update(
+                    setup_status="awaiting_entry_zone",
+                    reasons=["closed_entry_price_outside_setup_zone"],
+                )
+                return result
             expiry = min(
                 risk.expires_at,
                 session_close,
@@ -589,7 +597,7 @@ class AssetHierarchyAnalysis:
                     "setup_status": "confirmed",
                     "publication_valid": True,
                     "entry": risk.reference_entry,
-                    "current_price": risk.reference_entry,
+                    "current_price": current_price,
                     "entry_zone": {
                         "low": risk.entry_zone_low,
                         "high": risk.entry_zone_high,

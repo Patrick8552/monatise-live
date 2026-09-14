@@ -29,6 +29,8 @@ The service uses the same coordinator boundary scheduling and two-observation cl
 
 Manual analysis normalization and scanner notifications carry the policy and role metadata. H1, M15, M5, and M1 evidence flows into the proposal and execution intent rather than being reconstructed from a notification string.
 
+The actual closed M1 market price must be inside the proposed entry zone; a clamped reference entry cannot replace it to qualify a setup.
+
 A stock/index analysis signal must match its persisted hierarchy proof: exact parent chain, symbol, policy, M1 entry evidence, direction, levels, and target plan. Expiry is capped by the crypto signal lifetime, parent expiries, and session close. Re-evaluation cannot extend an existing bundle's lifetime. Compare-and-swap persistence prevents an older analysis from overwriting a concurrent invalidation.
 
 The master checks current proof when creating a proposal, publishing it, approving it, and delivering its command to the EA. Superseded/invalidated proofs and old snapshot-only signals are blocked. Explicit operator-entered trade proposals retain their separate manual path. The existing authorized-user checks, approval requirements, kill switch, arm/master gates, account binding, fresh native Bid/Ask validation, broker sizing, spread/stop/freeze checks, risk ceilings, replay protection, and position-management permissions remain enforced.
