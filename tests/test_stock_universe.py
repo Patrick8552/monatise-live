@@ -1,5 +1,6 @@
 import asyncio
 import json
+import pytest
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -144,7 +145,8 @@ class Redis:
     async def delete(self, key): self.values.pop(key, None)
 
 
-def test_runtime_scans_dynamic_universe_publishes_only_qualified_and_dedupes(monkeypatch):
+@pytest.mark.parametrize("production_quote_failure", [False, True, "data_failure"])
+def test_runtime_scans_dynamic_universe_publishes_only_qualified_and_dedupes(monkeypatch, production_quote_failure):
     class Alpaca:
         def active_stock_assets(self): return [asset("LONG"), asset("SHORT")]
         def stock_snapshots(self, symbols): return {"LONG": snapshot(105, 100), "SHORT": snapshot(95, 100)}
@@ -163,11 +165,28 @@ def test_runtime_scans_dynamic_universe_publishes_only_qualified_and_dedupes(mon
     runtime = OrchestrationRuntime.__new__(OrchestrationRuntime)
     runtime.redis, runtime.telegram = Redis(), Telegram()
     async def analyze(candidate, configuration, index):
+        if production_quote_failure == "data_failure":
+            return {"asset": candidate.symbol, "decision": "INSUFFICIENT_MARKET_DATA", "setup_status": "suppressed", "reasons": ["provider_incomplete"]}
         return {"asset": candidate.symbol, "company_name": candidate.name, "direction": candidate.side.upper(), "decision": "BUY_WATCH", "score": 8, "score_threshold": 7, "setup_status": "confirmed", "current_price": 100, "entry": 100, "stop_loss": 98, "target": 104, "targets": [104], "reward_risk": 2, "additional_context": {}, "execution": {"enabled": False}}
     runtime._analyze_market_stock = analyze
+    if production_quote_failure:
+        runtime.ftmo_master = SimpleNamespace(repository=None)
+        async def blocked(*args, **kwargs): return False
+        runtime._publish_ftmo_signal_proposal = blocked
     first = asyncio.run(runtime._run_stock_universe_scan(CONFIG, 3600, "test"))
     second = asyncio.run(runtime._run_stock_universe_scan(CONFIG, 3600, "test"))
     assert first["universe_source"] == "ftmo_registry"
     assert first["universe_size"] == 2 and first["deep_analysis_attempted"] == 2
+    if production_quote_failure == "data_failure":
+        assert first["pipeline_status"] == "degraded"
+        assert first["analysis_completed_count"] == 0 and first["analysis_failure_count"] == 2
+        assert first["telegram_published"] == 0
+        assert first["suppressions"] == {"provider_incomplete": 2}
+        return
     assert first["telegram_published"] == 2
-    assert second["telegram_published"] == 0 and second["suppressions"]["duplicate_unchanged"] == 2
+    if production_quote_failure:
+        assert second["telegram_published"] == 2
+        assert second["suppressions"].get("duplicate_unchanged", 0) == 0
+        assert second["proposal_published_count"] == 0
+    else:
+        assert second["telegram_published"] == 0 and second["suppressions"]["duplicate_unchanged"] == 2

@@ -482,6 +482,7 @@ class AssetHierarchyAnalysis:
             result.update(
                 {
                     "signal_core_score": core["score"],
+                    "score": core["score"],
                     "signal_core_evidence": core["evidence"],
                     "reasons": list(evaluation.reasons),
                     "watching": evaluation.watching,
@@ -550,6 +551,10 @@ class AssetHierarchyAnalysis:
             ):
                 if evaluation.validation:
                     result["reasons"].extend(evaluation.validation.reasons)
+                if not result["reasons"]:
+                    result["reasons"] = [f"awaiting_{key}" for key, present in core["evidence"].items() if not present]
+                if not result["reasons"]:
+                    result["reasons"] = ["awaiting_complete_hierarchy_confirmation"]
                 return result
             bundle = evaluation.bundle
             from monatise.application.flashalpha_analysis import (

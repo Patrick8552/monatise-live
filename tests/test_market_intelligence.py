@@ -204,3 +204,56 @@ def test_futures_provider_failure_returns_insufficient_market_data():
     assert result["decision"] == "INSUFFICIENT_MARKET_DATA"
     assert result["reason_code"] == "provider_unsupported"
     assert result["ftmo_execution_quote"]["status"] == "not_requested"
+
+
+def test_request_latency_does_not_make_fresh_stock_context_future_data(monkeypatch):
+    import monatise.application.market_intelligence as module
+    class ReceiptClock(datetime):
+        calls=0
+        @classmethod
+        def now(cls, tz=None):
+            cls.calls+=1
+            return NOW + timedelta(seconds=0 if cls.calls==1 else 2)
+    class LiveFlash(FlashAlpha):
+        def context(self,symbol):
+            value=super().context(symbol);value['as_of']=(NOW+timedelta(seconds=1)).isoformat();return value
+    class Hierarchy:
+        async def analyse(self,*args,**kwargs):
+            return {'setup_status':'not_confirmed','analysis_sources':[],'direction':'NONE'}
+        async def invalidate(self,*args):
+            raise AssertionError('valid receipt-time context must reach candle analysis')
+    monkeypatch.setattr(module,'datetime',ReceiptClock)
+    coordinator=StockMarketIntelligenceCoordinator(Alpaca(),Quiver(),Finnhub(),LiveFlash(),environment={},hierarchy=Hierarchy())
+    result=asyncio.run(coordinator.analyse('AAPL',instrument=FTMO_REGISTRY.resolve('AAPL')))
+    assert result['setup_status']=='not_confirmed'
+
+
+def test_request_latency_does_not_make_fresh_index_context_future_data(monkeypatch):
+    import monatise.application.market_intelligence as module
+    class ReceiptClock(datetime):
+        calls=0
+        @classmethod
+        def now(cls,tz=None):
+            cls.calls+=1
+            return NOW+timedelta(seconds=0 if cls.calls==1 else 2)
+    class LiveFlash(FlashAlpha):
+        def context(self,symbol):
+            value=super().context(symbol);value['as_of']=(NOW+timedelta(seconds=1)).isoformat();return value
+    class Hierarchy:
+        async def analyse(self,*args,**kwargs):
+            return {'setup_status':'not_confirmed','analysis_sources':[]}
+        async def invalidate(self,*args):
+            raise AssertionError('fresh context incorrectly invalidated')
+    monkeypatch.setattr(module,'datetime',ReceiptClock)
+    for symbol in ['US100.cash','US500.cash']:
+        ReceiptClock.calls=0
+        coordinator=FuturesMarketIntelligenceCoordinator(LiveFlash(),environment={},hierarchy=Hierarchy())
+        assert asyncio.run(coordinator.analyse(FTMO_REGISTRY.resolve(symbol)))['setup_status']=='not_confirmed'
+
+
+def test_genuinely_future_context_still_fails_closed():
+    class FutureFlash(FlashAlpha):
+        def context(self,symbol):
+            value=super().context(symbol);value['as_of']=(NOW+timedelta(minutes=10)).isoformat();return value
+    coordinator=StockMarketIntelligenceCoordinator(Alpaca(),Quiver(),Finnhub(),FutureFlash(),environment={})
+    assert asyncio.run(coordinator.analyse('AAPL',now=NOW))['decision']=='INSUFFICIENT_MARKET_DATA'

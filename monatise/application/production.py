@@ -1494,6 +1494,8 @@ class ProductionASGI(OrchestrationASGI):
                         await self._publish_operator_proposal(service, managed[0], None)
                 for event in result.get("lifecycle_events") or ():
                     await self._notify_ftmo_lifecycle(event)
+                from monatise.application.trade_accounting import TradeAccountingService
+                await TradeAccountingService(service).publish_pending(getattr(self.runtime, "telegram", None))
                 return 200, result
             if path == "/api/ftmo/bridge/candles" and method == "POST":
                 from monatise.application.hierarchy.broker_candles import BrokerCandleService
@@ -1609,6 +1611,10 @@ class ProductionASGI(OrchestrationASGI):
 
     async def _notify_ftmo_lifecycle(self, event: Mapping[str, Any]) -> None:
         state = str(event.get("lifecycle_state") or "UNKNOWN").upper()
+        if state == "POSITION_CLOSED":
+            # The accounting outbox publishes a close only after broker deal
+            # history reconciles. Never label the previous floating P/L final.
+            return
         lines = [
             f"FTMO {state.replace('_', ' ')}",
             f"Instrument: {event.get('symbol') or 'unknown'} | Direction: {str(event.get('side') or 'unknown').upper()}",
