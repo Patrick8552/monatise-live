@@ -136,6 +136,16 @@ is on the wrong side of the market, the original target has already been
 reached, or current identity/session/risk checks fail. Bridge 1.16 includes
 pending orders in aggregate risk and reports their stops and targets.
 
+Confirmed setups with an explicit entry zone now retain their validity and
+Approve/Reject controls while waiting outside the zone. Approval can authorize
+a Buy/Sell Limit or Stop at the fixed planned entry; observed prices, SL, TP,
+risk ceilings, expiry and structural invalidation remain separate and preserved.
+Managed pending orders require EA 1.20 and broker specified-expiry support.
+Signed heartbeat leases and broker-native expiry cancel orders that lose
+eligibility, including during disconnection or EA restart. See the
+[pending-entry policy](docs/pending-entry-policy.md) for the exact behavior and
+rollout requirements.
+
 Gold market proposals can opt into an allowance in USD per ounce with
 `FTMO_GOLD_MAXIMUM_ADVERSE_PRICE_DEVIATION` (default `0`, legacy behavior).
 Bridge 1.17 reports its independent `InpGoldMaximumAdversePriceDeviation`

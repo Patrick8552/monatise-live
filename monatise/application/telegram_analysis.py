@@ -222,6 +222,12 @@ def normalize_analysis(
             reference_in_zone = float(entry_zone["low"]) <= float(current_price) <= float(entry_zone["high"])
         except (KeyError, TypeError, ValueError):
             reference_in_zone = False
+    valid_zone = False
+    if entry_zone and entry is not None:
+        try:
+            valid_zone = all(math.isfinite(float(entry_zone[k])) and float(entry_zone[k]) > 0 for k in ("low", "high")) and float(entry_zone["low"]) <= float(entry) <= float(entry_zone["high"])
+        except (KeyError, TypeError, ValueError, OverflowError):
+            pass
     executable = bool(qualified and confirmed and entry is not None and stop is not None and targets and expires_at and reference_in_zone)
     if asset_class is not FTMOAssetClass.CRYPTO and raw.get("timeframe_policy") and raw.get("publication_valid") is not True:
         qualified = confirmed = executable = False
@@ -231,6 +237,7 @@ def normalize_analysis(
     elif qualified and not reference_in_zone:
         decision = f"QUALIFIED {direction.upper()} — WAITING FOR ENTRY ZONE"
 
+    pending_eligible = bool(qualified and confirmed and observed_price_valid and valid_zone and stop is not None and targets and expires_at and not reference_in_zone)
     return {
         "telegram_request_id": request_id,
         "request_id": request_id,
@@ -266,6 +273,7 @@ def normalize_analysis(
         "entry": entry,
         "entry_zone": dict(entry_zone) if entry_zone else None,
         "stop_loss": stop,
+        "structural_invalidation": raw.get("structural_invalidation"),
         "targets": targets,
         "take_profit_plan": raw.get("take_profit_plan"),
         "management_structure": raw.get("management_structure"),
@@ -276,6 +284,9 @@ def normalize_analysis(
         "decision": decision,
         "qualified": qualified,
         "executable": executable,
+        "pending_order_eligible": pending_eligible,
+        "proposal_eligible": executable or pending_eligible,
+        "entry_status": "WAITING_FOR_ENTRY" if pending_eligible else "IN_ENTRY_ZONE" if executable else "BLOCKED",
         "confirmation_status": "confirmed" if confirmed else str(raw.get("entry_confirmation_status") or raw.get("setup_status") or "not_confirmed"),
         "reference_price_in_entry_zone": reference_in_zone,
         "expires_at": expires_at,
@@ -374,7 +385,9 @@ def format_analysis(analysis: Mapping[str, Any]) -> str:
         f"{ftmo_quote.get('status') or 'not_requested'}"
         + (f" ({ftmo_quote.get('reason')})" if ftmo_quote.get("reason") else "")
     )
-    if not analysis.get("executable"):
+    if analysis.get("pending_order_eligible"):
+        lines.append("Waiting for entry: immediate market execution blocked. Pending order requires Approve trade; Reject trade remains available.")
+    elif not analysis.get("executable"):
         reasons = analysis.get("reasons") or []
         if reasons:
             lines.append("Reason: " + "; ".join(map(str, reasons[:4])))

@@ -591,12 +591,7 @@ class AssetHierarchyAnalysis:
                 risk.entry_zone_low,
                 risk.entry_zone_high,
             )
-            if not risk.entry_zone_low <= current_price <= risk.entry_zone_high:
-                result.update(
-                    setup_status="awaiting_entry_zone",
-                    reasons=["closed_entry_price_outside_setup_zone"],
-                )
-                return result
+            waiting_for_entry = not risk.entry_zone_low <= current_price <= risk.entry_zone_high
             expiry = min(
                 risk.expires_at,
                 session_close,
@@ -620,6 +615,8 @@ class AssetHierarchyAnalysis:
                     else "SELL_WATCH",
                     "direction": bundle.trigger_5m.direction.upper(),
                     "setup_status": "confirmed",
+                    "entry_status": "WAITING_FOR_ENTRY" if waiting_for_entry else "IN_ENTRY_ZONE",
+                    "pending_order_eligible": waiting_for_entry,
                     "publication_valid": True,
                     "entry": risk.reference_entry,
                     "current_price": current_price,
@@ -640,6 +637,8 @@ class AssetHierarchyAnalysis:
                     "as_of": bundle.trigger_5m.source_close_time.isoformat(),
                     "evidence_bundle": {
                         "bundle_id": bundle.bundle_id,
+                        "entry_zone": dict(result["entry_zone"]),
+                        "structural_invalidation": risk.structural_invalidation,
                         "entry_candle": {
                             "timeframe": POLICY.entry,
                             "candle_id": state.snapshots[

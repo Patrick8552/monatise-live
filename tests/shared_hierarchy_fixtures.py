@@ -21,6 +21,8 @@ async def persist_proof(
     target="2520",
     direction="LONG",
     identity="test-hierarchy",
+    zone=None,
+    observed_price=None,
 ):
     instrument = control._verified_instrument_mapping(symbol)
     if not requires_shared_hierarchy(instrument):
@@ -41,6 +43,7 @@ async def persist_proof(
     proof = {
         **SHARED_TIMEFRAME_POLICY.metadata(),
         "bundle_id": identity + instrument.ftmo_symbol,
+        **({"entry_zone": zone} if zone else {}),
         "contexts": contexts,
         "entry_candle": {
             "timeframe": "1m",
@@ -49,7 +52,7 @@ async def persist_proof(
         },
     }
     observation = {
-        "price": entry,
+        "price": observed_price if observed_price is not None else entry,
         "source": "test",
         "kind": "closed_candle",
         "timeframe": "1m",

@@ -1,5 +1,5 @@
 #property copyright "Monatise"
-#property version   "1.19"
+#property version   "1.20"
 #property strict
 #property description "Account-bound FTMO bridge. Telegram never talks directly to the broker."
 
@@ -29,9 +29,10 @@ input int    InpMaximumDeviationPoints = 20;
 input double InpGoldMaximumAdversePriceDeviation = 10.0; // Price units (USD/oz), signed Gold proposals only.
 input long   InpMagicNumber            = 26082501;
 
-string EA_VERSION = "1.19";
+string EA_VERSION = "1.20";
 string JOURNAL_FILE = "monatise-ftmo-command-journal.csv";
 string DynamicSymbols = "";
+string LastRequestNonce = "";
 CTrade Trade;
 
 string IsoTime(datetime value)
@@ -145,6 +146,7 @@ bool SignedRequest(string method, string path, string body, string &response, in
    }
    string timestamp = IntegerToString((long)TimeGMT());
    string nonce = RequestNonce();
+   LastRequestNonce = nonce;
    string canonical = method + "\n" + path + "\n" + timestamp + "\n" + nonce + "\n" + Sha256Hex(body);
    string signature = HmacSha256(InpBridgeSecret, canonical);
    if(signature == "") return false;
@@ -666,7 +668,7 @@ string BuildHeartbeat()
       + "\"terminal_connected\":" + (TerminalInfoInteger(TERMINAL_CONNECTED) ? "true" : "false") + ","
       + "\"trade_allowed\":" + (TradingPermission() ? "true" : "false") + ","
       + "\"ea_attached\":true,"
-      + "\"history_version\":1,"
+      + "\"history_version\":1,\"pending_entry_version\":1,"
       + "\"terminal_build\":\"" + IntegerToString((int)TerminalInfoInteger(TERMINAL_BUILD)) + "\","
       + "\"ea_version\":\"" + EA_VERSION + "\","
       + "\"multi_tp_version\":" + (InpMultiTPEnabled ? "1" : "0") + ","
@@ -921,6 +923,33 @@ bool FinalOrderValidation(string execution_payload, string &reason, double &vali
    if(order_type != "market" && MathAbs(entry - (side == "buy" ? tick.ask : tick.bid)) < minimum_stop)
       { reason = "pending entry is below the FTMO stop/freeze distance"; return false; }
    double actual_risk = (MathAbs(entry - stop) / tick_size) * tick_value * volume;
+   if(JsonString(execution_payload, "entry_policy_version") == "1")
+   {
+      double low = StringToDouble(JsonString(execution_payload, "entry_zone_low"));
+      double high = StringToDouble(JsonString(execution_payload, "entry_zone_high"));
+      double budget = StringToDouble(JsonString(execution_payload, "approved_risk_budget"));
+      if(low <= 0 || high < low || entry < low || entry > high || budget <= 0 || actual_risk > budget + 0.01)
+         { reason = "fixed entry zone or approved risk budget failed"; return false; }
+      double invalidation = StringToDouble(JsonString(execution_payload, "setup_invalidation_price"));
+      if(invalidation <= 0) invalidation = stop;
+      double minimum_rr = StringToDouble(JsonString(execution_payload, "minimum_reward_risk"));
+      if(!MathIsValidNumber(low) || !MathIsValidNumber(high) || !MathIsValidNumber(budget)
+         || !MathIsValidNumber(invalidation) || !MathIsValidNumber(minimum_rr) || minimum_rr <= 0
+         || MathAbs(target - entry) / MathAbs(entry - stop) + 1e-8 < minimum_rr)
+         { reason = "fixed setup or reward/risk policy failed"; return false; }
+      if((side == "buy" && (tick.bid <= invalidation || tick.bid >= target))
+         || (side == "sell" && (tick.ask >= invalidation || tick.ask <= target)))
+         { reason = "setup stop or target has already been reached"; return false; }
+      if(order_type != "market")
+      {
+         long lease = StringToInteger(JsonString(execution_payload, "pending_lease_epoch"));
+         long deadline = StringToInteger(JsonString(execution_payload, "pending_expires_epoch"));
+         if(JsonString(execution_payload, "pending_entry_version") != "1" || lease <= (long)TimeGMT()
+            || lease > (long)TimeGMT() + 20 || lease > deadline
+            || (SymbolInfoInteger(symbol, SYMBOL_EXPIRATION_MODE) & SYMBOL_EXPIRATION_SPECIFIED) == 0)
+            { reason = "pending entry requires a current lease and exact broker expiry"; return false; }
+      }
+   }
    if(gold_guard)
    {
       double budget = StringToDouble(JsonString(execution_payload, "approved_risk_budget"));
@@ -1031,7 +1060,8 @@ void ExecuteCommand(string command_json)
    double volume = StringToDouble(JsonString(execution_payload, "volume"));
    ulong target_id = (ulong)StringToInteger(JsonString(execution_payload, "target_id"));
    datetime pending_expires_at = (datetime)StringToInteger(JsonString(execution_payload, "pending_expires_epoch"));
-   string comment = "MNT:" + StringSubstr(command_id, 0, 16);
+   bool managed_pending = JsonString(execution_payload, "pending_entry_version") == "1";
+   string comment = (managed_pending ? "MNP:" : "MNT:") + StringSubstr(command_id, 0, 16);
    ENUM_ORDER_TYPE_TIME pending_order_time = ORDER_TIME_GTC;
    datetime pending_expiration = 0;
    if(operation == "open")
@@ -1044,7 +1074,7 @@ void ExecuteCommand(string command_json)
          return;
       }
       if(order_type != "market" && !ResolvePendingOrderExpiration(
-         symbol, pending_expires_at, pending_order_time, pending_expiration, reason
+         symbol, managed_pending ? (datetime)StringToInteger(JsonString(execution_payload, "pending_lease_epoch")) : pending_expires_at, pending_order_time, pending_expiration, reason
       ))
       {
          JournalAppend(command_id, "rejected", "", reason);
@@ -1052,6 +1082,9 @@ void ExecuteCommand(string command_json)
          return;
       }
    }
+   if(managed_pending && (!PreparePendingEntry(comment, pending_expires_at)
+      || pending_order_time != ORDER_TIME_SPECIFIED))
+   { Acknowledge(command_id, "rejected", "", "durable pending deadline or native specified expiry unavailable"); return; }
    JournalAppend(command_id, "broker_uncertain", "", "submission began; reconcile before any retry");
    if(operation == "partial_close") { ExecutePartialProfit(execution_payload, command_id); return; }
    Trade.SetExpertMagicNumber(InpMagicNumber);
@@ -1210,6 +1243,8 @@ void SendRequestedCandles(string request)
    SignedRequest("POST", "/api/ftmo/bridge/candles", body, response, status);
 }
 
+#include "MonatisePendingEntry.mqh"
+
 void SendHeartbeat()
 {
    string response; int status;
@@ -1219,6 +1254,7 @@ void SendHeartbeat()
       PrintFormat("Monatise heartbeat rejected HTTP %d: %s", status, response);
    else
    {
+      ApplyPendingManifest(response, LastRequestNonce);
       DynamicSymbols = JsonString(response, "requested_symbols_csv");
       SendRequestedCandles(JsonString(response, "candle_request"));
    }
@@ -1236,6 +1272,7 @@ int OnInit()
    // The server accepts execution quotes for at most five seconds. Keep the
    // outbound heartbeat cadence safely inside that window even when an older
    // chart template retained a larger input value.
+   GuardPendingEntries(true); // Restart never silently adopts an old pending order.
    EventSetTimer(MathMax(1, MathMin(InpHeartbeatSeconds, 2)));
    PrintFormat("Monatise FTMO bridge %s started. Execution gate=%s master-approved=%s", EA_VERSION,
                InpExecutionEnabled ? "on" : "off", InpMasterAccountApproved ? "yes" : "no");
@@ -1244,11 +1281,13 @@ int OnInit()
 
 void OnDeinit(const int reason)
 {
+   GuardPendingEntries(true);
    EventKillTimer();
 }
 
 void OnTimer()
 {
+   GuardPendingEntries(false);
    SendHeartbeat();
    PollCommands();
 }

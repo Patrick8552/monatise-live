@@ -427,9 +427,10 @@ def directional_layers(monkeypatch, *, entry_top=140.2):
 
 
 @pytest.mark.parametrize("symbol", ["AAPL", "US100.cash"])
+@pytest.mark.parametrize("waiting", [False, True])
 @pytest.mark.parametrize("multi_tp", [False, True])
 def test_confirmed_shared_setup_flows_through_approval_and_invalidation(
-    monkeypatch, symbol, multi_tp
+    monkeypatch, symbol, multi_tp, waiting
 ):
     from monatise.application.ftmo_master import FTMOMasterError
     from monatise.application.take_profit import TakeProfitPlan
@@ -490,12 +491,13 @@ def test_confirmed_shared_setup_flows_through_approval_and_invalidation(
         monkeypatch.setattr(master_module, "_utc", lambda value=None: value or current)
         quote = {
             **heartbeat()["quotes"]["XAUUSD"],
-            "bid": "140.19",
-            "ask": "140.20",
+            "ask": "142.20" if waiting else "140.20",
+            "bid": "142.19" if waiting else "140.19",
+            "expiration_mode": 4,
             "timestamp": current.isoformat(),
         }
         await control.accept_bridge_heartbeat(
-            heartbeat(quotes={symbol: quote}, multi_tp_version=1), now=current
+            heartbeat(quotes={symbol: quote}, multi_tp_version=1, pending_entry_version=1), now=current
         )
         await control.repository.update_control(kill_switch=False)
         proposal = await control.create_signal_proposal(
@@ -508,12 +510,18 @@ def test_confirmed_shared_setup_flows_through_approval_and_invalidation(
             analysis_state="LONG",
             confirmation_status="confirmed",
             source="test.shared-analysis",
+            analysis_provider=result["analysis_provider"],
+            entry_zone_low=result["entry_zone"]["low"], entry_zone_high=result["entry_zone"]["high"],
             evidence_bundle=result,
             take_profit_plan=result.get("take_profit_plan"),
             now=current,
         )
         command = await control.approve(proposal["proposal_id"], "42", now=current)
         assert command["payload"]["symbol"] == symbol
+        assert command["payload"]["order_type"] == ("limit" if waiting else "market")
+        assert command["payload"]["stop_loss"] == proposal["stop_loss"]
+        if multi_tp:
+            assert [t["price"] for t in command["payload"]["take_profit_plan"]["targets"]] == [t["price"] for t in proposal["take_profit_plan"]["targets"]]
         await engine.invalidate(instrument)
         assert await control.commands_for_bridge(now=current) == ()
         rejected = (await control.repository.command(command["command_id"]))[0]
@@ -743,16 +751,17 @@ def test_closed_m1_price_outside_entry_zone_cannot_be_replaced_by_clamped_entry(
             result = await engine.analyse(
                 instrument, now=NOW + timedelta(seconds=seconds)
             )
-        assert result["publication_valid"] is False
-        assert result["setup_status"] == "awaiting_entry_zone"
+        assert result["publication_valid"] is True
+        assert result["setup_status"] == "confirmed"
+        assert result["entry_status"] == "WAITING_FOR_ENTRY"
         assert result["current_price"] == pytest.approx(140.2)
         assert result["entry_zone"] == {"low": 139.2, "high": 140.0}
         assert result["market_price_observation"]["price"] == pytest.approx(140.2)
         assert result["market_price_observation"]["timeframe"] == "1m"
-        assert result.get("entry") is None
+        assert result["entry"] == 140.0
         assert (await store.get(CURRENT, instrument.ftmo_symbol)).value[
             "state"
-        ] == "invalidated"
+        ] == "valid"
 
     asyncio.run(scenario())
 

@@ -2149,9 +2149,11 @@ class OrchestrationRuntime:
             "fibonacci", "order_flow", "trigger", "open_interest", "funding_rate", "liquidations",
             "cvd", "long_short_ratio", "provider_observed_at", "analysis_sources",
             "timeframe_policy", "analysis_timeframe", "setup_timeframe", "confirmation_timeframe", "trigger_timeframe", "entry_timeframe", "evidence_bundle",
-            "market_price_observation",
+            "market_price_observation", "crypto_contexts", "structural_invalidation",
             "provider_consensus", "fallback_status", "data_quality", "ftmo_execution_quote",
         ) if analysis.get(key) is not None}
+        if "market_price_observation" not in evidence and analysis.get("current_reference_price") is not None:
+            evidence["market_price_observation"] = {"price": analysis["current_reference_price"], "source": provider, "kind": "provider_reference", "observed_at": analysis.get("as_of") or analysis.get("observed_at")}
         proposal_arguments = {
             "signal_id": signal_id, "symbol": symbol, "direction": direction,
             "analysis_entry": entry, "analysis_stop": stop, "analysis_target": target, "source": source,
@@ -2163,7 +2165,7 @@ class OrchestrationRuntime:
             "analysis_exchange": str(analysis.get("analysis_exchange") or analysis.get("exchange") or ""),
             "analysis_observed_at": timestamp(analysis.get("analysis_observed_at") or analysis.get("observed_at") or analysis.get("as_of")),
             "signal_expires_at": timestamp(analysis.get("valid_until") or analysis.get("expires_at")),
-            "entry_zone_low": analysis.get("entry_zone_low"), "entry_zone_high": analysis.get("entry_zone_high"),
+            "entry_zone_low": analysis.get("entry_zone_low", (analysis.get("entry_zone") or {}).get("low")), "entry_zone_high": analysis.get("entry_zone_high", (analysis.get("entry_zone") or {}).get("high")),
             "order_type": str(analysis.get("order_type") or "market"),
             "strategy": str(analysis.get("strategy") or analysis.get("setup_type") or "Monatise confirmed setup"),
             "timeframe": str(analysis.get("timeframe") or analysis.get("interval") or "unknown"),

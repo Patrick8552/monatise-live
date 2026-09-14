@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from dataclasses import asdict
 from monatise.application.take_profit import format_targets
 import asyncio
 import logging
@@ -79,7 +80,12 @@ class ShadowHierarchyService:
                 if evaluation.take_profit_plan is not None and self.plan_publisher is not None:
                     plan = evaluation.take_profit_plan
                     instrument = (market_context or {}).get("ftmo_instrument") or {}
-                    await self.plan_publisher({"publication_id": trigger_id, "ftmo_symbol": instrument.get("ftmo_symbol", symbol), "asset_class": "crypto", "asset": symbol, "direction": plan.direction, "entry": str(plan.entry), "stop_loss": str(plan.stop), "target": str(plan.legacy_take_profit), "take_profit_plan": plan.to_dict(), "management_structure": evaluation.management_structure, "setup_status": "confirmed", "expires_at": plan.expires_at.isoformat(), "analysis_provider": "coinglass"})
+                    await self.plan_publisher({"publication_id": trigger_id, "ftmo_symbol": instrument.get("ftmo_symbol", symbol), "asset_class": "crypto", "asset": symbol, "direction": plan.direction, "entry": str(plan.entry), "stop_loss": str(plan.stop), "target": str(plan.legacy_take_profit), "take_profit_plan": plan.to_dict(), "management_structure": evaluation.management_structure, "setup_status": "confirmed", "expires_at": plan.expires_at.isoformat(), "analysis_provider": "coinglass",
+                        "entry_zone": {"low": evaluation.bundle.risk_inputs.entry_zone_low, "high": evaluation.bundle.risk_inputs.entry_zone_high},
+                        "structural_invalidation": evaluation.bundle.risk_inputs.structural_invalidation,
+                        "market_price_observation": {"price": current_price, "source": "coinglass", "kind": "provider_reference", "observed_at": now.isoformat()},
+                        "crypto_contexts": [asdict(c.identity) for c in (evaluation.macro_context, evaluation.regime_4h, evaluation.strategy_1h, evaluation.setup_15m, evaluation.trigger_5m)],
+                    })
             except Exception as exc:
                 publication_failed = True
                 try:

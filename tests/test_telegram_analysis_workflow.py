@@ -373,7 +373,26 @@ def test_observed_market_price_is_never_replaced_by_planned_entry(symbol, observ
     assert result['market_price_available'] is available
     assert result['reference_price_in_entry_zone'] is in_zone
     assert result['executable'] is in_zone
+    assert result['pending_order_eligible'] is (available and not in_zone)
+    assert result['proposal_eligible'] is available
     if not available:
         assert 'WAITING FOR VERIFIED MARKET PRICE' in result['decision']
     elif not in_zone:
         assert 'WAITING FOR ENTRY ZONE' in result['decision']
+
+
+def test_valid_waiting_setup_still_enters_telegram_approval_flow():
+    runtime = Runtime()
+    async def waiting(symbol, **_kwargs):
+        return {"asset": symbol, "decision": "BUY_WATCH", "direction": "LONG", "setup_status": "confirmed",
+            "entry": 199, "entry_zone": {"low": 198, "high": 199}, "current_price": 200,
+            "stop_loss": 195, "target": 209, "targets": [209], "score": 8,
+            "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()}
+    runtime.analyse_stock = waiting
+    run_request(runtime, '/analyze AAPL', update_id=98)
+    analysis = next(iter(runtime.ftmo_master.repository.analyses.values()))
+    assert analysis['qualified'] and analysis['pending_order_eligible'] and analysis['proposal_eligible']
+    assert analysis['executable'] is False and analysis['current_reference_price'] == 200
+    assert runtime.ftmo_master.proposals[0]['analysis_entry'] == 199
+    assert runtime.ftmo_master.proposals[0]['entry_zone_high'] == 199
+    assert runtime.telegram.proposals
