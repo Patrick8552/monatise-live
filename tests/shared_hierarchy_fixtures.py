@@ -48,6 +48,13 @@ async def persist_proof(
             "closed_at": now.isoformat(),
         },
     }
+    observation = {
+        "price": entry,
+        "source": "test",
+        "kind": "closed_candle",
+        "timeframe": "1m",
+        "observed_at": now.isoformat(),
+    }
     await control.repository.store.put(
         SIGNALS,
         proof["bundle_id"],
@@ -59,6 +66,7 @@ async def persist_proof(
             "stop": stop,
             "target": target,
             "direction": direction,
+            "market_price_observation": observation,
         },
     )
     await control.repository.store.put(
@@ -66,4 +74,4 @@ async def persist_proof(
         instrument.ftmo_symbol,
         {"state": "valid", "bundle_id": proof["bundle_id"]},
     )
-    return {"evidence_bundle": proof}
+    return {"evidence_bundle": proof, "market_price_observation": observation}

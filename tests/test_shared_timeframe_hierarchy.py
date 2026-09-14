@@ -746,9 +746,28 @@ def test_closed_m1_price_outside_entry_zone_cannot_be_replaced_by_clamped_entry(
         assert result["publication_valid"] is False
         assert result["setup_status"] == "awaiting_entry_zone"
         assert result["current_price"] == pytest.approx(140.2)
+        assert result["entry_zone"] == {"low": 139.2, "high": 140.0}
+        assert result["market_price_observation"]["price"] == pytest.approx(140.2)
+        assert result["market_price_observation"]["timeframe"] == "1m"
         assert result.get("entry") is None
         assert (await store.get(CURRENT, instrument.ftmo_symbol)).value[
             "state"
         ] == "invalidated"
+
+    asyncio.run(scenario())
+
+
+def test_persisted_observation_cannot_be_rewritten_for_approval():
+    from copy import deepcopy
+
+    async def scenario():
+        control, store = service()
+        instrument = FTMO_REGISTRY.resolve("AAPL")
+        original = await persist_proof(control, "AAPL", NOW)
+        altered = deepcopy(original)
+        altered["market_price_observation"]["price"] = "2499"
+        with pytest.raises(ValueError, match="observed market price evidence"):
+            await validate_shared_evidence(store, instrument, altered, NOW)
+        assert await validate_shared_evidence(store, instrument, original, NOW)
 
     asyncio.run(scenario())

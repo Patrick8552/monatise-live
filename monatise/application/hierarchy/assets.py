@@ -248,12 +248,17 @@ class AssetHierarchyAnalysis:
                     prior = await store.get(SIGNALS, proof["bundle_id"])
                     expiry = result["expires_at"]
                     if prior:
-                        if prior.value["evidence"] != proof or any(
-                            str(prior.value[key]) != str(result[field])
-                            for key, field in (
-                                ("entry", "entry"),
-                                ("stop", "stop_loss"),
-                                ("target", "target"),
+                        if (
+                            prior.value["evidence"] != proof
+                            or prior.value.get("market_price_observation")
+                            != result.get("market_price_observation")
+                            or any(
+                                str(prior.value[key]) != str(result[field])
+                                for key, field in (
+                                    ("entry", "entry"),
+                                    ("stop", "stop_loss"),
+                                    ("target", "target"),
+                                )
                             )
                         ):
                             await self.invalidate(instrument)
@@ -280,6 +285,9 @@ class AssetHierarchyAnalysis:
                                 "stop": result["stop_loss"],
                                 "target": result["target"],
                                 "take_profit_plan": result.get("take_profit_plan"),
+                                "market_price_observation": result[
+                                    "market_price_observation"
+                                ],
                             },
                             expected_version=prior.version if prior else 0,
                         )
@@ -566,6 +574,23 @@ class AssetHierarchyAnalysis:
             risk = bundle.risk_inputs
             current_price = state.snapshots[POLICY.entry].latest_finalized.close
             result["current_price"] = current_price
+            entry_candle = state.snapshots[POLICY.entry].latest_finalized
+            result["market_observed_at"] = entry_candle.scheduled_close_time.isoformat()
+            result["market_price_observation"] = {
+                "price": current_price,
+                "source": provider,
+                "kind": "closed_candle",
+                "timeframe": POLICY.entry,
+                "observed_at": result["market_observed_at"],
+            }
+            result["entry_zone"] = {
+                "low": risk.entry_zone_low,
+                "high": risk.entry_zone_high,
+            }
+            result["entry_zone_low"], result["entry_zone_high"] = (
+                risk.entry_zone_low,
+                risk.entry_zone_high,
+            )
             if not risk.entry_zone_low <= current_price <= risk.entry_zone_high:
                 result.update(
                     setup_status="awaiting_entry_zone",
@@ -598,12 +623,6 @@ class AssetHierarchyAnalysis:
                     "publication_valid": True,
                     "entry": risk.reference_entry,
                     "current_price": current_price,
-                    "entry_zone": {
-                        "low": risk.entry_zone_low,
-                        "high": risk.entry_zone_high,
-                    },
-                    "entry_zone_low": risk.entry_zone_low,
-                    "entry_zone_high": risk.entry_zone_high,
                     "stop_loss": risk.final_stop,
                     "structural_invalidation": risk.structural_invalidation,
                     "target": risk.target_liquidity,

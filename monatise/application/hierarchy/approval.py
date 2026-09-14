@@ -53,6 +53,9 @@ async def validate_shared_evidence(
     current = await store.get(CURRENT, instrument.ftmo_symbol)
     if record is None or record.value.get("evidence") != dict(proof):
         raise ValueError("shared hierarchy proof is missing or changed")
+    observation = record.value.get("market_price_observation")
+    if not observation or payload.get("market_price_observation") != observation:
+        raise ValueError("observed market price evidence is missing or changed")
     if (
         current is None
         or current.value.get("bundle_id") != proof["bundle_id"]

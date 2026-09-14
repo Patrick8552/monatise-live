@@ -1,6 +1,6 @@
 # Shared analysis timeframe policy
 
-Stocks and indices now consume the existing crypto hierarchy through `hierarchy/policy.py`, `ShadowHierarchyCoordinator`, and `HierarchyLayerEvaluator`. Crypto's analytical decisions, defaults, candle confirmation, and risk construction are unchanged. The policy extraction adds metadata to its diagnostic output.
+Stocks and indices now consume the existing crypto hierarchy through `hierarchy/policy.py`, `ShadowHierarchyCoordinator`, and `HierarchyLayerEvaluator`. Crypto's timeframe roles, analytical engines, defaults, candle confirmation, and risk construction are unchanged. The policy extraction adds metadata to its diagnostic output.
 
 | Role | Shared timeframe | Existing lifetime |
 |---|---|---|
@@ -29,7 +29,9 @@ The service uses the same coordinator boundary scheduling and two-observation cl
 
 Manual analysis normalization and scanner notifications carry the policy and role metadata. H1, M15, M5, and M1 evidence flows into the proposal and execution intent rather than being reconstructed from a notification string.
 
-The actual closed M1 market price must be inside the proposed entry zone; a clamped reference entry cannot replace it to qualify a setup.
+The observed market price and the permitted entry zone are independent facts. Strategy calculations may propose an entry inside a zone, but must never overwrite an observed price with that planned entry, a zone edge, or a midpoint. If the actual closed M1 price is outside the zone, the stock/index result preserves both the observed price (with source, timeframe, and timestamp) and the unchanged zone while waiting. A missing observation remains unavailable.
+
+Telegram normalization enforces this across crypto, stocks, and indices: it never infers market price from a planned entry, and missing/invalid observations block execution. Notifications label observed market price and permitted entry zone separately. Approval records retain the observation separately from the planned analysis entry and native MT5 executable Bid/Ask.
 
 A stock/index analysis signal must match its persisted hierarchy proof: exact parent chain, symbol, policy, M1 entry evidence, direction, levels, and target plan. Expiry is capped by the crypto signal lifetime, parent expiries, and session close. Re-evaluation cannot extend an existing bundle's lifetime. Compare-and-swap persistence prevents an older analysis from overwriting a concurrent invalidation.
 

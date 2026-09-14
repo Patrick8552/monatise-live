@@ -340,8 +340,10 @@ class HierarchyLayerEvaluator:
             target = layer.liquidity.nearest_sell_side.price if layer.liquidity.nearest_sell_side else min(item.low for item in layer.market.candles[-20:])
         low, high = (zone.lower_bound, zone.upper_bound) if zone is not None else (price * 0.999, price * 1.001)
         atr = self._atr(refinement.market.candles)
-        reference_entry = min(max(price, low), high)
-        return self.risk_builder.build(direction=direction, entry_zone_low=low, entry_zone_high=high, structural_invalidation=swing, target_liquidity=target, atr=atr, movement_tolerance_pct=0.002, expires_at=now + POLICY.signal_lifetime, reference_entry=reference_entry)
+        # This is a proposed strategy entry. The observed market price remains
+        # `price` / refinement.market.price and must never be replaced by it.
+        proposed_entry = min(max(price, low), high)
+        return self.risk_builder.build(direction=direction, entry_zone_low=low, entry_zone_high=high, structural_invalidation=swing, target_liquidity=target, atr=atr, movement_tolerance_pct=0.002, expires_at=now + POLICY.signal_lifetime, reference_entry=proposed_entry)
 
     @staticmethod
     def _atr(candles: tuple[Candle, ...], window: int = 14) -> float:

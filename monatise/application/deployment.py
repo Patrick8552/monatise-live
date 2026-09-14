@@ -2149,6 +2149,7 @@ class OrchestrationRuntime:
             "fibonacci", "order_flow", "trigger", "open_interest", "funding_rate", "liquidations",
             "cvd", "long_short_ratio", "provider_observed_at", "analysis_sources",
             "timeframe_policy", "analysis_timeframe", "setup_timeframe", "confirmation_timeframe", "trigger_timeframe", "entry_timeframe", "evidence_bundle",
+            "market_price_observation",
             "provider_consensus", "fallback_status", "data_quality", "ftmo_execution_quote",
         ) if analysis.get(key) is not None}
         proposal_arguments = {

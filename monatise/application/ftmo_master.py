@@ -867,6 +867,7 @@ class FTMOMasterControlService:
                         "liquidity": analysis["liquidity"], "market_structure": analysis["structure"],
                         "supply_demand": analysis["supply_demand"], "fibonacci": analysis["fibonacci"],
                         "order_flow": analysis["order_flow"], "evidence_bundle": analysis.get("evidence_bundle"),
+                        "market_price_observation": analysis.get("market_price_observation"),
                     }, now=observed,
                 )
             except FTMOMasterError as exc:
@@ -2727,6 +2728,7 @@ def format_proposal(
 ) -> str:
     evidence = proposal.get("evidence_bundle") or {}
     hierarchy = evidence.get("evidence_bundle") or evidence
+    observation = evidence.get("market_price_observation") or {}
     if not approval_available:
         return "\n".join((
             CONTEXT_ONLY,
@@ -2752,7 +2754,9 @@ def format_proposal(
               if hierarchy.get("timeframe_policy") else ()),
             f"Session: {proposal.get('market_session') or 'UNKNOWN'} | Checked: {proposal.get('session_checked_at') or 'UNKNOWN'}",
             f"Market: {'OPEN' if proposal.get('market_open') is True else 'CLOSED' if proposal.get('market_open') is False else 'UNKNOWN'} | Broker break: {proposal.get('broker_break_proximity') or 'UNKNOWN'}",
-            f"Analysis reference price: {proposal.get('analysis_price') or proposal['entry']}",
+            f"Planned analysis entry: {proposal.get('analysis_price') or proposal['entry']}",
+            *((f"Observed analysis market price: {observation['price']} | {observation.get('source') or 'unknown source'} | {observation.get('kind') or 'reference'} | observed {observation.get('observed_at') or 'time unavailable'}",)
+              if observation.get("price") is not None else ()),
             f"Executable entry: {proposal['entry']}",
             *((
                 f"Gold price allowance: up to ${proposal['price_guard']['maximum_adverse_deviation']} per ounce worse than {proposal['price_guard']['reference']}; better prices allowed within the setup.",

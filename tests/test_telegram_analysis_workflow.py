@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta, timezone
-from types import SimpleNamespace
 
 import pytest
 
@@ -341,3 +340,40 @@ def test_crypto_analysis_and_ftmo_execution_symbols_remain_separate():
     assert resolved.analysis_instrument == "BTCUSDT"
     assert resolved.execution_registry_symbol == "BTCUSD"
     assert resolved.asset_class is FTMOAssetClass.CRYPTO
+
+
+@pytest.mark.parametrize('symbol', ['BTC', 'AAPL', 'US100.cash'])
+@pytest.mark.parametrize('observed,available,in_zone', [
+    (None, False, False), (99, True, False), (101, True, True), (105, True, False),
+    (float('nan'), False, False), (0, False, False), (True, False, False), ('unavailable', False, False),
+])
+def test_observed_market_price_is_never_replaced_by_planned_entry(symbol, observed, available, in_zone):
+    from copy import deepcopy
+    import math
+    raw = {
+        'classification': 'trend', 'direction': 'long', 'decision': 'BUY_WATCH',
+        'entry_confirmation_status': 'confirmed', 'setup_status': 'confirmed',
+        'entry': 101, 'entry_zone': {'low': 100, 'high': 102},
+        'invalidation': 90, 'stop_loss': 90, 'target': 110, 'targets': [110],
+        'expires_at': (NOW + timedelta(minutes=15)).isoformat(),
+    }
+    field = 'current_reference_price' if symbol == 'BTC' else 'current_price'
+    if observed is not None:
+        raw[field] = observed
+    before = deepcopy(raw)
+    result = normalize_analysis(raw, resolve_telegram_instrument(symbol, FTMO_REGISTRY),
+        request_id='price-facts', analysis_id='a', requested_at=NOW, started_at=NOW,
+        completed_at=NOW, session={})
+    assert result['entry'] == 101 and result['entry_zone'] == {'low': 100, 'high': 102}
+    if isinstance(observed, float) and math.isnan(observed):
+        assert math.isnan(result['current_reference_price'])
+    else:
+        assert result['current_reference_price'] == observed
+        assert raw == before
+    assert result['market_price_available'] is available
+    assert result['reference_price_in_entry_zone'] is in_zone
+    assert result['executable'] is in_zone
+    if not available:
+        assert 'WAITING FOR VERIFIED MARKET PRICE' in result['decision']
+    elif not in_zone:
+        assert 'WAITING FOR ENTRY ZONE' in result['decision']
