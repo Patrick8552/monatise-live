@@ -55,9 +55,9 @@ class FlashAlphaAdapter:
     def _context(self, symbol: str) -> dict[str, Any]:
         ticker = normalize_flashalpha_symbol(symbol)
         encoded = quote(ticker, safe="")
-        gex = self._get(f"/v1/exposure/gex/{encoded}")
+        gex, gex_metadata = self._get_retry(f"/v1/exposure/gex/{encoded}")
         _raise_for_provider_payload(gex, expected=("underlying_price", "gamma_flip", "net_gex"))
-        levels_response = self._get(f"/v1/exposure/levels/{encoded}")
+        levels_response, levels_metadata = self._get_retry(f"/v1/exposure/levels/{encoded}")
         _raise_for_provider_payload(levels_response, expected=("levels", "underlying_price", "gamma_flip", "call_wall", "put_wall"))
         payload = gex if isinstance(gex, dict) else {}
         levels_payload = levels_response if isinstance(levels_response, dict) else {}
@@ -66,10 +66,13 @@ class FlashAlphaAdapter:
             "source": "FlashAlpha",
             "symbol": ticker,
             "as_of": levels_payload.get("as_of") or payload.get("as_of"),
-            "underlying_price": levels_payload.get("underlying_price") or payload.get("underlying_price"),
-            "gamma_flip": _level_value(levels.get("gamma_flip") or levels_payload.get("gamma_flip") or payload.get("gamma_flip")),
-            "call_wall": _level_value(levels.get("call_wall") or levels_payload.get("call_wall") or payload.get("call_wall")),
-            "put_wall": _level_value(levels.get("put_wall") or levels_payload.get("put_wall") or payload.get("put_wall")),
+            "underlying_price": _first_present("underlying_price", levels_payload, payload),
+            # Explicit null/zero means unavailable/invalid. Never revive a level
+            # withheld by the levels endpoint from a different endpoint.
+            "gamma_flip": _level_value(_first_present("gamma_flip", levels, levels_payload, payload)),
+            "gamma_flip_status": _first_present("gamma_flip_status", levels, levels_payload, payload),
+            "call_wall": _level_value(_first_present("call_wall", levels, levels_payload, payload)),
+            "put_wall": _level_value(_first_present("put_wall", levels, levels_payload, payload)),
             "zero_dte_magnet": levels.get("zero_dte_magnet"),
             "max_positive_gamma": _level_value(levels.get("max_positive_gamma")),
             "max_negative_gamma": _level_value(levels.get("max_negative_gamma")),
@@ -77,6 +80,10 @@ class FlashAlphaAdapter:
             "positioning_levels": {key: levels.get(key, levels_payload.get(key, [])) for key in ("resistance_levels", "support_levels", "gamma_levels")},
             "net_gex": payload.get("net_gex"),
             "net_gex_label": payload.get("net_gex_label"),
+            "provider_evidence": {
+                "gex": _response_evidence(payload, gex_metadata),
+                "levels": _response_evidence(levels_payload, levels_metadata),
+            },
         }
 
     def account(self) -> dict[str, Any]:
@@ -152,11 +159,20 @@ class FlashAlphaAdapter:
         return {"configured": self.configured, **self.telemetry}
 
     def _get(self, path: str, query: dict[str, Any] | None = None) -> Any:
+        return self._get_retry(path, query)[0]
+
+    def _get_retry(self, path: str, query: dict[str, Any] | None = None) -> tuple[Any, dict[str, Any]]:
+        statuses = []
         for attempt in range(3):
             try:
-                payload, _metadata = self._get_with_metadata(path, query)
-                return payload
+                payload, metadata = self._get_with_metadata(path, query)
+                return payload, {**metadata, "attempts": attempt + 1,
+                                 "http_statuses": [*statuses, metadata["http_status"]]}
             except FlashAlphaAdapterError as exc:
+                statuses.append(exc.status_code)
+                exc.attempts = attempt + 1
+                exc.http_statuses = statuses.copy()
+                exc.endpoint = next((name for name in ("gex", "levels") if f"/{name}/" in path), "other")
                 wait = exc.rate_limit.get("retry_after_seconds", 1)
                 if (exc.status_code != 429 or attempt == 2
                         or exc.rate_limit.get("remaining") == 0
@@ -216,8 +232,19 @@ def normalize_flashalpha_symbol(symbol: str) -> str:
 
 def _level_value(value: Any) -> Any:
     if isinstance(value, dict):
-        return value.get("strike") or value.get("level") or value.get("value")
+        return next((value[key] for key in ("strike", "level", "value") if key in value), None)
     return value
+
+
+def _first_present(key: str, *sources: dict[str, Any]) -> Any:
+    return next((source[key] for source in sources if key in source), None)
+
+
+def _response_evidence(payload: dict[str, Any], metadata: dict[str, Any]) -> dict[str, Any]:
+    levels = payload.get("levels") if isinstance(payload.get("levels"), dict) else {}
+    return {**metadata, **{key: payload.get(key) for key in ("symbol", "as_of", "data_as_of", "endpoint_version")},
+            "gamma_flip_status": _first_present("gamma_flip_status", levels, payload),
+            "gamma_flip": _level_value(_first_present("gamma_flip", levels, payload))}
 
 
 def _raise_for_provider_payload(payload: Any, *, expected: tuple[str, ...]) -> None:

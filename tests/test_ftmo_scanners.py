@@ -36,6 +36,18 @@ def test_registry_contains_complete_current_ftmo_scanner_universes():
     assert all(item.source and item.registry_version and item.last_verified_at.tzinfo for item in FTMO_REGISTRY.all())
 
 
+def test_verified_spcx_route_and_air_france_identity_do_not_enable_unsupported_european_stocks():
+    spcx = FTMO_REGISTRY.resolve('SPCX')
+    assert (spcx.provider_symbol, spcx.exchange, spcx.market_data_provider) == ('SPCX', 'NASDAQ', 'flashalpha')
+    air_france = FTMO_REGISTRY.resolve('AIRF')
+    assert air_france.underlying_symbol == 'AF.PA'
+    assert air_france.market_data_provider == 'unavailable'
+    stocks = FTMO_REGISTRY.for_asset_class(FTMOAssetClass.STOCK)
+    assert len([s for s in stocks if s.market_data_provider == 'flashalpha']) == 46
+    assert {s.ftmo_symbol for s in stocks if s.market_data_provider == 'unavailable'} == {
+        'ADSGn', 'AIRF', 'ALVG', 'BAYGn', 'DBKGn', 'IBE', 'LVMH', 'SAN', 'SIEGn', 'VOWG_p', 'TTE', 'BMW', 'MBG'}
+
+
 @pytest.mark.parametrize("asset_class", tuple(FTMOAssetClass))
 def test_every_enabled_ftmo_instrument_can_enter_its_scanner(asset_class):
     universe = FTMO_REGISTRY.for_asset_class(asset_class)

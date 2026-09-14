@@ -22,6 +22,7 @@ from monatise.application.ftmo_registry import FTMOAssetClass, FTMOInstrument, F
 from monatise.application.hierarchy.assets import AssetHierarchyAnalysis
 from monatise.application.hierarchy.broker_candles import is_index
 from monatise.application.hierarchy.policy import SHARED_TIMEFRAME_POLICY as POLICY
+from monatise.application.provider_evidence import EvidenceValidationError, FEEDS, flashalpha_diagnostics, gamma_status
 
 
 FAILURE_CODES = {
@@ -32,6 +33,10 @@ FAILURE_CODES = {
 
 
 def _failure_code(error: BaseException) -> str:
+    if getattr(error, "status_code", None) == 429 or getattr(error, "code", None) == "rate_limited":
+        return "provider_rate_limited"
+    if getattr(error, "status_code", None) in {403, 404}:
+        return "provider_unsupported"
     detail = str(error).casefold()
     if "429" in detail or "rate" in detail and "limit" in detail:
         return "provider_rate_limited"
@@ -139,22 +144,50 @@ def validate_flashalpha_context(
     now: datetime,
     maximum_age: timedelta,
 ) -> datetime:
+    def reject(message, field, issue, endpoint="context"):
+        raise EvidenceValidationError(message, field=field, issue=issue, endpoint=endpoint)
+
     if not isinstance(context, dict) or str(context.get("symbol") or "").upper() != provider_symbol.upper():
-        raise ValueError("provider_incomplete: futures symbol identity mismatch")
+        reject("provider_incomplete: futures symbol identity mismatch", "symbol", "identity_mismatch")
     as_of = _parse_time(context.get("as_of"))
     if as_of is None:
-        raise ValueError("provider_incomplete: missing provider timestamp")
+        reject("provider_incomplete: missing provider timestamp", "as_of", "missing_or_malformed")
     if as_of > now:
-        raise ValueError("provider_incomplete: future provider timestamp")
+        reject("provider_incomplete: future provider timestamp", "as_of", "future")
     if now - as_of > maximum_age:
-        raise ValueError("provider_stale: futures intelligence is stale")
+        reject("provider_stale: futures intelligence is stale", "as_of", "stale")
+    # A newly generated response must not disguise an old source feed or a
+    # stale/mismatched second endpoint. Legacy normalized replay data retains
+    # its existing snapshot validation when endpoint metadata is absent.
+    for endpoint, raw in (context.get("provider_evidence") or {}).items():
+        if endpoint not in {"gex", "levels"}:
+            continue
+        if not isinstance(raw, dict):
+            reject(f"provider_incomplete: flashalpha {endpoint} malformed evidence", "response", "malformed", endpoint)
+        if str(raw.get("symbol") or "").upper() != provider_symbol.upper():
+            reject(f"provider_incomplete: flashalpha {endpoint} symbol identity mismatch", "symbol", "identity_mismatch", endpoint)
+        clocks = {"as_of": raw.get("as_of")}
+        feeds = raw.get("data_as_of")
+        if feeds is not None and not isinstance(feeds, dict):
+            reject(f"provider_incomplete: flashalpha {endpoint} invalid data_as_of", "data_as_of", "malformed", endpoint)
+        relevant_feeds = FEEDS[4:] if provider_symbol.endswith("=F") else FEEDS[:2]
+        clocks.update({f"data_as_of.{key}": feeds[key] for key in relevant_feeds if isinstance(feeds, dict) and feeds.get(key) is not None})
+        for field, value in clocks.items():
+            parsed = _parse_time(value)
+            if parsed is None or parsed > now:
+                reject(f"provider_incomplete: flashalpha {endpoint} invalid {field}", field, "future" if parsed else "missing_or_malformed", endpoint)
+            if now - parsed > maximum_age:
+                reject(f"provider_stale: flashalpha {endpoint} stale {field}", field, "stale", endpoint)
+    if "gamma_flip_status" in context and context["gamma_flip_status"] != "available":
+        status = gamma_status(context["gamma_flip_status"])
+        reject(f"provider_incomplete: flashalpha gamma_flip unavailable ({status})", "gamma_flip", status, "levels")
     for key in ("underlying_price", "gamma_flip", "call_wall", "put_wall"):
         value = context.get(key)
         if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(float(value)) or float(value) <= 0:
-            raise ValueError(f"provider_incomplete: invalid {key}")
+            reject(f"provider_incomplete: invalid {key}", key, "invalid_number")
     net_gex = context.get("net_gex")
     if not isinstance(net_gex, (int, float)) or isinstance(net_gex, bool) or not math.isfinite(float(net_gex)):
-        raise ValueError("provider_incomplete: invalid net_gex")
+        reject("provider_incomplete: invalid net_gex", "net_gex", "invalid_number")
     return as_of
 
 
@@ -163,6 +196,13 @@ async def _optional_call(call: Any) -> tuple[Any | None, str | None]:
         return await asyncio.to_thread(call), None
     except Exception as error:  # provider adapters expose sanitized error types
         return None, _failure_code(error)
+
+
+async def _flashalpha_call(adapter, symbol):
+    try:
+        return await asyncio.to_thread(adapter.context, symbol), None, None
+    except Exception as error:
+        return None, _failure_code(error), flashalpha_diagnostics(error=error)
 
 
 def _insufficient(
@@ -210,7 +250,7 @@ class StockMarketIntelligenceCoordinator:
         if instrument is None or instrument.asset_class is not FTMOAssetClass.STOCK or instrument.market_data_provider != "flashalpha":
             return {**_insufficient(ticker, "stock", [], "provider_unsupported", now=observed), **POLICY.metadata()}
         flash, quiver, finnhub = await asyncio.gather(
-            _optional_call(lambda: self.flashalpha.context(ticker)),
+            _flashalpha_call(self.flashalpha, ticker),
             _optional_call(lambda: self.quiver.context(normalize_quiver_symbol(ticker)))
             if enrichment_index is None or enrichment_index < max(0, int(self.environment.get("MONATISE_STOCK_QUIVER_CAP_PER_CYCLE", "6")))
             else asyncio.sleep(0, result=(None, "cycle_quota_reserved")),
@@ -218,7 +258,7 @@ class StockMarketIntelligenceCoordinator:
             if enrichment_index is None or enrichment_index < max(0, int(self.environment.get("MONATISE_STOCK_FINNHUB_CAP_PER_CYCLE", "6")))
             else asyncio.sleep(0, result=(None, "cycle_quota_reserved")),
         )
-        context, error = flash
+        context, error, diagnostics = flash
         error_detail = None
         # Providers can stamp a response while the request is in flight. Compare
         # against receipt time, never the earlier request-start time. An explicit
@@ -231,6 +271,8 @@ class StockMarketIntelligenceCoordinator:
             except ValueError as exc:
                 error = str(exc).split(":", 1)[0]
                 error_detail = str(exc)  # Fixed validation messages, never a provider exception.
+                diagnostics = flashalpha_diagnostics(context, exc)
+        diagnostics = diagnostics or flashalpha_diagnostics(context)
         sources = [
             _source("flashalpha", "positioning_context", "failed" if error else "used", ticker,
                     evidence=[] if error else ["verified positioning context at shared analysis layer"], failure_reason=error_detail or error),
@@ -240,10 +282,11 @@ class StockMarketIntelligenceCoordinator:
         ]
         if error:
             await self.hierarchy.invalidate(instrument)
-            return {**_insufficient(ticker, "stock", sources, error, now=observed), "reason_detail": error_detail, **POLICY.metadata(), "analysis_provider": "alpaca", "analysis_instrument": ticker}
+            return {**_insufficient(ticker, "stock", sources, error, now=observed), "reason_detail": error_detail, "provider_diagnostics": diagnostics, **POLICY.metadata(), "analysis_provider": "alpaca", "analysis_instrument": ticker}
         quiver_score = int((((quiver[0] or {}).get("summary") or {}).get("score") or 0))
         result = await self.hierarchy.analyse(instrument, context={**context, "quiver_score": quiver_score}, now=now)
         result["analysis_sources"] += sources
+        result["provider_diagnostics"] = diagnostics
         result["supplemental_intelligence"] = result["additional_context"] = {
             "flashalpha": context, "quiver": quiver[0] or {}, "finnhub": finnhub[0] or {},
         }
@@ -283,7 +326,7 @@ class FuturesMarketIntelligenceCoordinator:
         if instrument.asset_class is not FTMOAssetClass.FUTURES_LINKED or not instrument.futures_symbol:
             raise ValueError("instrument is not a verified futures-linked FTMO CFD")
         provider_symbol = f"{instrument.futures_symbol}=F"
-        context, error = await _optional_call(lambda: self.flashalpha.context(provider_symbol))
+        context, error, diagnostics = await _flashalpha_call(self.flashalpha, provider_symbol)
         observed = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
         reason = error
         reason_detail = None
@@ -297,6 +340,8 @@ class FuturesMarketIntelligenceCoordinator:
             except ValueError as validation_error:
                 reason = "provider_stale" if str(validation_error).startswith("provider_stale") else "provider_incomplete"
                 reason_detail = str(validation_error)
+                diagnostics = flashalpha_diagnostics(context, validation_error)
+        diagnostics = diagnostics or flashalpha_diagnostics(context)
 
         sources = [
             _source("alpaca", "market_data", "not_applicable", None, requested=False, failure_reason="provider_unsupported"),
@@ -315,6 +360,7 @@ class FuturesMarketIntelligenceCoordinator:
                 await self.hierarchy.invalidate(instrument)
             result = _insufficient(instrument.ftmo_symbol, FTMOAssetClass.FUTURES_LINKED.value, sources, reason, now=observed)
             result["reason_detail"] = reason_detail
+            result["provider_diagnostics"] = diagnostics
             result.update({
                 "ftmo_symbol": instrument.ftmo_symbol,
                 "underlying_market": instrument.underlying_market,
@@ -330,6 +376,7 @@ class FuturesMarketIntelligenceCoordinator:
         if is_index(instrument):
             analysis = await self.hierarchy.analyse(instrument, context=context, now=now)
             analysis["analysis_sources"] += sources
+            analysis["provider_diagnostics"] = diagnostics
             analysis.update({"futures_symbol": instrument.futures_symbol, "micro_futures_symbol": instrument.micro_futures_symbol,
                              "underlying_market": instrument.underlying_market, "provider_consensus": "PARTIAL",
                              "fallback_status": "no_snapshot_only_fallback"})
@@ -337,6 +384,7 @@ class FuturesMarketIntelligenceCoordinator:
         analysis = build_flashalpha_futures_analysis(context)
         validity_minutes = max(5, int(self.environment.get("MONATISE_FUTURES_ON_DEMAND_VALIDITY_MINUTES", "30")))
         analysis.update({
+            "provider_diagnostics": diagnostics,
             "ftmo_symbol": instrument.ftmo_symbol,
             "underlying_market": instrument.underlying_market,
             "futures_symbol": instrument.futures_symbol,

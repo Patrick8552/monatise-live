@@ -45,6 +45,7 @@ from monatise.application.market_intelligence import (
     StockMarketIntelligenceCoordinator,
     validate_flashalpha_context,
 )
+from monatise.application.provider_evidence import flashalpha_diagnostics
 from monatise.application.stock_universe import StockCandidate, StockUniverseConfiguration, rank_stock_universe
 from monatise.application.universe_discovery import rank_significant_futures_universe
 from monatise.application.ftmo_registry import FTMOAssetClass, FTMOInstrumentRegistry, FTMO_REGISTRY
@@ -2000,7 +2001,8 @@ class OrchestrationRuntime:
                 except Exception as exc:
                     failures.append({"symbol": root, "error_type": type(exc).__name__,
                                      "reason_code": getattr(exc, "code", "provider_unavailable"),
-                                     "http_status": getattr(exc, "status_code", None)})
+                                     "http_status": getattr(exc, "status_code", None),
+                                     "provider_diagnostics": flashalpha_diagnostics(error=exc)})
                 finally:
                     queue.task_done()
 
@@ -2016,6 +2018,7 @@ class OrchestrationRuntime:
                 rejected_inputs.append(stamp_analysis({"ftmo_symbol": instrument.ftmo_symbol,
                     "pipeline_stage": "DATA_REJECTED", "decision": "INSUFFICIENT_MARKET_DATA",
                     "reason_code": failure.get("reason_code", "provider_quota_deferred"),
+                    "provider_diagnostics": failure.get("provider_diagnostics"),
                     "reasons": [failure.get("reason_code", "provider_quota_deferred")],
                     "analysis_sources": [{"provider": "flashalpha", "status": "failed",
                         "failure_reason": failure.get("reason_code", "provider_quota_deferred")}]}, instrument.ftmo_symbol))
@@ -2033,12 +2036,14 @@ class OrchestrationRuntime:
                 rejected_inputs.append(stamp_analysis({"ftmo_symbol": instrument.ftmo_symbol,
                     "pipeline_stage": "DATA_REJECTED", "decision": "INSUFFICIENT_MARKET_DATA",
                     "reason_code": str(exc).split(":", 1)[0], "reasons": [str(exc)]}, instrument.ftmo_symbol))
+                rejected_inputs[-1]["provider_diagnostics"] = flashalpha_diagnostics(context, exc)
                 if is_index(instrument):
                     await self._shared_asset_hierarchy().invalidate(instrument)
                 continue
             if is_index(instrument):
                 analysis = await self._shared_asset_hierarchy().analyse(instrument, context=context)
                 analysis.update({"futures_symbol": instrument.futures_symbol, "micro_futures_symbol": instrument.micro_futures_symbol,
+                                 "provider_diagnostics": flashalpha_diagnostics(context),
                                  "underlying_market": instrument.underlying_market, "provider_consensus": "PARTIAL",
                                  "fallback_status": "no_snapshot_only_fallback"})
                 stamp_analysis(analysis, instrument.ftmo_symbol)
@@ -2046,6 +2051,7 @@ class OrchestrationRuntime:
                 continue
             analysis = build_flashalpha_futures_analysis(context)
             analysis.update({
+                "provider_diagnostics": flashalpha_diagnostics(context),
                 "ftmo_symbol": instrument.ftmo_symbol,
                 "underlying_market": instrument.underlying_market,
                 "futures_symbol": instrument.futures_symbol,
