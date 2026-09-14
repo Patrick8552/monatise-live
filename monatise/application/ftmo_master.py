@@ -22,7 +22,9 @@ from typing import Any, Mapping
 
 from monatise.application.take_profit import MultiTPConfiguration, TakeProfitPlan, allocate_volume, convert_plan, revalidate_plan, route_for, format_targets
 from monatise.application.position_management import PositionManagementService
-from monatise.application.entry_policy import entry_order_type, PENDING_LEASE_SECONDS
+from monatise.application.entry_policy import (
+    entry_order_type, PENDING_LEASE_SECONDS, PENDING_ORDER_LIFETIME_SECONDS, PENDING_ENTRY_VERSION,
+)
 
 from monatise.application.hierarchy.approval import requires_shared_hierarchy, validate_shared_evidence
 from monatise.application.market_session import classify_market_session, session_allows_execution
@@ -1791,8 +1793,8 @@ class FTMOMasterControlService:
 
     @staticmethod
     def _require_pending_capability(bridge, quote):
-        if bridge.get("pending_entry_version") != 1 or not int(quote.get("expiration_mode", 0)) & 4:
-            raise FTMOMasterError("managed pending entry requires EA 1.20 and broker specified expiration support")
+        if bridge.get("pending_entry_version") != PENDING_ENTRY_VERSION or not int(quote.get("expiration_mode", 0)) & 4:
+            raise FTMOMasterError("managed pending entry requires EA 1.21 and broker specified expiration support")
 
     def _entry_attempt(self, proposal, quote, *, preview=False):
         result = dict(proposal)
@@ -2477,7 +2479,20 @@ class FTMOMasterControlService:
             command["payload"].update({key: proposal[key] for key in ("entry_zone_low", "entry_zone_high", "setup_invalidation_price")})
             command["payload"].update(entry_policy_version="1", approved_risk_budget=proposal["risk_amount"], minimum_reward_risk=str(self.configuration.minimum_reward_risk))
             if proposal["order_type"] != "market":
-                command["payload"].update(pending_entry_version="1", pending_lease_epoch=str(int(min(proposal_expires_at, observed + timedelta(seconds=PENDING_LEASE_SECONDS)).timestamp())))
+                native_expiry = min(
+                    proposal_expires_at,
+                    observed + timedelta(seconds=PENDING_ORDER_LIFETIME_SECONDS),
+                    await self._validate_entry_source(proposal, observed),
+                )
+                if readiness.get("execution_session_expiry"):
+                    native_expiry = min(native_expiry, _timestamp(readiness["execution_session_expiry"], "execution session expiry"))
+                if proposal.get("take_profit_plan"):
+                    native_expiry = min(native_expiry, TakeProfitPlan.from_dict(proposal["take_profit_plan"]).expires_at)
+                command["payload"].update(
+                    pending_entry_version=str(PENDING_ENTRY_VERSION),
+                    pending_lease_epoch=str(int(min(native_expiry, observed + timedelta(seconds=PENDING_LEASE_SECONDS)).timestamp())),
+                    pending_native_expires_epoch=str(int(native_expiry.timestamp())),
+                )
         if proposal.get("take_profit_plan"):
             plan = TakeProfitPlan.from_dict(proposal["take_profit_plan"])
             command["payload"].update(multi_tp_version="1", target_count=str(len(plan.targets)), minimum_target_rr=str(plan.minimum_rr), minimum_target_increment_r=str(plan.minimum_increment_r))

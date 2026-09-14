@@ -1,4 +1,4 @@
-"""Short, revocable broker-expiry leases for explicitly approved pending entries."""
+"""Short local eligibility leases, separate from the approved broker expiry."""
 from datetime import datetime, timedelta
 from decimal import Decimal
 
@@ -42,6 +42,13 @@ async def pending_entry_leases(master, snapshot, now):
                     or command.get("expected_server", "").casefold() != snapshot["server"].casefold()
                     or command.get("status") not in {"delivered", "reconciled", "broker_uncertain"}):
                 raise ValueError("pending order has no matching approved command")
+            native_deadline = datetime.fromtimestamp(int(command["payload"]["pending_native_expires_epoch"]), tz=now.tzinfo)
+            expires = min(expires, native_deadline)
+            if now >= expires:
+                raise ValueError("approved pending order expired")
+            native_expiration = int(order["expiration_epoch"])
+            if native_expiration <= int(now.timestamp()) or native_expiration > int(native_deadline.timestamp()):
+                raise ValueError("broker pending expiry differs from the approved deadline")
             for field in ("symbol", "side", "order_type", "entry", "stop_loss", "take_profit", "volume", "entry_zone_low", "entry_zone_high", "setup_invalidation_price"):
                 if str(command["payload"].get(field)) != str(proposal.get(field)):
                     raise ValueError("pending proposal differs from signed approval")
@@ -87,7 +94,7 @@ async def pending_entry_leases(master, snapshot, now):
             risk = Decimal(fields["risk_amount"]) * volume / Decimal(fields["volume"])
             if volume > Decimal(fields["volume"]) or risk > Decimal(proposal["risk_amount"]):
                 raise ValueError("pending order exceeds current or approved risk capacity")
-            leases.append(f"{int(order['ticket'])}|{int(min(expires, now + timedelta(seconds=PENDING_LEASE_SECONDS)).timestamp())}")
+            leases.append(f"{int(order['ticket'])}|{int(min(expires, now + timedelta(seconds=PENDING_LEASE_SECONDS)).timestamp())}|{int(expires.timestamp())}")
         except (ValueError, RuntimeError, ArithmeticError, KeyError, TypeError) as exc:
             reason = str(exc)
         if reason:

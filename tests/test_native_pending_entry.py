@@ -27,7 +27,7 @@ const string ACCOUNT_SERVER="server";
 string InpExpectedAccount="123", InpExpectedServer="broker", InpExpectedCurrency="USD", InpBridgeSecret="secret";
 long InpMagicNumber=9, clock_now=1000;
 bool InpExecutionEnabled=true, InpMasterAccountApproved=true, identity=true, permission=true, delete_ok=true, modify_ok=true;
-struct Order {ulong ticket; string comment; long magic=9,type=2,expiry=1015; double entry=100,sl=90,tp=125;};
+struct Order {ulong ticket; string comment; long magic=9,type=2,expiry=1100; double entry=100,sl=90,tp=125;};
 std::vector<Order> orders;
 int selected=0, deleted=0, modified=0;
 std::map<string,double> globals;
@@ -72,31 +72,39 @@ int StringSplit(string s,char c,std::vector<string>&v) {v.clear();size_t a=0,b;w
 void reset() {
  clock_now=1000; identity=permission=delete_ok=modify_ok=InpExecutionEnabled=InpMasterAccountApproved=true;
  orders={{7,"MNP:abcdef"},{8,"MNT:legacy"},{9,"MNP:foreign",77}}; globals.clear(); deleted=modified=0;
- PreparePendingEntry("MNP:abcdef",1100);
- fields={{"pending_manifest_signature","authentic"},{"nonce","nonce"},{"account","123"},{"server","broker"},{"currency","USD"},{"valid_until","1020"},{"leases","7|1020"}};
+ PreparePendingEntry("MNP:abcdef",1100,1015);
+ fields={{"pending_manifest_signature","authentic"},{"nonce","nonce"},{"account","123"},{"server","broker"},{"currency","USD"},{"valid_until","1020"},{"leases","7|1020|1100"}};
 }
 int main() {
- reset(); if(PreparePendingEntry("MNP:abcdef",1200)) return 1; // uncertain submission cannot duplicate
- orders[0].expiry=1008; ApplyPendingManifest("","nonce");
- if(orders[0].expiry!=1020 || modified!=1 || deleted!=0 || orders[0].sl!=90 || orders[0].tp!=125) return 2;
+ reset(); if(PreparePendingEntry("MNP:abcdef",1200,1015)) return 1; // uncertain submission cannot duplicate
+ ApplyPendingManifest("","nonce");
+ if(orders[0].expiry!=1100 || modified!=0 || deleted!=0 || orders[0].sl!=90 || orders[0].tp!=125
+    || globals[PendingKey("MNP:abcdef","lease")]!=1020) return 2;
  reset(); fields["leases"]=""; ApplyPendingManifest("","nonce");
  if(orders.size()!=2 || deleted!=1 || orders[0].ticket!=8 || orders[1].ticket!=9) return 3;
  reset(); delete_ok=false; fields["leases"]=""; ApplyPendingManifest("","nonce");
  if(deleted!=1 || !GlobalVariableCheck(PendingKey("MNP:abcdef","revoked"))) return 4;
- fields["leases"]="7|1020"; ApplyPendingManifest("","nonce"); if(deleted!=2 || modified) return 5;
+ fields["leases"]="7|1020|1100"; ApplyPendingManifest("","nonce"); if(deleted!=2 || modified) return 5;
  delete_ok=true; GuardPendingEntries(false); if(orders.size()!=2 || deleted!=3) return 6;
  reset(); GuardPendingEntries(true); if(orders.size()!=2 || deleted!=1) return 7; // restart cancels only owned pending
- reset(); clock_now=1016; GuardPendingEntries(false); if(deleted!=1) return 8; // offline/native expiry
+ reset(); clock_now=1016; GuardPendingEntries(false); if(deleted!=1) return 8; // local lease expires before broker deadline
  reset(); InpExecutionEnabled=false; GuardPendingEntries(false); if(deleted!=1) return 9;
  reset(); orders[0].expiry=1008; fields["pending_manifest_signature"]="tampered"; ApplyPendingManifest("","nonce"); if(modified || deleted) return 10;
  reset(); orders[0].expiry=1008; ApplyPendingManifest("","replayed-nonce"); if(modified || deleted) return 11;
- reset(); fields["leases"]="7|1200"; ApplyPendingManifest("","nonce"); if(deleted!=1 || modified) return 12;
+ reset(); fields["leases"]="7|1200|1200"; ApplyPendingManifest("","nonce"); if(deleted!=1 || modified) return 12;
  reset(); globals[PendingKey("MNP:abcdef","expiry")]=1005; ApplyPendingManifest("","nonce"); if(deleted!=1) return 13;
  reset(); orders.erase(orders.begin()); ApplyPendingManifest("","nonce"); if(deleted || modified) return 14; // already filled: no close
- reset(); orders[0].expiry=1008; modify_ok=false; ApplyPendingManifest("","nonce"); if(modified!=1 || deleted!=1) return 15;
+ reset(); fields["leases"]="7|1008|1008"; modify_ok=false; ApplyPendingManifest("","nonce"); if(modified!=1 || deleted!=1) return 15;
  reset(); permission=false; fields["leases"]=""; ApplyPendingManifest("","nonce"); if(deleted) return 16;
  permission=true; GuardPendingEntries(false); if(deleted!=1) return 17;
- reset(); fields["leases"]="7|1008"; ApplyPendingManifest("","nonce"); if(orders[0].expiry!=1008 || modified!=1) return 18;
+ reset(); fields["leases"]="7|1008|1008"; ApplyPendingManifest("","nonce"); if(orders[0].expiry!=1008 || modified!=1) return 18;
+ reset(); fields["leases"]="7|1020|1200"; ApplyPendingManifest("","nonce"); if(deleted!=1 || modified) return 19; // never extend approval
+ reset(); globals.erase(PendingKey("MNP:abcdef","lease")); GuardPendingEntries(false); if(deleted!=1) return 20;
+ reset(); if(PreparePendingEntry("MNP:new",2801,1015) || PreparePendingEntry("MNP:new",2800,1021)) return 21;
+ if(!PreparePendingEntry("MNP:new",2800,1020)) return 22;
+ reset(); orders[0].expiry=1200; GuardPendingEntries(false); if(deleted!=1) return 23; // broker deadline tampering
+ reset(); fields["leases"]="7|1020"; ApplyPendingManifest("","nonce"); if(deleted!=1) return 24; // old protocol fails closed
+ reset(); ApplyPendingManifest("","nonce"); clock_now=1021; GuardPendingEntries(false); if(deleted!=1) return 25;
  return 0;
 }
 ''')

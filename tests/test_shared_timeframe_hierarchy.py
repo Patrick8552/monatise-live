@@ -497,7 +497,7 @@ def test_confirmed_shared_setup_flows_through_approval_and_invalidation(
             "timestamp": current.isoformat(),
         }
         await control.accept_bridge_heartbeat(
-            heartbeat(quotes={symbol: quote}, multi_tp_version=1, pending_entry_version=1), now=current
+            heartbeat(quotes={symbol: quote}, multi_tp_version=1, pending_entry_version=2), now=current
         )
         await control.repository.update_control(kill_switch=False)
         proposal = await control.create_signal_proposal(
