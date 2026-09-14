@@ -18,9 +18,10 @@ def stamp_analysis(result, symbol):
 
 
 def analysis_trace(result):
-    fields = ("asset", "ftmo_symbol", "analysis_id", "scanner_run_id", "decision", "direction",
+    fields = ("asset", "symbol", "ftmo_symbol", "publication_id", "setup_state", "trigger_state",
+              "shadow_outcome", "duplicate_blocked", "telegram_publication_failed", "layers_observed", "analysis_id", "scanner_run_id", "decision", "direction",
               "setup_status", "score", "score_threshold", "signal_core_score", "signal_core_evidence",
-              "reason_code", "reasons", "suppression_reasons", "pipeline_stage", "proposal_id",
+              "reason_code", "reason_detail", "reasons", "suppression_reasons", "pipeline_stage", "proposal_id",
               "telegram_message_id", "telegram_publish_status", "timeframe_policy", "analysis_timeframe",
               "confirmation_timeframe", "trigger_timeframe", "generated_at", "expires_at")
     value = {key: result.get(key) for key in fields if result.get(key) is not None}
@@ -50,6 +51,9 @@ def audited_scan(asset_class):
                 result["pipeline_status"] = "degraded" if (
                     result.get("failures") or result.get("analysis_failure_count")
                     or result.get("snapshot_batch_failures")
+                    or result.get("context_only_published")
+                    or any(row.get("pipeline_stage") in {"DATA_REJECTED", "PUBLICATION_FAILED", "CONTEXT_ONLY"}
+                           or row.get("telegram_publication_failed") for row in result.get("results", []))
                     or (result.get("excluded") or {}).get("provider_unavailable_fail_closed")
                 ) else "healthy"
                 record.update(status=result["pipeline_status"], finished_at=result["finished_at"],

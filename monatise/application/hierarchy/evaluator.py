@@ -23,6 +23,23 @@ from monatise.application.hierarchy.models import (
 from monatise.application.hierarchy.risk import StructuralRiskInputBuilder
 from monatise.core.models import Candle
 from monatise.application.hierarchy.policy import SHARED_TIMEFRAME_POLICY as POLICY
+
+
+def risk_rejection_code(error: Exception) -> str:
+    # Only known validation messages become diagnostics; arbitrary exception text
+    # may contain provider payloads or sensitive execution context.
+    return {
+        "1m entry refinement is unavailable": "entry_refinement_unavailable",
+        "15m stop structure is unavailable": "stop_structure_unavailable",
+        "reference entry must be inside entry zone": "entry_zone_mismatch",
+        "stop and target are inconsistent with direction": "invalid_stop_target_geometry",
+        "insufficient target evidence": "insufficient_target_evidence",
+        "insufficient TP1 reward/risk; cannot skip first objective": "tp1_reward_risk_below_minimum",
+        "current price is unavailable": "current_price_unavailable",
+        "ATR requires at least two candles": "atr_unavailable",
+        "prices and risk inputs must be non-negative": "invalid_risk_inputs",
+        "invalid direction, entry or stop": "invalid_risk_geometry",
+    }.get(str(error), type(error).__name__)
 from monatise.engines.liquidity import LiquidityEngine, LiquidityRequest
 from monatise.engines.liquidity_sweep import LiquiditySweepEngine, SweepRequest
 from monatise.engines.market_data.models import DataQuality, DataStatus, MarketSnapshot
@@ -217,7 +234,7 @@ class HierarchyLayerEvaluator:
                     except (TypeError, ValueError) as exc:
                         target_plan = None
                         management_structure = None
-                        reasons.append(f"risk_proposal_rejected:{type(exc).__name__}")
+                        reasons.append(f"risk_proposal_rejected:{risk_rejection_code(exc)}")
 
         return ShadowEvaluation(normalized, evaluated_at, state.macro_context, state.regime_context, state.strategy_context, state.setup_context, state.trigger_context, bundle, validation, self.watching(normalized), tuple(reasons), take_profit_plan=target_plan, management_structure=management_structure)
 
