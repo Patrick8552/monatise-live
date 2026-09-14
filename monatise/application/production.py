@@ -751,12 +751,14 @@ class ProductionASGI(OrchestrationASGI):
         replacement = await create(proposal_id, actor=actor)
         if replacement is None or replacement.get("status") != "pending_confirmation":
             return None
+        if replacement.get("telegram_publish_status") == "published" and replacement.get("approval_keyboard_attached"):
+            return str(replacement["proposal_id"])
         await self._publish_operator_proposal(service, replacement, ownership_check)
         published = (await service.repository.proposal(str(replacement["proposal_id"])))[0]
         if not published.get("approval_keyboard_attached") or published.get("telegram_publish_status") != "published":
             raise FTMOMasterError("limit replacement could not be published with approval controls")
         await self._update_trade_proposal_state(
-            proposal_id, "LIMIT REPLACEMENT PROPOSED",
+            proposal_id, "PENDING ENTRY PROPOSED" if replacement.get("entry_policy") else "LIMIT REPLACEMENT PROPOSED",
             reason=f"Use proposal {replacement['proposal_id']} for a new manual decision. The original market order will not be retried.",
         )
         return str(replacement["proposal_id"])
@@ -1101,7 +1103,7 @@ class ProductionASGI(OrchestrationASGI):
                 requested_at=requested_at, started_at=analysis_started_at,
                 completed_at=analysis_completed_at, session=session,
             )
-            signal_id = signal_identity(request_id, analysis_id, analysis) if analysis["executable"] else None
+            signal_id = signal_identity(request_id, analysis_id, analysis) if analysis["proposal_eligible"] else None
             analysis.update({
                 "telegram_bot_id": request_record["telegram_bot_id"],
                 "telegram_chat_id": chat_id,
@@ -1136,7 +1138,7 @@ class ProductionASGI(OrchestrationASGI):
             proposal = None
             quote_request = None
             proposal_state = "NO_TRADE" if not analysis["qualified"] else "CONTEXT_ONLY"
-            if analysis["executable"] and service is not None:
+            if analysis["proposal_eligible"] and service is not None:
                 expiry = datetime.fromisoformat(str(analysis["expires_at"]).replace("Z", "+00:00"))
                 if hasattr(service, "create_quote_request"):
                     analysis = await repository.update_telegram_analysis(analysis_id, {
@@ -1193,6 +1195,9 @@ class ProductionASGI(OrchestrationASGI):
                             "analysis_sources": analysis.get("analysis_sources") or [],
                             "provider_consensus": analysis.get("provider_consensus"),
                             "session": analysis["session"],
+                            "evidence_bundle": analysis.get("evidence_bundle"),
+                            "market_price_observation": analysis.get("market_price_observation"),
+                            "structural_invalidation": analysis.get("structural_invalidation"),
                         },
                         now=analysis_completed_at,
                     )
@@ -1475,6 +1480,14 @@ class ProductionASGI(OrchestrationASGI):
                 result["requested_symbols_csv"] = ",".join(
                     await service.requested_execution_quote_symbols()
                 )
+                from monatise.application.hierarchy.broker_candles import BrokerCandleService
+                result["candle_request"] = await BrokerCandleService(service).next_request()
+                manifest = json.dumps({"account": service.configuration.account_id, "server": service.configuration.server,
+                    "currency": service.configuration.currency, "nonce": nonce,
+                    "valid_until": str(int(datetime.now(timezone.utc).timestamp()) + 20),
+                    "leases": result.pop("pending_entry_leases", "")}, sort_keys=True, separators=(",", ":"))
+                result["pending_manifest"] = base64.b64encode(manifest.encode()).decode()
+                result["pending_manifest_signature"] = hmac.new(service.configuration.bridge_secret.encode(), manifest.encode(), hashlib.sha256).hexdigest()
                 for proposal_id in result.get("management_proposal_ids") or ():
                     managed = await service.repository.proposal(proposal_id)
                     if managed:
@@ -1482,8 +1495,17 @@ class ProductionASGI(OrchestrationASGI):
                 for event in result.get("lifecycle_events") or ():
                     await self._notify_ftmo_lifecycle(event)
                 return 200, result
+            if path == "/api/ftmo/bridge/candles" and method == "POST":
+                from monatise.application.hierarchy.broker_candles import BrokerCandleService
+                return 200, await BrokerCandleService(service).accept(parsed)
             if path == "/api/ftmo/bridge/commands" and method == "GET":
                 commands = await service.commands_for_bridge(limit=5)
+                for pending in (() if commands else await service.repository.proposals()):
+                    if pending.get("entry_policy") and pending.get("status") == "execution_failed" and pending.get("limit_replacement_eligible"):
+                        try:
+                            await self._offer_limit_replacement(pending["proposal_id"])
+                        except (FTMOMasterError, ValueError, RuntimeError):
+                            pass  # Keep the durable pending decision for a later fresh quote/publish attempt.
                 signed = []
                 for command in commands:
                     canonical = json.dumps(command, sort_keys=True, separators=(",", ":"))

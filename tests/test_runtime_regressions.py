@@ -245,11 +245,12 @@ def test_signal_ledger_cannot_update_another_users_record(tmp_path, owner, other
 
 
 def test_current_stock_analysis_expires_through_public_validity_helper():
-    from tests.test_market_intelligence import Alpaca, Quiver, Finnhub, FlashAlpha, NOW as STOCK_NOW
-    from monatise.application.market_intelligence import StockMarketIntelligenceCoordinator
+    from monatise.application.hierarchy.policy import SHARED_TIMEFRAME_POLICY as policy
     from monatise.application.stock_analysis import refresh_setup_validity
-    coordinator = StockMarketIntelligenceCoordinator(Alpaca(), Quiver(), Finnhub(), FlashAlpha(), environment={})
-    analysis = asyncio.run(coordinator.analyse("AAPL", now=STOCK_NOW))
+    STOCK_NOW = NOW
+    analysis = {**policy.metadata(), "setup_status": "confirmed", "publication_valid": True,
+                "decision": "BUY_WATCH", "entry": 100, "setup_state": "ACTIVE",
+                "expires_at": (STOCK_NOW + policy.signal_lifetime).isoformat()}
     assert analysis["setup_status"] == "confirmed"
     assert analysis["publication_valid"] is True
     expired = refresh_setup_validity(analysis, now=STOCK_NOW + timedelta(hours=2))

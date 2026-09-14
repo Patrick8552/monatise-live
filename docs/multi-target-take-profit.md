@@ -2,6 +2,8 @@
 
 Status: implemented behind disabled feature flags; requires staged broker/demo acceptance before production activation. This document describes the implementation, not a claim of live deployment or verified broker fills.
 
+The September 14 [shared timeframe migration](shared-timeframe-policy.md) moves stock/index target generation onto the existing crypto hierarchy and ships EA 1.19 for read-only index history. The original implementation history below describes the earlier rollout.
+
 ## Architecture and investigation
 
 The implementation started from verified remote HEAD `f74fa5a755f7df8109142855e5098e9278d51f50` on 13 September 2026. The remote was checked rather than assuming the September 11 implementation was still current. That baseline passed a single `take_profit` through provider coordination, broker-relative mapping, Telegram preview, fresh-price approval, signed bridge command and one native position TP.

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -172,7 +173,7 @@ def normalize_analysis(
         targets = list(raw.get("targets") or ([raw.get("target")] if raw.get("target") is not None else []))
         qualified = classification not in {"no_trade", "grid", "two_sided", "none"} and direction in {"long", "short"} and confirmed
         decision = f"QUALIFIED {direction.upper()}" if qualified else "NO_TRADE"
-        current_price = raw.get("current_reference_price") or (raw.get("evidence") or {}).get("current_price") or raw.get("entry")
+        current_price = next((value for value in (raw.get("current_reference_price"), (raw.get("evidence") or {}).get("current_price")) if value is not None), None)
         provider_evidence = raw.get("derivatives") or (raw.get("evidence") or {}).get("derivatives") or {}
         reasons = list(raw.get("blockers") or raw.get("reasons") or raw.get("price_action_reasons") or [])
     elif asset_class in {FTMOAssetClass.STOCK, FTMOAssetClass.FOREX}:
@@ -183,7 +184,7 @@ def normalize_analysis(
         targets = list(raw.get("targets") or ([raw.get("target")] if raw.get("target") is not None else []))
         entry_zone = raw.get("entry_zone") if isinstance(raw.get("entry_zone"), Mapping) else None
         decision = f"QUALIFIED {direction.upper()}" if qualified else "NO_TRADE"
-        current_price = raw.get("current_price") or (raw.get("snapshot") or {}).get("latest_trade") or entry
+        current_price = next((value for value in (raw.get("current_price"), (raw.get("snapshot") or {}).get("latest_trade")) if value is not None), None)
         provider_evidence = raw.get("additional_context") or {}
         reasons = list(raw.get("cautions") or raw.get("reasons") or [])
         classification, confirmed = "trend" if qualified else "no_trade", qualified
@@ -195,7 +196,7 @@ def normalize_analysis(
         targets = list(raw.get("targets") or ([raw.get("target")] if raw.get("target") is not None else []))
         entry_zone = raw.get("entry_zone") if isinstance(raw.get("entry_zone"), Mapping) else None
         decision = f"QUALIFIED {direction.upper()}" if qualified else "NO_TRADE"
-        current_price = raw.get("current_price") or entry
+        current_price = raw.get("current_price")
         provider_evidence = {key: raw.get(key) for key in ("gamma_flip", "call_wall", "put_wall", "net_gex", "net_gex_label") if raw.get(key) is not None}
         reasons = list(raw.get("reasons") or [])
         classification, confirmed = "trend" if qualified else "no_trade", qualified
@@ -209,16 +210,34 @@ def normalize_analysis(
     score = int(raw.get("score") or 0)
     recommended = recommended_risk_percent(score)
     expires_at = raw.get("expires_at") or raw.get("valid_until")
-    reference_in_zone = True
-    if entry_zone and current_price is not None:
+    # Observation and strategy are separate facts. Never fill missing market
+    # data with an intended entry, zone midpoint, or zone boundary.
+    try:
+        observed_price_valid = not isinstance(current_price, bool) and math.isfinite(float(current_price)) and float(current_price) > 0
+    except (TypeError, ValueError, OverflowError):
+        observed_price_valid = False
+    reference_in_zone = observed_price_valid
+    if entry_zone and observed_price_valid:
         try:
             reference_in_zone = float(entry_zone["low"]) <= float(current_price) <= float(entry_zone["high"])
         except (KeyError, TypeError, ValueError):
             reference_in_zone = False
+    valid_zone = False
+    if entry_zone and entry is not None:
+        try:
+            valid_zone = all(math.isfinite(float(entry_zone[k])) and float(entry_zone[k]) > 0 for k in ("low", "high")) and float(entry_zone["low"]) <= float(entry) <= float(entry_zone["high"])
+        except (KeyError, TypeError, ValueError, OverflowError):
+            pass
     executable = bool(qualified and confirmed and entry is not None and stop is not None and targets and expires_at and reference_in_zone)
-    if qualified and not reference_in_zone:
+    if asset_class is not FTMOAssetClass.CRYPTO and raw.get("timeframe_policy") and raw.get("publication_valid") is not True:
+        qualified = confirmed = executable = False
+        decision = "NO_TRADE"
+    if qualified and not observed_price_valid:
+        decision = f"QUALIFIED {direction.upper()} — WAITING FOR VERIFIED MARKET PRICE"
+    elif qualified and not reference_in_zone:
         decision = f"QUALIFIED {direction.upper()} — WAITING FOR ENTRY ZONE"
 
+    pending_eligible = bool(qualified and confirmed and observed_price_valid and valid_zone and stop is not None and targets and expires_at and not reference_in_zone)
     return {
         "telegram_request_id": request_id,
         "request_id": request_id,
@@ -233,11 +252,19 @@ def normalize_analysis(
         "requested_at": requested_at.isoformat(),
         "analysis_started_at": started_at.isoformat(),
         "analysis_completed_at": completed_at.isoformat(),
-        "timeframe": raw.get("interval") or raw.get("timeframe") or "15m",
+        "timeframe": raw.get("analysis_timeframe") or raw.get("interval") or raw.get("timeframe") or "15m",
+        **{key: raw[key] for key in ("timeframe_policy", "context_timeframe", "analysis_timeframe", "setup_timeframe", "confirmation_timeframe", "trigger_timeframe", "entry_timeframe", "stop_timeframe", "evidence_bundle", "score_scale", "signal_core_score") if key in raw},
         "session": dict(session),
         "market_state": raw.get("market_state") or raw.get("market_regime") or classification.upper(),
         "bias": direction.upper(),
         "current_reference_price": current_price,
+        "market_price_available": observed_price_valid,
+        "market_price_observation": raw.get("market_price_observation") or {
+            "price": current_price,
+            "source": raw.get("analysis_provider") or resolved.analysis_provider,
+            "observed_at": raw.get("market_observed_at") or raw.get("as_of"),
+            "kind": "provider_reference",
+        },
         "liquidity": raw.get("liquidity") or {},
         "structure": raw.get("market_structure") or {},
         "supply_demand": raw.get("supply_demand") or {},
@@ -246,6 +273,7 @@ def normalize_analysis(
         "entry": entry,
         "entry_zone": dict(entry_zone) if entry_zone else None,
         "stop_loss": stop,
+        "structural_invalidation": raw.get("structural_invalidation"),
         "targets": targets,
         "take_profit_plan": raw.get("take_profit_plan"),
         "management_structure": raw.get("management_structure"),
@@ -256,6 +284,9 @@ def normalize_analysis(
         "decision": decision,
         "qualified": qualified,
         "executable": executable,
+        "pending_order_eligible": pending_eligible,
+        "proposal_eligible": executable or pending_eligible,
+        "entry_status": "WAITING_FOR_ENTRY" if pending_eligible else "IN_ENTRY_ZONE" if executable else "BLOCKED",
         "confirmation_status": "confirmed" if confirmed else str(raw.get("entry_confirmation_status") or raw.get("setup_status") or "not_confirmed"),
         "reference_price_in_entry_zone": reference_in_zone,
         "expires_at": expires_at,
@@ -308,15 +339,17 @@ def format_analysis(analysis: Mapping[str, Any]) -> str:
         f"Session: {session.get('market_session') or 'UNKNOWN'} | Market: {'OPEN' if session.get('market_open') is True else 'CLOSED' if session.get('market_open') is False else 'UNKNOWN'}",
         f"Broker break: {session.get('broker_break_proximity') or 'UNKNOWN'}",
         f"Market state: {analysis.get('market_state') or 'UNKNOWN'} | Bias: {analysis.get('bias') or 'NONE'}",
-        f"Current reference price: {analysis.get('current_reference_price') if analysis.get('current_reference_price') is not None else 'unavailable'}",
+        f"Observed market price: {analysis.get('current_reference_price') if analysis.get('market_price_available', analysis.get('current_reference_price') is not None) else 'unavailable'}",
         f"Liquidity: {_compact(analysis.get('liquidity'))}",
         f"Structure: {_compact(analysis.get('structure'))}",
         f"Supply / Demand: {_compact(analysis.get('supply_demand'))}",
         f"Fibonacci: {_compact(analysis.get('fibonacci'))}",
         f"Order flow: {_compact(analysis.get('order_flow'))}",
     ]
+    if analysis.get("timeframe_policy"):
+        lines.append(f"Hierarchy: {analysis['context_timeframe']} context | {analysis['analysis_timeframe']} direction | {analysis['setup_timeframe']} setup/SL | {analysis['confirmation_timeframe']} confirmation | {analysis['entry_timeframe']} entry")
     if zone:
-        lines.append(f"Entry zone: {zone.get('low')}–{zone.get('high')}")
+        lines.append(f"Permitted entry zone: {zone.get('low')}–{zone.get('high')}")
     elif analysis.get("entry") is not None:
         lines.append(f"Entry reference: {analysis['entry']}")
     if analysis.get("stop_loss") is not None:
@@ -352,7 +385,9 @@ def format_analysis(analysis: Mapping[str, Any]) -> str:
         f"{ftmo_quote.get('status') or 'not_requested'}"
         + (f" ({ftmo_quote.get('reason')})" if ftmo_quote.get("reason") else "")
     )
-    if not analysis.get("executable"):
+    if analysis.get("pending_order_eligible"):
+        lines.append("Waiting for entry: immediate market execution blocked. Pending order requires Approve trade; Reject trade remains available.")
+    elif not analysis.get("executable"):
         reasons = analysis.get("reasons") or []
         if reasons:
             lines.append("Reason: " + "; ".join(map(str, reasons[:4])))

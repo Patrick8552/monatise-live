@@ -268,7 +268,7 @@ def apply_flashalpha_plan(
 
 
 def crypto_layer_candidates(
-    layer: Any, *, timeframe: str, observed: datetime
+    layer: Any, *, timeframe: str, observed: datetime, provider: str = "monatise_crypto"
 ) -> list[TargetCandidate]:
     """Use the existing liquidity, structure, zone and Fibonacci assessments."""
     from monatise.engines.fibonacci_liquidity import (
@@ -282,7 +282,7 @@ def crypto_layer_candidates(
         result.append(
             candidate(
                 level.price,
-                provider="monatise_crypto",
+                provider=provider,
                 kind="LIQUIDITY_POOL",
                 timeframe=timeframe,
                 observed=observed,
@@ -298,7 +298,7 @@ def crypto_layer_candidates(
             result.append(
                 candidate(
                     price,
-                    provider="monatise_crypto",
+                    provider=provider,
                     kind=kind,
                     timeframe=timeframe,
                     observed=observed,
@@ -313,7 +313,7 @@ def crypto_layer_candidates(
             result.append(
                 candidate(
                     price,
-                    provider="monatise_crypto",
+                    provider=provider,
                     kind=kind,
                     timeframe=timeframe,
                     observed=observed,
@@ -342,7 +342,7 @@ def crypto_layer_candidates(
             result.append(
                 candidate(
                     level.price,
-                    provider="monatise_crypto",
+                    provider=provider,
                     kind="FIB_" + str(level.ratio).replace(".", "_"),
                     timeframe=timeframe,
                     observed=observed,

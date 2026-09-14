@@ -214,7 +214,7 @@ using string=std::string; using ulong=unsigned long; using datetime=long;
 bool InpExecutionEnabled=true, InpMasterAccountApproved=true;
 int InpMaximumOpenExposures=5, InpMaximumDeviationPoints=20, InpMaximumSpreadTicks=80, InpMagicNumber=123;
 double InpGoldMaximumAdversePriceDeviation=10, InpRiskFraction=.03, InpDailyLossLimit=500, InpTotalLossLimit=1000, InpInitialAccountBalance=10000;
-enum {ORDER_MAGIC,POSITION_MAGIC,SYMBOL_TRADE_TICK_SIZE,SYMBOL_TRADE_TICK_VALUE_LOSS,SYMBOL_TRADE_TICK_VALUE,SYMBOL_POINT,SYMBOL_VOLUME_MIN,SYMBOL_VOLUME_MAX,SYMBOL_VOLUME_STEP,SYMBOL_TRADE_MODE,SYMBOL_TRADE_MODE_FULL,SYMBOL_TRADE_STOPS_LEVEL,SYMBOL_TRADE_FREEZE_LEVEL,ACCOUNT_EQUITY};
+enum {ORDER_MAGIC,POSITION_MAGIC,SYMBOL_TRADE_TICK_SIZE,SYMBOL_TRADE_TICK_VALUE_LOSS,SYMBOL_TRADE_TICK_VALUE,SYMBOL_POINT,SYMBOL_VOLUME_MIN,SYMBOL_VOLUME_MAX,SYMBOL_VOLUME_STEP,SYMBOL_TRADE_MODE,SYMBOL_TRADE_MODE_FULL,SYMBOL_TRADE_STOPS_LEVEL,SYMBOL_TRADE_FREEZE_LEVEL,ACCOUNT_EQUITY,SYMBOL_EXPIRATION_MODE,SYMBOL_EXPIRATION_SPECIFIED};
 std::map<string,string> f{{"gold_price_guard_version","1"},{"price_guard_reference","4300"},{"maximum_adverse_price_deviation","10"},{"operation","open"},{"expires_epoch","2000"},{"symbol","XAUUSD"},{"side","buy"},{"order_type","market"},{"entry","4300"},{"volume",".02"},{"stop_loss","4270"},{"take_profit","4370"},{"approved_risk_budget","100"},{"minimum_reward_risk","1.5"}};
 string JsonString(string, string k) { return f[k]; }
 double StringToDouble(string s) { try {return std::stod(s);} catch(...) {return 0;} }
@@ -251,9 +251,38 @@ int main() {
  f["gold_price_guard_version"]=""; ask=4300.21; if(FinalOrderValidation("",reason,validated)) return 9;
  ask=4300.19; if(!FinalOrderValidation("",reason,validated)) return 10;
  f["expires_epoch"]="999"; if(FinalOrderValidation("",reason,validated)) return 11;
+ f["expires_epoch"]="2000"; f["entry_policy_version"]="1"; f["pending_entry_version"]="1";
+ f["entry_zone_low"]="4299"; f["entry_zone_high"]="4301"; f["pending_lease_epoch"]="1015"; f["pending_expires_epoch"]="1100";
+ f["order_type"]="limit"; ask=4305;
+ if(!FinalOrderValidation("",reason,validated) || validated!=4300) return 12;
+ f["order_type"]="stop"; ask=4295;
+ if(!FinalOrderValidation("",reason,validated)) return 13;
+ f["side"]="sell"; f["stop_loss"]="4330"; f["take_profit"]="4230"; f["order_type"]="limit";
+ if(!FinalOrderValidation("",reason,validated)) return 14;
+ ask=4305; f["order_type"]="stop";
+ if(!FinalOrderValidation("",reason,validated)) return 15;
+ f["entry_zone_high"]="4299"; if(FinalOrderValidation("",reason,validated)) return 16;
+ f["entry_zone_high"]="4301"; f["pending_lease_epoch"]="999"; if(FinalOrderValidation("",reason,validated)) return 17;
+ f["pending_lease_epoch"]="1015"; f["setup_invalidation_price"]="4304"; if(FinalOrderValidation("",reason,validated)) return 18;
  return 0;
 }
 ''')
     binary = tmp_path / 'final'
     subprocess.run([compiler, '-std=c++17', str(cpp), '-o', str(binary)], check=True, capture_output=True)
     subprocess.run([str(binary)], check=True, capture_output=True)
+
+
+def test_fixed_zone_market_entry_preserves_gold_adverse_price_guard(monkeypatch):
+    async def scenario():
+        control, _ = await gold_setup(monkeypatch)
+        p = await control.create_signal_proposal(signal_id='gold-zone', symbol='XAUUSD', direction='LONG',
+            analysis_state='LONG', confirmation_status='confirmed', analysis_entry='2500.20',
+            analysis_stop='2470.20', analysis_target='2570.20', source='test', analysis_provider='ftmo_mt5',
+            entry_zone_low='2490', entry_zone_high='2520', now=NOW,
+            evidence_bundle={'market_price_observation': {'price':'2500.20','source':'ftmo_mt5'}})
+        assert p['entry_policy'] and p['price_guard']['maximum_adverse_deviation'] == '10'
+        await quote(control, '2511.20')  # Inside zone, but exceeds existing Gold allowance.
+        with pytest.raises(FTMOMasterError, match='tolerance'):
+            await control.approve(p['proposal_id'], '42', now=NOW)
+        assert await control.repository.pending_commands() == ()
+    asyncio.run(scenario())

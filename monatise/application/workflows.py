@@ -409,7 +409,7 @@ class TelegramNotifier:
         direction = str(analysis.get("direction") or "NONE")
         lines = [
             f"Monatise CME futures setup: {asset} {direction}",
-            f"FlashAlpha score: {int(analysis.get('score') or 0):+d}/10 | threshold: ±{int(analysis.get('score_threshold') or 7)}",
+            f"FlashAlpha score: {int(analysis.get('score') or 0):+d}/{int(analysis.get('score_scale') or 10)} | threshold: ±{int(analysis.get('score_threshold') or 7)}",
             f"Entry: {_price(analysis.get('entry'))}",
             f"Invalidation / gamma flip: {_price(analysis.get('stop_loss'))}",
             f"Target / {'call' if direction == 'LONG' else 'put'} wall: {_price(analysis.get('target'))}",
@@ -442,14 +442,14 @@ class TelegramNotifier:
             f"Exchange: {analysis.get('exchange') or 'unavailable'}",
             "Asset Class: STOCK",
             f"Direction: {direction}",
-            f"Monatise score: {int(analysis.get('score') or 0):+d}/10 | threshold: ±{int(analysis.get('score_threshold') or 7)}",
+            f"Monatise score: {int(analysis.get('score') or 0):+d}/{int(analysis.get('score_scale') or 10)} | threshold: ±{int(analysis.get('score_threshold') or 7)}",
             f"Current reference: {_price(current_reference)}",
             f"Entry: {_price(analysis.get('entry'))}",
             f"Trigger: {analysis.get('confirmation_trigger', 'confirmed technical trigger')}",
             f"Invalidation: {_price(analysis.get('stop_loss'))}",
             "Targets: " + " | ".join(_price(item) for item in targets if item is not None),
             f"Reward/risk: {float(analysis.get('reward_risk') or 0):.2f}",
-            f"Timeframe: {analysis.get('timeframe', '1h / 1d')}",
+            f"Timeframe: {analysis.get('timeframe', 'unavailable')}",
             f"Valid until: {analysis.get('valid_until', 'n/a')}",
         ]
         if has_tradingview_price:
@@ -491,6 +491,8 @@ class TelegramNotifier:
             "Sources: Monatise technical hierarchy; Alpaca market data; Quiver/Finnhub/FlashAlpha where available.",
             "Notification only; no trade was executed.",
         ]
+        if analysis.get("timeframe_policy"):
+            lines.append(f"Hierarchy: {analysis['context_timeframe']} context | {analysis['analysis_timeframe']} direction | {analysis['setup_timeframe']} setup/SL | {analysis['confirmation_timeframe']} confirmation | {analysis['entry_timeframe']} entry")
         return "\n".join(lines)
 
     @staticmethod
@@ -507,7 +509,7 @@ class TelegramNotifier:
             "Asset Class: FUTURES-LINKED CFD",
             "Product note: the FTMO instrument is a CFD, not an exchange-traded futures contract.",
             f"Direction: {direction}",
-            f"Monatise score: {int(analysis.get('score') or 0):+d}/10 | threshold: ±{int(analysis.get('score_threshold') or 7)}",
+            f"Monatise score: {int(analysis.get('score') or 0):+d}/{int(analysis.get('score_scale') or 10)} | threshold: ±{int(analysis.get('score_threshold') or 7)}",
             "ANALYSIS",
             f"Primary context: {analysis.get('api_symbol') or analysis.get('futures_symbol') or 'UNKNOWN'}",
             f"Source: {analysis.get('data_source') or 'market intelligence provider'}",
@@ -526,6 +528,8 @@ class TelegramNotifier:
             ))
         else:
             lines.append("TradingView: Optional confirmation unavailable or stale — not an execution blocker.")
+        if analysis.get("timeframe_policy"):
+            lines.append(f"Hierarchy: {analysis['context_timeframe']} context | {analysis['analysis_timeframe']} direction | {analysis['setup_timeframe']} setup/SL | {analysis['confirmation_timeframe']} confirmation | {analysis['entry_timeframe']} entry")
         lines.append("EXECUTION")
         quote = analysis.get("ftmo_execution_quote") or {}
         if proposal is not None:
