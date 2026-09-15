@@ -2,18 +2,29 @@ from __future__ import annotations
 
 import math
 from typing import Any
+from datetime import datetime, timezone
+from monatise.application.gamma_evidence import validate_certificate
+from monatise.application.gamma_reconstruction import GammaQualityError
 
 
 FLASHALPHA_FUTURES_SYMBOLS = ("ES", "NQ", "RTY", "YM", "MES", "MNQ")
 
 
-def flashalpha_directional_bias(context: dict[str, Any]) -> str:
+def flashalpha_directional_bias(context: dict[str, Any], *, now=None) -> str:
     # Certification describes the provider's reconstructed gamma boundary, not
     # a trade-side sign convention. Never repair it by flipping the GEX sign.
-    if "gamma_flip_status" in context and context["gamma_flip_status"] != "available":
+    resolved = context.get("gamma_evidence")
+    if resolved is not None:
+        try:
+            validate_certificate(resolved, symbol=context.get("symbol"), now=now or datetime.now(timezone.utc))
+            if context.get("gamma_flip") != resolved["gamma_flip"]:
+                return "neutral"
+        except (GammaQualityError, ValueError, TypeError):
+            return "neutral"
+    if resolved is None and "gamma_flip_status" in context and context["gamma_flip_status"] != "available":
         return "neutral"
     for raw in (context.get("provider_evidence") or {}).values():
-        if isinstance(raw, dict) and "gamma_flip_status" in raw and raw["gamma_flip_status"] != "available":
+        if resolved is None and isinstance(raw, dict) and "gamma_flip_status" in raw and raw["gamma_flip_status"] != "available":
             return "neutral"
     price = _number(context.get("underlying_price"))
     flip = _number(context.get("gamma_flip"))

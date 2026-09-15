@@ -475,7 +475,13 @@ class TelegramNotifier:
             + ("; ".join(str(item) for item in (quiver_summary.get("drivers") or [])[:3]) or "no fresh directional insider/Congress evidence")
         )
         flashalpha = context.get("flashalpha") or {}
-        if not flashalpha.get("unavailable") and flashalpha.get("gamma_flip") is not None:
+        from monatise.application.gamma_confidence import format_confidence
+        lines.extend(format_confidence(analysis.get("confidence_evidence"), analysis.get("gamma_evidence")))
+        from monatise.application.gamma_evidence import format_gamma_evidence
+        gamma_line = format_gamma_evidence(analysis.get("gamma_evidence"))
+        if gamma_line:
+            lines.append(gamma_line)
+        elif not flashalpha.get("unavailable") and flashalpha.get("gamma_flip") is not None:
             lines.append(
                 f"FlashAlpha: flip {_price(flashalpha.get('gamma_flip'))} | call wall {_price(flashalpha.get('call_wall'))} | "
                 f"put wall {_price(flashalpha.get('put_wall'))} | regime {flashalpha.get('net_gex_label') or 'n/a'}"

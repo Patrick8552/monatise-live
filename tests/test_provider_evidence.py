@@ -51,17 +51,19 @@ def test_fresh_levels_cannot_hide_invalid_gex_source(mutation,field,issue):
     assert 'PRIVATE' not in str(diag)
 
 
-def test_snow_rejection_has_durable_provider_field_and_no_candle_or_order_fallback():
+def test_snow_rejection_keeps_gamma_block_and_continues_non_executable_candles():
     class Provider:
         def context(self,symbol):
             result=context();result.update(gamma_flip=None,gamma_flip_status='no_boundary');return result
     alpaca=Alpaca()
     result=asyncio.run(StockMarketIntelligenceCoordinator(alpaca,Quiver(),Finnhub(),Provider(),environment={})
         .analyse('SNOW',instrument=FTMO_REGISTRY.resolve('SNOW'),now=NOW))
-    assert result['decision']=='INSUFFICIENT_MARKET_DATA' and not publication_allowed(result)
-    assert result['reason_detail']=='provider_incomplete: flashalpha gamma_flip unavailable (no_boundary)'
+    assert result['decision']=='NO_TRADE' and not publication_allowed(result)
     assert result['ftmo_execution_quote']['status']=='not_requested'
-    assert alpaca.calls==[]
+    assert alpaca.calls
+    assert result["gamma_evidence"]["state"] == "UNCERTIFIED"
+    assert result["gamma_evidence"]["degradation_allowed"] is True
+    assert "uncertified_gamma_requires_full_independent_confluence" in result["reasons"]
     trace=analysis_trace(result)
     assert trace['provider_diagnostics']['failure']['issue']=='no_boundary'
 

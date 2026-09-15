@@ -1275,6 +1275,7 @@ class OrchestrationRuntime:
         *,
         interval_seconds: int | None = None,
         allocation_fraction: float = 1.0,
+        requests_per_analysis: int = 2,
     ) -> int | None:
         """Return a daily-plan-aware context budget for one scanner cycle."""
         if "flashalpha" not in getattr(self, "dependencies", {}) and getattr(self, "flashalpha", None) is None:
@@ -1295,12 +1296,12 @@ class OrchestrationRuntime:
         reserve = max(2, int(configured_reserve)) if configured_reserve is not None else (
             max(2, min(50, daily_limit // 10)) if isinstance(daily_limit, int) else 2
         )
-        remaining_capacity = max(0, (remaining - reserve) // 2)
+        remaining_capacity = max(0, (remaining - reserve) // max(2, requests_per_analysis))
         if not isinstance(daily_limit, int) or interval_seconds is None:
             return remaining_capacity
         cycles_per_day = max(1, math.ceil(86_400 / max(1, interval_seconds)))
         daily_scheduled_requests = max(0, daily_limit - reserve) * max(0.0, min(1.0, allocation_fraction))
-        planned_capacity = math.floor(daily_scheduled_requests / cycles_per_day / 2)
+        planned_capacity = math.floor(daily_scheduled_requests / cycles_per_day / max(2, requests_per_analysis))
         return min(remaining_capacity, max(0, planned_capacity))
 
     async def _register_scheduled_analysis(self) -> tuple[str, ...]:
@@ -1798,7 +1799,7 @@ class OrchestrationRuntime:
             shorts[:configuration.shortlist_per_side],
         )
         stock_interval = max(300, int(getattr(self, "environment", {}).get("MONATISE_STOCK_SCAN_INTERVAL_SECONDS", "1800")))
-        scheduled_capacity = self._flashalpha_scheduled_capacity(interval_seconds=stock_interval, allocation_fraction=0.7)
+        scheduled_capacity = self._flashalpha_scheduled_capacity(interval_seconds=stock_interval, allocation_fraction=0.7, requests_per_analysis=4)
         quota_deferred = 0
         if scheduled_capacity is not None and len(shortlisted) > scheduled_capacity:
             quota_deferred = len(shortlisted) - scheduled_capacity

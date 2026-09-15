@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -398,6 +399,14 @@ class AssetHierarchyAnalysis:
             },
         }
         try:
+            gamma = context.get("gamma_evidence")
+            if gamma is not None:
+                from monatise.application.gamma_evidence import CERTIFIED, fingerprint, validate_certificate
+                from monatise.application.gamma_confidence import eligible_uncertified, confidence_evidence, independent_checks
+                if gamma.get("state") in CERTIFIED:
+                    validate_certificate(gamma, symbol=instrument.provider_symbol, now=observed)
+                elif not eligible_uncertified(gamma,strategy=self.configuration.strategy_version,symbol=instrument.provider_symbol,now=observed):
+                    raise ValueError("gamma_or_supporting_evidence_unavailable")
             if symbol not in self._engines:
                 batch_provider = _BatchProvider()
                 provenance = Provenance(
@@ -622,11 +631,23 @@ class AssetHierarchyAnalysis:
                     result["reasons"] = ["awaiting_complete_hierarchy_confirmation"]
                 return result
             bundle = evaluation.bundle
+            confidence = None
+            if gamma is not None:
+                checks = independent_checks(result,direction=bundle.trigger_5m.direction)
+                try:
+                    confidence = confidence_evidence(gamma,strategy=self.configuration.strategy_version,
+                        symbol=instrument.provider_symbol,now=now or datetime.now(timezone.utc),checks=checks)
+                except ValueError:
+                    result.update(reasons=["uncertified_gamma_requires_full_independent_confluence"],
+                                  setup_status="insufficient_independent_confluence")
+                    return result
+                result.update(confidence_evidence=confidence,confidence_state=confidence["state"],
+                              risk_multiplier=confidence["risk_multiplier"])
             from monatise.application.flashalpha_analysis import (
                 flashalpha_directional_bias,
             )
 
-            bias = flashalpha_directional_bias(context) if context else None
+            bias = flashalpha_directional_bias(context, now=now or datetime.now(timezone.utc)) if context else None
             quiver_score = int(context.get("quiver_score") or 0)
             if (
                 bundle.trigger_5m.direction == "long"
@@ -678,6 +699,12 @@ class AssetHierarchyAnalysis:
                     )
                 ),
             )
+            if gamma is not None:
+                from monatise.application.gamma_confidence import validate_confidence
+                validate_confidence(confidence,gamma,symbol=instrument.provider_symbol,now=now or datetime.now(timezone.utc))
+                expiry = min(expiry, _timestamp(gamma["expires_at"]))
+            signal_bundle_id = (hashlib.sha256(f"{bundle.bundle_id}:{fingerprint(gamma)}:{confidence['evidence_id']}".encode()).hexdigest()
+                                if gamma is not None else bundle.bundle_id)
             if expiry <= observed:
                 raise ValueError("hierarchical_setup_expired")
             result.update(
@@ -707,10 +734,11 @@ class AssetHierarchyAnalysis:
                     "valid_until": expiry.isoformat(),
                     "setup_expires_at": expiry.isoformat(),
                     "setup_state": "ACTIVE",
-                    "setup_id": bundle.bundle_id,
+                    "setup_id": signal_bundle_id,
                     "as_of": bundle.trigger_5m.source_close_time.isoformat(),
                     "evidence_bundle": {
-                        "bundle_id": bundle.bundle_id,
+                        "bundle_id": signal_bundle_id,
+                        **({"gamma_evidence":gamma,"confidence_evidence":confidence} if gamma is not None else {}),
                         "entry_zone": dict(result["entry_zone"]),
                         "structural_invalidation": risk.structural_invalidation,
                         "entry_candle": {
@@ -741,9 +769,9 @@ class AssetHierarchyAnalysis:
                 plan = replace(evaluation.take_profit_plan, expires_at=expiry)
                 result.update(plan_fields(plan))
             previous = self._previous_signal.get(symbol)
-            if previous and previous != bundle.bundle_id:
+            if previous and previous != signal_bundle_id:
                 result["supersedes_signal_id"] = previous
-            self._previous_signal[symbol] = bundle.bundle_id
+            self._previous_signal[symbol] = signal_bundle_id
             return result
         except (ValueError, TypeError, KeyError, RuntimeError, TimeoutError) as exc:
             # Discard cached parents after a provider failure, session boundary

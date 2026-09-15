@@ -21,6 +21,8 @@ from enum import StrEnum
 from typing import Any, Mapping
 
 from monatise.application.take_profit import MultiTPConfiguration, TakeProfitPlan, allocate_volume, convert_plan, revalidate_plan, route_for, format_targets
+from monatise.application.gamma_confidence import allocation_from_proof, format_confidence
+from monatise.application.gamma_evidence import format_gamma_evidence
 from monatise.application.position_management import PositionManagementService
 from monatise.application.entry_policy import (
     entry_order_type, PENDING_LEASE_SECONDS, PENDING_ORDER_LIFETIME_SECONDS, PENDING_ENTRY_VERSION,
@@ -384,10 +386,11 @@ class FTMOMasterRepository:
             "signal_id": signal_id, "analysis_id": analysis_id, "symbol": proposal.get("symbol"),
             "direction": proposal.get("side"), "status": "qualified", "proposal_id": proposal["proposal_id"],
             "created_at": proposal["created_at"], "expires_at": proposal["expires_at"],
+            **({"risk_allocation": dict(proposal["risk_allocation"])} if proposal.get("risk_allocation") else {}),
         }
         existing = await self.store.get(self.SIGNALS, signal_id)
         if existing is not None:
-            if any(existing.value.get(key) != signal[key] for key in ("analysis_id", "symbol", "direction", "proposal_id")):
+            if any(existing.value.get(key) != signal.get(key) for key in ("analysis_id", "symbol", "direction", "proposal_id", "risk_allocation")):
                 raise FTMOMasterError("persisted signal identity collision")
         else:
             await self._put(self.SIGNALS, signal_id, signal, expected_version=0)
@@ -1079,6 +1082,7 @@ class FTMOMasterControlService:
         entry_zone_low: Any | None = None,
         entry_zone_high: Any | None = None,
         risk_fraction_limit: Any | None = None,
+        risk_multiplier: Any = Decimal("1"),
         price_guard: Mapping[str, Any] | None = None,
         initialize_price_guard: bool = False,
         exclude_pending_ticket: str | None = None,
@@ -1193,7 +1197,11 @@ class FTMOMasterControlService:
             risk_fraction_limit, "recommended risk fraction", positive=True,
         )
         requested_risk_fraction = min(requested_risk_fraction, self.configuration.risk_fraction, MAX_RISK_FRACTION_PER_TRADE)
-        risk_budget = min(risk_ceiling(equity), equity * requested_risk_fraction, available_loss_capacity)
+        multiplier = _decimal(risk_multiplier, "confidence risk multiplier", positive=True)
+        if multiplier not in {Decimal("1"), Decimal("0.50")}:
+            raise FTMOMasterError("unsupported confidence risk allocation")
+        # Reduce the already constrained monetary budget before broker lot sizing.
+        risk_budget = min(risk_ceiling(equity), equity * requested_risk_fraction, available_loss_capacity) * multiplier
         if guard.get("risk_budget") is not None:
             risk_budget = min(risk_budget, _decimal(guard["risk_budget"], "approved risk budget", positive=True))
         if risk_budget <= ZERO:
@@ -1687,10 +1695,12 @@ class FTMOMasterControlService:
         observed = _utc(now)
         if actor not in self.configuration.authorized_user_ids and actor != "monatise-scanner":
             raise FTMOMasterError("Telegram user is not authorized")
+        allocation_input = {**dict(metadata or {}), "symbol": symbol, "recommended_risk_fraction": risk_fraction_limit}
+        risk_inputs, confidence = await self._confidence_risk_inputs(allocation_input, observed, initial=True)
         fields = await self._validated_open_fields(
             symbol=symbol, side=side, order_type=order_type, stop_loss=stop_loss,
             take_profit=take_profit, entry=entry, now=observed,
-            risk_fraction_limit=risk_fraction_limit,
+            **risk_inputs,
             initialize_price_guard=True,
             defer_entry_placement=bool((metadata or {}).get("entry_policy")),
             entry_zone_low=(metadata or {}).get("entry_zone_low"),
@@ -1714,6 +1724,13 @@ class FTMOMasterControlService:
             raise FTMOMasterError("signal has already expired")
         details = dict(metadata or {})
         details.pop("price_guard", None)  # Only the control plane can define approval bounds.
+        details.pop("risk_allocation", None)
+        if confidence is not None:
+            details["risk_allocation"] = {
+                "confidence_evidence_id": confidence["evidence_id"],
+                "risk_multiplier": confidence["risk_multiplier"],
+                "normal_risk_fraction": fields["recommended_risk_fraction"],
+            }
         if details.get("take_profit_plan"):
             if not self.configuration.multi_tp.permits(route_for(instrument)):
                 raise FTMOMasterError("multi-target execution route is disabled")
@@ -1752,6 +1769,37 @@ class FTMOMasterControlService:
             raise FTMOMasterError("proposal persistence failed or identity collision")
         return proposal
 
+    async def _confidence_risk_inputs(self, proposal, now, *, initial=False):
+        """Read allocation from immutable strategy proof, never a client multiplier."""
+        payload = proposal.get("evidence_bundle") or {}
+        if not isinstance(payload, Mapping):
+            raise FTMOMasterError("malformed confidence proof")
+        proof = payload.get("evidence_bundle") or payload
+        allocation = proposal.get("risk_allocation")
+        if not initial:
+            signal = await self._validate_signal_identity(proposal)
+            if signal.value.get("risk_allocation") != allocation:
+                raise FTMOMasterError("durable risk allocation changed")
+        if not isinstance(proof, Mapping):
+            raise FTMOMasterError("malformed confidence proof")
+        confidence = proof.get("confidence_evidence")
+        if confidence is None and allocation is None:
+            return {"risk_fraction_limit": proposal.get("recommended_risk_fraction")}, None
+        try:
+            instrument = self._verified_instrument_mapping(proposal["symbol"])
+            await validate_shared_evidence(self.repository.store, instrument, payload, now)
+            multiplier = allocation_from_proof(proof, symbol=instrument.provider_symbol, now=now)
+            if not isinstance(confidence, Mapping):
+                raise ValueError("confidence evidence missing")
+            if not initial and (not isinstance(allocation, Mapping)
+                    or allocation.get("confidence_evidence_id") != confidence["evidence_id"]
+                    or allocation.get("risk_multiplier") != confidence["risk_multiplier"]):
+                raise ValueError("confidence risk allocation missing or changed")
+            normal = proposal.get("recommended_risk_fraction") if initial else allocation["normal_risk_fraction"]
+            return {"risk_fraction_limit": normal, "risk_multiplier": multiplier}, confidence
+        except (ValueError, KeyError, TypeError) as exc:
+            raise FTMOMasterError(str(exc)) from exc
+
     @staticmethod
     def _cap_reviewed_risk(proposal, refreshed, quote):
         # A fresh quote/equity may reduce size, never increase the
@@ -1772,7 +1820,7 @@ class FTMOMasterControlService:
             raise FTMOMasterError("analysis or signal expired, invalidated or superseded")
         if signal is None or any(signal.value.get(key) != proposal.get(field) for key, field in (
             ("proposal_id", "proposal_id"), ("analysis_id", "analysis_id"),
-            ("symbol", "symbol"), ("direction", "side"),
+            ("symbol", "symbol"), ("direction", "side"), ("risk_allocation", "risk_allocation"),
         )):
             raise FTMOMasterError("durable signal identity or direction mismatch")
         return signal
@@ -2185,7 +2233,7 @@ class FTMOMasterControlService:
         arguments = {
             "symbol": parent["symbol"], "side": parent["side"], "order_type": pending_type,
             "entry": original_entry, "stop_loss": parent["stop_loss"], "take_profit": parent["take_profit"],
-            "risk_fraction_limit": parent.get("recommended_risk_fraction") or parent["risk_fraction"],
+            "risk_fraction_limit": (parent.get("risk_allocation") or {}).get("normal_risk_fraction") or parent.get("recommended_risk_fraction") or parent["risk_fraction"],
         }
         metadata = {key: parent[key] for key in (
             "analysis_source", "analysis_provider", "analysis_instrument", "analysis_exchange",
@@ -2364,7 +2412,7 @@ class FTMOMasterControlService:
                     now=now,
                     reference_entry=proposal.get("entry") if proposal["order_type"] == "market" and not proposal.get("entry_policy") else None,
                     entry_zone_low=proposal.get("entry_zone_low"), entry_zone_high=proposal.get("entry_zone_high"),
-                    risk_fraction_limit=proposal.get("recommended_risk_fraction"),
+                    **(await self._confidence_risk_inputs(proposal, observed))[0],
                     avoid_reached_target=bool(proposal.get("replacement_for_proposal_id") or proposal.get("entry_policy")),
                     price_guard=proposal.get("price_guard"),
                 )
@@ -2382,7 +2430,7 @@ class FTMOMasterControlService:
                 if "exposure limit" in reason:
                     raise FTMOMasterError(reason + " at approval") from exc
                 raise
-            if proposal.get("entry_policy"):
+            if proposal.get("entry_policy") or proposal.get("risk_allocation"):
                 self._cap_reviewed_risk(proposal, refreshed, quote)
             if proposal.get("take_profit_plan"):
                 if not self.configuration.multi_tp.permits(route_for(instrument)) or bridge.get("multi_tp_version") != 1:
@@ -2486,6 +2534,7 @@ class FTMOMasterControlService:
                 "actual_risk_amount": proposal.get("risk_amount"),
                 "actual_risk_fraction": proposal.get("risk_fraction"),
                 "recommended_risk_fraction": proposal.get("recommended_risk_fraction"),
+                "risk_allocation": proposal.get("risk_allocation"),
             },
         }
         command["payload"].update({
@@ -2606,7 +2655,7 @@ class FTMOMasterControlService:
             reference_entry=None if proposal.get("entry_policy") else proposal["entry"], now=observed,
             defer_entry_placement=bool(proposal.get("entry_policy")),
             entry_zone_low=proposal.get("entry_zone_low"), entry_zone_high=proposal.get("entry_zone_high"),
-            risk_fraction_limit=proposal.get("recommended_risk_fraction"),
+            **(await self._confidence_risk_inputs(proposal, observed))[0],
             avoid_reached_target=bool(proposal.get("replacement_for_proposal_id") or proposal.get("entry_policy")),
             price_guard=proposal.get("price_guard"),
         )
@@ -2715,6 +2764,22 @@ class FTMOMasterControlService:
                 except (ValueError, FTMOMasterError) as exc:
                     await self.repository.update_command(command["command_id"], {"status": CommandStatus.REJECTED.value, "reason": str(exc)})
                     continue
+            if approved.get("kind") == "open_trade":
+                try:
+                    await self._validate_signal_identity(approved)
+                    if approved.get("risk_allocation"):
+                        inputs, _ = await self._confidence_risk_inputs(approved, observed)
+                        if command.get("risk_policy", {}).get("risk_allocation") != approved["risk_allocation"]:
+                            raise FTMOMasterError("command confidence allocation differs from approval")
+                        if not approved.get("entry_policy"):
+                            fields = await self._validated_open_fields(symbol=approved["symbol"], side=approved["side"],
+                                order_type=approved["order_type"], entry=approved["entry"], stop_loss=approved["stop_loss"],
+                                take_profit=approved["take_profit"], now=observed, **inputs)
+                            if Decimal(command["payload"]["volume"]) > Decimal(fields["volume"]):
+                                raise FTMOMasterError("approved order exceeds current confidence risk capacity")
+                except (ValueError, FTMOMasterError, TypeError, KeyError) as exc:
+                    await self.repository.update_command(command["command_id"], {"status": CommandStatus.REJECTED.value, "reason": str(exc)})
+                    continue
             if approved.get("replacement_for_proposal_id"):
                 try:
                     await self._validate_limit_replacement_origin(approved, now=now)
@@ -2741,7 +2806,7 @@ class FTMOMasterControlService:
                     fields = await self._validated_open_fields(symbol=approved["symbol"], side=approved["side"], order_type=approved["order_type"],
                         entry=approved["entry"], stop_loss=approved["stop_loss"], take_profit=approved["take_profit"], now=observed,
                         entry_zone_low=approved["entry_zone_low"], entry_zone_high=approved["entry_zone_high"],
-                        risk_fraction_limit=approved.get("recommended_risk_fraction"))
+                        **(await self._confidence_risk_inputs(approved, observed))[0])
                     if Decimal(approved["volume"]) > Decimal(fields["volume"]):
                         raise FTMOMasterError("approved order exceeds current risk capacity")
                     session = classify_market_session(observed, instrument=self._verified_instrument_mapping(approved["symbol"]), trade_mode=quote.get("trade_mode"))
@@ -3015,6 +3080,8 @@ def format_proposal(
             f"Strategy: {proposal.get('strategy') or 'Operator preview'}",
             *((f"Hierarchy: {hierarchy['context_timeframe']} context | {hierarchy['analysis_timeframe']} analysis | {hierarchy['setup_timeframe']} setup/SL | {hierarchy['confirmation_timeframe']} confirmation | {hierarchy['entry_timeframe']} entry",)
               if hierarchy.get("timeframe_policy") else ()),
+            *((format_gamma_evidence(hierarchy["gamma_evidence"]),) if hierarchy.get("gamma_evidence") else ()),
+            *format_confidence(hierarchy.get("confidence_evidence"), hierarchy.get("gamma_evidence")),
             f"Session: {proposal.get('market_session') or 'UNKNOWN'} | Checked: {proposal.get('session_checked_at') or 'UNKNOWN'}",
             f"Market: {'OPEN' if proposal.get('market_open') is True else 'CLOSED' if proposal.get('market_open') is False else 'UNKNOWN'} | Broker break: {proposal.get('broker_break_proximity') or 'UNKNOWN'}",
             f"Planned analysis entry: {proposal.get('analysis_price') or proposal['entry']}",

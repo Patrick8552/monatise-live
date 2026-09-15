@@ -89,7 +89,7 @@ async def pending_entry_leases(master, snapshot, now):
             fields = await master._validated_open_fields(symbol=proposal["symbol"], side=proposal["side"], order_type=proposal["order_type"],
                 entry=proposal["entry"], stop_loss=proposal["stop_loss"], take_profit=proposal["take_profit"], now=now,
                 entry_zone_low=proposal["entry_zone_low"], entry_zone_high=proposal["entry_zone_high"],
-                risk_fraction_limit=proposal.get("recommended_risk_fraction"), exclude_pending_ticket=str(order["ticket"]),
+                **(await master._confidence_risk_inputs(proposal, now))[0], exclude_pending_ticket=str(order["ticket"]),
                 defer_entry_placement=True)  # A working order may approach/touch entry without becoming invalid.
             risk = Decimal(fields["risk_amount"]) * volume / Decimal(fields["volume"])
             if volume > Decimal(fields["volume"]) or risk > Decimal(proposal["risk_amount"]):
