@@ -29,6 +29,7 @@ from monatise.application.hierarchy import (
 from tests.test_application_hierarchy import MemoryStore
 from tests.test_ftmo_master import service, active_environment, heartbeat
 from tests.shared_hierarchy_fixtures import persist_proof
+from tests.stock_session_fixtures import calendar_rows, stock_rows
 
 NOW = datetime(2026, 9, 14, 16, 0, 20, tzinfo=timezone.utc)
 DURATIONS = {"4h": 14400, "1h": 3600, "15m": 900, "5m": 300, "1m": 60}
@@ -64,19 +65,17 @@ class Alpaca:
             mutation,
         )
 
-    def market_calendar(self, day):
-        return (
-            []
-            if self.closed
-            else [{"date": day, "open": "09:30", "close": self.early_close or "16:00"}]
-        )
+    def market_calendar(self, day, end=None):
+        end = end or day
+        return calendar_rows(day, end, holidays=[end] if self.closed else [],
+                             early_closes={end: self.early_close} if self.early_close else {})
 
     def stock_bars(self, symbol, timeframe, limit):
         self.calls.append((symbol, timeframe, limit))
         tf = {"4Hour": "4h", "1Hour": "1h", "15Min": "15m", "5Min": "5m", "1Min": "1m"}[
             timeframe
         ]
-        data = rows(tf)
+        data = stock_rows(tf, NOW)
         if tf == "1m" and self.mutation == "stale":
             for row in data:
                 row["t"] = (
@@ -193,7 +192,7 @@ def test_stock_analysis_fetches_all_crypto_layers_and_requires_second_observatio
     [
         ({"closed": True}, "stock_exchange_closed"),
         ({"early_close": "11:00"}, "stock_regular_session_closed"),
-        ({"mutation": "stale"}, "1m_candles_stale"),
+        ({"mutation": "stale"}, "1m_expected_closed_candle_missing"),
     ],
 )
 def test_stock_holidays_early_closes_and_stale_lower_layers_fail_closed(

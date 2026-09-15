@@ -38,10 +38,13 @@ class Alpaca:
         if self.failure:
             raise self.failure
         minutes = {"4Hour": 240, "1Hour": 60, "15Min": 15, "5Min": 5, "1Min": 1}[timeframe]
-        return bars(minutes, end=NOW - timedelta(minutes=minutes * 2))
+        from tests.stock_session_fixtures import stock_rows
+        tf = {240: "4h", 60: "1h", 15: "15m", 5: "5m", 1: "1m"}[minutes]
+        return stock_rows(tf, NOW)
 
-    def market_calendar(self, day):
-        return [{"date": day, "open": "09:30", "close": "16:00"}]
+    def market_calendar(self, day, end=None):
+        from tests.stock_session_fixtures import calendar_rows
+        return calendar_rows(day, end or day)
 
     def stock_snapshot(self, symbol):
         self.calls.append(("snapshot", symbol))
@@ -105,7 +108,7 @@ def test_stock_coordinator_uses_verified_roles_and_never_yahoo():
     assert providers["ftmo_mt5"]["status"] == "not_requested"
     assert "yahoo" not in str(result).casefold()
     assert result["analysis_provider"] == "alpaca"
-    assert providers["alpaca"]["timeframes"]["1h"]["candle_count"] == 80
+    assert providers["alpaca"]["timeframes"]["1h"]["candle_count"] == 60
     assert result["analysis_timeframe"] == "1h" and result["trigger_timeframe"] == "5m"
 
 
