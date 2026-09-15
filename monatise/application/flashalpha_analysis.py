@@ -8,6 +8,13 @@ FLASHALPHA_FUTURES_SYMBOLS = ("ES", "NQ", "RTY", "YM", "MES", "MNQ")
 
 
 def flashalpha_directional_bias(context: dict[str, Any]) -> str:
+    # Certification describes the provider's reconstructed gamma boundary, not
+    # a trade-side sign convention. Never repair it by flipping the GEX sign.
+    if "gamma_flip_status" in context and context["gamma_flip_status"] != "available":
+        return "neutral"
+    for raw in (context.get("provider_evidence") or {}).values():
+        if isinstance(raw, dict) and "gamma_flip_status" in raw and raw["gamma_flip_status"] != "available":
+            return "neutral"
     price = _number(context.get("underlying_price"))
     flip = _number(context.get("gamma_flip"))
     if price is None or flip is None:
