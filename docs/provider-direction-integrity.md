@@ -30,7 +30,7 @@ bundle. Publication and approval validate persisted signal identity and directio
 against the proposal; pending-entry revalidation uses the same check. A mismatch
 fails closed instead of editing a stored signal or displaying another direction.
 
-Read-only FlashAlpha requests retry temporary HTTP 502/503/504 and timeouts,
+Read-only FlashAlpha requests retry temporary HTTP 500/502/503/504 and timeouts,
 including timeouts wrapped by `URLError`. The existing three-attempt limit,
 short retry-delay limit and exhausted-quota protection remain. Authentication,
 coverage, malformed payload and quality failures are not retried into eligibility.
@@ -40,3 +40,24 @@ raw adapter output, scanner traces, confirmed evidence, persisted signals,
 Telegram proposal text, Ask/Bid conversion, approval intents, duplicate approvals,
 rejection after an integrity failure, uncertified indicative levels, endpoint
 disagreement, missing source timestamps, wall geometry and bounded retries.
+
+## Stock mapping verification
+
+Current provider inventory and primary issuer sources confirm AMD and WMT on
+Nasdaq and AZN on NYSE. Correct the registry at its source so calendar, analysis,
+proposal and intent metadata share these exchange identities:
+
+- [AMD investor FAQ](https://ir.amd.com/contacts-faq/faq).
+- [Walmart listing transfer](https://www.nasdaq.com/press-release/walmart-debuts-nasdaq-marking-its-first-day-trading-2025-12-09).
+- [AstraZeneca NYSE listing](https://www.astrazeneca.com/media-centre/press-releases/2026/astrazeneca-begins-trading-on-NYSE.html).
+
+BRK.B remains a registered FTMO/Alpaca instrument, but its FlashAlpha request
+returns 404 and no verified Berkshire route is present in the directory. Mark
+its analytical provider unavailable until required evidence can be verified.
+Do not infer a replacement ticker or share class. The registry now has 45
+configured stock analysis routes and 14 unavailable routes. Every configured
+route still needs fresh, certified evidence for each analysis.
+
+Directory absence alone does not establish non-coverage: direct requests for
+RACE, AZN and SPCX returned analytics despite directory omissions. These keep
+their routes and pass through the existing freshness/certification gates.

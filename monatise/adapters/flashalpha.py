@@ -173,7 +173,7 @@ class FlashAlphaAdapter:
                 exc.attempts = attempt + 1
                 exc.http_statuses = statuses.copy()
                 exc.endpoint = next((name for name in ("gex", "levels") if f"/{name}/" in path), "other")
-                retryable = exc.status_code in {429, 502, 503, 504} or exc.code == "provider_timeout"
+                retryable = exc.status_code in {429, 500, 502, 503, 504} or exc.code == "provider_timeout"
                 wait = exc.rate_limit.get("retry_after_seconds", attempt + 1)
                 if (not retryable or attempt == 2
                         or exc.rate_limit.get("remaining") == 0
