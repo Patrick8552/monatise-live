@@ -9,6 +9,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+STOCK_INTRADAY_LOOKBACK_DAYS = 45
+
 
 class AlpacaAdapterError(RuntimeError):
     pass
@@ -42,7 +44,7 @@ class AlpacaMarketDataAdapter:
         return self._get(f"/v2/stocks/{symbol.upper()}/snapshot", {"feed": self.feed})
 
     def stock_bars(self, symbol: str, timeframe: str = "1Hour", limit: int = 200) -> list[dict[str, Any]]:
-        lookback_days = 365 if timeframe.strip().casefold() in {"1day", "day", "1d"} else 45
+        lookback_days = 365 if timeframe.strip().casefold() in {"1day", "day", "1d"} else STOCK_INTRADAY_LOOKBACK_DAYS
         start = (datetime.now(timezone.utc) - timedelta(days=lookback_days)).isoformat()
         payload = self._get(
             f"/v2/stocks/{symbol.upper()}/bars",
@@ -53,11 +55,13 @@ class AlpacaMarketDataAdapter:
         # analysis engine expects chronological order for ATR and breakouts.
         return list(reversed([row for row in rows if isinstance(row, dict)]))
 
-    def market_calendar(self, day: str) -> list[dict[str, Any]]:
-        payload = self._get_absolute(f"{self.trading_base_url}/v2/calendar?{urlencode({'start': day, 'end': day})}")
+    def market_calendar(self, day: str, end: str | None = None) -> list[dict[str, Any]]:
+        payload = self._get_absolute(f"{self.trading_base_url}/v2/calendar?{urlencode({'start': day, 'end': end or day})}")
         if not isinstance(payload, list):
             raise AlpacaAdapterError("Alpaca calendar returned an invalid payload")
-        return [row for row in payload if isinstance(row, dict)]
+        if any(not isinstance(row, dict) for row in payload):
+            raise AlpacaAdapterError("Alpaca calendar returned an invalid row")
+        return payload
 
     def active_stock_assets(self) -> list[dict[str, Any]]:
         payload = self._get_absolute(

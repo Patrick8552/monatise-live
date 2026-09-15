@@ -9,6 +9,8 @@ from decimal import Decimal
 from typing import Any, Mapping
 from zoneinfo import ZoneInfo
 
+from monatise.adapters.alpaca import STOCK_INTRADAY_LOOKBACK_DAYS
+from monatise.application.hierarchy.stock_sessions import StockSessionCalendar
 from monatise.application.hierarchy.approval import SIGNALS, CURRENT
 from monatise.application.hierarchy.broker_candles import BrokerCandleService, is_index
 from monatise.application.hierarchy.coordinator import (
@@ -63,7 +65,15 @@ def _timestamp(value: Any) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
-def _candles(rows: Any, timeframe: str, now: datetime) -> list[Candle]:
+def _candles(
+    rows: Any,
+    timeframe: str,
+    now: datetime,
+    *,
+    stock_calendar: StockSessionCalendar | None = None,
+    grace_seconds: int = 10,
+    diagnostics: dict | None = None,
+) -> list[Candle]:
     if not isinstance(rows, list) or len(rows) < 50:
         raise ValueError(f"{timeframe}_candles_incomplete")
     candles = []
@@ -81,14 +91,45 @@ def _candles(rows: Any, timeframe: str, now: datetime) -> list[Candle]:
             raise ValueError("candle timestamps are future, duplicate or unordered")
         previous = opened
         candles.append(candle)
+    if stock_calendar is not None:
+        candles = [
+            c
+            for c in candles
+            if stock_calendar.regular_bar(_timestamp(c.timestamp), timeframe)
+        ]
     closed = [
         c
         for c in candles
-        if _timestamp(c.timestamp) + timedelta(seconds=INTERVAL_SECONDS[timeframe] + 10)
+        if _timestamp(c.timestamp)
+        + timedelta(seconds=INTERVAL_SECONDS[timeframe] + grace_seconds)
         <= now
     ]
+    if stock_calendar is not None:
+        expected = stock_calendar.expected_closed_open(
+            timeframe, now, grace_seconds=grace_seconds
+        )
+        if diagnostics is not None:
+            diagnostics.update(
+                freshness_policy="exchange_session_expected_bar_v1",
+                calendar_start=stock_calendar.start.isoformat(),
+                calendar_end=stock_calendar.end.isoformat(),
+                expected_closed_open=expected.isoformat(),
+                expected_closed_at=(
+                    expected + timedelta(seconds=INTERVAL_SECONDS[timeframe])
+                ).isoformat(),
+                latest_closed_open=closed[-1].timestamp if closed else None,
+                latest_received_open=rows[-1]["t"],
+                regular_session_candle_count=len(candles),
+                closed_count=len(closed),
+                ignored_out_of_session_count=len(rows) - len(candles),
+                provider_grace_seconds=grace_seconds,
+            )
     if len(closed) < 50:
         raise ValueError(f"{timeframe}_closed_candles_incomplete")
+    if stock_calendar is not None:
+        if _timestamp(closed[-1].timestamp) != expected:
+            raise ValueError(f"{timeframe}_expected_closed_candle_missing")
+        return candles
     age = (
         now
         - _timestamp(closed[-1].timestamp)
@@ -136,7 +177,7 @@ class AssetHierarchyAnalysis:
 
     async def _batch(
         self, instrument: Any, now: datetime
-    ) -> tuple[dict, datetime, dict]:
+    ) -> tuple[dict, datetime, dict, StockSessionCalendar | None]:
         if is_index(instrument):
             if self.master is None:
                 raise ValueError(
@@ -158,31 +199,29 @@ class AssetHierarchyAnalysis:
                     "volume_kind": "tick_volume",
                     "broker_time_offset": batch.get("broker_time_offset"),
                 },
+                None,
             )
         if self.alpaca is None or instrument.exchange not in {"NASDAQ", "NYSE"}:
             raise ValueError("stock_candle_provider_unsupported")
         day = now.astimezone(ZoneInfo("America/New_York")).date().isoformat()
         if not callable(getattr(self.alpaca, "market_calendar", None)):
             raise ValueError("stock_calendar_unavailable")
-        calendar = await asyncio.to_thread(self.alpaca.market_calendar, day)
-        row = next((item for item in calendar if item.get("date") == day), None)
-        if row is None:
-            raise ValueError("stock_exchange_closed")
-        zone = ZoneInfo("America/New_York")
-        opened = (
-            datetime.fromisoformat(f"{day}T{row['open']}")
-            .replace(tzinfo=zone)
-            .astimezone(timezone.utc)
+        start = (
+            (now - timedelta(days=STOCK_INTRADAY_LOOKBACK_DAYS))
+            .astimezone(ZoneInfo("America/New_York"))
+            .date()
         )
-        close = (
-            datetime.fromisoformat(f"{day}T{row['close']}")
-            .replace(tzinfo=zone)
-            .astimezone(timezone.utc)
+        calendar_rows = await asyncio.to_thread(
+            self.alpaca.market_calendar, start.isoformat(), day
         )
-        if not opened <= now < close:
-            raise ValueError("stock_regular_session_closed")
-        # Stock candle history can contain overnight gaps. Never fabricate
-        # missing bars; the latest closed bar on each layer must still be fresh.
+        if not calendar_rows:
+            raise ValueError("stock_calendar_unavailable")
+        calendar = StockSessionCalendar.from_provider(
+            calendar_rows,
+            start=start,
+            end=now.astimezone(ZoneInfo("America/New_York")).date(),
+        )
+        close = calendar.require_regular_session(now).closes
         values = await asyncio.gather(
             *(
                 asyncio.to_thread(
@@ -202,7 +241,12 @@ class AssetHierarchyAnalysis:
                 "instrument": instrument.provider_symbol
                 or instrument.underlying_symbol,
                 "feed": getattr(self.alpaca, "feed", "unknown"),
+                "calendar_provider": "alpaca",
+                "calendar_start": start.isoformat(),
+                "calendar_end": day,
+                "session_timezone": "America/New_York",
             },
+            calendar,
         )
 
     async def analyse(
@@ -401,12 +445,25 @@ class AssetHierarchyAnalysis:
             # confirmation rule. Entry layers remain dormant until setup watch.
             for attempt in range(4):
                 current = now or datetime.now(timezone.utc)
-                batch, session_close, provenance = await self._batch(
+                batch, session_close, provenance, calendar = await self._batch(
                     instrument, current
                 )
                 current = now or datetime.now(timezone.utc)
+                if calendar is not None:
+                    calendar.require_regular_session(current)
+                candle_diagnostics = result.setdefault("candle_diagnostics", {})
                 batch_provider.rows = {
-                    tf: _candles(batch[tf], tf, current) for tf in POLICY.timeframes
+                    tf: _candles(
+                        batch[tf],
+                        tf,
+                        current,
+                        stock_calendar=calendar,
+                        grace_seconds=self.configuration.provider_grace_seconds
+                        if calendar
+                        else 10,
+                        diagnostics=candle_diagnostics.setdefault(tf, {}),
+                    )
+                    for tf in POLICY.timeframes
                 }
                 closed_values = {
                     (tf, c.timestamp): (c.open, c.high, c.low, c.close, c.volume)
@@ -470,7 +527,10 @@ class AssetHierarchyAnalysis:
                     "affected_score": True,
                     "provider_symbol": result["analysis_instrument"],
                     "timeframes": {
-                        tf: {"candle_count": len(batch_provider.rows[tf])}
+                        tf: {
+                            "candle_count": len(batch_provider.rows[tf]),
+                            **candle_diagnostics[tf],
+                        }
                         for tf in POLICY.timeframes
                     },
                     "evidence_contributed": ["shared crypto hierarchy"],
@@ -553,7 +613,11 @@ class AssetHierarchyAnalysis:
                 if evaluation.validation:
                     result["reasons"].extend(evaluation.validation.reasons)
                 if not result["reasons"]:
-                    result["reasons"] = [f"awaiting_{key}" for key, present in core["evidence"].items() if not present]
+                    result["reasons"] = [
+                        f"awaiting_{key}"
+                        for key, present in core["evidence"].items()
+                        if not present
+                    ]
                 if not result["reasons"]:
                     result["reasons"] = ["awaiting_complete_hierarchy_confirmation"]
                 return result
@@ -597,7 +661,9 @@ class AssetHierarchyAnalysis:
                 risk.entry_zone_low,
                 risk.entry_zone_high,
             )
-            waiting_for_entry = not risk.entry_zone_low <= current_price <= risk.entry_zone_high
+            waiting_for_entry = (
+                not risk.entry_zone_low <= current_price <= risk.entry_zone_high
+            )
             expiry = min(
                 risk.expires_at,
                 session_close,
@@ -621,7 +687,9 @@ class AssetHierarchyAnalysis:
                     else "SELL_WATCH",
                     "direction": bundle.trigger_5m.direction.upper(),
                     "setup_status": "confirmed",
-                    "entry_status": "WAITING_FOR_ENTRY" if waiting_for_entry else "IN_ENTRY_ZONE",
+                    "entry_status": "WAITING_FOR_ENTRY"
+                    if waiting_for_entry
+                    else "IN_ENTRY_ZONE",
                     "pending_order_eligible": waiting_for_entry,
                     "publication_valid": True,
                     "entry": risk.reference_entry,
