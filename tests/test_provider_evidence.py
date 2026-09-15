@@ -76,6 +76,15 @@ def test_transport_failure_preserves_provider_http_and_attempts_without_message(
     assert 'PRIVATE' not in str(analysis_trace(result))
 
 
+def test_wrapped_transport_timeout_retains_typed_reason_without_exception_text():
+    error = FlashAlphaAdapterError('PRIVATE URLError', code='provider_timeout')
+    result = asyncio.run(StockMarketIntelligenceCoordinator(Alpaca(), Quiver(), Finnhub(),
+        FlashAlpha(failure=error), environment={}).analyse('SNOW', now=NOW))
+    assert result['reason_code'] == 'provider_timeout'
+    assert not publication_allowed(result)
+    assert 'PRIVATE' not in str(analysis_trace(result))
+
+
 def test_valid_certified_context_passes_unchanged():
     value=context()
     assert validate_flashalpha_context(value,provider_symbol='SNOW',now=NOW,maximum_age=timedelta(hours=1))

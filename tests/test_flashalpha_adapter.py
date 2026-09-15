@@ -149,7 +149,7 @@ def test_exhausted_daily_provider_quota_is_not_retried(monkeypatch):
     assert len(calls)==1
 
 
-@pytest.mark.parametrize('failure', [502, 503, 504, 'timeout', 'wrapped_timeout'])
+@pytest.mark.parametrize('failure', [500, 502, 503, 504, 'timeout', 'wrapped_timeout'])
 def test_temporary_transport_failure_recovers_with_bounded_retry(monkeypatch, failure):
     calls, waits = [], []
     def request(req, timeout=10):
@@ -166,7 +166,7 @@ def test_temporary_transport_failure_recovers_with_bounded_retry(monkeypatch, fa
     assert metadata['attempts'] == 2 and len(calls) == 2 and waits == [1]
 
 
-@pytest.mark.parametrize('status,headers,attempts', [(503, {}, 3), (503, {'Retry-After':'30'}, 1),
+@pytest.mark.parametrize('status,headers,attempts', [(500, {}, 3), (503, {}, 3), (503, {'Retry-After':'30'}, 1),
     (503, {'X-RateLimit-Remaining':'0'}, 1), (401, {}, 1), (403, {}, 1), (404, {}, 1)])
 def test_transport_retries_never_bypass_limits_or_permanent_failure(monkeypatch, status, headers, attempts):
     calls, waits = [], []

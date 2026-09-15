@@ -30,7 +30,7 @@ bundle. Publication and approval validate persisted signal identity and directio
 against the proposal; pending-entry revalidation uses the same check. A mismatch
 fails closed instead of editing a stored signal or displaying another direction.
 
-Read-only FlashAlpha requests retry temporary HTTP 502/503/504 and timeouts,
+Read-only FlashAlpha requests retry temporary HTTP 500/502/503/504 and timeouts,
 including timeouts wrapped by `URLError`. The existing three-attempt limit,
 short retry-delay limit and exhausted-quota protection remain. Authentication,
 coverage, malformed payload and quality failures are not retried into eligibility.

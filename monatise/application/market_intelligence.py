@@ -33,6 +33,8 @@ FAILURE_CODES = {
 
 
 def _failure_code(error: BaseException) -> str:
+    if getattr(error, "code", None) == "provider_timeout":
+        return "provider_timeout"
     if getattr(error, "status_code", None) == 429 or getattr(error, "code", None) == "rate_limited":
         return "provider_rate_limited"
     if getattr(error, "status_code", None) in {403, 404}:
