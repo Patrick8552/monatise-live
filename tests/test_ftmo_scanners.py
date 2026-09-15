@@ -43,9 +43,24 @@ def test_verified_spcx_route_and_air_france_identity_do_not_enable_unsupported_e
     assert air_france.underlying_symbol == 'AF.PA'
     assert air_france.market_data_provider == 'unavailable'
     stocks = FTMO_REGISTRY.for_asset_class(FTMOAssetClass.STOCK)
-    assert len([s for s in stocks if s.market_data_provider == 'flashalpha']) == 46
+    assert len([s for s in stocks if s.market_data_provider == 'flashalpha']) == 45
     assert {s.ftmo_symbol for s in stocks if s.market_data_provider == 'unavailable'} == {
-        'ADSGn', 'AIRF', 'ALVG', 'BAYGn', 'DBKGn', 'IBE', 'LVMH', 'SAN', 'SIEGn', 'VOWG_p', 'TTE', 'BMW', 'MBG'}
+        'ADSGn', 'AIRF', 'ALVG', 'BAYGn', 'DBKGn', 'IBE', 'LVMH', 'SAN', 'SIEGn', 'VOWG_p', 'TTE', 'BMW', 'MBG', 'BRK.B'}
+
+
+@pytest.mark.parametrize('symbol,exchange', [('AMD', 'NASDAQ'), ('WMT', 'NASDAQ'), ('AZN', 'NYSE')])
+def test_stock_exchange_mappings_match_current_primary_listings(symbol, exchange):
+    instrument = FTMO_REGISTRY.resolve(symbol)
+    assert instrument.exchange == exchange
+    assert instrument.provider_symbol == instrument.underlying_symbol == symbol
+    assert instrument.registry_version == 'ftmo-stock-mappings-2026-09-15'
+
+
+def test_broker_registered_berkshire_does_not_imply_verified_analysis_support():
+    instrument = FTMO_REGISTRY.resolve('BRK.B')
+    assert instrument.enabled and instrument.exchange == 'NYSE'
+    assert instrument.underlying_symbol == 'BRK.B'
+    assert instrument.market_data_provider == 'unavailable'
 
 
 @pytest.mark.parametrize("asset_class", tuple(FTMOAssetClass))
