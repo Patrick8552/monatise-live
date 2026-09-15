@@ -79,3 +79,42 @@ def test_transport_failure_preserves_provider_http_and_attempts_without_message(
 def test_valid_certified_context_passes_unchanged():
     value=context()
     assert validate_flashalpha_context(value,provider_symbol='SNOW',now=NOW,maximum_age=timedelta(hours=1))
+
+
+@pytest.mark.parametrize('endpoint', ['gex', 'levels'])
+def test_one_endpoint_cannot_hide_another_endpoints_sign_certificate_failure(endpoint):
+    value = context()
+    value['provider_evidence'][endpoint]['gamma_flip_status'] = 'stored_sign_mismatch'
+    with pytest.raises(EvidenceValidationError) as caught:
+        validate_flashalpha_context(value, provider_symbol='SNOW', now=NOW, maximum_age=timedelta(hours=1))
+    assert flashalpha_diagnostics(value, caught.value)['failure'] == {
+        'field': 'gamma_flip', 'issue': 'stored_sign_mismatch', 'endpoint': endpoint}
+
+
+@pytest.mark.parametrize('feed', ['equity_feed', 'equity_options_feed'])
+@pytest.mark.parametrize('missing', [True, False])
+def test_advertised_provenance_requires_both_relevant_feed_timestamps(feed, missing):
+    value = context()
+    if missing:
+        del value['provider_evidence']['gex']['data_as_of'][feed]
+    else:
+        value['provider_evidence']['gex']['data_as_of'][feed] = None
+    with pytest.raises(EvidenceValidationError) as caught:
+        validate_flashalpha_context(value, provider_symbol='SNOW', now=NOW, maximum_age=timedelta(hours=1))
+    assert caught.value.field == 'data_as_of.' + feed
+
+
+def test_null_provenance_is_not_a_fresh_response_only_fallback():
+    value = context()
+    value['provider_evidence']['gex']['data_as_of'] = None
+    with pytest.raises(EvidenceValidationError) as caught:
+        validate_flashalpha_context(value, provider_symbol='SNOW', now=NOW, maximum_age=timedelta(hours=1))
+    assert caught.value.field == 'data_as_of'
+
+
+@pytest.mark.parametrize('field', ['call_wall', 'put_wall'])
+def test_certified_boundary_still_requires_valid_wall_price_relationship(field):
+    value = context()
+    value[field] = value['underlying_price'] + (-1 if field == 'call_wall' else 1)
+    with pytest.raises(EvidenceValidationError, match='walls do not bracket'):
+        validate_flashalpha_context(value, provider_symbol='SNOW', now=NOW, maximum_age=timedelta(hours=1))

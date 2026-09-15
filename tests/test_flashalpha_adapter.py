@@ -1,6 +1,7 @@
 import json
 from io import BytesIO
 from urllib.error import HTTPError
+from urllib.error import URLError
 
 import monatise.adapters.flashalpha as flashalpha_module
 import pytest
@@ -146,6 +147,38 @@ def test_exhausted_daily_provider_quota_is_not_retried(monkeypatch):
     with pytest.raises(FlashAlphaAdapterError):
         FlashAlphaAdapter('token')._get('/v1/exposure/gex/AAPL')
     assert len(calls)==1
+
+
+@pytest.mark.parametrize('failure', [502, 503, 504, 'timeout', 'wrapped_timeout'])
+def test_temporary_transport_failure_recovers_with_bounded_retry(monkeypatch, failure):
+    calls, waits = [], []
+    def request(req, timeout=10):
+        calls.append(req)
+        if len(calls) == 1:
+            if failure == 'timeout': raise TimeoutError()
+            if failure == 'wrapped_timeout': raise URLError(TimeoutError())
+            raise HTTPError(req.full_url, failure, 'temporary', {}, None)
+        return Response({'underlying_price': 100, 'net_gex': -25})
+    monkeypatch.setattr(flashalpha_module, 'urlopen', request)
+    monkeypatch.setattr(flashalpha_module.time, 'sleep', waits.append)
+    value, metadata = FlashAlphaAdapter('token')._get_retry('/v1/exposure/gex/NQ%3DF')
+    assert value['net_gex'] == -25
+    assert metadata['attempts'] == 2 and len(calls) == 2 and waits == [1]
+
+
+@pytest.mark.parametrize('status,headers,attempts', [(503, {}, 3), (503, {'Retry-After':'30'}, 1),
+    (503, {'X-RateLimit-Remaining':'0'}, 1), (401, {}, 1), (403, {}, 1), (404, {}, 1)])
+def test_transport_retries_never_bypass_limits_or_permanent_failure(monkeypatch, status, headers, attempts):
+    calls, waits = [], []
+    def request(req, timeout=10):
+        calls.append(req)
+        raise HTTPError(req.full_url, status, 'upstream', headers, None)
+    monkeypatch.setattr(flashalpha_module, 'urlopen', request)
+    monkeypatch.setattr(flashalpha_module.time, 'sleep', waits.append)
+    with pytest.raises(FlashAlphaAdapterError) as caught:
+        FlashAlphaAdapter('token')._get('/v1/exposure/levels/NQ%3DF')
+    assert len(calls) == attempts and len(waits) == attempts - 1
+    assert caught.value.attempts == attempts and caught.value.endpoint == 'levels'
 
 
 def test_withheld_level_is_not_replaced_by_other_endpoint_or_zero(monkeypatch):

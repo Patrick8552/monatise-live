@@ -173,8 +173,9 @@ class FlashAlphaAdapter:
                 exc.attempts = attempt + 1
                 exc.http_statuses = statuses.copy()
                 exc.endpoint = next((name for name in ("gex", "levels") if f"/{name}/" in path), "other")
-                wait = exc.rate_limit.get("retry_after_seconds", 1)
-                if (exc.status_code != 429 or attempt == 2
+                retryable = exc.status_code in {429, 502, 503, 504} or exc.code == "provider_timeout"
+                wait = exc.rate_limit.get("retry_after_seconds", attempt + 1)
+                if (not retryable or attempt == 2
                         or exc.rate_limit.get("remaining") == 0
                         or not isinstance(wait, int) or not 0 <= wait <= 5):
                     raise
@@ -219,7 +220,8 @@ class FlashAlphaAdapter:
                 f"FlashAlpha HTTP {error.code}", code=code, status_code=error.code, rate_limit=rate_limit,
             ) from error
         except (URLError, TimeoutError, OSError, json.JSONDecodeError) as error:
-            code = "provider_timeout" if isinstance(error, TimeoutError) else "provider_down"
+            cause = error.reason if isinstance(error, URLError) else error
+            code = "provider_timeout" if isinstance(cause, TimeoutError) else "provider_down"
             raise FlashAlphaAdapterError(f"FlashAlpha unavailable: {type(error).__name__}", code=code) from error
 
 

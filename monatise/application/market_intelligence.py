@@ -168,16 +168,21 @@ def validate_flashalpha_context(
             reject(f"provider_incomplete: flashalpha {endpoint} symbol identity mismatch", "symbol", "identity_mismatch", endpoint)
         clocks = {"as_of": raw.get("as_of")}
         feeds = raw.get("data_as_of")
-        if feeds is not None and not isinstance(feeds, dict):
+        if "data_as_of" in raw and not isinstance(feeds, dict):
             reject(f"provider_incomplete: flashalpha {endpoint} invalid data_as_of", "data_as_of", "malformed", endpoint)
         relevant_feeds = FEEDS[4:] if provider_symbol.endswith("=F") else FEEDS[:2]
-        clocks.update({f"data_as_of.{key}": feeds[key] for key in relevant_feeds if isinstance(feeds, dict) and feeds.get(key) is not None})
+        clocks.update({f"data_as_of.{key}": feeds.get(key) for key in relevant_feeds if isinstance(feeds, dict)})
         for field, value in clocks.items():
             parsed = _parse_time(value)
             if parsed is None or parsed > now:
                 reject(f"provider_incomplete: flashalpha {endpoint} invalid {field}", field, "future" if parsed else "missing_or_malformed", endpoint)
             if now - parsed > maximum_age:
                 reject(f"provider_stale: flashalpha {endpoint} stale {field}", field, "stale", endpoint)
+        # GEX and levels can be served by different snapshots. A certified
+        # levels response cannot hide a failed certificate in the GEX response.
+        if "gamma_flip_status" in raw and raw["gamma_flip_status"] != "available":
+            status = gamma_status(raw["gamma_flip_status"])
+            reject(f"provider_incomplete: flashalpha {endpoint} gamma_flip unavailable ({status})", "gamma_flip", status, endpoint)
     if "gamma_flip_status" in context and context["gamma_flip_status"] != "available":
         status = gamma_status(context["gamma_flip_status"])
         reject(f"provider_incomplete: flashalpha gamma_flip unavailable ({status})", "gamma_flip", status, "levels")
@@ -188,6 +193,8 @@ def validate_flashalpha_context(
     net_gex = context.get("net_gex")
     if not isinstance(net_gex, (int, float)) or isinstance(net_gex, bool) or not math.isfinite(float(net_gex)):
         reject("provider_incomplete: invalid net_gex", "net_gex", "invalid_number")
+    if not context["put_wall"] <= context["underlying_price"] <= context["call_wall"]:
+        reject("provider_conflict: flashalpha walls do not bracket underlying price", "walls", "price_relationship")
     return as_of
 
 

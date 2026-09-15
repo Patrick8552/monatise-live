@@ -255,6 +255,7 @@ class AssetHierarchyAnalysis:
                             or any(
                                 str(prior.value[key]) != str(result[field])
                                 for key, field in (
+                                    ("direction", "direction"),
                                     ("entry", "entry"),
                                     ("stop", "stop_loss"),
                                     ("target", "target"),

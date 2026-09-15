@@ -1766,8 +1766,19 @@ class FTMOMasterControlService:
             refreshed[key] = str(Decimal(refreshed[key]) * capped / volume)
         refreshed["volume"] = str(capped)
 
-    async def _validate_entry_source(self, proposal, now):
+    async def _validate_signal_identity(self, proposal):
         signal = await self.repository.store.get(self.repository.SIGNALS, proposal["signal_id"])
+        if signal is not None and signal.value.get("status") != "qualified":
+            raise FTMOMasterError("analysis or signal expired, invalidated or superseded")
+        if signal is None or any(signal.value.get(key) != proposal.get(field) for key, field in (
+            ("proposal_id", "proposal_id"), ("analysis_id", "analysis_id"),
+            ("symbol", "symbol"), ("direction", "side"),
+        )):
+            raise FTMOMasterError("durable signal identity or direction mismatch")
+        return signal
+
+    async def _validate_entry_source(self, proposal, now):
+        signal = await self._validate_signal_identity(proposal)
         analysis = await self.repository.telegram_analysis(proposal["analysis_id"])
         if (signal is None or signal.value.get("status") != "qualified" or signal.value.get("proposal_id") != proposal["proposal_id"]
                 or analysis is None or not analysis.get("qualified") or analysis.get("invalidated")
@@ -2283,6 +2294,7 @@ class FTMOMasterControlService:
         # Approval authorizes a fresh attempt, never the stale preview price.
         bridge = await self._healthy_bridge(now)
         if proposal["kind"] == "open_trade":
+            await self._validate_signal_identity(proposal)
             bridge, quote, observed = await self._fresh_approval_quote(
                 proposal["symbol"], observed=observed, wait_for_refresh=now is None,
                 proposal_id=proposal_id, actor=actor,
@@ -2577,9 +2589,7 @@ class FTMOMasterControlService:
             raise FTMOMasterError("durable proposal is incomplete")
         if await self.repository.telegram_analysis(str(proposal["analysis_id"])) is None:
             raise FTMOMasterError("durable analysis is missing")
-        signal = await self.repository.store.get(self.repository.SIGNALS, str(proposal["signal_id"]))
-        if signal is None or signal.value.get("proposal_id") != proposal["proposal_id"]:
-            raise FTMOMasterError("durable signal is missing or mismatched")
+        await self._validate_signal_identity(proposal)
         quote_at = _timestamp(proposal["quote_timestamp"], "proposal quote timestamp")
         age = (observed - quote_at).total_seconds()
         if age > self.configuration.quote_max_age_seconds:
