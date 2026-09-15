@@ -1,4 +1,4 @@
-const CACHE_NAME = "monatise-shell-20260824-ftmo-v1";
+const CACHE_NAME = "monatise-shell-20260915-balance-v1";
 const SHELL_ASSETS = [
   "./",
   "./cg.html",
@@ -15,13 +15,13 @@ const SHELL_ASSETS = [
   "./coinglass-dashboard.js?v=20260824-ftmo-v1",
   "./stocks.css?v=20260821-v1",
   "./stocks.js?v=20260821-v1",
-  "./manifest.webmanifest?v=20260727-brand-v2",
-  "./favicon.ico?v=20260727-brand-v4",
-  "./og.png?v=20260727-brand-v4",
-  "./monatise-yinyang.svg?v=20260727-brand-v3",
-  "./icon-180.png?v=20260727-brand-v2",
-  "./icon-192.png?v=20260727-brand-v2",
-  "./icon-512.png?v=20260727-brand-v2"
+  "./manifest.webmanifest?v=20260915-balance-v1",
+  "./favicon.ico?v=20260915-balance-v1",
+  "./og.png?v=20260915-balance-v1",
+  "./monatise-balance.png?v=20260915-balance-v1",
+  "./icon-180.png?v=20260915-balance-v1",
+  "./icon-192.png?v=20260915-balance-v1",
+  "./icon-512.png?v=20260915-balance-v1"
 ];
 
 self.addEventListener("install", (event) => {
