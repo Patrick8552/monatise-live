@@ -62,6 +62,8 @@ async def validate_shared_evidence(
         or current.value.get("state") != "valid"
     ):
         raise ValueError("shared hierarchy setup was invalidated or superseded")
+    from monatise.application.gamma_confidence import allocation_from_proof
+    allocation_from_proof(proof, symbol=instrument.provider_symbol, now=now)
     expiry = datetime.fromisoformat(record.value["expires_at"])
     if expiry.tzinfo is None or now >= expiry:
         raise ValueError("shared hierarchy setup expired")

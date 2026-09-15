@@ -84,13 +84,18 @@ class FlashAlpha:
         price, flip = (108, 106) if self.bullish else (104, 106)
         result = {
             "source": "FlashAlpha", "symbol": symbol, "as_of": (NOW - timedelta(minutes=5)).isoformat(),
-            "underlying_price": price, "gamma_flip": flip, "call_wall": 115,
+            "underlying_price": price, "gamma_flip": flip, "gamma_flip_status":"available", "call_wall": 115,
             "put_wall": 95, "net_gex": 1, "net_gex_label": "positive",
         }
         if self.mutation == "stale":
             result["as_of"] = (NOW - timedelta(hours=2)).isoformat()
         elif self.mutation == "missing_wall":
             result.pop("call_wall")
+        result['provider_evidence']={name:{'symbol':symbol,'as_of':result['as_of'],
+            'gamma_flip_status':'available','data_as_of':{
+                ('futures_feed' if symbol.endswith('=F') else 'equity_feed'):result['as_of'],
+                ('futures_options_feed' if symbol.endswith('=F') else 'equity_options_feed'):result['as_of']}}
+            for name in ('gex','levels')}
         return result
 
 
@@ -222,6 +227,8 @@ def test_request_latency_does_not_make_fresh_stock_context_future_data(monkeypat
         def context(self,symbol):
             value=super().context(symbol);value['as_of']=(NOW+timedelta(seconds=1)).isoformat();return value
     class Hierarchy:
+        from monatise.application.hierarchy import HierarchyConfiguration
+        configuration = HierarchyConfiguration()
         async def analyse(self,*args,**kwargs):
             return {'setup_status':'not_confirmed','analysis_sources':[],'direction':'NONE'}
         async def invalidate(self,*args):
@@ -244,6 +251,8 @@ def test_request_latency_does_not_make_fresh_index_context_future_data(monkeypat
         def context(self,symbol):
             value=super().context(symbol);value['as_of']=(NOW+timedelta(seconds=1)).isoformat();return value
     class Hierarchy:
+        from monatise.application.hierarchy import HierarchyConfiguration
+        configuration = HierarchyConfiguration()
         async def analyse(self,*args,**kwargs):
             return {'setup_status':'not_confirmed','analysis_sources':[]}
         async def invalidate(self,*args):

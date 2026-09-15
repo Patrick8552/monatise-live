@@ -21,7 +21,7 @@ def analysis_trace(result):
     fields = ("asset", "symbol", "ftmo_symbol", "publication_id", "setup_state", "trigger_state",
               "shadow_outcome", "duplicate_blocked", "telegram_publication_failed", "layers_observed", "analysis_id", "scanner_run_id", "decision", "direction",
               "setup_status", "score", "score_threshold", "signal_core_score", "signal_core_evidence",
-              "reason_code", "reason_detail", "provider_diagnostics", "candle_diagnostics", "reasons", "suppression_reasons", "pipeline_stage", "proposal_id",
+              "reason_code", "reason_detail", "provider_diagnostics", "candle_diagnostics", "gamma_evidence", "confidence_evidence", "confidence_state", "risk_multiplier", "non_executable_analysis", "reasons", "suppression_reasons", "pipeline_stage", "proposal_id",
               "telegram_message_id", "telegram_publish_status", "timeframe_policy", "analysis_timeframe",
               "confirmation_timeframe", "trigger_timeframe", "generated_at", "expires_at")
     value = {key: result.get(key) for key in fields if result.get(key) is not None}

@@ -16,6 +16,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping
 
 from monatise.adapters.flashalpha import FlashAlphaAdapter
+from monatise.adapters.alpaca import AlpacaMarketDataAdapter
+from monatise.adapters.alpaca_gamma import AlpacaGammaProvider
+from monatise.application.gamma_evidence import GammaEvidenceLadder, CERTIFIED
+from monatise.application.gamma_confidence import eligible_uncertified, requires_gamma
 from monatise.adapters.quiver import normalize_quiver_symbol
 from monatise.application.flashalpha_analysis import build_flashalpha_futures_analysis
 from monatise.application.ftmo_registry import FTMOAssetClass, FTMOInstrument, FTMO_REGISTRY
@@ -146,6 +150,10 @@ def validate_flashalpha_context(
     now: datetime,
     maximum_age: timedelta,
 ) -> datetime:
+    return _validate_flashalpha_context(context, provider_symbol=provider_symbol, now=now, maximum_age=maximum_age, require_gamma=True)
+
+
+def _validate_flashalpha_context(context, *, provider_symbol, now, maximum_age, require_gamma):
     def reject(message, field, issue, endpoint="context"):
         raise EvidenceValidationError(message, field=field, issue=issue, endpoint=endpoint)
 
@@ -161,7 +169,10 @@ def validate_flashalpha_context(
     # A newly generated response must not disguise an old source feed or a
     # stale/mismatched second endpoint. Legacy normalized replay data retains
     # its existing snapshot validation when endpoint metadata is absent.
-    for endpoint, raw in (context.get("provider_evidence") or {}).items():
+    provenance = context.get("provider_evidence")
+    if provenance is not None and not isinstance(provenance,dict):
+        reject("provider_incomplete: malformed provider evidence", "provider_evidence", "malformed")
+    for endpoint, raw in (provenance or {}).items():
         if endpoint not in {"gex", "levels"}:
             continue
         if not isinstance(raw, dict):
@@ -182,13 +193,13 @@ def validate_flashalpha_context(
                 reject(f"provider_stale: flashalpha {endpoint} stale {field}", field, "stale", endpoint)
         # GEX and levels can be served by different snapshots. A certified
         # levels response cannot hide a failed certificate in the GEX response.
-        if "gamma_flip_status" in raw and raw["gamma_flip_status"] != "available":
+        if require_gamma and "gamma_flip_status" in raw and raw["gamma_flip_status"] != "available":
             status = gamma_status(raw["gamma_flip_status"])
             reject(f"provider_incomplete: flashalpha {endpoint} gamma_flip unavailable ({status})", "gamma_flip", status, endpoint)
-    if "gamma_flip_status" in context and context["gamma_flip_status"] != "available":
+    if require_gamma and "gamma_flip_status" in context and context["gamma_flip_status"] != "available":
         status = gamma_status(context["gamma_flip_status"])
         reject(f"provider_incomplete: flashalpha gamma_flip unavailable ({status})", "gamma_flip", status, "levels")
-    for key in ("underlying_price", "gamma_flip", "call_wall", "put_wall"):
+    for key in (("underlying_price", "gamma_flip", "call_wall", "put_wall") if require_gamma else ("underlying_price", "call_wall", "put_wall")):
         value = context.get(key)
         if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(float(value)) or float(value) <= 0:
             reject(f"provider_incomplete: invalid {key}", key, "invalid_number")
@@ -230,6 +241,7 @@ def _insufficient(
         "score": 0,
         "score_threshold": 7,
         "setup_status": "insufficient_market_data",
+        "publication_valid": False,
         "reason_code": reason,
         "reasons": [reason],
         "analysis_sources": sources,
@@ -244,10 +256,27 @@ def _insufficient(
 class StockMarketIntelligenceCoordinator:
     """Use crypto's candle hierarchy; retain verified provider context gates."""
 
-    def __init__(self, alpaca, quiver, finnhub, flashalpha, *, environment, hierarchy=None):
+    def __init__(self, alpaca, quiver, finnhub, flashalpha, *, environment, hierarchy=None, gamma_ladder=None):
         self.alpaca, self.quiver, self.finnhub, self.flashalpha = alpaca, quiver, finnhub, flashalpha
         self.environment = environment
         self.hierarchy = hierarchy or AssetHierarchyAnalysis(alpaca=alpaca, environment=environment)
+        self.gamma_ladder = gamma_ladder or GammaEvidenceLadder(
+            chain_provider=AlpacaGammaProvider(alpaca) if isinstance(alpaca, AlpacaMarketDataAdapter) else None)
+        # This separate hierarchy has no durable store, broker or publication
+        # capability. It cannot mint an executable bundle during gamma failure.
+        self.analysis_only_hierarchy = AssetHierarchyAnalysis(alpaca=alpaca, environment=environment)
+
+    async def _analysis_without_gamma(self, instrument, now):
+        try:
+            async with asyncio.timeout(20):
+                raw = await self.analysis_only_hierarchy.analyse(instrument, context={}, now=now)
+            keys = ("market_structure", "liquidity", "supply_demand", "fibonacci", "trigger",
+                    "candle_diagnostics", "freshness", "reasons", "analysis_sources", "timeframe_policy")
+            return {**{key:raw[key] for key in keys if key in raw},
+                    "execution_eligible":False,"gamma_used":False,"publication_valid":False}
+        except (TimeoutError, ValueError, RuntimeError):
+            return {"execution_eligible":False,"gamma_used":False,"publication_valid":False,
+                    "reasons":["analysis_only_data_unavailable"]}
 
     async def analyse(self, symbol, *, instrument=None, now=None, enrichment_index=None):
         observed = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
@@ -282,6 +311,19 @@ class StockMarketIntelligenceCoordinator:
                 error_detail = str(exc)  # Fixed validation messages, never a provider exception.
                 diagnostics = flashalpha_diagnostics(context, exc)
         diagnostics = diagnostics or flashalpha_diagnostics(context)
+        maximum_age = timedelta(minutes=max(5, int(self.environment.get("MONATISE_FLASHALPHA_MAX_AGE_MINUTES", "60"))))
+        def validate_primary(value, at):
+            return validate_flashalpha_context(value, provider_symbol=ticker, now=at, maximum_age=maximum_age)
+        def validate_supporting(value, at):
+            return _validate_flashalpha_context(value, provider_symbol=ticker, now=at, maximum_age=maximum_age, require_gamma=False)
+        gamma, accepted_context, resolved_error = await self.gamma_ladder.resolve(
+            context=context, primary_error=error, primary=self.flashalpha, symbol=ticker,
+            now=lambda: (now or datetime.now(timezone.utc)).astimezone(timezone.utc),
+            maximum_age=maximum_age, validate_primary=validate_primary, validate_supporting=validate_supporting)
+        primary_error = error
+        error = resolved_error if gamma["state"] in CERTIFIED else (error or "provider_incomplete")
+        if gamma["state"] == "CERTIFIED_PRIMARY" and error is None:
+            diagnostics = flashalpha_diagnostics(accepted_context)
         sources = [
             _source("flashalpha", "positioning_context", "failed" if error else "used", ticker,
                     evidence=[] if error else ["verified positioning context at shared analysis layer"], failure_reason=error_detail or error),
@@ -289,27 +331,47 @@ class StockMarketIntelligenceCoordinator:
             _source("finnhub", "supplemental_intelligence", "used" if finnhub[0] and not finnhub[0].get("unavailable") else "degraded", ticker, failure_reason=finnhub[1]),
             _source("ftmo_mt5", "execution_pricing", "not_requested", instrument.ftmo_symbol, requested=False),
         ]
-        if error:
+        strategy = self.hierarchy.configuration.strategy_version
+        degraded = eligible_uncertified(gamma, strategy=strategy, symbol=ticker, now=now or datetime.now(timezone.utc))
+        if error and not degraded:
             await self.hierarchy.invalidate(instrument)
-            return {**_insufficient(ticker, "stock", sources, error, now=observed), "reason_detail": error_detail, "provider_diagnostics": diagnostics, **POLICY.metadata(), "analysis_provider": "alpaca", "analysis_instrument": ticker}
+            broader = await self._analysis_without_gamma(instrument, now)
+            return {**_insufficient(ticker, "stock", sources, error, now=observed), "reason_detail": error_detail,
+                    "provider_diagnostics": diagnostics, "gamma_evidence":gamma,"gamma_flip":None,
+                    "gamma_required":requires_gamma(strategy),"non_executable_analysis":broader,
+                    **{key:broader[key] for key in ("market_structure","liquidity","supply_demand","fibonacci") if key in broader},
+                    **POLICY.metadata(), "analysis_provider": "alpaca", "analysis_instrument": ticker}
+        if degraded:
+            sources[0].update(status="degraded", evidence_contributed=["verified supporting walls and underlying; gamma excluded from direction"])
+        if primary_error and gamma["state"] in {"CERTIFIED_RECONSTRUCTED", "CERTIFIED_CROSS_PROVIDER"}:
+            sources[0].update(status="degraded",evidence_contributed=["verified supporting walls and underlying; primary gamma quarantined"])
+            sources.append(_source(gamma["provider"],"independent_gamma","used",ticker,
+                                   evidence=[gamma["state"],gamma["certificate_id"]]))
+        context = accepted_context
+        effective_context = {**context,"gamma_flip":gamma["gamma_flip"],"gamma_evidence":gamma}
         quiver_score = int((((quiver[0] or {}).get("summary") or {}).get("score") or 0))
-        result = await self.hierarchy.analyse(instrument, context={**context, "quiver_score": quiver_score}, now=now)
+        result = await self.hierarchy.analyse(instrument, context={**effective_context, "quiver_score": quiver_score}, now=now)
+        result.update(gamma_evidence=gamma,gamma_flip=gamma["gamma_flip"],gamma_required=requires_gamma(strategy))
         result["analysis_sources"] += sources
         result["provider_diagnostics"] = diagnostics
+        if degraded:
+            result["fallback_status"] = "independent_confluence_required"
         result["supplemental_intelligence"] = result["additional_context"] = {
             "flashalpha": context, "quiver": quiver[0] or {}, "finnhub": finnhub[0] or {},
         }
         result["direction_authority"] = "Monatise shared H1 market structure"
         result["provider_consensus"] = "PARTIAL"
-        result["fallback_status"] = "no_snapshot_only_fallback"
+        result["fallback_status"] = gamma["state"]
+        if degraded and not result.get("publication_valid"):
+            result.setdefault("reasons",[]).append("uncertified_gamma_requires_full_independent_confluence")
         if result.get("setup_status") == "confirmed":
             from monatise.application.flashalpha_analysis import flashalpha_directional_bias
-            bias = flashalpha_directional_bias(context)
+            bias = flashalpha_directional_bias(effective_context, now=now or datetime.now(timezone.utc))
             direction = result["direction"]
             score = int((((quiver[0] or {}).get("summary") or {}).get("score") or 0))
             conflict = ((direction == "LONG" and (bias == "bearish" or score <= -2))
                         or (direction == "SHORT" and (bias == "bullish" or score >= 2)))
-            result["provider_consensus"] = "CONFLICT" if conflict else "CONFIRMED"
+            result["provider_consensus"] = "CONFLICT" if conflict else ("INDEPENDENT_CONFLUENCE" if degraded else "CONFIRMED")
             if conflict:
                 result.update(decision="NO_TRADE", setup_status="provider_conflict", publication_valid=False)
                 result["reasons"].append("positioning_context_conflicts_with_shared_hierarchy")

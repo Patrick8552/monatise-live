@@ -253,7 +253,7 @@ def normalize_analysis(
         "analysis_started_at": started_at.isoformat(),
         "analysis_completed_at": completed_at.isoformat(),
         "timeframe": raw.get("analysis_timeframe") or raw.get("interval") or raw.get("timeframe") or "15m",
-        **{key: raw[key] for key in ("timeframe_policy", "context_timeframe", "analysis_timeframe", "setup_timeframe", "confirmation_timeframe", "trigger_timeframe", "entry_timeframe", "stop_timeframe", "evidence_bundle", "score_scale", "signal_core_score") if key in raw},
+        **{key: raw[key] for key in ("timeframe_policy", "context_timeframe", "analysis_timeframe", "setup_timeframe", "confirmation_timeframe", "trigger_timeframe", "entry_timeframe", "stop_timeframe", "evidence_bundle", "score_scale", "signal_core_score", "gamma_evidence", "confidence_evidence", "confidence_state", "risk_multiplier", "non_executable_analysis") if key in raw},
         "session": dict(session),
         "market_state": raw.get("market_state") or raw.get("market_regime") or classification.upper(),
         "bias": direction.upper(),
@@ -346,6 +346,11 @@ def format_analysis(analysis: Mapping[str, Any]) -> str:
         f"Fibonacci: {_compact(analysis.get('fibonacci'))}",
         f"Order flow: {_compact(analysis.get('order_flow'))}",
     ]
+    from monatise.application.gamma_evidence import format_gamma_evidence
+    gamma_line = format_gamma_evidence(analysis.get("gamma_evidence"))
+    if gamma_line: lines.append(gamma_line)
+    from monatise.application.gamma_confidence import format_confidence
+    lines.extend(format_confidence(analysis.get("confidence_evidence"), analysis.get("gamma_evidence")))
     if analysis.get("timeframe_policy"):
         lines.append(f"Hierarchy: {analysis['context_timeframe']} context | {analysis['analysis_timeframe']} direction | {analysis['setup_timeframe']} setup/SL | {analysis['confirmation_timeframe']} confirmation | {analysis['entry_timeframe']} entry")
     if zone:

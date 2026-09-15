@@ -360,6 +360,7 @@ def test_flashalpha_cycle_budget_scales_to_plan_and_scanner_cadence():
     }}
 
     assert runtime._flashalpha_scheduled_capacity(interval_seconds=1800, allocation_fraction=0.7) == 17
+    assert runtime._flashalpha_scheduled_capacity(interval_seconds=1800, allocation_fraction=0.7, requests_per_analysis=4) == 8
     assert runtime._flashalpha_scheduled_capacity(interval_seconds=3600, allocation_fraction=0.3) == 15
 
     runtime.dependencies["flashalpha"].update({"plan": "basic", "daily_limit": 250, "remaining": 250})
