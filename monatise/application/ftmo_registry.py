@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Any, Iterable
@@ -176,9 +176,9 @@ def _future(symbol: str, name: str, underlying: str, venue: str, root: str, micr
     return FTMOInstrument(FTMOAssetClass.FUTURES_LINKED, symbol, name, underlying, underlying, venue, "flashalpha", root, root, micro, "FTMO published platform schedule; futures venue hours differ", currency, True, "active", REGISTRY_SOURCE, REGISTRY_VERSION, REGISTRY_VERIFIED_AT)
 
 
-_US_NASDAQ = {"AAPL", "AMZN", "ARM", "ASML", "AVGO", "AZN", "CSCO", "GOOG", "INTC", "META", "MSFT", "MSTR", "NFLX", "NVDA", "PLTR", "QCOM", "SBUX", "TSLA", "ZM"}
+_US_NASDAQ = {"AAPL", "AMZN", "ARM", "ASML", "AVGO", "AZN", "CSCO", "GOOG", "INTC", "META", "MSFT", "MSTR", "NFLX", "NVDA", "PLTR", "QCOM", "SBUX", "SPCX", "TSLA", "ZM"}
 _EU_STOCKS = {
-    "ADSGn": ("ADS.DE", "XETRA"), "AIRF": ("AIR.PA", "Euronext Paris"), "ALVG": ("ALV.DE", "XETRA"),
+    "ADSGn": ("ADS.DE", "XETRA"), "AIRF": ("AF.PA", "Euronext Paris"), "ALVG": ("ALV.DE", "XETRA"),
     "BAYGn": ("BAYN.DE", "XETRA"), "DBKGn": ("DBK.DE", "XETRA"), "IBE": ("IBE.MC", "BME"),
     "LVMH": ("MC.PA", "Euronext Paris"), "SAN": ("SAN.MC", "BME"), "SIEGn": ("SIE.DE", "XETRA"),
     "VOWG_p": ("VOW3.DE", "XETRA"), "TTE": ("TTE.PA", "Euronext Paris"), "BMW": ("BMW.DE", "XETRA"),
@@ -288,11 +288,14 @@ def _builtins() -> tuple[FTMOInstrument, ...]:
         if symbol in _EU_STOCKS:
             provider_symbol, exchange = _EU_STOCKS[symbol]
             stocks.append(_stock(symbol, name, provider_symbol, exchange, currency, "unavailable", provider_symbol))
-        elif symbol == "SPCX":
-            stocks.append(_stock(symbol, name, symbol, "Private market / FTMO CFD", currency, "unavailable", None))
         else:
             exchange = "NASDAQ" if symbol in _US_NASDAQ else "NYSE"
             stocks.append(_stock(symbol, name, symbol, exchange, currency, "flashalpha", symbol))
+        if symbol in {"SPCX", "AIRF"}:
+            stocks[-1] = replace(stocks[-1],
+                registry_version="ftmo-provider-coverage-2026-09-14",
+                last_verified_at=datetime(2026, 9, 14, 17, 46, tzinfo=timezone.utc),
+                source="FTMO registry; issuer/exchange identity and live provider checks (docs/provider-coverage-2026-09-14.md)")
     crypto = [_crypto(*row) for row in _CRYPTO_ROWS]
     forex = [_forex(*row) for row in _FOREX_ROWS]
     futures = [_future(*row) for row in _FUTURES_ROWS]

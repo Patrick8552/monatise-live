@@ -570,6 +570,16 @@ def test_analysis_route_rejects_requests_when_replay_protection_unavailable():
     assert json.loads(dataset[1]["body"])["data"][0]["symbol"] == "BTC"
 
 
+@pytest.mark.parametrize('commit', ['a' * 40, 'not-a-commit-PRIVATE', ''])
+def test_operator_reports_only_valid_non_secret_deployed_commit(commit):
+    runtime = Runtime()
+    runtime.environment['RENDER_GIT_COMMIT'] = commit
+    result = get(ProductionASGI(runtime), '/api/operator')
+    payload = json.loads(result[1]['body'])
+    assert payload['deployment']['commit'] == (commit if len(commit) == 40 else None)
+    assert 'server-secret' not in str(payload) and 'PRIVATE' not in str(payload)
+
+
 def test_frontend_read_routes_are_implemented_by_production_app():
     runtime = Runtime()
     def dashboard_query(path, query):  # noqa: ANN001, ANN202

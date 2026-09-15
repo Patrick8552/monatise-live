@@ -1828,7 +1828,9 @@ class ProductionASGI(OrchestrationASGI):
 
     async def _operator_status(self) -> tuple[int, dict[str, Any]]:
         configured = self.runtime.coinglass is not None and bool(self.runtime.environment.get("COINGLASS_API_KEY", "").strip())
+        commit = str(self.runtime.environment.get("RENDER_GIT_COMMIT") or self.runtime.environment.get("MONATISE_GIT_COMMIT") or "").strip()
         return 200, {
+            "deployment": {"commit": commit if re.fullmatch(r"[0-9a-fA-F]{40}", commit) else None},
             "integrations": {"coinglass": {
                 "configured": configured,
                 "exchange": "Binance",

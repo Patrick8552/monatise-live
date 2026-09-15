@@ -146,3 +146,34 @@ def test_exhausted_daily_provider_quota_is_not_retried(monkeypatch):
     with pytest.raises(FlashAlphaAdapterError):
         FlashAlphaAdapter('token')._get('/v1/exposure/gex/AAPL')
     assert len(calls)==1
+
+
+def test_withheld_level_is_not_replaced_by_other_endpoint_or_zero(monkeypatch):
+    def request(req, timeout=10):
+        if '/levels/' in req.full_url:
+            return Response({'symbol':'SNOW','levels':{'gamma_flip':None,
+                'gamma_flip_status':'no_boundary','call_wall':{'strike':0,'value':350},'put_wall':330}})
+        return Response({'symbol':'SNOW','gamma_flip':334,'gamma_flip_status':'available','net_gex':1})
+    monkeypatch.setattr(flashalpha_module,'urlopen',request)
+    context=FlashAlphaAdapter('PRIVATE_TOKEN').context('SNOW')
+    assert context['gamma_flip'] is None
+    assert context['gamma_flip_status']=='no_boundary'
+    assert context['call_wall']==0
+    assert context['provider_evidence']['levels']['attempts']==1
+    assert context['provider_evidence']['levels']['http_statuses']==[200]
+
+
+def test_context_retains_each_response_identity_and_retry_history(monkeypatch):
+    calls=[]
+    def request(req,timeout=10):
+        calls.append(req)
+        if len(calls)==1:
+            raise HTTPError(req.full_url,429,'slow down',{'Retry-After':'1'},None)
+        return Response({'symbol':'WRONG','net_gex':1,'gamma_flip_status':'available',
+                         'as_of':'2026-09-14T17:00:00Z','levels':{'gamma_flip':100}})
+    monkeypatch.setattr(flashalpha_module,'urlopen',request)
+    monkeypatch.setattr(flashalpha_module.time,'sleep',lambda _:None)
+    context=FlashAlphaAdapter('PRIVATE_TOKEN').context('SNOW')
+    assert context['provider_evidence']['gex']['symbol']=='WRONG'
+    assert context['provider_evidence']['gex']['http_statuses']==[429,200]
+    assert context['provider_evidence']['gex']['attempts']==2
