@@ -8,6 +8,8 @@ ASGI app (monatise/application/production.py), and must not depend on either.
 from __future__ import annotations
 
 import time
+import math
+from datetime import datetime
 
 
 STOCK_WATCHLIST = ("SPX", "NDX", "NASDAQ", "QQQ", "SPY", "AAPL", "TSLA", "NVDA")
@@ -231,7 +233,7 @@ def normalize_indicator_payload(payload: dict) -> dict:
     return normalized
 
 
-def normalize_tradingview_alert(payload: dict | str) -> dict:
+def normalize_tradingview_alert(payload: dict | str, *, allow_gold_reference: bool = False, now: float | None = None) -> dict:
     if isinstance(payload, str):
         raw = payload.strip()
         payload = {"message": raw}
@@ -247,8 +249,33 @@ def normalize_tradingview_alert(payload: dict | str) -> dict:
     raw_symbol = str(payload.get("symbol") or payload.get("ticker") or payload.get("pair") or "").strip()
     if not raw_symbol:
         raise ValueError("TradingView alert symbol is required")
+    gold_reference = False
     if is_removed_gold_symbol(raw_symbol):
-        raise ValueError("Gold/XAU setups are not supported")
+        if not allow_gold_reference:
+            raise ValueError("Gold/XAU setups are not supported")
+        source_symbol = raw_symbol.upper().rsplit(":", 1)[-1]
+        if source_symbol not in {"XAUUSD", "XAU/USD"}:
+            raise ValueError("Gold reference requires exact XAU/USD alias")
+        tf = str(payload.get("timeframe") or payload.get("interval") or "")
+        if tf not in {"1", "5", "15", "60", "240", "1m", "5m", "15m", "1h", "4h"}:
+            raise ValueError("Gold reference timeframe unsupported")
+        event = payload.get("timestamp")
+        try:
+            parsed = datetime.fromisoformat(str(event).replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                raise ValueError("timezone required")
+            age = (time.time() if now is None else now) - parsed.timestamp()
+            value = float(payload.get("price") or payload.get("close"))
+            if not 0 <= age <= TRADINGVIEW_FRESH_SECONDS or not math.isfinite(value) or value <= 0:
+                raise ValueError("stale timestamp or invalid price")
+        except (ValueError, TypeError) as exc:
+            raise ValueError("Gold reference timestamp/price invalid") from exc
+        # Reference labels/levels can never be interpreted as a command.
+        allowed = {"symbol", "ticker", "pair", "timeframe", "interval", "timestamp",
+                   "price", "close", "indicator", "strategy", "message", "note"}
+        payload = {key: value for key, value in payload.items() if key in allowed}
+        payload["action"] = "WAIT"
+        gold_reference = True
     if is_removed_forex_symbol(raw_symbol):
         raise ValueError("Forex setups are not supported")
     symbol = normalize_alert_symbol(raw_symbol)
@@ -263,6 +290,7 @@ def normalize_tradingview_alert(payload: dict | str) -> dict:
     except (TypeError, ValueError):
         confidence = 0.0
     return {
+        **({"reference_only": True, "source_symbol": raw_symbol, "event_at": payload["timestamp"], "instrument_kind": "broker_xauusd_reference"} if gold_reference else {}),
         "symbol": symbol,
         "action": action,
         "confidence": confidence,
@@ -289,7 +317,7 @@ def normalize_tradingview_alert(payload: dict | str) -> dict:
             "note": str(payload.get("hedgeNote") or payload.get("hedge_note") or "").strip()[:180],
         },
         "message": str(payload.get("message") or payload.get("note") or "").strip()[:240],
-        "receivedAt": time.time(),
+        "receivedAt": time.time() if now is None else now,
     }
 
 

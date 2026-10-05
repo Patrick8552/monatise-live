@@ -1341,7 +1341,8 @@ class FTMOMasterControlService:
             "daily_loss_limit": str(_decimal(payload.get("daily_loss_limit"), "daily loss limit", positive=True)),
             "total_loss_limit": str(_decimal(payload.get("total_loss_limit"), "total loss limit", positive=True)),
             "terminal_connected": bool(payload.get("terminal_connected")),
-            "trade_allowed": bool(payload.get("trade_allowed")),
+            "trade_allowed": bool(payload.get("trade_allowed")) and payload.get("history_only") is not True,
+            "history_only": payload.get("history_only") is True,
             "ea_attached": bool(payload.get("ea_attached")),
             "identity_match": identity_match,
             "terminal_build": str(payload.get("terminal_build") or ""),
@@ -1950,6 +1951,13 @@ class FTMOMasterControlService:
             analysis_provider=analysis_provider,
             analysis_instrument=analysis_instrument,
         )
+        from monatise.application.hierarchy.broker_candles import is_xauusd
+        if is_xauusd(instrument) and (
+            str(strategy or "").startswith("gold-")
+            or str(analysis_provider or "").casefold() in {"ftmo_mt5", "databento"}
+            or (isinstance(evidence_bundle, Mapping) and evidence_bundle.get("gold_policy_version"))
+        ):
+            raise FTMOMasterError("gold approval disabled pending separate policy release")
         if requires_shared_hierarchy(instrument):
             try:
                 proof = await validate_shared_evidence(self.repository.store, instrument, evidence_bundle, observed)

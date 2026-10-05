@@ -49,10 +49,10 @@ jobs:
           enable-cache: true
 
       - name: Install locked environment
-        run: uv sync --extra dev
+        run: uv sync --extra dev --extra gold-data
 
       - name: Run tests
-        run: uv run pytest
+        run: uv run pytest -rs
 
   live-server-docker-smoke:
     name: Live server Docker smoke test

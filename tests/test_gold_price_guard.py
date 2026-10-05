@@ -211,7 +211,7 @@ def test_native_final_validation_enforces_gold_risk_setup_and_legacy_deviation(t
 #include <map>
 #include <cmath>
 using string=std::string; using ulong=unsigned long; using datetime=long;
-bool InpExecutionEnabled=true, InpMasterAccountApproved=true;
+bool InpHistoryOnly=false, InpExecutionEnabled=true, InpMasterAccountApproved=true;
 int InpMaximumOpenExposures=5, InpMaximumDeviationPoints=20, InpMaximumSpreadTicks=80, InpMagicNumber=123;
 double InpGoldMaximumAdversePriceDeviation=10, InpRiskFraction=.03, InpDailyLossLimit=500, InpTotalLossLimit=1000, InpInitialAccountBalance=10000;
 enum {ORDER_MAGIC,POSITION_MAGIC,SYMBOL_TRADE_TICK_SIZE,SYMBOL_TRADE_TICK_VALUE_LOSS,SYMBOL_TRADE_TICK_VALUE,SYMBOL_POINT,SYMBOL_VOLUME_MIN,SYMBOL_VOLUME_MAX,SYMBOL_VOLUME_STEP,SYMBOL_TRADE_MODE,SYMBOL_TRADE_MODE_FULL,SYMBOL_TRADE_STOPS_LEVEL,SYMBOL_TRADE_FREEZE_LEVEL,ACCOUNT_EQUITY,SYMBOL_EXPIRATION_MODE,SYMBOL_EXPIRATION_SPECIFIED};
@@ -240,6 +240,8 @@ bool CurrentOpenRisk(double &risk,string &) {risk=0;return true;}
 ''' + functions + r'''
 int main() {
  string reason; double validated=0;
+ InpHistoryOnly=true; if(FinalOrderValidation("",reason,validated)) return 90;
+ InpHistoryOnly=false;
  if(!FinalOrderValidation("",reason,validated) || validated!=4310) return 1;
  ask=4310.01; if(FinalOrderValidation("",reason,validated)) return 2;
  ask=4310; f["approved_risk_budget"]="79"; if(FinalOrderValidation("",reason,validated)) return 3;
@@ -280,17 +282,14 @@ int main() {
     subprocess.run([str(binary)], check=True, capture_output=True)
 
 
-def test_fixed_zone_market_entry_preserves_gold_adverse_price_guard(monkeypatch):
+def test_new_gold_technical_zone_is_shadow_even_with_valid_price_guard(monkeypatch):
     async def scenario():
         control, _ = await gold_setup(monkeypatch)
-        p = await control.create_signal_proposal(signal_id='gold-zone', symbol='XAUUSD', direction='LONG',
-            analysis_state='LONG', confirmation_status='confirmed', analysis_entry='2500.20',
-            analysis_stop='2470.20', analysis_target='2570.20', source='test', analysis_provider='ftmo_mt5',
-            entry_zone_low='2490', entry_zone_high='2520', now=NOW,
-            evidence_bundle={'market_price_observation': {'price':'2500.20','source':'ftmo_mt5'}})
-        assert p['entry_policy'] and p['price_guard']['maximum_adverse_deviation'] == '10'
-        await quote(control, '2511.20')  # Inside zone, but exceeds existing Gold allowance.
-        with pytest.raises(FTMOMasterError, match='tolerance'):
-            await control.approve(p['proposal_id'], '42', now=NOW)
+        with pytest.raises(FTMOMasterError, match="gold approval disabled"):
+            await control.create_signal_proposal(signal_id='gold-zone', symbol='XAUUSD', direction='LONG',
+                analysis_state='LONG', confirmation_status='confirmed', analysis_entry='2500.20',
+                analysis_stop='2470.20', analysis_target='2570.20', source='test', analysis_provider='ftmo_mt5',
+                entry_zone_low='2490', entry_zone_high='2520', now=NOW,
+                evidence_bundle={'market_price_observation': {'price':'2500.20','source':'ftmo_mt5'}})
         assert await control.repository.pending_commands() == ()
     asyncio.run(scenario())

@@ -7,7 +7,7 @@ BRIDGE_SOURCE = Path(__file__).parents[1] / "mt5" / "Experts" / "MonatiseFTMOBri
 def test_mt5_bridge_enforces_expiry_price_volume_and_broker_symbol_constraints():
     source = BRIDGE_SOURCE.read_text(encoding="utf-8")
 
-    assert '#property version   "1.22"' in source
+    assert '#property version   "1.24"' in source
     assert 'InpSymbols                = "XAUUSD,US100.cash,US500.cash,AAPL,EURUSD,GBPUSD,USDJPY,USDCHF,AUDUSD,NZDUSD,USDCAD"' in source
     assert "BTCUSD" not in source.split("input string InpSymbols", 1)[1].split(";", 1)[0]
     assert "InpRiskFraction           = 0.03" in source
@@ -93,3 +93,20 @@ def test_broker_history_covers_entire_positions_independently_of_multi_tp():
         assert field in heartbeat
     for field in ("DEAL_PROFIT", "DEAL_COMMISSION", "DEAL_SWAP", "DEAL_FEE", "DEAL_POSITION_ID", "DEAL_SL", "DEAL_TP"):
         assert field in source
+
+
+def test_history_only_mode_never_polls_or_manages_orders():
+    source = BRIDGE_SOURCE.read_text(encoding="utf-8")
+    assert 'input bool InpHistoryOnly = false;' in source
+    assert 'if(InpHistoryOnly || !InpExecutionEnabled || !InpMasterAccountApproved)' in source
+    init = source.split('int OnInit()', 1)[1].split('void OnDeinit', 1)[0]
+    deinit = source.split('void OnDeinit', 1)[1].split('void OnTimer', 1)[0]
+    assert 'if(!InpHistoryOnly) GuardPendingEntries(true);' in init
+    assert 'if(!InpHistoryOnly) GuardPendingEntries(true);' in deinit
+    timer = source.split('void OnTimer()', 1)[1]
+    branch = timer.split('if(InpHistoryOnly)', 1)[1].split('}', 1)[0]
+    assert 'SendHeartbeat();' in branch and 'return;' in branch
+    assert 'GuardPendingEntries' not in branch and 'PollCommands' not in branch
+    heartbeat = source.split('void SendHeartbeat()',1)[1].split('int OnInit()',1)[0]
+    assert 'if(!InpHistoryOnly) ApplyPendingManifest(response, LastRequestNonce);' in heartbeat
+    assert '\\\"t_broker\\\"' in source

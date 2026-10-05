@@ -161,6 +161,7 @@ def normalize_analysis(
     session: Mapping[str, Any],
 ) -> dict[str, Any]:
     asset_class = resolved.asset_class
+    gold_shadow = resolved.canonical == "XAU/USD" and bool(raw.get("gold_policy_version"))
     if asset_class is FTMOAssetClass.CRYPTO:
         classification = str(raw.get("classification") or "no_trade").casefold()
         direction = str(raw.get("direction") or "none").casefold()
@@ -237,8 +238,25 @@ def normalize_analysis(
     elif qualified and not reference_in_zone:
         decision = f"QUALIFIED {direction.upper()} — WAITING FOR ENTRY ZONE"
 
+    if gold_shadow:
+        qualified = confirmed = executable = False
+        decision = "SHADOW_QUALIFIED" if raw.get("analytical_qualified") else "SHADOW_UNQUALIFIED"
     pending_eligible = bool(qualified and confirmed and observed_price_valid and valid_zone and stop is not None and targets and expires_at and not reference_in_zone)
     return {
+        **({
+            "gold_policy_version": raw["gold_policy_version"],
+            "strategy": raw.get("strategy"),
+            "assessment_mode": raw.get("assessment_mode", "shadow"),
+            "analytical_qualified": bool(raw.get("analytical_qualified")),
+            "technical_bias": raw.get("technical_bias", "unavailable"),
+            "required_evidence": list(raw.get("required_evidence") or []),
+            "score_components": dict(raw.get("score_components") or {}),
+            "optional_evidence": {name: {key: value.get(key) for key in
+                ("status", "reason", "as_of", "expires_at", "gil_state", "model_uncertainty") if key in value}
+                for name, value in (raw.get("optional_evidence") or {}).items() if isinstance(value, Mapping)},
+            "publication_eligible": False, "approval_eligible": False, "execution_eligible": False,
+            "approval_blocking_reasons": list(raw.get("approval_blocking_reasons") or ["gold_shadow_policy_not_released"]),
+        } if gold_shadow else {}),
         "telegram_request_id": request_id,
         "request_id": request_id,
         "analysis_id": analysis_id,
@@ -278,9 +296,9 @@ def normalize_analysis(
         "take_profit_plan": raw.get("take_profit_plan"),
         "management_structure": raw.get("management_structure"),
         "reward_risk": raw.get("reward_risk"),
-        "score": score,
+        "score": None if gold_shadow and raw.get("score") is None else score,
         "score_threshold": int(raw.get("score_threshold") or 7),
-        "conviction": raw.get("conviction") if raw.get("conviction") is not None else abs(score),
+        "conviction": None if gold_shadow else raw.get("conviction") if raw.get("conviction") is not None else abs(score),
         "decision": decision,
         "qualified": qualified,
         "executable": executable,
@@ -325,7 +343,39 @@ def _compact(value: Any, *, maximum: int = 3) -> str:
     return str(value or "No decisive evidence")
 
 
+def _format_gold_shadow(analysis: Mapping[str, Any]) -> str:
+    observed = analysis.get("market_price_observation") or {}
+    score = analysis.get("score")
+    lines = [
+        "MONATISE GOLD SHADOW ANALYSIS",
+        f"Instrument: {analysis['canonical_instrument']} | Mode: {analysis['assessment_mode']}",
+        f"Strategy: {analysis.get('strategy')} | Policy: {analysis['gold_policy_version']}",
+        f"Observed broker price: {observed.get('price') if analysis.get('market_price_available') else 'unavailable'} | Time: {observed.get('observed_at') or 'unavailable'}",
+        f"Technical bias: {analysis.get('technical_bias')} | Analytical qualification: {analysis.get('analytical_qualified')}",
+        f"Evidence score: {score if score is not None else 'unavailable'} / 3 (independent groups; not win probability)",
+    ]
+    for name in ("gc_futures", "gold_options", "basis"):
+        value = analysis.get("optional_evidence", {}).get(name, {})
+        lines.append(f"{name}: {value.get('status', 'unavailable')} | {value.get('reason') or value.get('gil_state') or 'no certified context'}")
+        if value.get("model_uncertainty"):
+            lines.append(f"Options model uncertainty: {value['model_uncertainty']}")
+    if analysis.get("entry_zone"):
+        zone = analysis['entry_zone']
+        lines.append(f"Planned entry: {analysis.get('entry')} | Zone: {zone.get('low')}–{zone.get('high')}")
+    if analysis.get("stop_loss") is not None:
+        lines.append(f"Broker structural SL: {analysis['stop_loss']}")
+    if analysis.get("targets"):
+        lines.append("Structural target candidates: " + " / ".join(map(str, analysis['targets'])))
+    lines.append(f"Shadow expiry: {analysis.get('expires_at') or 'unavailable'}")
+    if analysis.get("reasons"):
+        lines.append("Evidence / qualification reasons: " + "; ".join(map(str, analysis['reasons'])))
+    lines.append("Publication: disabled | Approval: disabled | Execution: disabled")
+    return "\n".join(lines)
+
+
 def format_analysis(analysis: Mapping[str, Any]) -> str:
+    if analysis.get("gold_policy_version"):
+        return _format_gold_shadow(analysis)
     session = analysis.get("session") or {}
     zone = analysis.get("entry_zone") or {}
     targets = analysis.get("targets") or []

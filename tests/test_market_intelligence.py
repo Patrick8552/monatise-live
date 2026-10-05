@@ -194,17 +194,18 @@ def test_candle_quality_rejects_invalid_series(mutation):
         validate_candles(rows, provider="alpaca", symbol="AAPL", timeframe="15m", now=NOW)
 
 
-def test_futures_coordinator_preserves_flashalpha_and_ftmo_separation():
-    coordinator = FuturesMarketIntelligenceCoordinator(FlashAlpha(), environment={})
+def test_gold_coordinator_is_broker_first_and_shadow_without_flashalpha():
+    class NeverFlash:
+        def context(self, symbol):
+            raise AssertionError("Gold must not request FlashAlpha")
+    coordinator = FuturesMarketIntelligenceCoordinator(NeverFlash(), environment={})
     result = asyncio.run(coordinator.analyse(FTMO_REGISTRY.resolve("XAU/USD"), now=NOW))
-    providers = {item["provider"]: item for item in result["analysis_sources"]}
-    assert result["analysis_provider"] == "flashalpha"
-    assert result["analysis_instrument"] == "GC=F"
-    assert result["provider_consensus"] == "PARTIAL"
-    assert providers["flashalpha"]["status"] == "used"
-    assert providers["ftmo_mt5"]["status"] == "not_requested"
+    assert result["analysis_provider"] == "ftmo_mt5"
+    assert result["analysis_instrument"] == "XAU/USD"
+    assert result["decision"] == "INSUFFICIENT_MARKET_DATA"
+    assert "authenticated MT5 bridge required" in result["reason_code"]
+    assert not result["publication_valid"] and not result["approval_eligible"]
     assert "bid" not in result and "ask" not in result
-    assert result["expires_at"] == (NOW + timedelta(minutes=30)).isoformat()
 
 
 def test_futures_provider_failure_returns_insufficient_market_data():
