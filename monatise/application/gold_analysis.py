@@ -409,7 +409,23 @@ class GoldAnalysisCoordinator:
         options_provider=None,
         basis_provider=None,
         policy=None,
+        history_calendar=None,
     ):
+        if history_calendar is None and (environment or {}).get(
+            "MONATISE_GOLD_SESSION_MANIFEST"
+        ):
+            from monatise.application.gold_sessions import GoldSessionCalendar
+
+            history_calendar = GoldSessionCalendar.load(
+                environment["MONATISE_GOLD_SESSION_MANIFEST"]
+            )
+        if history_calendar is not None:
+            if master is None:
+                raise ValueError("broker schedule requires authenticated master")
+            history_calendar.require_identity(
+                master.configuration.account_id, master.configuration.server, "XAU/USD"
+            )
+            master.gold_history_calendar = history_calendar
         self.policy = policy or GoldPolicy()
         self.technical = technical or GoldHierarchyAnalysis(
             master=master, environment=environment, policy=self.policy

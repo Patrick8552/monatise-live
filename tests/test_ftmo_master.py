@@ -1400,7 +1400,7 @@ def test_telegram_does_not_publish_approval_controls_when_execution_is_already_b
 
 def test_mt5_bridge_reports_exact_symbol_diagnostics_and_the_actual_tick_timestamp():
     source = Path("mt5/Experts/MonatiseFTMOBridge.mq5").read_text()
-    assert '#property version   "1.23"' in source
+    assert '#property version   "1.24"' in source
     assert "ResolveBrokerSymbol" in source and "SymbolInfoTick(resolved_symbol, tick)" in source
     assert '\\",\\"submission_attempted\\\":' in source
     assert 'JsonEscape(broker_retcode)' in source
@@ -1439,4 +1439,18 @@ def test_terminal_quote_failure_is_published_once_with_the_exact_reason():
         assert await app._process_quote_request_once(request["quote_request_id"]) is True
         assert len(runtime.telegram.messages) == 1
 
+    asyncio.run(scenario())
+
+
+def test_history_only_bridge_keeps_read_access_and_disables_execution_readiness():
+    async def scenario():
+        control, _ = service()
+        await control.accept_bridge_heartbeat(heartbeat(history_only=True, trade_allowed=True, history_version=3), now=NOW)
+        bridge = await control._healthy_bridge(NOW)
+        assert bridge['history_only'] is True
+        assert bridge['trade_allowed'] is False
+        assert bridge['history_version'] == 3
+        status = await control.status(now=NOW)
+        assert status['bridge_healthy'] is True
+        assert status['execution_ready'] is False
     asyncio.run(scenario())

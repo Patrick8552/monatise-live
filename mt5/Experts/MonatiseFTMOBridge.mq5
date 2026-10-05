@@ -1,11 +1,13 @@
 #property copyright "Monatise"
-#property version   "1.23"
+#property version   "1.24"
 #property strict
 #property description "Account-bound FTMO bridge. Telegram never talks directly to the broker."
 
 #include <Trade/Trade.mqh>
 #include "MonatiseBrokerResults.mqh"
 #include "MonatiseMultiTP.mqh"
+
+input bool InpHistoryOnly = false; // Certification: no polling, pending management or orders.
 
 input bool InpMultiTPEnabled = false; // Must match server rollout; no autonomous trading.
 
@@ -29,7 +31,7 @@ input int    InpMaximumDeviationPoints = 20;
 input double InpGoldMaximumAdversePriceDeviation = 10.0; // Price units (USD/oz), signed Gold proposals only.
 input long   InpMagicNumber            = 26082501;
 
-string EA_VERSION = "1.23";
+string EA_VERSION = "1.24";
 string JOURNAL_FILE = "monatise-ftmo-command-journal.csv";
 string DynamicSymbols = "";
 string DealHistoryCoverage = "{}";
@@ -686,9 +688,9 @@ string BuildHeartbeat()
       + "\"daily_loss_limit\":\"" + DoubleToString(InpDailyLossLimit, 2) + "\","
       + "\"total_loss_limit\":\"" + DoubleToString(InpTotalLossLimit, 2) + "\","
       + "\"terminal_connected\":" + (TerminalInfoInteger(TERMINAL_CONNECTED) ? "true" : "false") + ","
-      + "\"trade_allowed\":" + (TradingPermission() ? "true" : "false") + ","
+      + "\"trade_allowed\":" + (!InpHistoryOnly && TradingPermission() ? "true" : "false") + ","
       + "\"ea_attached\":true,"
-      + "\"history_version\":2,\"pending_entry_version\":2,"
+      + "\"history_version\":3,\"history_only\":" + (InpHistoryOnly ? "true" : "false") + ",\"pending_entry_version\":2,"
       + "\"terminal_build\":\"" + IntegerToString((int)TerminalInfoInteger(TERMINAL_BUILD)) + "\","
       + "\"ea_version\":\"" + EA_VERSION + "\","
       + "\"deal_history_version\":1,\"deal_history_coverage\":" + DealHistoryCoverage + ","
@@ -874,7 +876,7 @@ bool GoldPriceGuard(string payload, string symbol, string side, double entry, st
 
 bool FinalOrderValidation(string execution_payload, string &reason, double &validated_price)
 {
-   if(!InpExecutionEnabled || !InpMasterAccountApproved) { reason = "local execution gates are disabled"; return false; }
+   if(InpHistoryOnly || !InpExecutionEnabled || !InpMasterAccountApproved) { reason = "local execution gates are disabled"; return false; }
    if(!IdentityMatches()) { reason = "account/server/currency mismatch"; return false; }
    if(!TradingPermission()) { reason = "MT5 trading permission is unavailable"; return false; }
    string operation = JsonString(execution_payload, "operation");
@@ -1165,7 +1167,7 @@ void ExecuteCommand(string command_json)
 
 void PollCommands()
 {
-   if(!InpExecutionEnabled || !InpMasterAccountApproved || !IdentityMatches()) return;
+   if(InpHistoryOnly || !InpExecutionEnabled || !InpMasterAccountApproved || !IdentityMatches()) return;
    string response; int status;
    if(!SignedRequest("GET", "/api/ftmo/bridge/commands", "", response, status) || status != 200) return;
    int cursor = 0;
@@ -1244,6 +1246,7 @@ void SendRequestedCandles(string request)
       {
          if(i > 0) rows += ",";
          rows += "{\"t\":\"" + IsoTime((datetime)((long)rates[i].time - offset)) + "\","
+              + "\"t_broker\":" + IntegerToString((long)rates[i].time) + ","
               + "\"o\":" + DoubleToString(rates[i].open, 10) + ","
               + "\"h\":" + DoubleToString(rates[i].high, 10) + ","
               + "\"l\":" + DoubleToString(rates[i].low, 10) + ","
@@ -1284,7 +1287,7 @@ void SendHeartbeat()
       PrintFormat("Monatise heartbeat rejected HTTP %d: %s", status, response);
    else
    {
-      ApplyPendingManifest(response, LastRequestNonce);
+      if(!InpHistoryOnly) ApplyPendingManifest(response, LastRequestNonce);
       DynamicSymbols = JsonString(response, "requested_symbols_csv");
       SendRequestedCandles(JsonString(response, "candle_request"));
    }
@@ -1302,7 +1305,7 @@ int OnInit()
    // The server accepts execution quotes for at most five seconds. Keep the
    // outbound heartbeat cadence safely inside that window even when an older
    // chart template retained a larger input value.
-   GuardPendingEntries(true); // Restart never silently adopts an old pending order.
+   if(!InpHistoryOnly) GuardPendingEntries(true); // Restart never silently adopts an old pending order.
    EventSetTimer(MathMax(1, MathMin(InpHeartbeatSeconds, 2)));
    PrintFormat("Monatise FTMO bridge %s started. Execution gate=%s master-approved=%s", EA_VERSION,
                InpExecutionEnabled ? "on" : "off", InpMasterAccountApproved ? "yes" : "no");
@@ -1311,12 +1314,17 @@ int OnInit()
 
 void OnDeinit(const int reason)
 {
-   GuardPendingEntries(true);
+   if(!InpHistoryOnly) GuardPendingEntries(true);
    EventKillTimer();
 }
 
 void OnTimer()
 {
+   if(InpHistoryOnly)
+   {
+      SendHeartbeat();
+      return;
+   }
    GuardPendingEntries(false);
    SendHeartbeat();
    GuardPendingEntries(false); // Recheck a lease after a potentially blocking request.

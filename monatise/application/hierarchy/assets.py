@@ -204,9 +204,9 @@ class AssetHierarchyAnalysis:
                     "captured_at": batch["captured_at"],
                     "volume_kind": "tick_volume",
                     "broker_time_offset": batch.get("broker_time_offset"),
-                    **{key: batch[key] for key in ("point", "tick_size", "spread_price", "timestamp_policy") if key in batch},
+                    **{key: batch[key] for key in ("point", "tick_size", "spread_price", "timestamp_policy", "calendar_fingerprint", "calendar_source", "calendar_version") if key in batch},
                 },
-                None,
+                getattr(self.master, "gold_history_calendar", None) if instrument.ftmo_symbol == "XAU/USD" else None,
             )
         if self.alpaca is None or instrument.exchange not in {"NASDAQ", "NYSE"}:
             raise ValueError("stock_candle_provider_unsupported")

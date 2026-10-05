@@ -56,12 +56,14 @@ class BrokerCandleService:
         if not supports_broker_history(instrument):
             raise ValueError("broker hierarchy candles require a verified index or XAU/USD")
         bridge = await self.master._healthy_bridge(None)
-        if bridge.get("history_version") not in {1, 2}:
+        if bridge.get("history_version") not in {1, 2, 3}:
             raise ValueError(
                 "index_candles_unavailable: MT5 EA 1.19 history capability required"
             )
-        if is_xauusd(instrument) and bridge.get("history_version") != 2:
+        if is_xauusd(instrument) and bridge.get("history_version") not in {2, 3}:
             raise ValueError("gold_candles_unavailable: history capability 2 required")
+        if is_xauusd(instrument) and getattr(self.master, "gold_history_calendar", None) is not None and bridge.get("history_version") != 3:
+            raise ValueError("gold reviewed history requires capability 3")
         now = datetime.now(timezone.utc)
         request_id = secrets.token_hex(16)
         await self.store.put(
@@ -112,7 +114,7 @@ class BrokerCandleService:
         self, payload: Mapping[str, Any], now: datetime | None = None
     ) -> dict[str, Any]:
         observed = now or datetime.now(timezone.utc)
-        await self.master._healthy_bridge(observed)
+        bridge = await self.master._healthy_bridge(observed)
         request_id = str(payload.get("request_id") or "")
         record = await self.store.get(DEMANDS, request_id)
         if not record or record.value.get("state") != "pending":
@@ -145,6 +147,15 @@ class BrokerCandleService:
             raise ValueError(
                 "candle response must contain the complete shared hierarchy"
             )
+        calendar = getattr(self.master, "gold_history_calendar", None) if request.get("gold") else None
+        if calendar is not None:
+            if bridge.get("history_version") != 3:
+                raise ValueError("gold reviewed history requires capability 3")
+            calendar.require_identity(request["account_id"], request["server"], request["symbol"])
+            if payload.get("broker_time_offset") != calendar.offset(captured):
+                raise ValueError("broker schedule/current UTC offset mismatch")
+            if payload.get("session_open") is not True or datetime.fromisoformat(str(payload.get("session_close")).replace("Z", "+00:00")) != calendar.session_close(captured):
+                raise ValueError("broker schedule/session response mismatch")
         clean = {}
         for timeframe, rows in series.items():
             if not isinstance(rows, list) or not 50 <= len(rows) <= request["limit"]:
@@ -159,6 +170,9 @@ class BrokerCandleService:
                     for key in ("o", "h", "l", "c", "v")
                 ):
                     raise ValueError("candle OHLCV is incomplete")
+                row = dict(row)
+                if calendar is not None:
+                    row["t"] = calendar.normalize_broker_epoch(row.get("t_broker")).isoformat()
                 candle = Candle(
                     str(row["t"]),
                     *(float(row[key]) for key in ("o", "h", "l", "c", "v")),
@@ -204,6 +218,9 @@ class BrokerCandleService:
             response["timestamp_policy"] = payload.get("timestamp_policy")
             if response["timestamp_policy"] != "current_offset_uncertified_history":
                 raise ValueError("gold history timestamp policy unavailable")
+            if calendar is not None:
+                response.update(timestamp_policy="reviewed_broker_schedule_v1", calendar_fingerprint=calendar.fingerprint,
+                                calendar_source=calendar.source, calendar_version=calendar.version)
         await self.store.put(
             DEMANDS,
             request_id,
