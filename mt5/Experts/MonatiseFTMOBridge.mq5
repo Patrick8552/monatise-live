@@ -1,5 +1,5 @@
 #property copyright "Monatise"
-#property version   "1.22"
+#property version   "1.23"
 #property strict
 #property description "Account-bound FTMO bridge. Telegram never talks directly to the broker."
 
@@ -29,7 +29,7 @@ input int    InpMaximumDeviationPoints = 20;
 input double InpGoldMaximumAdversePriceDeviation = 10.0; // Price units (USD/oz), signed Gold proposals only.
 input long   InpMagicNumber            = 26082501;
 
-string EA_VERSION = "1.22";
+string EA_VERSION = "1.23";
 string JOURNAL_FILE = "monatise-ftmo-command-journal.csv";
 string DynamicSymbols = "";
 string DealHistoryCoverage = "{}";
@@ -688,7 +688,7 @@ string BuildHeartbeat()
       + "\"terminal_connected\":" + (TerminalInfoInteger(TERMINAL_CONNECTED) ? "true" : "false") + ","
       + "\"trade_allowed\":" + (TradingPermission() ? "true" : "false") + ","
       + "\"ea_attached\":true,"
-      + "\"history_version\":1,\"pending_entry_version\":2,"
+      + "\"history_version\":2,\"pending_entry_version\":2,"
       + "\"terminal_build\":\"" + IntegerToString((int)TerminalInfoInteger(TERMINAL_BUILD)) + "\","
       + "\"ea_version\":\"" + EA_VERSION + "\","
       + "\"deal_history_version\":1,\"deal_history_coverage\":" + DealHistoryCoverage + ","
@@ -1264,6 +1264,10 @@ void SendRequestedCandles(string request)
        + "\"session_open\":" + (session_open ? "true" : "false") + ","
        + "\"session_close\":\"" + IsoTime(session_close) + "\","
        + "\"broker_time_offset\":" + IntegerToString(offset) + ","
+       + "\"point\":" + DoubleToString(SymbolInfoDouble(symbol, SYMBOL_POINT), 10) + ","
+       + "\"tick_size\":" + DoubleToString(SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE), 10) + ","
+       + "\"spread_price\":" + DoubleToString(SymbolInfoInteger(symbol, SYMBOL_SPREAD) * SymbolInfoDouble(symbol, SYMBOL_POINT), 10) + ","
+       + "\"timestamp_policy\":\"current_offset_uncertified_history\","
        + "\"timeframes\":{" + series + "}}";
    string response; int status;
    SignedRequest("POST", "/api/ftmo/bridge/candles", body, response, status);

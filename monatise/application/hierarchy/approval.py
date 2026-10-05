@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Mapping
 
-from monatise.application.hierarchy.broker_candles import is_index
+from monatise.application.hierarchy.broker_candles import is_index, is_xauusd
 from monatise.application.hierarchy.policy import SHARED_TIMEFRAME_POLICY as POLICY
 
 SIGNALS = "shared_hierarchy_signals_v1"
@@ -19,6 +19,8 @@ def requires_shared_hierarchy(instrument: Any) -> bool:
 async def validate_shared_evidence(
     store: Any, instrument: Any, evidence: Mapping | None, now: datetime
 ) -> dict:
+    if is_xauusd(instrument):
+        raise ValueError("gold approval disabled pending separate policy release")
     if evidence is not None and not isinstance(evidence, Mapping):
         raise ValueError("malformed shared hierarchy evidence")
     payload = dict(evidence or {})

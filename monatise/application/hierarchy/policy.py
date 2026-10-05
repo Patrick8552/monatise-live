@@ -68,6 +68,8 @@ def timeframe_policy(asset_class: str) -> TimeframePolicy:
         "stocks",
         "index",
         "indices",
+        "gold",
+        "xauusd",
     }:
         raise ValueError("asset class does not use the shared candle hierarchy")
     return SHARED_TIMEFRAME_POLICY

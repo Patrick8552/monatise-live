@@ -1950,6 +1950,13 @@ class FTMOMasterControlService:
             analysis_provider=analysis_provider,
             analysis_instrument=analysis_instrument,
         )
+        from monatise.application.hierarchy.broker_candles import is_xauusd
+        if is_xauusd(instrument) and (
+            str(strategy or "").startswith("gold-")
+            or str(analysis_provider or "").casefold() in {"ftmo_mt5", "databento"}
+            or (isinstance(evidence_bundle, Mapping) and evidence_bundle.get("gold_policy_version"))
+        ):
+            raise FTMOMasterError("gold approval disabled pending separate policy release")
         if requires_shared_hierarchy(instrument):
             try:
                 proof = await validate_shared_evidence(self.repository.store, instrument, evidence_bundle, observed)

@@ -7,13 +7,14 @@ import hashlib
 from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from math import isfinite
 from typing import Any, Mapping
 from zoneinfo import ZoneInfo
 
 from monatise.adapters.alpaca import STOCK_INTRADAY_LOOKBACK_DAYS
 from monatise.application.hierarchy.stock_sessions import StockSessionCalendar
 from monatise.application.hierarchy.approval import SIGNALS, CURRENT
-from monatise.application.hierarchy.broker_candles import BrokerCandleService, is_index
+from monatise.application.hierarchy.broker_candles import BrokerCandleService, is_index, supports_broker_history
 from monatise.application.hierarchy.coordinator import (
     HierarchyConfiguration,
     ShadowHierarchyCoordinator,
@@ -87,6 +88,8 @@ def _candles(
             raise ValueError("candle OHLCV is incomplete")
         candle = Candle(str(row["t"]), *map(float, values))
         candle.validate()
+        if not all(isfinite(v) for v in (candle.open, candle.high, candle.low, candle.close, candle.volume)) or candle.low <= 0 or candle.volume < 0:
+            raise ValueError("invalid candle price/volume")
         opened = _timestamp(candle.timestamp)
         if opened > now or (previous is not None and opened <= previous):
             raise ValueError("candle timestamps are future, duplicate or unordered")
@@ -148,7 +151,9 @@ class AssetHierarchyAnalysis:
         alpaca: Any = None,
         master: Any = None,
         environment: Mapping[str, str] | None = None,
+        evaluator_factory: Any = HierarchyLayerEvaluator,
     ):
+        self.evaluator_factory = evaluator_factory
         self.alpaca, self.master = alpaca, master
         self.environment = environment or {}
         self.configuration = replace(
@@ -179,7 +184,7 @@ class AssetHierarchyAnalysis:
     async def _batch(
         self, instrument: Any, now: datetime
     ) -> tuple[dict, datetime, dict, StockSessionCalendar | None]:
-        if is_index(instrument):
+        if supports_broker_history(instrument):
             if self.master is None:
                 raise ValueError(
                     "index_candles_unavailable: authenticated MT5 bridge required"
@@ -199,6 +204,7 @@ class AssetHierarchyAnalysis:
                     "captured_at": batch["captured_at"],
                     "volume_kind": "tick_volume",
                     "broker_time_offset": batch.get("broker_time_offset"),
+                    **{key: batch[key] for key in ("point", "tick_size", "spread_price", "timestamp_policy") if key in batch},
                 },
                 None,
             )
@@ -370,7 +376,7 @@ class AssetHierarchyAnalysis:
         observed = now or datetime.now(timezone.utc)
         symbol = instrument.ftmo_symbol
         route = route_for(instrument)
-        provider = "ftmo_mt5" if is_index(instrument) else "alpaca"
+        provider = "ftmo_mt5" if supports_broker_history(instrument) else "alpaca"
         result = {
             **POLICY.metadata(),
             "asset": instrument.underlying_symbol,
@@ -378,7 +384,7 @@ class AssetHierarchyAnalysis:
             "asset_class": instrument.asset_class.value,
             "analysis_provider": provider,
             "analysis_instrument": symbol
-            if is_index(instrument)
+            if supports_broker_history(instrument)
             else instrument.provider_symbol or instrument.underlying_symbol,
             "analysis_exchange": instrument.exchange,
             "decision": "NO_TRADE",
@@ -438,7 +444,7 @@ class AssetHierarchyAnalysis:
                 multi_tp = replace(
                     multi_tp, minimum_rr=max(multi_tp.minimum_rr, minimum_rr)
                 )
-                evaluator = HierarchyLayerEvaluator(
+                evaluator = self.evaluator_factory(
                     configuration=self.configuration,
                     risk_builder=StructuralRiskInputBuilder(
                         minimum_reward_to_risk=float(minimum_rr)
@@ -548,6 +554,12 @@ class AssetHierarchyAnalysis:
             if evaluation is None:
                 result["reasons"] = ["awaiting_next_closed_candle"]
                 return result
+            entry_rows = batch_provider.rows[POLICY.entry]
+            closed_entry = [c for c in entry_rows if _timestamp(c.timestamp) + timedelta(seconds=70) <= current]
+            if closed_entry:
+                result["current_price"] = closed_entry[-1].close
+                result["market_observed_at"] = (_timestamp(closed_entry[-1].timestamp) + timedelta(minutes=1)).isoformat()
+                result["market_price_observation"] = {"price": result["current_price"], "source": provider, "kind": "closed_candle", "timeframe": POLICY.entry, "observed_at": result["market_observed_at"]}
             core = ShadowHierarchyService._signal_core_evidence(evaluation)
             result.update(
                 {

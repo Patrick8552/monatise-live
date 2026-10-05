@@ -280,17 +280,14 @@ int main() {
     subprocess.run([str(binary)], check=True, capture_output=True)
 
 
-def test_fixed_zone_market_entry_preserves_gold_adverse_price_guard(monkeypatch):
+def test_new_gold_technical_zone_is_shadow_even_with_valid_price_guard(monkeypatch):
     async def scenario():
         control, _ = await gold_setup(monkeypatch)
-        p = await control.create_signal_proposal(signal_id='gold-zone', symbol='XAUUSD', direction='LONG',
-            analysis_state='LONG', confirmation_status='confirmed', analysis_entry='2500.20',
-            analysis_stop='2470.20', analysis_target='2570.20', source='test', analysis_provider='ftmo_mt5',
-            entry_zone_low='2490', entry_zone_high='2520', now=NOW,
-            evidence_bundle={'market_price_observation': {'price':'2500.20','source':'ftmo_mt5'}})
-        assert p['entry_policy'] and p['price_guard']['maximum_adverse_deviation'] == '10'
-        await quote(control, '2511.20')  # Inside zone, but exceeds existing Gold allowance.
-        with pytest.raises(FTMOMasterError, match='tolerance'):
-            await control.approve(p['proposal_id'], '42', now=NOW)
+        with pytest.raises(FTMOMasterError, match="gold approval disabled"):
+            await control.create_signal_proposal(signal_id='gold-zone', symbol='XAUUSD', direction='LONG',
+                analysis_state='LONG', confirmation_status='confirmed', analysis_entry='2500.20',
+                analysis_stop='2470.20', analysis_target='2570.20', source='test', analysis_provider='ftmo_mt5',
+                entry_zone_low='2490', entry_zone_high='2520', now=NOW,
+                evidence_bundle={'market_price_observation': {'price':'2500.20','source':'ftmo_mt5'}})
         assert await control.repository.pending_commands() == ()
     asyncio.run(scenario())

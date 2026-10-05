@@ -39,7 +39,8 @@ from monatise.adapters.finnhub import FinnhubAdapter
 from monatise.adapters.flashalpha import FlashAlphaAdapter
 from monatise.application.flashalpha_analysis import build_flashalpha_futures_analysis
 from monatise.application.hierarchy.assets import AssetHierarchyAnalysis
-from monatise.application.hierarchy.broker_candles import is_index
+from monatise.application.hierarchy.broker_candles import is_index, is_xauusd
+from monatise.application.gold_analysis import GoldAnalysisCoordinator
 from monatise.application.market_intelligence import (
     FuturesMarketIntelligenceCoordinator,
     StockMarketIntelligenceCoordinator,
@@ -1927,7 +1928,7 @@ class OrchestrationRuntime:
             for item in self.environment.get("MONATISE_FLASHALPHA_FUTURES_ROOTS", "ES,NQ,GC").split(",")
             if item.strip()
         }
-        instruments = tuple(item for item in all_instruments if item.futures_symbol in configured_roots)
+        instruments = tuple(item for item in all_instruments if is_xauusd(item) or item.futures_symbol in configured_roots)
         interval_seconds = max(3600, int(self.environment.get("MONATISE_FTMO_FUTURES_SCAN_INTERVAL_SECONDS", "3600")))
         cooldown_seconds = max(300, int(self.environment.get("MONATISE_FTMO_FUTURES_SCAN_COOLDOWN_SECONDS", "3600")))
         namespace = self.environment.get("MONATISE_REDIS_NAMESPACE", "monatise:production-analysis")
@@ -1971,8 +1972,10 @@ class OrchestrationRuntime:
 
     @audited_scan("futures_indices")
     async def _analyze_ftmo_futures(self, instruments: tuple[Any, ...], cooldown_seconds: int, namespace: str) -> dict[str, Any]:
-        adapter = getattr(self, "flashalpha", None) or FlashAlphaAdapter.from_env()
-        self.flashalpha = adapter
+        adapter = None
+        if any(not is_xauusd(item) and item.futures_symbol for item in instruments):
+            adapter = getattr(self, "flashalpha", None) or FlashAlphaAdapter.from_env()
+            self.flashalpha = adapter
         try:
             tradingview_alerts = await self.recent_tradingview_alerts(limit=TRADINGVIEW_ALERT_LIMIT)
         except Exception as exc:
@@ -1981,9 +1984,9 @@ class OrchestrationRuntime:
                 extra={"error_type": type(exc).__name__},
             )
             tradingview_alerts = []
-        all_unique_roots = tuple(dict.fromkeys(item.futures_symbol for item in instruments if item.futures_symbol))
+        all_unique_roots = tuple(dict.fromkeys(item.futures_symbol for item in instruments if item.futures_symbol and not is_xauusd(item)))
         futures_interval = max(3600, int(getattr(self, "environment", {}).get("MONATISE_FTMO_FUTURES_SCAN_INTERVAL_SECONDS", "3600")))
-        scheduled_capacity = self._flashalpha_scheduled_capacity(interval_seconds=futures_interval, allocation_fraction=0.3)
+        scheduled_capacity = self._flashalpha_scheduled_capacity(interval_seconds=futures_interval, allocation_fraction=0.3) if all_unique_roots else 0
         unique_roots = all_unique_roots if scheduled_capacity is None else all_unique_roots[:scheduled_capacity]
         queue: asyncio.Queue[str] = asyncio.Queue()
         for root in unique_roots:
@@ -2013,6 +2016,12 @@ class OrchestrationRuntime:
         candidates: list[tuple[Any, dict[str, Any]]] = []
         rejected_inputs = []
         for instrument in instruments:
+            if is_xauusd(instrument):
+                reference = next((a for a in tradingview_alerts if a.get("symbol") == "XAUUSD" and a.get("reference_only")), None)
+                analysis = await self._gold_coordinator().analyse(instrument, reference=reference)
+                stamp_analysis(analysis, instrument.ftmo_symbol)
+                candidates.append((instrument, analysis))
+                continue
             context = contexts.get(instrument.futures_symbol)
             if context is None:
                 failure = next((f for f in failures if f["symbol"] == instrument.futures_symbol), {})
@@ -2207,6 +2216,8 @@ class OrchestrationRuntime:
         quote_wait_seconds: float = 0.0,
     ) -> tuple[dict[str, Any] | None, str | None]:
         """Acquire and validate a native FTMO quote before creating a proposal."""
+        if analysis.get("gold_policy_version") or str(analysis.get("strategy") or "").startswith("gold-"):
+            return None, "gold approval disabled pending separate policy release"
         if self.ftmo_master is None or self.telegram is None:
             return None, "FTMO bridge or Telegram notifier is unavailable"
         from monatise.application.position_management import PositionManagementService
@@ -2832,7 +2843,7 @@ class OrchestrationRuntime:
         """
         if self.postgres is None:
             raise RuntimeError("tradingview alert storage is not configured")
-        alert = normalize_tradingview_alert(raw_payload)
+        alert = normalize_tradingview_alert(raw_payload, allow_gold_reference=self.environment.get("MONATISE_GOLD_TRADINGVIEW_REFERENCE_ENABLED", "false").casefold() == "true")
         cursor = await self.postgres.execute(
             "INSERT INTO monatise_tradingview_alerts (fingerprint, symbol, payload) VALUES (%s,%s,%s::jsonb) "
             "ON CONFLICT (fingerprint) DO NOTHING",
@@ -2917,6 +2928,13 @@ class OrchestrationRuntime:
         analysis = finalize_dynamic_analysis(sanitized_result(result), result, asset)
         return apply_crypto_output_plan(analysis, result.context.outputs, config=MultiTPConfiguration.from_environment(self.environment), now=datetime.now(timezone.utc))
 
+    def _gold_coordinator(self) -> GoldAnalysisCoordinator:
+        service = getattr(self, "gold_analysis", None)
+        if service is None:
+            service = GoldAnalysisCoordinator(master=self.ftmo_master, environment=self.environment)
+            self.gold_analysis = service
+        return service
+
     def _shared_asset_hierarchy(self) -> AssetHierarchyAnalysis:
         service = getattr(self, "asset_hierarchy", None)
         if service is None:
@@ -2940,6 +2958,8 @@ class OrchestrationRuntime:
 
     async def analyse_ftmo_futures_instrument(self, instrument: Any) -> dict[str, Any]:
         """Run capability-aware specialist futures intelligence."""
+        if is_xauusd(instrument):
+            return await self._gold_coordinator().analyse(instrument)
         if self.futures_intelligence is None:
             self.flashalpha = self.flashalpha or FlashAlphaAdapter.from_env()
             self.futures_intelligence = FuturesMarketIntelligenceCoordinator(

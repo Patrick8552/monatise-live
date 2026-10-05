@@ -24,7 +24,8 @@ from monatise.adapters.quiver import normalize_quiver_symbol
 from monatise.application.flashalpha_analysis import build_flashalpha_futures_analysis
 from monatise.application.ftmo_registry import FTMOAssetClass, FTMOInstrument, FTMO_REGISTRY
 from monatise.application.hierarchy.assets import AssetHierarchyAnalysis
-from monatise.application.hierarchy.broker_candles import is_index
+from monatise.application.hierarchy.broker_candles import is_index, is_xauusd
+from monatise.application.gold_analysis import GoldAnalysisCoordinator
 from monatise.application.hierarchy.policy import SHARED_TIMEFRAME_POLICY as POLICY
 from monatise.application.provider_evidence import EvidenceValidationError, FEEDS, flashalpha_diagnostics, gamma_status
 
@@ -382,10 +383,11 @@ class StockMarketIntelligenceCoordinator:
 class FuturesMarketIntelligenceCoordinator:
     """Coordinate shared index candles and other futures positioning analysis."""
 
-    def __init__(self, flashalpha: FlashAlphaAdapter, *, environment: Mapping[str, str], hierarchy: AssetHierarchyAnalysis | None = None) -> None:
+    def __init__(self, flashalpha: FlashAlphaAdapter, *, environment: Mapping[str, str], hierarchy: AssetHierarchyAnalysis | None = None, gold: GoldAnalysisCoordinator | None = None) -> None:
         self.flashalpha = flashalpha
         self.environment = environment
         self.hierarchy = hierarchy or AssetHierarchyAnalysis(environment=environment)
+        self.gold = gold or GoldAnalysisCoordinator(master=getattr(self.hierarchy, "master", None), environment=environment)
 
     async def analyse(
         self,
@@ -396,6 +398,8 @@ class FuturesMarketIntelligenceCoordinator:
         observed = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
         if instrument.asset_class is not FTMOAssetClass.FUTURES_LINKED or not instrument.futures_symbol:
             raise ValueError("instrument is not a verified futures-linked FTMO CFD")
+        if is_xauusd(instrument):
+            return await self.gold.analyse(instrument, now=now)
         provider_symbol = f"{instrument.futures_symbol}=F"
         context, error, diagnostics = await _flashalpha_call(self.flashalpha, provider_symbol)
         observed = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
