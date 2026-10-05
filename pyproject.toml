@@ -20,6 +20,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
 live = ["hyperliquid-python-sdk==0.23.0"]
+gold-data = ["databento==0.87.0"]
 
 [project.scripts]
 monatise = "monatise.cli:main"
