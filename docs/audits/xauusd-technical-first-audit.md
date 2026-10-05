@@ -19,6 +19,8 @@ Baseline: `uv sync --extra dev`; `uv run pytest -q`: 1646 passed, 14 skipped (Po
 
 ## Limits discovered
 
-EA 1.22 converts ALL history using the CURRENT server offset. It does not supply historical DST transitions, exchange holidays, or an authoritative historical broker session calendar. EA 1.23 adds history v2 units and explicitly labels this limitation. The patch does not claim live timestamp certification. Gold patterns reject gaps within the causal sequence and never synthesize bars; closed/current-session failures remain unavailable. Complete historical DST/holiday certification remains release work.
+EA 1.22 converts ALL history using the CURRENT server offset. It does not supply historical DST transitions, exchange holidays, or an authoritative historical broker session calendar. EA 1.23 added history v2 units and explicitly labelled this limitation. EA 1.24 now sends raw historical broker wall timestamps (v3); an explicit account-bound reviewed offset/session manifest can normalize them and reject ambiguous DST times. It adds history-only certification mode, without order polling or pending management. The patch does not claim the supplied manifest is authoritative or that live timestamp certification occurred. Gold patterns reject gaps within the causal sequence and never synthesize bars; closed/current-session failures remain unavailable. Complete historical DST/holiday certification remains release work.
 
 This audit describes source changes and offline fixtures. It is not a deployed or live-certified system. Optional model and stream capabilities are separately documented; unsupported families and uncertain claims remain unavailable.
+
+The October 5 continuation, complete local integration results, external blockers and current authorization are recorded in [the certification record](xauusd-certification-2026-10-05.md). Render workspace suspension and VPS RDP error 0x204 prevent deployment and EA compilation/installation.
