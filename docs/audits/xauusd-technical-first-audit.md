@@ -10,6 +10,7 @@ Baseline: main 9f396bfb148b44219020442cddc9d43f96af6565. No AGENTS.md found in t
 - Reuse: candle finalization/revisions, hierarchy collection, H4 regime, H1 structure, M15 liquidity/zones, M5 break/reclaim, M1 refinement, canonical Fib and multi-target builder. Typed Gold evaluator wraps the reused outputs with correct market/volume provenance.
 - New work: strict causal Gold sweep/reversal contract, Gold policy/coordinator, broker-unit stop buffer, Databento adapter/replay, basis, options model routines.
 - Approval: deployment publication_allowed -> FTMO create_signal_proposal -> mapping -> shared proof/risk -> broker quote/manual approval -> commands. New Gold results are shadow-only before proof persistence; create_signal_proposal independently rejects the new Gold analytical strategy/provider identities. Existing order/approval checks remain in place.
+- Reporting: Telegram normalization now retains shadow policy/qualification, unavailable scores and optional-evidence diagnostics; separate Gold formatting omits account/risk recommendations and raw licensed data.
 - TradingView: authenticated webhook -> normalize -> durable reference storage -> Gold assessment, never broker history or execution.
 
 ## Test-backed defects

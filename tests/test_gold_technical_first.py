@@ -512,3 +512,69 @@ def test_reference_legacy_target_aliases_grid_and_hedge_fields_are_removed():
     assert r["setup"]["targetOne"] is None and r["setup"]["targetTwo"] is None
     assert r["hedge"]["ratio"] is None and r["hedge"]["trigger"] is None
     assert r["receivedAt"] == NOW.timestamp()
+
+
+def test_gold_report_normalization_preserves_unavailable_score_and_no_proposal():
+    from monatise.application.telegram_analysis import (
+        format_analysis,
+        normalize_analysis,
+        resolve_telegram_instrument,
+    )
+
+    raw = asyncio.run(GoldAnalysisCoordinator().analyse(GOLD, now=NOW))
+    analysis = normalize_analysis(
+        raw,
+        resolve_telegram_instrument("XAUUSD", FTMO_REGISTRY),
+        request_id="synthetic-request",
+        analysis_id="synthetic-analysis",
+        requested_at=NOW,
+        started_at=NOW,
+        completed_at=NOW,
+        session={},
+    )
+    assert analysis["score"] is None and analysis["conviction"] is None
+    assert analysis["optional_evidence"]["gc_futures"]["status"] == "unavailable"
+    assert not analysis["proposal_eligible"] and not analysis["executable"]
+    message = format_analysis(analysis)
+    assert (
+        "Evidence score: unavailable" in message and "Publication: disabled" in message
+    )
+    assert "gc_futures: unavailable" in message and "0/10" not in message
+
+
+def test_shadow_qualification_never_promoted_by_report_normalization():
+    from monatise.application.telegram_analysis import (
+        normalize_analysis,
+        resolve_telegram_instrument,
+    )
+
+    raw = {
+        "gold_policy_version": "xauusd-technical-v1",
+        "strategy": "gold-sweep-reversal-technical-v1",
+        "analytical_qualified": True,
+        "setup_status": "confirmed",
+        "decision": "BUY_WATCH",
+        "direction": "LONG",
+        "score": 3,
+        "entry": 2500,
+        "entry_zone": {"low": 2499, "high": 2501},
+        "current_price": 2500.5,
+        "stop_loss": 2490,
+        "targets": [2530],
+        "expires_at": (NOW + timedelta(minutes=10)).isoformat(),
+    }
+    analysis = normalize_analysis(
+        raw,
+        resolve_telegram_instrument("XAUUSD", FTMO_REGISTRY),
+        request_id="synthetic-request",
+        analysis_id="synthetic-analysis",
+        requested_at=NOW,
+        started_at=NOW,
+        completed_at=NOW,
+        session={},
+    )
+    assert (
+        analysis["analytical_qualified"] and analysis["decision"] == "SHADOW_QUALIFIED"
+    )
+    assert analysis["current_reference_price"] == 2500.5 and analysis["entry"] == 2500
+    assert not analysis["proposal_eligible"] and not analysis["pending_order_eligible"]
