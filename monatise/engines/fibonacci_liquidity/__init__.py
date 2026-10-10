@@ -4,6 +4,7 @@ from monatise.engines.fibonacci_liquidity.engine import FibonacciLiquidityEngine
 from monatise.engines.fibonacci_liquidity.models import (
     AnchorQuality,
     FibonacciAnchor,
+    FibonacciAnchorConstraint,
     FibonacciAssessment,
     FibonacciDirection,
     FibonacciLevel,
@@ -16,6 +17,7 @@ from monatise.engines.fibonacci_liquidity.models import (
 __all__ = [
     "AnchorQuality",
     "FibonacciAnchor",
+    "FibonacciAnchorConstraint",
     "FibonacciAssessment",
     "FibonacciDirection",
     "FibonacciLevel",

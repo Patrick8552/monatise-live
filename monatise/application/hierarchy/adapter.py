@@ -38,27 +38,32 @@ class HierarchyValidation:
     evidence_bundle_id: str
 
 
+def target_independent_reasons(contexts, *, strategy_version, requested_at, risk_expires_at):
+    """Shared admission checks; no target or fake passing RR is created."""
+    reasons = []
+    if any(context.identity.strategy_version != strategy_version for context in contexts):
+        reasons.append("strategy_version_mismatch")
+    if any(requested_at >= context.expires_at for context in contexts) or requested_at >= risk_expires_at:
+        reasons.append("evidence_expired")
+    if any(context.data_quality in {DataQualityState.UNAVAILABLE, DataQualityState.REVISED} for context in contexts):
+        reasons.append("data_unavailable_or_revised")
+    if contexts[2].state is StrategicState.BLOCKED:
+        reasons.append("strategic_context_blocked")
+    if contexts[3].state is not SetupState.SETUP_CONFIRMED:
+        reasons.append("setup_not_confirmed")
+    if contexts[4].state is not TriggerState.TRIGGER_CONFIRMED:
+        reasons.append("trigger_not_confirmed")
+    return reasons
+
+
 class CanonicalEvidenceAdapter:
     """Validates hierarchy evidence before any existing engine request is constructed."""
 
     def validate(self, request: HierarchicalAnalysisRequest) -> HierarchyValidation:
         bundle = request.evidence_bundle
         contexts = (bundle.macro_context, bundle.regime_4h, bundle.strategy_1h, bundle.setup_15m, bundle.trigger_5m)
-        reasons: list[str] = []
-        if any(context.identity.strategy_version != bundle.strategy_version for context in contexts):
-            reasons.append("strategy_version_mismatch")
-        if any(request.requested_at >= context.expires_at for context in contexts) or request.requested_at >= bundle.risk_inputs.expires_at:
-            reasons.append("evidence_expired")
-        if any(context.data_quality in {DataQualityState.UNAVAILABLE, DataQualityState.REVISED} for context in contexts):
-            reasons.append("data_unavailable_or_revised")
-        # The 4h regime is advisory for FTMO crypto publication. The
-        # 1h structure remains directional authority and may still block.
-        if bundle.strategy_1h.state is StrategicState.BLOCKED:
-            reasons.append("strategic_context_blocked")
-        if bundle.setup_15m.state is not SetupState.SETUP_CONFIRMED:
-            reasons.append("setup_not_confirmed")
-        if bundle.trigger_5m.state is not TriggerState.TRIGGER_CONFIRMED:
-            reasons.append("trigger_not_confirmed")
+        reasons = target_independent_reasons(contexts, strategy_version=bundle.strategy_version,
+            requested_at=request.requested_at, risk_expires_at=bundle.risk_inputs.expires_at)
         if bundle.risk_inputs.calculated_reward_to_risk < bundle.risk_inputs.minimum_reward_to_risk:
             reasons.append("reward_to_risk_below_minimum")
 

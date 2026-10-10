@@ -281,22 +281,7 @@ class GoldLayerEvaluator(HierarchyLayerEvaluator):
         pattern = sweep_reversal(stop_layer.market.candles, trigger.direction, "15m")
         if not pattern["confirmed"]:
             raise ValueError("gold_stop_pattern_unavailable")
-        point, tick, spread = (
-            Decimal(str(self.broker_units[k]))
-            for k in ("point", "tick_size", "spread_price")
-        )
-        structural = Decimal(str(pattern["structural_invalidation"]))
-        buffer = (
-            max(point, tick, Decimal(str(risk.volatility_buffer)))
-            + max(spread, Decimal(str(risk.estimated_spread_allowance)))
-            + Decimal(str(risk.estimated_slippage_allowance))
-        )
-        stop = (
-            structural - buffer if trigger.direction == "long" else structural + buffer
-        )
-        stop = (stop / tick).to_integral_value(
-            rounding=ROUND_FLOOR if trigger.direction == "long" else ROUND_CEILING
-        ) * tick
+        structural, stop = self._gold_stop_values(risk, pattern, trigger.direction)
         entry, target = (
             Decimal(str(risk.reference_entry)),
             Decimal(str(risk.target_liquidity)),
@@ -314,6 +299,59 @@ class GoldLayerEvaluator(HierarchyLayerEvaluator):
             final_stop=float(stop),
             calculated_reward_to_risk=float(reward / distance),
             expires_at=min(risk.expires_at, trigger.expires_at),
+        )
+
+    def _gold_stop_values(self, risk, pattern, direction):
+        """Single stop formula shared by canonical completion and research preparation."""
+        point, tick, spread = (
+            Decimal(str(self.broker_units[k]))
+            for k in ("point", "tick_size", "spread_price")
+        )
+        structural = Decimal(str(pattern["structural_invalidation"]))
+        buffer = (
+            max(point, tick, Decimal(str(risk.volatility_buffer)))
+            + max(spread, Decimal(str(risk.estimated_spread_allowance)))
+            + Decimal(str(risk.estimated_slippage_allowance))
+        )
+        stop = (
+            structural - buffer if direction == "long" else structural + buffer
+        )
+        stop = (stop / tick).to_integral_value(
+            rounding=ROUND_FLOOR if direction == "long" else ROUND_CEILING
+        ) * tick
+        return structural, stop
+
+    def prepare_entry_stop(self, trigger, now, *, entry_layer, stop_layer):
+        """Research input preparation, never a signal or target-dependent qualification."""
+        from monatise.application.hierarchy.policy import SHARED_TIMEFRAME_POLICY
+
+        if self.broker_units is None:
+            raise ValueError("gold_broker_units_unavailable")
+        if entry_layer is None or stop_layer is None:
+            raise ValueError("gold_entry_or_stop_structure_unavailable")
+        zone = (entry_layer.zones.active_demand or entry_layer.zones.nearest_demand) if trigger.direction == "long" else (entry_layer.zones.active_supply or entry_layer.zones.nearest_supply)
+        if zone is None:
+            raise ValueError("gold_entry_zone_unavailable")
+        price = entry_layer.market.price
+        if price is None:
+            raise ValueError("current price is unavailable")
+        pattern = sweep_reversal(stop_layer.market.candles, trigger.direction, "15m")
+        if not pattern["confirmed"]:
+            raise ValueError("gold_stop_pattern_unavailable")
+        points = stop_layer.structure.swing_lows if trigger.direction == "long" else stop_layer.structure.swing_highs
+        swing = points[-1][1] if points else (min(c.low for c in stop_layer.market.candles[-10:]) if trigger.direction == "long" else max(c.high for c in stop_layer.market.candles[-10:]))
+        prepared = self.risk_builder.prepare(
+            direction=trigger.direction, entry_zone_low=zone.lower_bound,
+            entry_zone_high=zone.upper_bound, structural_invalidation=swing,
+            atr=self._atr(entry_layer.market.candles), movement_tolerance_pct=0.002,
+            expires_at=min(now + SHARED_TIMEFRAME_POLICY.signal_lifetime, trigger.expires_at),
+            reference_entry=min(max(price, zone.lower_bound), zone.upper_bound),
+        )
+        structural, stop = self._gold_stop_values(prepared, pattern, trigger.direction)
+        return replace(
+            prepared,
+            structural_invalidation=float(structural),
+            final_stop=float(stop),
         )
 
 

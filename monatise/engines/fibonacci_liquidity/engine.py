@@ -73,6 +73,28 @@ class FibonacciLiquidityEngine:
                 "structure is not directional enough for Fibonacci anchoring",
             )
 
+        constraint = request.anchor_constraint
+        if constraint is not None:
+            from monatise.engines.market_structure import MarketStructureEngine, MarketStructureRequest
+
+            # The optional path verifies real OHLC pivots; the default path is unchanged.
+            authentic = MarketStructureEngine().assess(MarketStructureRequest(
+                market, swing_window=structure.metadata.get("swing_window", 3)
+            ))
+            starts = authentic.swing_lows if direction is FibonacciDirection.BULLISH else authentic.swing_highs
+            ends = authentic.swing_highs if direction is FibonacciDirection.BULLISH else authentic.swing_lows
+            supplied_starts = structure.swing_lows if direction is FibonacciDirection.BULLISH else structure.swing_highs
+            supplied_ends = structure.swing_highs if direction is FibonacciDirection.BULLISH else structure.swing_lows
+            if (
+                constraint.symbol != market.symbol or constraint.timeframe != market.interval
+                or constraint.direction is not direction
+                or (constraint.start_index, constraint.start_price) not in starts
+                or (constraint.end_index, constraint.end_price) not in ends
+                or (constraint.start_index, constraint.start_price) not in supplied_starts
+                or (constraint.end_index, constraint.end_price) not in supplied_ends
+            ):
+                return self._empty(market.symbol, "constrained_pair_not_authentic")
+
         if market.quality.status is DataStatus.DEGRADED:
             reasons.append("Fibonacci analysis uses degraded market data")
 
@@ -95,6 +117,12 @@ class FibonacciLiquidityEngine:
             structure_confidence=structure.confidence,
             request=request,
         )
+
+        if constraint is not None:
+            anchors = [a for a in anchors if (
+                a.start_index == constraint.start_index and a.start_price == constraint.start_price
+                and a.end_index == constraint.end_index and a.end_price == constraint.end_price
+            )]
 
         if not anchors:
             return self._empty(

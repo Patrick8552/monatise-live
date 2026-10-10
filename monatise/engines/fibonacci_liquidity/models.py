@@ -40,6 +40,31 @@ class AnchorQuality(StrEnum):
 
 
 @dataclass(frozen=True)
+class FibonacciAnchorConstraint:
+    """An explicit pair; optional callers cannot replace pivots or rank fallbacks."""
+
+    symbol: str
+    timeframe: str
+    direction: FibonacciDirection
+    start_index: int
+    start_price: float
+    end_index: int
+    end_price: float
+    association_id: str
+
+    def validate(self) -> None:
+        require_finite(start_price=self.start_price, end_price=self.end_price)
+        if (
+            not self.symbol or not self.timeframe or not self.association_id
+            or self.direction not in {FibonacciDirection.BULLISH, FibonacciDirection.BEARISH}
+            or type(self.start_index) is not int or type(self.end_index) is not int
+            or self.start_index < 0 or self.end_index <= self.start_index
+            or min(self.start_price, self.end_price) <= 0
+        ):
+            raise ValueError("invalid Fibonacci anchor constraint")
+
+
+@dataclass(frozen=True)
 class FibonacciRequest:
     market: MarketSnapshot
     structure: MarketStructureAssessment
@@ -75,8 +100,13 @@ class FibonacciRequest:
     minimum_anchor_range_atr: float = 2.0
     minimum_structure_confidence: float = 0.45
     maximum_alternate_anchors: int = 3
+    anchor_constraint: FibonacciAnchorConstraint | None = None
 
     def validate(self) -> None:
+        if self.anchor_constraint is not None:
+            if not isinstance(self.anchor_constraint, FibonacciAnchorConstraint):
+                raise ValueError("typed Fibonacci anchor constraint required")
+            self.anchor_constraint.validate()
         require_finite(**{
             **{f"retracement_ratio_{index}": value for index, value in enumerate(self.retracement_ratios)},
             **{f"extension_ratio_{index}": value for index, value in enumerate(self.extension_ratios)},
