@@ -1,0 +1,6 @@
+"""Isolated retrospective research; never registered with a production route."""
+PHASE3 = "ce1ee530effe68080ac2e81d1a29b80200b0d54b"
+H1_RESEARCH = "f1de9d46cb5f3458726b81cfbc9f1d0dfba73f35"
+POLICY = "gold-fib-h1-structural-leg-v1"
+AVAILABILITY_POLICY = "retrospective-close-plus-grace-v1"
+OUTCOME_POLICY = "gold-price-path-reachability-v1"

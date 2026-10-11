@@ -125,7 +125,7 @@ class GoldOptionDefinition:
     multiplier: float
 
 
-def normalize_option(record, *, futures, publishers, now, convention):
+def normalize_option(record, *, futures, publishers, now, convention, identity_policy=None, cutoff_ns=None):
     # Convention must come from a reviewed contract specification, never from
     # a root-name guess. Standard OG only in this first implementation.
     if convention != {
@@ -136,8 +136,15 @@ def normalize_option(record, *, futures, publishers, now, convention):
         "multiplier": 100,
     }:
         raise ValueError("unsupported or unverified Gold option convention")
+    if identity_policy is not None:
+        from monatise.adapters.databento_identity import DatabentoPublisherPolicy
+        if not isinstance(identity_policy, DatabentoPublisherPolicy):
+            raise ValueError("explicit Databento identity policy required")
+        identity_policy.validate(record, publishers=publishers, now=now, cutoff_ns=cutoff_ns)
+    elif cutoff_ns is not None:
+        raise ValueError("nanosecond cutoff requires explicit identity policy")
     if (
-        publishers.get(record.publisher_id) != ("GLBX.MDP3", "XCEC")
+        (identity_policy is None and publishers.get(record.publisher_id) != ("GLBX.MDP3", "XCEC"))
         or str(record.asset) != "OG"
         or str(record.instrument_class) not in {"C", "P"}
         or record.leg_count != 0

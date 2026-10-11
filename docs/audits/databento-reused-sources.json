@@ -1,0 +1,31 @@
+{
+  "files": {
+    "monatise/adapters/databento_gold.py": "bed5ca110839c26ff8f017d714de6126513bc28dfc935605627c3cd3f9e21930",
+    "monatise/adapters/databento_identity.py": "4c8c474379497fee24888313eaa3ad4741f1b249d87dcfb60feec9cd797abe22",
+    "monatise/application/gold_options.py": "a62574f31946e9c40dfca4fa38fb8c06ba198fc08fb56625c4cdd05220821a00",
+    "monatise/research/broker_xauusd/__init__.py": "d31ec2fbc590c62fa5f7850da9bf037ca07a08a7fb1dc5c9c92cfc32e733dc21",
+    "monatise/research/broker_xauusd/models.py": "2b81e49bf9d1ad8e41ad90ca15022a4bfcd8d850dc18cf9de84f58e77990550c",
+    "monatise/research/databento/__init__.py": "f317fade7780ba5b472af2045f319813fe4b039e98dc1cb4b2cbb9dfd043fdd1",
+    "monatise/research/databento/acquisition.py": "efdaab8e64b88f56ba95dfd7b3b6efbde38a15a8577053b1d1161b2eee68bcbd",
+    "monatise/research/databento/archive.py": "25ee87b4c70e1d9306a23690f4c07a3794f5639819b851e885dd9804fcd874e2",
+    "monatise/research/databento/benchmark.py": "e3e5ff0ac04a0063bfe0003cd83925d2d343800422852b0765563767a570ae1f",
+    "monatise/research/databento/registry.py": "16e74a57bba6497074628fbb0c49af8704a3915fffeecd0b11faa41fd67d843f",
+    "monatise/research/databento/replay.py": "0f9602d4ed5200f0dffacb2258ff18bf220550159cb7dc3b24455ff7c69d6fd5",
+    "monatise/research/gc_fib/__init__.py": "f9b241f71f8ea1ecd0c05a91dbb51aae9c572b9f36c91282205c2dc90835c44e",
+    "monatise/research/gc_fib/bootstrap.py": "450ed2cee901d34618779c1b1d3fb5a532db1957c65bb99c5e4ccde3cf6c2a5b",
+    "monatise/research/gc_fib/candles.py": "5f15e5b6ef65c0b413e42dd47b52968f0ca498b71b350ba8f256aa459038497c",
+    "monatise/research/gc_fib/native_contract.py": "753cebd35a7489eef32d2197d4f183af499ed54757eacc25ca5a5f48f31e39fe",
+    "monatise/research/gc_fib/preflight.py": "91a7bc0276572d5044cc16f9e6113fd11aca9c2272c2cb1c32ece25271332481",
+    "monatise/research/gc_fib/runner.py": "26e860e4f08eb4d765afd4061f8da027bf83c9a967dbdd53f0634703551370e0",
+    "monatise/research/gc_fib/worker.py": "df93c53443995972cf3032d4983d62c90478816cb73344e2d9706019175c4202",
+    "monatise/research/gold_retrospective/__init__.py": "41ef64dcb32bea9bd5060a6e376c631779dad905b139cb554c20c64d4a467bd7",
+    "monatise/research/gold_retrospective/runner.py": "98562beba60e7a0b6903616be3358995cd727884675364e9deb7896f6bdd282f",
+    "tests/fixtures/databento/glbx_metadata_2026-10-11.json": "801dcc502504434aa8eeeb17f71463ebae60c2489199b6782cd5bc6d6a7a3e0a",
+    "tests/research/test_databento_foundations.py": "48a88848e7247e8c2114bda9e565ce195c71db034120b16386642c97b6fdbff7",
+    "tests/research/test_databento_history.py": "25849daeb6a541588b0b28c487b6d43e7e0a3e780ed2824290bd19937ac69446",
+    "tests/research/test_databento_history_postgres.py": "5fc6205e62e1a47c85f73c51078d0b2f7f61dcf6481aefdbe12b6eb490a9a4a0",
+    "tests/research/test_gc_fib.py": "3063664faf89c8b01c90fcb405232796dc252e4d5b72718a59b31428d9341679",
+    "tests/research/test_gc_native_contract.py": "1262c6b1085742fc23113fea52e362cb51046b735b7c5ba0e9c821a406e120c9"
+  },
+  "source_commit": "a144db7f89e7bb3bb5748b83660d51243f69dc51"
+}

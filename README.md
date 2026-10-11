@@ -431,3 +431,11 @@ Exchange APIs can be added later by implementing the `MarketDataPort` and `Execu
 ## Positioning
 
 Monatise harvests liquidity through grid-based market participation, not one-shot trend entries.
+
+## Local CME market-data research
+
+The opt-in [Databento CME research foundation](docs/databento-cme-research.md)
+provides guarded historical acquisition, immutable source storage, contract-aware
+replay, disabled depth/options adapters and persistent cost controls. See the
+[implementation report](docs/audits/databento-cme-implementation-report.md).
+Production activation and new billable data require separate approval.

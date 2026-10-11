@@ -13,4 +13,5 @@ test-results/
 artifacts/
 # Operator reports stay outside the public source repository.
 private-reports/
+research-data/
 docs/telegram-trade-controls-2026-09-11.md

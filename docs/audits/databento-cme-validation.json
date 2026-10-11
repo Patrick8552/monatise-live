@@ -1,0 +1,318 @@
+{
+  "assessments": 557,
+  "cache_overlaps_found": 1,
+  "cache_plan_action": "REUSE_EXISTING_PARTITIONS_NO_DOWNLOAD",
+  "coverage_certified": false,
+  "credit_consumed_this_run_usd": "0",
+  "derived_bars_verified": 9768,
+  "distinct_valid_h1_episodes": 12,
+  "frozen_selector_commit": "f1de9d46cb5f3458726b81cfbc9f1d0dfba73f35",
+  "gil_enabled": false,
+  "historical_billing": {
+    "approved_budget_usd": "0",
+    "budget_review_reference": "default-zero-budget",
+    "committed_usage_usd": "0",
+    "credit_used_usd": "0",
+    "historical_cache_unknown_billing_count": 24,
+    "historical_credit_usd": null,
+    "previously_acquired_cache_count": 24,
+    "provider_charge_cap": false,
+    "remaining_budget_usd": "0",
+    "settled_api_usage_usd": "0",
+    "settled_cash_usd": "0",
+    "trading_enabled": false,
+    "unreconciled_attempts": 0
+  },
+  "input_sha256": "c572e5f52f96cbc2e50df838368df6f2632dd04ae3f2def73a465fd4e565252b",
+  "native_archives": [
+    {
+      "actual_billed_usd": null,
+      "archive_sha256": "e625338f05d5f8440b75b0827b55159c7ecad75e7dc53ede9c92a775280baa04",
+      "historical_estimated_usd": "4.116446e-06",
+      "manifest_file": "acquisition-result-00.json",
+      "manifest_sha256": "4d16f2e806c9cd532f0728e45b6e6c1a835ba0c1aa897e9763f9276d2b7c32b9",
+      "record_count": 5,
+      "request_sha256": "7de4861af280e600e0abb3d292aee11a13d9d40b4a26bfe96394e11914d7d73f",
+      "schema": "definition"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_sha256": "3a83fa0625afe7a54972bf9f6601115a9274ccad7e79a696f4b5d781029db07f",
+      "historical_estimated_usd": "5.215406e-06",
+      "manifest_file": "acquisition-result-01.json",
+      "manifest_sha256": "aca6e6fdc2a860356dbacb973ab1dcb27d8e3be793cfca61b2fd684580402149",
+      "record_count": 35,
+      "request_sha256": "ab1bcd00dd44a072f65e6244f001f5c438ba915b4dbb91ae4c5570243e0f18e9",
+      "schema": "status"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_sha256": "4e6f4124c8919ab88536170f4d5c83e27353140d45b9b5963a48279bba570417",
+      "historical_estimated_usd": "0.024741366506",
+      "manifest_file": "acquisition-result-02.json",
+      "manifest_sha256": "b7890c7e1c3a96cd3f92a08d718214a5db884d7db9aca23699f313c0012c7c03",
+      "record_count": 6777,
+      "request_sha256": "ead74104990a010ec0c7c78c27941a8730c0fcb1831db686bf60d5358551b8d8",
+      "schema": "ohlcv-1m"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_sha256": "9d9487747c9049797cc525a22594219791542fec9fc6450dc194a65a8a99293f",
+      "historical_estimated_usd": "0.536754190922",
+      "manifest_file": "acquisition-result-03.json",
+      "manifest_sha256": "ae2436dce25f9a353c3bcd5414e763720f1bc312a8929c3bbdb73ecd341ce6a8",
+      "record_count": 428821,
+      "request_sha256": "61423988ec2da19a7d9b564c839ff3ad1b263fbcdac90af0f6672c9ef4f662ba",
+      "schema": "trades"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_sha256": "4f3ae344c07c4762ca69d7b80137685cb59213d1a021ce2f0bca532cecbd4be5",
+      "historical_estimated_usd": "0.080136090517",
+      "manifest_file": "acquisition-result-04.json",
+      "manifest_sha256": "cd48c4e599a6e37ffe24582ccbe5905eaf03069a54e8ca42e35d15e4b6254e62",
+      "record_count": 597538,
+      "request_sha256": "c2b32bb551aa57a5f8c21654536f32a4b4e5fe77f293da03a1acafc581cab911",
+      "schema": "mbp-1"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_sha256": "4e8e28c60924d0a13e43dee268fd3ce1c9f51d0248df2b9151d3347523114cb8",
+      "historical_estimated_usd": "0.132998809218",
+      "manifest_file": "acquisition-result-05.json",
+      "manifest_sha256": "6bd37ea06728330a07802bbbcc7250d422b3d95aab93c9442cabedfa85f6bf1e",
+      "record_count": 991711,
+      "request_sha256": "8b09fa69b5be869c0feca3f9dc25963bac679ae41f4a7f265c0e838e6dbe3ef8",
+      "schema": "mbp-1"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_sha256": "1b944fbc43b4fd3372b0238f3ce9d062798c6596a20dde4c3615ea38d445c86b",
+      "historical_estimated_usd": "0.111350297928",
+      "manifest_file": "acquisition-result-06.json",
+      "manifest_sha256": "6b9474e010f972fb47294bd565de6df8e6da596dc8f8ee1e225a2e9464eb1875",
+      "record_count": 830288,
+      "request_sha256": "3da3538274b3b7a2558c9cbbd94666bf259977f707cbeae052961a14de0e94d3",
+      "schema": "mbp-1"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_sha256": "56a4d3220570de1df6404cfd3fc8274a5cc8b78e110cb3420c39ed93e0e8ccea",
+      "historical_estimated_usd": "0.101215571165",
+      "manifest_file": "acquisition-result-07.json",
+      "manifest_sha256": "f071379ec5a23a2595a57098eaa59177795cce33ed0b3f05af6de0446c1cf185",
+      "record_count": 754718,
+      "request_sha256": "e4a23a014d32c81db76273bfea73bbf6a9dfecfd7360711755891cd6ff6b7bc3",
+      "schema": "mbp-1"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_sha256": "0e818929b5fbbfec67895462949ea371ef74188a6f98f237c2830c53e404773d",
+      "historical_estimated_usd": "0.085219681263",
+      "manifest_file": "acquisition-result-08.json",
+      "manifest_sha256": "372df1f823e00184344519fe8c88bf84287b44456498196d3f5a65e9de8990d1",
+      "record_count": 635444,
+      "request_sha256": "f95c288d3b4dd27295177e4037195402e7a64b3c99ea1fd911c17df9ddf1323f",
+      "schema": "mbp-1"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_sha256": "5c43148441b4b7db8f57d763f30ae235cee65b067c66cb95e36629008a0862df",
+      "historical_estimated_usd": "0.120065197349",
+      "manifest_file": "acquisition-result-09.json",
+      "manifest_sha256": "008074a2341c07e4d7dafd3812ebb8cde2347ceab02ce7eb449e8edb3c6bd539",
+      "record_count": 895271,
+      "request_sha256": "5656690da0b7a22402d3f824fae32cf8b4200e2ef606ab7fd59f042e42899d40",
+      "schema": "mbp-1"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_sha256": "a211744f6a6ea0baa251bdf8db18ac53e5ae7f4116ed361593fe1f00f7e319be",
+      "historical_estimated_usd": "0.085660502315",
+      "manifest_file": "acquisition-result-10.json",
+      "manifest_sha256": "17d4f9a4060f6a39cc48d8adfd20ba6deb8af40cd9a27eb21c1a2f5301b11b29",
+      "record_count": 601530,
+      "request_sha256": "238c54083e6f2020c85281ec81f365288780b8a8d0955960fe9f385090ba2aa9",
+      "schema": "mbp-1"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_sha256": "bbfc82c2726e5c9b0dd792242c9651ab4da9d0776e834bbe90dae139c674c60b",
+      "historical_estimated_usd": "0.056874364614",
+      "manifest_file": "acquisition-result-11.json",
+      "manifest_sha256": "9cb5a4a5ca2a99bb53d7ab22e53227b5bacf3949a84156952933f8fa7a45dc33",
+      "record_count": 403630,
+      "request_sha256": "c1364d0ee7a87fc3eb10eac0c14918121f08fa05395df94652c4b45adee8423a",
+      "schema": "mbp-1"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_sha256": "6c68e247a9f4e1a21719698866e42863536ca1a3fd6025e709f0d67132343743",
+      "historical_estimated_usd": "0.053747713566",
+      "manifest_file": "acquisition-result-12.json",
+      "manifest_sha256": "8d42009b50e2694ed98fc923b03529c4e235732e453197b20882d06ba155d54a",
+      "record_count": 390003,
+      "request_sha256": "e9736520623319476c8abc527a8cbbf522ab36de768eb5599ddf37edaa497cf1",
+      "schema": "mbp-1"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_sha256": "d01b31f2c0aa7f87e7c94ae005ad7132ae1b975814bf0a04a4bb736a1152c1f6",
+      "historical_estimated_usd": "4.939735e-06",
+      "manifest_file": "warmup-result-00.json",
+      "manifest_sha256": "df90c857ec14714be6d040be6bbf419e743776c796d834c5c3a7860525ed34c5",
+      "record_count": 6,
+      "request_sha256": "bd5cc2253ac281d2ba9eadf9a285c289775bee8b1526368e83ecfc4fd172a153",
+      "schema": "definition"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_sha256": "621375e74b112798c124ce93c3157ddf62785770e208446cf14b107e74ab5915",
+      "historical_estimated_usd": "1.0877848e-05",
+      "manifest_file": "warmup-result-01.json",
+      "manifest_sha256": "c182b366b2aeaaba129adf210f6bd62a5031ad1d4cacab8548ccb0f3806a80b8",
+      "record_count": 73,
+      "request_sha256": "5e924f68f8adee96c17bc9433832103604410da7ee305c4cf66cef7d57d194f3",
+      "schema": "status"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_sha256": "f8471d0006f340aab5d74c08a4174c1591b621415b863e8276034ca2f9cb1fa0",
+      "historical_estimated_usd": "0.024606287479",
+      "manifest_file": "warmup-result-02.json",
+      "manifest_sha256": "0937a396217a4cdc4fa4cc8ee415cfcb453919476c2acbe926b80eb97702668c",
+      "record_count": 6740,
+      "request_sha256": "dcf3f84d6f9c015c65adb892e01811cba8a70c0e2a3e3a3c7d466c4e89c381db",
+      "schema": "ohlcv-1m"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_sha256": "544816e7448cb6b8efce83199ee1e46d8d328398a3dee222cd34a9f4c07c8dbe",
+      "historical_estimated_usd": "4.939735e-06",
+      "manifest_file": "warmup-result-03.json",
+      "manifest_sha256": "464406fe3080742895a1d7a98c5f2d4199d19843f119ff83e6c1d96bd0faea68",
+      "record_count": 6,
+      "request_sha256": "28393fd186c1801d8def1b4713a60efe277e557205bb2a141aa037096650b0ba",
+      "schema": "definition"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_sha256": "8319b303f058148cc6c8f10251aeca1fdc8df8798bd06cfd1092a76ab3f67f7a",
+      "historical_estimated_usd": "6.407499e-06",
+      "manifest_file": "warmup-result-04.json",
+      "manifest_sha256": "6236f39acae49ddc406171ec8fdae21f33a2b8b9ce88a3157110b98100c2f3e2",
+      "record_count": 43,
+      "request_sha256": "eef6b5e12846693c70a63ec388c168fd18d7cac0b417a832f27af3689d252d8e",
+      "schema": "status"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_sha256": "eda548bc477a2408dad7748c55de583fe4b682608591bb0bdc5a373b1f3d9443",
+      "historical_estimated_usd": "0.025190412998",
+      "manifest_file": "warmup-result-05.json",
+      "manifest_sha256": "4018e612ac2de817307d6984ffbd211d2fd1020b4b722cc34a12707b0c32e79f",
+      "record_count": 6900,
+      "request_sha256": "0519e4044b26532bcaf8a111fb9edbcedef7c9e9901d425e28d85ff761f7e9b2",
+      "schema": "ohlcv-1m"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_sha256": "9e9caf53d06ef9c44f5010b45719f6cd894e56ffe611ad4f3ed51173abfc595e",
+      "historical_estimated_usd": "6.705523e-06",
+      "manifest_file": "warmup-result-07.json",
+      "manifest_sha256": "e14caed9d2af2198a9611ae595fd041b14d1e1fcf88f6387932e77752a2252bb",
+      "record_count": 45,
+      "request_sha256": "42423c67a2bb21096772225d770d7b8f75781df645df62ca6f61e2d66d0f0378",
+      "schema": "status"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_sha256": "2abd5bb896db0d5df5a83fa7f707ea127abb3c35659f77c0504b7c6723cb1873",
+      "historical_estimated_usd": "0.02517580986",
+      "manifest_file": "warmup-result-08.json",
+      "manifest_sha256": "a644d0539ff1cabcd6435f2a64884d4b322c7b3916061304094048b4aba578ec",
+      "record_count": 6896,
+      "request_sha256": "c8fd14befda4a12bd86a1e6a20d5271b271240fc810231ca07a43db04b5bcd66",
+      "schema": "ohlcv-1m"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_sha256": "24a550317af8d8b97f298d6734178827ea006f2f526d5b81e77ff4a7309f2d3b",
+      "historical_estimated_usd": "4.939735e-06",
+      "manifest_file": "warmup-result-09.json",
+      "manifest_sha256": "b579da8a9998d0960c840300741d33cc503240a083c4c757465cc2e8ddaa933b",
+      "record_count": 6,
+      "request_sha256": "fc0f6e7a801070cec8dc511161f1736795ba43365663ac9caa4fe78f7dd2a8f1",
+      "schema": "definition"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_sha256": "31b5eb10fc861fcf9bce205137b75c65bf445f48b8371a2153a802e791406c1e",
+      "historical_estimated_usd": "7.748604e-06",
+      "manifest_file": "warmup-result-10.json",
+      "manifest_sha256": "d0c6caf86ce5f1d9e901b45860f7ae0daf3ddc38fb68e96fa9f269d27234989e",
+      "record_count": 52,
+      "request_sha256": "2afe30a1bbb620a4845245afaa22dc3bc226c2d47ad89cee334961ca29aebfaa",
+      "schema": "status"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_sha256": "bb533292b555035888d9e29ac19a8c4de99df948d4f6da34e1e2b025fd0891c8",
+      "historical_estimated_usd": "0.02517580986",
+      "manifest_file": "warmup-result-11.json",
+      "manifest_sha256": "2b8fdf89f88aab7766018a99b71a44e5787720df232e1890b59c22b36895842d",
+      "record_count": 6896,
+      "request_sha256": "d5bfe77ad117985f3c366313bd678962d68fff7e2c3e106a88ec47779a48a1aa",
+      "schema": "ohlcv-1m"
+    }
+  ],
+  "native_schema_record_counts": {
+    "definition": 23,
+    "mbp-1": 6100133,
+    "ohlcv-1m": 34209,
+    "status": 248,
+    "trades": 428821
+  },
+  "new_databento_usage_usd": "0",
+  "pit_verified": false,
+  "preserved_report_equal": true,
+  "qualified_trades": null,
+  "quarantined_manifests": [
+    {
+      "actual_billed_usd": null,
+      "manifest_file": "acquisition-result-13.json",
+      "sha256": "c173022e2765c96a558ea9e1a3a0eda283f9c4eb696dcadb33345787d80f2623",
+      "status": "QUARANTINED"
+    },
+    {
+      "actual_billed_usd": null,
+      "manifest_file": "warmup-result-06.json",
+      "sha256": "ac62b5005f0240a64759d850ebacaf9208675a262c39c5cdf61da2ee75b940a2",
+      "status": "QUARANTINED"
+    }
+  ],
+  "raw_level_records": 12,
+  "repeat_equal": true,
+  "replay_sha256": "7d333eaa6929aaa9f9593c1d69d076ed4313f004297c323ae014a568502bf78d",
+  "schema": "cme-offline-acceptance-v1",
+  "source_checkout": "/Users/thankgod/Documents/Codex/2026-09-14/g/work/monatise-gold-h1-fib-f0",
+  "source_matched_minutes": 34207,
+  "test_summary": {
+    "frozen_h1": {
+      "failed": 0,
+      "log": "private-reports/frozen-selector-tests-v1.log",
+      "passed": 53,
+      "skipped": 0
+    },
+    "full_python": {
+      "failed": 0,
+      "log": "private-reports/full-isolated-v2/pytest.log",
+      "passed": 1948,
+      "skipped": 0
+    }
+  },
+  "touch_window_observations_verified": 0,
+  "trade_win_rate": null,
+  "trading_enabled": false,
+  "valid_fibonacci_assessments": 69
+}

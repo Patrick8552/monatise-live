@@ -1,0 +1,29 @@
+{
+  "dataset": "GLBX.MDP3",
+  "dataset_list_included_glbx": true,
+  "entitlement_for_new_requests": "UNVERIFIED",
+  "no_request_made_this_run": true,
+  "observed_at": "2026-10-11T12:57:22.399102+00:00",
+  "schema": "saved-databento-capabilities-v1",
+  "schemas": [
+    "mbo",
+    "mbp-1",
+    "mbp-10",
+    "tbbo",
+    "trades",
+    "bbo-1s",
+    "bbo-1m",
+    "ohlcv-1s",
+    "ohlcv-1m",
+    "ohlcv-1h",
+    "ohlcv-1d",
+    "definition",
+    "statistics",
+    "status",
+    "cmbp-1",
+    "cbbo-1s",
+    "cbbo-1m"
+  ],
+  "source_method": "authenticated metadata preflight saved before this implementation",
+  "source_sha256": "f9183324f0153548cb56a0992e9e5ca885131c32592379402bd04ebf443411d8"
+}
