@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+from monatise.adapters.databento_identity import DatabentoPublisherPolicy
+
 SCALE = Decimal(1_000_000_000)
 UNDEF_PRICE = (1 << 63) - 1
 UNDEF_TIMESTAMP = (1 << 64) - 1
@@ -55,9 +57,15 @@ class GCDefinition:
     expiry: datetime
 
 
-def definition(record, *, publishers, now):
+def definition(record, *, publishers, now, identity_policy=None, cutoff_ns=None):
     publisher = publishers.get(record.publisher_id)
-    if publisher != ("GLBX.MDP3", "XCEC"):
+    if identity_policy is not None:
+        if not isinstance(identity_policy, DatabentoPublisherPolicy):
+            raise ValueError("explicit Databento identity policy required")
+        identity_policy.validate(record, publishers=publishers, now=now, cutoff_ns=cutoff_ns)
+    elif cutoff_ns is not None:
+        raise ValueError("nanosecond cutoff requires explicit identity policy")
+    elif publisher != ("GLBX.MDP3", "XCEC"):
         raise ValueError("unknown or contradictory GC publisher")
     if (
         str(record.instrument_class) != "F"
@@ -111,10 +119,11 @@ class GCReplay:
     A gap must come from transport diagnostics; reordering is quarantined.
     """
 
-    def __init__(self, *, publishers, capacity=50000):
+    def __init__(self, *, publishers, capacity=50000, identity_policy=None):
         if not 10 <= capacity <= 500000:
             raise ValueError("invalid bounded replay capacity")
         self.publishers = dict(publishers)
+        self.identity_policy = identity_policy
         self.capacity = capacity
         self.definitions = {}
         self.contract = None
@@ -128,9 +137,12 @@ class GCReplay:
         self.last_received = None
         self.coverage = None
 
-    def add_definition(self, record, *, now):
+    def add_definition(self, record, *, now, cutoff_ns=None):
         try:
-            value = definition(record, publishers=self.publishers, now=now)
+            value = definition(
+                record, publishers=self.publishers, now=now,
+                identity_policy=self.identity_policy, cutoff_ns=cutoff_ns,
+            )
         except ValueError:
             if self.contract and record.instrument_id == self.contract.instrument_id:
                 self.mark_gap("selected_contract_definition_rejected")
@@ -319,7 +331,15 @@ class GCReplay:
                 cvd += size if side == "B" else -size
         return {
             "status": "usable",
-            "symbol": "XAU/USD",
+            "symbol": (
+                "COMEX:GC:" + self.contract.raw_symbol
+                if self.identity_policy is not None else "XAU/USD"
+            ),
+            **({
+                "instrument_namespace": "COMEX:GC:" + self.contract.raw_symbol,
+                "context_for": "XAU/USD",
+                "execution_price_authority": False,
+            } if self.identity_policy is not None else {}),
             "strategy_version": "xauusd-technical-v1",
             "dataset": "GLBX.MDP3",
             "publisher_id": self.contract.publisher_id,
