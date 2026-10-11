@@ -61,7 +61,7 @@ async def prepare_replay(archive, *, cutoff, start, end, evidence_kind):
                 "captured_at": captured.isoformat(), "revision": revision,
                 "confirmation_observations": confirmations, "is_final": final,
                 "first_final_available_at": first_final.isoformat() if first_final else None,
-                "point_in_time_eligible": final and evidence_kind != "RETROSPECTIVE_HISTORICAL_DOWNLOAD"})
+                "point_in_time_eligible": final and evidence_kind in {"ENGINEERING_SYNTHETIC", "POINT_IN_TIME_OBSERVATION"}})
             if closed:
                 touched.add(key[0])
         # Export only genuinely closed-at-capture rows. Availability replaces
@@ -96,6 +96,8 @@ async def prepare_replay(archive, *, cutoff, start, end, evidence_kind):
                        "available_rows": sum(k[0] == tf for k in states),
                        "finalized_rows": sum(k[0] == tf and s["final"] for k, s in states.items())}
     blockers = []
+    if evidence_kind == "UNKNOWN_OR_UNVERIFIED":
+        blockers.append("UNVERIFIED_EVIDENCE")
     minimum_history = max(RegimeRequest.__dataclass_fields__["slow_window"].default,
                           LiquidityRequest.__dataclass_fields__["range_window"].default)
     if any(c["finalized_rows"] < minimum_history for c in coverage.values()):

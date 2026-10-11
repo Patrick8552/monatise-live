@@ -180,7 +180,8 @@ class BrokerObservationArchive:
 
     async def batches(self, *, cutoff):
         cutoff = instant(cutoff)
-        documents = await self.store.list_namespace(self.namespace)
+        admitted_reader = getattr(self.store,"list_admitted",None)
+        documents = await admitted_reader(self.namespace,cutoff) if callable(admitted_reader) else await self.store.list_namespace(self.namespace)
         receipts = {}
         for d in documents:
             key = d.key.decode("utf-8") if isinstance(d.key, bytes) else d.key
