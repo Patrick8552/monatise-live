@@ -97,6 +97,21 @@ class DatabentoPublisherPolicy:
             raise ValueError("nanosecond cutoff contradicts presentation clock")
         if self.observed_at_ns > cutoff:
             raise ValueError("publisher metadata unavailable at assessment")
+        self.validate_contract_identity(record, publishers=publishers)
+        event, received, expiration = (
+            timestamp_ns(record.ts_event), timestamp_ns(record.ts_recv),
+            timestamp_ns(record.expiration),
+        )
+        if not event <= received <= cutoff < expiration:
+            raise ValueError("definition unavailable at nanosecond cutoff")
+
+    def validate_contract_identity(self, record, *, publishers):
+        """Economic identity only; never certifies point-in-time availability.
+
+        Historical reference reconstruction may reuse these checks without
+        pretending today's catalog was observed at an old receive timestamp.
+        Normal analysis callers must continue to use validate(), above.
+        """
         pid = record.publisher_id
         if isinstance(pid, bool) or not isinstance(pid, int):
             raise ValueError("invalid record publisher")
@@ -105,12 +120,6 @@ class DatabentoPublisherPolicy:
             raise ValueError("unknown or contradictory GC feed publisher")
         if str(getattr(record, "exchange", "")) != "XCEC":
             raise ValueError("unknown or contradictory GC economic exchange")
-        event, received, expiration = (
-            timestamp_ns(record.ts_event), timestamp_ns(record.ts_recv),
-            timestamp_ns(record.expiration),
-        )
-        if not event <= received <= cutoff < expiration:
-            raise ValueError("definition unavailable at nanosecond cutoff")
         if str(record.instrument_class) == "F":
             match = re.fullmatch(r"GC([FGHJKMNQUVXZ])(\d{1,2})", str(record.raw_symbol))
             year, month = record.maturity_year, record.maturity_month
