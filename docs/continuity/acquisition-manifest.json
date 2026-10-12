@@ -1,0 +1,1292 @@
+{
+  "as_of": "2026-10-12",
+  "billing_policy": "Actual per-request amounts remain unknown. Estimates and reservations are not charges. Never retry automatically.",
+  "clock_policy": "Native integer UTC nanoseconds; end exclusive; historical retrieval is never live known-at",
+  "dataset": "GLBX.MDP3",
+  "native_format": "Databento DBN with Zstandard; immutable source bytes, no public redistribution",
+  "new_acquisitions_this_preservation_task": 0,
+  "records": [
+    {
+      "actual_billed_usd": null,
+      "archive_bytes": 363,
+      "archive_hash_reverified": true,
+      "archive_sha256": "e625338f05d5f8440b75b0827b55159c7ecad75e7dc53ede9c92a775280baa04",
+      "archive_status": "ARCHIVED",
+      "billing_status": "UNKNOWN",
+      "download_attempts": 1,
+      "end_utc_exclusive": "2026-10-10T00:00:00Z",
+      "evidence_kind": "AUTHENTIC_HISTORICAL_DOWNLOAD",
+      "group": "GC",
+      "ingestion_basis": "BULK_ARCHIVE_ADMISSION",
+      "local_availability_ns": 1791746168390028000,
+      "local_ingestion_ns": 1791746168390028000,
+      "manifest_name": "acquisition-result-00.json",
+      "observation_basis": "LOCAL_ARCHIVE_ADMISSION",
+      "quarantine_sha256": null,
+      "request": {
+        "contracts": [
+          [
+            1,
+            41271,
+            "GCZ6"
+          ]
+        ],
+        "dataset": "GLBX.MDP3",
+        "end_ns": 1791590400000000000,
+        "record_limit": 1000000,
+        "schema": "definition",
+        "start_ns": 1791158400000000000,
+        "wire_byte_limit": 268435456
+      },
+      "request_sha256": "7de4861af280e600e0abb3d292aee11a13d9d40b4a26bfe96394e11914d7d73f",
+      "retrieval_ns": 1791746168387523000,
+      "sdk_stype_in": "raw_symbol",
+      "sdk_symbols": [
+        "GCZ6"
+      ],
+      "start_utc": "2026-10-05T00:00:00Z"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_bytes": 564,
+      "archive_hash_reverified": true,
+      "archive_sha256": "3a83fa0625afe7a54972bf9f6601115a9274ccad7e79a696f4b5d781029db07f",
+      "archive_status": "ARCHIVED",
+      "billing_status": "UNKNOWN",
+      "download_attempts": 1,
+      "end_utc_exclusive": "2026-10-10T00:00:00Z",
+      "evidence_kind": "AUTHENTIC_HISTORICAL_DOWNLOAD",
+      "group": "GC",
+      "ingestion_basis": "BULK_ARCHIVE_ADMISSION",
+      "local_availability_ns": 1791746323439660000,
+      "local_ingestion_ns": 1791746323439660000,
+      "manifest_name": "acquisition-result-01.json",
+      "observation_basis": "LOCAL_ARCHIVE_ADMISSION",
+      "quarantine_sha256": null,
+      "request": {
+        "contracts": [
+          [
+            1,
+            41271,
+            "GCZ6"
+          ]
+        ],
+        "dataset": "GLBX.MDP3",
+        "end_ns": 1791590400000000000,
+        "record_limit": 1000000,
+        "schema": "status",
+        "start_ns": 1791158400000000000,
+        "wire_byte_limit": 268435456
+      },
+      "request_sha256": "ab1bcd00dd44a072f65e6244f001f5c438ba915b4dbb91ae4c5570243e0f18e9",
+      "retrieval_ns": 1791746323438354000,
+      "sdk_stype_in": "raw_symbol",
+      "sdk_symbols": [
+        "GCZ6"
+      ],
+      "start_utc": "2026-10-05T00:00:00Z"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_bytes": 119703,
+      "archive_hash_reverified": true,
+      "archive_sha256": "4e6f4124c8919ab88536170f4d5c83e27353140d45b9b5963a48279bba570417",
+      "archive_status": "ARCHIVED",
+      "billing_status": "UNKNOWN",
+      "download_attempts": 1,
+      "end_utc_exclusive": "2026-10-10T00:00:00Z",
+      "evidence_kind": "AUTHENTIC_HISTORICAL_DOWNLOAD",
+      "group": "GC",
+      "ingestion_basis": "BULK_ARCHIVE_ADMISSION",
+      "local_availability_ns": 1791746375134720000,
+      "local_ingestion_ns": 1791746375134720000,
+      "manifest_name": "acquisition-result-02.json",
+      "observation_basis": "LOCAL_ARCHIVE_ADMISSION",
+      "quarantine_sha256": null,
+      "request": {
+        "contracts": [
+          [
+            1,
+            41271,
+            "GCZ6"
+          ]
+        ],
+        "dataset": "GLBX.MDP3",
+        "end_ns": 1791590400000000000,
+        "record_limit": 1000000,
+        "schema": "ohlcv-1m",
+        "start_ns": 1791158400000000000,
+        "wire_byte_limit": 268435456
+      },
+      "request_sha256": "ead74104990a010ec0c7c78c27941a8730c0fcb1831db686bf60d5358551b8d8",
+      "retrieval_ns": 1791746375130793000,
+      "sdk_stype_in": "raw_symbol",
+      "sdk_symbols": [
+        "GCZ6"
+      ],
+      "start_utc": "2026-10-05T00:00:00Z"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_bytes": 8749274,
+      "archive_hash_reverified": true,
+      "archive_sha256": "9d9487747c9049797cc525a22594219791542fec9fc6450dc194a65a8a99293f",
+      "archive_status": "ARCHIVED",
+      "billing_status": "UNKNOWN",
+      "download_attempts": 1,
+      "end_utc_exclusive": "2026-10-10T00:00:00Z",
+      "evidence_kind": "AUTHENTIC_HISTORICAL_DOWNLOAD",
+      "group": "GC",
+      "ingestion_basis": "BULK_ARCHIVE_ADMISSION",
+      "local_availability_ns": 1791746413671920000,
+      "local_ingestion_ns": 1791746413671920000,
+      "manifest_name": "acquisition-result-03.json",
+      "observation_basis": "LOCAL_ARCHIVE_ADMISSION",
+      "quarantine_sha256": null,
+      "request": {
+        "contracts": [
+          [
+            1,
+            41271,
+            "GCZ6"
+          ]
+        ],
+        "dataset": "GLBX.MDP3",
+        "end_ns": 1791590400000000000,
+        "record_limit": 1000000,
+        "schema": "trades",
+        "start_ns": 1791158400000000000,
+        "wire_byte_limit": 268435456
+      },
+      "request_sha256": "61423988ec2da19a7d9b564c839ff3ad1b263fbcdac90af0f6672c9ef4f662ba",
+      "retrieval_ns": 1791746413499636000,
+      "sdk_stype_in": "raw_symbol",
+      "sdk_symbols": [
+        "GCZ6"
+      ],
+      "start_utc": "2026-10-05T00:00:00Z"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_bytes": 13751855,
+      "archive_hash_reverified": true,
+      "archive_sha256": "4f3ae344c07c4762ca69d7b80137685cb59213d1a021ce2f0bca532cecbd4be5",
+      "archive_status": "ARCHIVED",
+      "billing_status": "UNKNOWN",
+      "download_attempts": 1,
+      "end_utc_exclusive": "2026-10-05T07:30:00Z",
+      "evidence_kind": "AUTHENTIC_HISTORICAL_DOWNLOAD",
+      "group": "GC",
+      "ingestion_basis": "BULK_ARCHIVE_ADMISSION",
+      "local_availability_ns": 1791746453646940000,
+      "local_ingestion_ns": 1791746453646940000,
+      "manifest_name": "acquisition-result-04.json",
+      "observation_basis": "LOCAL_ARCHIVE_ADMISSION",
+      "quarantine_sha256": null,
+      "request": {
+        "contracts": [
+          [
+            1,
+            41271,
+            "GCZ6"
+          ]
+        ],
+        "dataset": "GLBX.MDP3",
+        "end_ns": 1791185400000000000,
+        "record_limit": 1000000,
+        "schema": "mbp-1",
+        "start_ns": 1791158400000000000,
+        "wire_byte_limit": 268435456
+      },
+      "request_sha256": "c2b32bb551aa57a5f8c21654536f32a4b4e5fe77f293da03a1acafc581cab911",
+      "retrieval_ns": 1791746453405818000,
+      "sdk_stype_in": "raw_symbol",
+      "sdk_symbols": [
+        "GCZ6"
+      ],
+      "start_utc": "2026-10-05T00:00:00Z"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_bytes": 22623459,
+      "archive_hash_reverified": true,
+      "archive_sha256": "4e8e28c60924d0a13e43dee268fd3ce1c9f51d0248df2b9151d3347523114cb8",
+      "archive_status": "ARCHIVED",
+      "billing_status": "UNKNOWN",
+      "download_attempts": 1,
+      "end_utc_exclusive": "2026-10-05T15:00:00Z",
+      "evidence_kind": "AUTHENTIC_HISTORICAL_DOWNLOAD",
+      "group": "GC",
+      "ingestion_basis": "BULK_ARCHIVE_ADMISSION",
+      "local_availability_ns": 1791746515407372000,
+      "local_ingestion_ns": 1791746515407372000,
+      "manifest_name": "acquisition-result-05.json",
+      "observation_basis": "LOCAL_ARCHIVE_ADMISSION",
+      "quarantine_sha256": null,
+      "request": {
+        "contracts": [
+          [
+            1,
+            41271,
+            "GCZ6"
+          ]
+        ],
+        "dataset": "GLBX.MDP3",
+        "end_ns": 1791212400000000000,
+        "record_limit": 1000000,
+        "schema": "mbp-1",
+        "start_ns": 1791185400000000000,
+        "wire_byte_limit": 268435456
+      },
+      "request_sha256": "8b09fa69b5be869c0feca3f9dc25963bac679ae41f4a7f265c0e838e6dbe3ef8",
+      "retrieval_ns": 1791746515028642000,
+      "sdk_stype_in": "raw_symbol",
+      "sdk_symbols": [
+        "GCZ6"
+      ],
+      "start_utc": "2026-10-05T07:30:00Z"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_bytes": 19037731,
+      "archive_hash_reverified": true,
+      "archive_sha256": "1b944fbc43b4fd3372b0238f3ce9d062798c6596a20dde4c3615ea38d445c86b",
+      "archive_status": "ARCHIVED",
+      "billing_status": "UNKNOWN",
+      "download_attempts": 1,
+      "end_utc_exclusive": "2026-10-06T06:00:00Z",
+      "evidence_kind": "AUTHENTIC_HISTORICAL_DOWNLOAD",
+      "group": "GC",
+      "ingestion_basis": "BULK_ARCHIVE_ADMISSION",
+      "local_availability_ns": 1791746557278274000,
+      "local_ingestion_ns": 1791746557278274000,
+      "manifest_name": "acquisition-result-06.json",
+      "observation_basis": "LOCAL_ARCHIVE_ADMISSION",
+      "quarantine_sha256": null,
+      "request": {
+        "contracts": [
+          [
+            1,
+            41271,
+            "GCZ6"
+          ]
+        ],
+        "dataset": "GLBX.MDP3",
+        "end_ns": 1791266400000000000,
+        "record_limit": 1000000,
+        "schema": "mbp-1",
+        "start_ns": 1791212400000000000,
+        "wire_byte_limit": 268435456
+      },
+      "request_sha256": "3da3538274b3b7a2558c9cbbd94666bf259977f707cbeae052961a14de0e94d3",
+      "retrieval_ns": 1791746556960979000,
+      "sdk_stype_in": "raw_symbol",
+      "sdk_symbols": [
+        "GCZ6"
+      ],
+      "start_utc": "2026-10-05T15:00:00Z"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_bytes": 17289804,
+      "archive_hash_reverified": true,
+      "archive_sha256": "56a4d3220570de1df6404cfd3fc8274a5cc8b78e110cb3420c39ed93e0e8ccea",
+      "archive_status": "ARCHIVED",
+      "billing_status": "UNKNOWN",
+      "download_attempts": 1,
+      "end_utc_exclusive": "2026-10-06T13:30:00Z",
+      "evidence_kind": "AUTHENTIC_HISTORICAL_DOWNLOAD",
+      "group": "GC",
+      "ingestion_basis": "BULK_ARCHIVE_ADMISSION",
+      "local_availability_ns": 1791746619350369000,
+      "local_ingestion_ns": 1791746619350369000,
+      "manifest_name": "acquisition-result-07.json",
+      "observation_basis": "LOCAL_ARCHIVE_ADMISSION",
+      "quarantine_sha256": null,
+      "request": {
+        "contracts": [
+          [
+            1,
+            41271,
+            "GCZ6"
+          ]
+        ],
+        "dataset": "GLBX.MDP3",
+        "end_ns": 1791293400000000000,
+        "record_limit": 1000000,
+        "schema": "mbp-1",
+        "start_ns": 1791266400000000000,
+        "wire_byte_limit": 268435456
+      },
+      "request_sha256": "e4a23a014d32c81db76273bfea73bbf6a9dfecfd7360711755891cd6ff6b7bc3",
+      "retrieval_ns": 1791746619050590000,
+      "sdk_stype_in": "raw_symbol",
+      "sdk_symbols": [
+        "GCZ6"
+      ],
+      "start_utc": "2026-10-06T06:00:00Z"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_bytes": 14412866,
+      "archive_hash_reverified": true,
+      "archive_sha256": "0e818929b5fbbfec67895462949ea371ef74188a6f98f237c2830c53e404773d",
+      "archive_status": "ARCHIVED",
+      "billing_status": "UNKNOWN",
+      "download_attempts": 1,
+      "end_utc_exclusive": "2026-10-06T21:00:00Z",
+      "evidence_kind": "AUTHENTIC_HISTORICAL_DOWNLOAD",
+      "group": "GC",
+      "ingestion_basis": "BULK_ARCHIVE_ADMISSION",
+      "local_availability_ns": 1791746666647658000,
+      "local_ingestion_ns": 1791746666647658000,
+      "manifest_name": "acquisition-result-08.json",
+      "observation_basis": "LOCAL_ARCHIVE_ADMISSION",
+      "quarantine_sha256": null,
+      "request": {
+        "contracts": [
+          [
+            1,
+            41271,
+            "GCZ6"
+          ]
+        ],
+        "dataset": "GLBX.MDP3",
+        "end_ns": 1791320400000000000,
+        "record_limit": 1000000,
+        "schema": "mbp-1",
+        "start_ns": 1791293400000000000,
+        "wire_byte_limit": 268435456
+      },
+      "request_sha256": "f95c288d3b4dd27295177e4037195402e7a64b3c99ea1fd911c17df9ddf1323f",
+      "retrieval_ns": 1791746666396872000,
+      "sdk_stype_in": "raw_symbol",
+      "sdk_symbols": [
+        "GCZ6"
+      ],
+      "start_utc": "2026-10-06T13:30:00Z"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_bytes": 20499082,
+      "archive_hash_reverified": true,
+      "archive_sha256": "5c43148441b4b7db8f57d763f30ae235cee65b067c66cb95e36629008a0862df",
+      "archive_status": "ARCHIVED",
+      "billing_status": "UNKNOWN",
+      "download_attempts": 1,
+      "end_utc_exclusive": "2026-10-07T12:00:00Z",
+      "evidence_kind": "AUTHENTIC_HISTORICAL_DOWNLOAD",
+      "group": "GC",
+      "ingestion_basis": "BULK_ARCHIVE_ADMISSION",
+      "local_availability_ns": 1791746754214800000,
+      "local_ingestion_ns": 1791746754214800000,
+      "manifest_name": "acquisition-result-09.json",
+      "observation_basis": "LOCAL_ARCHIVE_ADMISSION",
+      "quarantine_sha256": null,
+      "request": {
+        "contracts": [
+          [
+            1,
+            41271,
+            "GCZ6"
+          ]
+        ],
+        "dataset": "GLBX.MDP3",
+        "end_ns": 1791374400000000000,
+        "record_limit": 1000000,
+        "schema": "mbp-1",
+        "start_ns": 1791320400000000000,
+        "wire_byte_limit": 268435456
+      },
+      "request_sha256": "5656690da0b7a22402d3f824fae32cf8b4200e2ef606ab7fd59f042e42899d40",
+      "retrieval_ns": 1791746753870095000,
+      "sdk_stype_in": "raw_symbol",
+      "sdk_symbols": [
+        "GCZ6"
+      ],
+      "start_utc": "2026-10-06T21:00:00Z"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_bytes": 13399436,
+      "archive_hash_reverified": true,
+      "archive_sha256": "a211744f6a6ea0baa251bdf8db18ac53e5ae7f4116ed361593fe1f00f7e319be",
+      "archive_status": "ARCHIVED",
+      "billing_status": "UNKNOWN",
+      "download_attempts": 1,
+      "end_utc_exclusive": "2026-10-07T13:52:00Z",
+      "evidence_kind": "AUTHENTIC_HISTORICAL_DOWNLOAD",
+      "group": "GC",
+      "ingestion_basis": "BULK_ARCHIVE_ADMISSION",
+      "local_availability_ns": 1791746777679109000,
+      "local_ingestion_ns": 1791746777679109000,
+      "manifest_name": "acquisition-result-10.json",
+      "observation_basis": "LOCAL_ARCHIVE_ADMISSION",
+      "quarantine_sha256": null,
+      "request": {
+        "contracts": [
+          [
+            1,
+            41271,
+            "GCZ6"
+          ]
+        ],
+        "dataset": "GLBX.MDP3",
+        "end_ns": 1791381120000000000,
+        "record_limit": 1000000,
+        "schema": "mbp-1",
+        "start_ns": 1791374400000000000,
+        "wire_byte_limit": 268435456
+      },
+      "request_sha256": "238c54083e6f2020c85281ec81f365288780b8a8d0955960fe9f385090ba2aa9",
+      "retrieval_ns": 1791746777436397000,
+      "sdk_stype_in": "raw_symbol",
+      "sdk_symbols": [
+        "GCZ6"
+      ],
+      "start_utc": "2026-10-07T12:00:00Z"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_bytes": 9110419,
+      "archive_hash_reverified": true,
+      "archive_sha256": "bbfc82c2726e5c9b0dd792242c9651ab4da9d0776e834bbe90dae139c674c60b",
+      "archive_status": "ARCHIVED",
+      "billing_status": "UNKNOWN",
+      "download_attempts": 1,
+      "end_utc_exclusive": "2026-10-07T15:45:00Z",
+      "evidence_kind": "AUTHENTIC_HISTORICAL_DOWNLOAD",
+      "group": "GC",
+      "ingestion_basis": "BULK_ARCHIVE_ADMISSION",
+      "local_availability_ns": 1791746802105641000,
+      "local_ingestion_ns": 1791746802105641000,
+      "manifest_name": "acquisition-result-11.json",
+      "observation_basis": "LOCAL_ARCHIVE_ADMISSION",
+      "quarantine_sha256": null,
+      "request": {
+        "contracts": [
+          [
+            1,
+            41271,
+            "GCZ6"
+          ]
+        ],
+        "dataset": "GLBX.MDP3",
+        "end_ns": 1791387900000000000,
+        "record_limit": 1000000,
+        "schema": "mbp-1",
+        "start_ns": 1791381120000000000,
+        "wire_byte_limit": 268435456
+      },
+      "request_sha256": "c1364d0ee7a87fc3eb10eac0c14918121f08fa05395df94652c4b45adee8423a",
+      "retrieval_ns": 1791746801934329000,
+      "sdk_stype_in": "raw_symbol",
+      "sdk_symbols": [
+        "GCZ6"
+      ],
+      "start_utc": "2026-10-07T13:52:00Z"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_bytes": 8802839,
+      "archive_hash_reverified": true,
+      "archive_sha256": "6c68e247a9f4e1a21719698866e42863536ca1a3fd6025e709f0d67132343743",
+      "archive_status": "ARCHIVED",
+      "billing_status": "UNKNOWN",
+      "download_attempts": 1,
+      "end_utc_exclusive": "2026-10-07T19:30:00Z",
+      "evidence_kind": "AUTHENTIC_HISTORICAL_DOWNLOAD",
+      "group": "GC",
+      "ingestion_basis": "BULK_ARCHIVE_ADMISSION",
+      "local_availability_ns": 1791746821834372000,
+      "local_ingestion_ns": 1791746821834372000,
+      "manifest_name": "acquisition-result-12.json",
+      "observation_basis": "LOCAL_ARCHIVE_ADMISSION",
+      "quarantine_sha256": null,
+      "request": {
+        "contracts": [
+          [
+            1,
+            41271,
+            "GCZ6"
+          ]
+        ],
+        "dataset": "GLBX.MDP3",
+        "end_ns": 1791401400000000000,
+        "record_limit": 1000000,
+        "schema": "mbp-1",
+        "start_ns": 1791387900000000000,
+        "wire_byte_limit": 268435456
+      },
+      "request_sha256": "e9736520623319476c8abc527a8cbbf522ab36de768eb5599ddf37edaa497cf1",
+      "retrieval_ns": 1791746821668616000,
+      "sdk_stype_in": "raw_symbol",
+      "sdk_symbols": [
+        "GCZ6"
+      ],
+      "start_utc": "2026-10-07T15:45:00Z"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_bytes": null,
+      "archive_hash_reverified": false,
+      "archive_sha256": null,
+      "archive_status": "QUARANTINED",
+      "billing_status": "RECONCILIATION_REQUIRED",
+      "download_attempts": 1,
+      "end_utc_exclusive": "2026-10-08T03:00:00Z",
+      "evidence_kind": "AUTHENTIC_HISTORICAL_DOWNLOAD",
+      "group": "GC",
+      "ingestion_basis": null,
+      "local_availability_ns": null,
+      "local_ingestion_ns": null,
+      "manifest_name": "acquisition-result-13.json",
+      "observation_basis": "LOCAL_ARCHIVE_ADMISSION",
+      "quarantine_sha256": "0340d9af9ad1af21441330930c0c4dcd4ee14025694527687f3de27247532e8d",
+      "request": {
+        "contracts": [
+          [
+            1,
+            41271,
+            "GCZ6"
+          ]
+        ],
+        "dataset": "GLBX.MDP3",
+        "end_ns": 1791428400000000000,
+        "record_limit": 1000000,
+        "schema": "mbp-1",
+        "start_ns": 1791401400000000000,
+        "wire_byte_limit": 268435456
+      },
+      "request_sha256": "8aa46658731a38fcb59dbf5bd9664129faff6dd138d8a8831970e24907032071",
+      "retrieval_ns": null,
+      "sdk_stype_in": "raw_symbol",
+      "sdk_symbols": [
+        "GCZ6"
+      ],
+      "start_utc": "2026-10-07T19:30:00Z"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_bytes": 373,
+      "archive_hash_reverified": true,
+      "archive_sha256": "d01b31f2c0aa7f87e7c94ae005ad7132ae1b975814bf0a04a4bb736a1152c1f6",
+      "archive_status": "ARCHIVED",
+      "billing_status": "UNKNOWN",
+      "download_attempts": 1,
+      "end_utc_exclusive": "2026-09-14T00:00:00Z",
+      "evidence_kind": "AUTHENTIC_HISTORICAL_DOWNLOAD",
+      "group": "GC",
+      "ingestion_basis": "BULK_ARCHIVE_ADMISSION",
+      "local_availability_ns": 1791747607331838000,
+      "local_ingestion_ns": 1791747607331838000,
+      "manifest_name": "warmup-result-00.json",
+      "observation_basis": "LOCAL_ARCHIVE_ADMISSION",
+      "quarantine_sha256": null,
+      "request": {
+        "contracts": [
+          [
+            1,
+            41271,
+            "GCZ6"
+          ]
+        ],
+        "dataset": "GLBX.MDP3",
+        "end_ns": 1789344000000000000,
+        "record_limit": 1000000,
+        "schema": "definition",
+        "start_ns": 1788739200000000000,
+        "wire_byte_limit": 268435456
+      },
+      "request_sha256": "bd5cc2253ac281d2ba9eadf9a285c289775bee8b1526368e83ecfc4fd172a153",
+      "retrieval_ns": 1791747607329527000,
+      "sdk_stype_in": "raw_symbol",
+      "sdk_symbols": [
+        "GCZ6"
+      ],
+      "start_utc": "2026-09-07T00:00:00Z"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_bytes": 1023,
+      "archive_hash_reverified": true,
+      "archive_sha256": "621375e74b112798c124ce93c3157ddf62785770e208446cf14b107e74ab5915",
+      "archive_status": "ARCHIVED",
+      "billing_status": "UNKNOWN",
+      "download_attempts": 1,
+      "end_utc_exclusive": "2026-09-14T00:00:00Z",
+      "evidence_kind": "AUTHENTIC_HISTORICAL_DOWNLOAD",
+      "group": "GC",
+      "ingestion_basis": "BULK_ARCHIVE_ADMISSION",
+      "local_availability_ns": 1791747670866196000,
+      "local_ingestion_ns": 1791747670866196000,
+      "manifest_name": "warmup-result-01.json",
+      "observation_basis": "LOCAL_ARCHIVE_ADMISSION",
+      "quarantine_sha256": null,
+      "request": {
+        "contracts": [
+          [
+            1,
+            41271,
+            "GCZ6"
+          ]
+        ],
+        "dataset": "GLBX.MDP3",
+        "end_ns": 1789344000000000000,
+        "record_limit": 1000000,
+        "schema": "status",
+        "start_ns": 1788739200000000000,
+        "wire_byte_limit": 268435456
+      },
+      "request_sha256": "5e924f68f8adee96c17bc9433832103604410da7ee305c4cf66cef7d57d194f3",
+      "retrieval_ns": 1791747670863725000,
+      "sdk_stype_in": "raw_symbol",
+      "sdk_symbols": [
+        "GCZ6"
+      ],
+      "start_utc": "2026-09-07T00:00:00Z"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_bytes": 124387,
+      "archive_hash_reverified": true,
+      "archive_sha256": "f8471d0006f340aab5d74c08a4174c1591b621415b863e8276034ca2f9cb1fa0",
+      "archive_status": "ARCHIVED",
+      "billing_status": "UNKNOWN",
+      "download_attempts": 1,
+      "end_utc_exclusive": "2026-09-14T00:00:00Z",
+      "evidence_kind": "AUTHENTIC_HISTORICAL_DOWNLOAD",
+      "group": "GC",
+      "ingestion_basis": "BULK_ARCHIVE_ADMISSION",
+      "local_availability_ns": 1791747710729742000,
+      "local_ingestion_ns": 1791747710729742000,
+      "manifest_name": "warmup-result-02.json",
+      "observation_basis": "LOCAL_ARCHIVE_ADMISSION",
+      "quarantine_sha256": null,
+      "request": {
+        "contracts": [
+          [
+            1,
+            41271,
+            "GCZ6"
+          ]
+        ],
+        "dataset": "GLBX.MDP3",
+        "end_ns": 1789344000000000000,
+        "record_limit": 1000000,
+        "schema": "ohlcv-1m",
+        "start_ns": 1788739200000000000,
+        "wire_byte_limit": 268435456
+      },
+      "request_sha256": "dcf3f84d6f9c015c65adb892e01811cba8a70c0e2a3e3a3c7d466c4e89c381db",
+      "retrieval_ns": 1791747710720476000,
+      "sdk_stype_in": "raw_symbol",
+      "sdk_symbols": [
+        "GCZ6"
+      ],
+      "start_utc": "2026-09-07T00:00:00Z"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_bytes": 376,
+      "archive_hash_reverified": true,
+      "archive_sha256": "544816e7448cb6b8efce83199ee1e46d8d328398a3dee222cd34a9f4c07c8dbe",
+      "archive_status": "ARCHIVED",
+      "billing_status": "UNKNOWN",
+      "download_attempts": 1,
+      "end_utc_exclusive": "2026-09-21T00:00:00Z",
+      "evidence_kind": "AUTHENTIC_HISTORICAL_DOWNLOAD",
+      "group": "GC",
+      "ingestion_basis": "BULK_ARCHIVE_ADMISSION",
+      "local_availability_ns": 1791747758210800000,
+      "local_ingestion_ns": 1791747758210800000,
+      "manifest_name": "warmup-result-03.json",
+      "observation_basis": "LOCAL_ARCHIVE_ADMISSION",
+      "quarantine_sha256": null,
+      "request": {
+        "contracts": [
+          [
+            1,
+            41271,
+            "GCZ6"
+          ]
+        ],
+        "dataset": "GLBX.MDP3",
+        "end_ns": 1789948800000000000,
+        "record_limit": 1000000,
+        "schema": "definition",
+        "start_ns": 1789344000000000000,
+        "wire_byte_limit": 268435456
+      },
+      "request_sha256": "28393fd186c1801d8def1b4713a60efe277e557205bb2a141aa037096650b0ba",
+      "retrieval_ns": 1791747758209072000,
+      "sdk_stype_in": "raw_symbol",
+      "sdk_symbols": [
+        "GCZ6"
+      ],
+      "start_utc": "2026-09-14T00:00:00Z"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_bytes": 698,
+      "archive_hash_reverified": true,
+      "archive_sha256": "8319b303f058148cc6c8f10251aeca1fdc8df8798bd06cfd1092a76ab3f67f7a",
+      "archive_status": "ARCHIVED",
+      "billing_status": "UNKNOWN",
+      "download_attempts": 1,
+      "end_utc_exclusive": "2026-09-21T00:00:00Z",
+      "evidence_kind": "AUTHENTIC_HISTORICAL_DOWNLOAD",
+      "group": "GC",
+      "ingestion_basis": "BULK_ARCHIVE_ADMISSION",
+      "local_availability_ns": 1791747805978874000,
+      "local_ingestion_ns": 1791747805978874000,
+      "manifest_name": "warmup-result-04.json",
+      "observation_basis": "LOCAL_ARCHIVE_ADMISSION",
+      "quarantine_sha256": null,
+      "request": {
+        "contracts": [
+          [
+            1,
+            41271,
+            "GCZ6"
+          ]
+        ],
+        "dataset": "GLBX.MDP3",
+        "end_ns": 1789948800000000000,
+        "record_limit": 1000000,
+        "schema": "status",
+        "start_ns": 1789344000000000000,
+        "wire_byte_limit": 268435456
+      },
+      "request_sha256": "eef6b5e12846693c70a63ec388c168fd18d7cac0b417a832f27af3689d252d8e",
+      "retrieval_ns": 1791747805976496000,
+      "sdk_stype_in": "raw_symbol",
+      "sdk_symbols": [
+        "GCZ6"
+      ],
+      "start_utc": "2026-09-14T00:00:00Z"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_bytes": 128089,
+      "archive_hash_reverified": true,
+      "archive_sha256": "eda548bc477a2408dad7748c55de583fe4b682608591bb0bdc5a373b1f3d9443",
+      "archive_status": "ARCHIVED",
+      "billing_status": "UNKNOWN",
+      "download_attempts": 1,
+      "end_utc_exclusive": "2026-09-21T00:00:00Z",
+      "evidence_kind": "AUTHENTIC_HISTORICAL_DOWNLOAD",
+      "group": "GC",
+      "ingestion_basis": "BULK_ARCHIVE_ADMISSION",
+      "local_availability_ns": 1791747825368209000,
+      "local_ingestion_ns": 1791747825368209000,
+      "manifest_name": "warmup-result-05.json",
+      "observation_basis": "LOCAL_ARCHIVE_ADMISSION",
+      "quarantine_sha256": null,
+      "request": {
+        "contracts": [
+          [
+            1,
+            41271,
+            "GCZ6"
+          ]
+        ],
+        "dataset": "GLBX.MDP3",
+        "end_ns": 1789948800000000000,
+        "record_limit": 1000000,
+        "schema": "ohlcv-1m",
+        "start_ns": 1789344000000000000,
+        "wire_byte_limit": 268435456
+      },
+      "request_sha256": "0519e4044b26532bcaf8a111fb9edbcedef7c9e9901d425e28d85ff761f7e9b2",
+      "retrieval_ns": 1791747825359661000,
+      "sdk_stype_in": "raw_symbol",
+      "sdk_symbols": [
+        "GCZ6"
+      ],
+      "start_utc": "2026-09-14T00:00:00Z"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_bytes": null,
+      "archive_hash_reverified": false,
+      "archive_sha256": null,
+      "archive_status": "QUARANTINED",
+      "billing_status": "RECONCILIATION_REQUIRED",
+      "download_attempts": 1,
+      "end_utc_exclusive": "2026-09-28T00:00:00Z",
+      "evidence_kind": "AUTHENTIC_HISTORICAL_DOWNLOAD",
+      "group": "GC",
+      "ingestion_basis": null,
+      "local_availability_ns": null,
+      "local_ingestion_ns": null,
+      "manifest_name": "warmup-result-06.json",
+      "observation_basis": "LOCAL_ARCHIVE_ADMISSION",
+      "quarantine_sha256": "d86c44575838f6087ddd3b76ea3ccefd052acc449c5b5adaed25da2c2a201685",
+      "request": {
+        "contracts": [
+          [
+            1,
+            41271,
+            "GCZ6"
+          ]
+        ],
+        "dataset": "GLBX.MDP3",
+        "end_ns": 1790553600000000000,
+        "record_limit": 1000000,
+        "schema": "definition",
+        "start_ns": 1789948800000000000,
+        "wire_byte_limit": 268435456
+      },
+      "request_sha256": "d78d0f321062261b6e96ef6c32374d608d0ce28d2429a6169e00ec45b885a9ee",
+      "retrieval_ns": null,
+      "sdk_stype_in": "raw_symbol",
+      "sdk_symbols": [
+        "GCZ6"
+      ],
+      "start_utc": "2026-09-21T00:00:00Z"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_bytes": 730,
+      "archive_hash_reverified": true,
+      "archive_sha256": "9e9caf53d06ef9c44f5010b45719f6cd894e56ffe611ad4f3ed51173abfc595e",
+      "archive_status": "ARCHIVED",
+      "billing_status": "UNKNOWN",
+      "download_attempts": 1,
+      "end_utc_exclusive": "2026-09-28T00:00:00Z",
+      "evidence_kind": "AUTHENTIC_HISTORICAL_DOWNLOAD",
+      "group": "GC",
+      "ingestion_basis": "BULK_ARCHIVE_ADMISSION",
+      "local_availability_ns": 1791748091917683000,
+      "local_ingestion_ns": 1791748091917683000,
+      "manifest_name": "warmup-result-07.json",
+      "observation_basis": "LOCAL_ARCHIVE_ADMISSION",
+      "quarantine_sha256": null,
+      "request": {
+        "contracts": [
+          [
+            1,
+            41271,
+            "GCZ6"
+          ]
+        ],
+        "dataset": "GLBX.MDP3",
+        "end_ns": 1790553600000000000,
+        "record_limit": 1000000,
+        "schema": "status",
+        "start_ns": 1789948800000000000,
+        "wire_byte_limit": 268435456
+      },
+      "request_sha256": "42423c67a2bb21096772225d770d7b8f75781df645df62ca6f61e2d66d0f0378",
+      "retrieval_ns": 1791748091915086000,
+      "sdk_stype_in": "raw_symbol",
+      "sdk_symbols": [
+        "GCZ6"
+      ],
+      "start_utc": "2026-09-21T00:00:00Z"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_bytes": 124254,
+      "archive_hash_reverified": true,
+      "archive_sha256": "2abd5bb896db0d5df5a83fa7f707ea127abb3c35659f77c0504b7c6723cb1873",
+      "archive_status": "ARCHIVED",
+      "billing_status": "UNKNOWN",
+      "download_attempts": 1,
+      "end_utc_exclusive": "2026-09-28T00:00:00Z",
+      "evidence_kind": "AUTHENTIC_HISTORICAL_DOWNLOAD",
+      "group": "GC",
+      "ingestion_basis": "BULK_ARCHIVE_ADMISSION",
+      "local_availability_ns": 1791748106120637000,
+      "local_ingestion_ns": 1791748106120637000,
+      "manifest_name": "warmup-result-08.json",
+      "observation_basis": "LOCAL_ARCHIVE_ADMISSION",
+      "quarantine_sha256": null,
+      "request": {
+        "contracts": [
+          [
+            1,
+            41271,
+            "GCZ6"
+          ]
+        ],
+        "dataset": "GLBX.MDP3",
+        "end_ns": 1790553600000000000,
+        "record_limit": 1000000,
+        "schema": "ohlcv-1m",
+        "start_ns": 1789948800000000000,
+        "wire_byte_limit": 268435456
+      },
+      "request_sha256": "c8fd14befda4a12bd86a1e6a20d5271b271240fc810231ca07a43db04b5bcd66",
+      "retrieval_ns": 1791748106110649000,
+      "sdk_stype_in": "raw_symbol",
+      "sdk_symbols": [
+        "GCZ6"
+      ],
+      "start_utc": "2026-09-21T00:00:00Z"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_bytes": 373,
+      "archive_hash_reverified": true,
+      "archive_sha256": "24a550317af8d8b97f298d6734178827ea006f2f526d5b81e77ff4a7309f2d3b",
+      "archive_status": "ARCHIVED",
+      "billing_status": "UNKNOWN",
+      "download_attempts": 1,
+      "end_utc_exclusive": "2026-10-05T00:00:00Z",
+      "evidence_kind": "AUTHENTIC_HISTORICAL_DOWNLOAD",
+      "group": "GC",
+      "ingestion_basis": "BULK_ARCHIVE_ADMISSION",
+      "local_availability_ns": 1791748165837506000,
+      "local_ingestion_ns": 1791748165837506000,
+      "manifest_name": "warmup-result-09.json",
+      "observation_basis": "LOCAL_ARCHIVE_ADMISSION",
+      "quarantine_sha256": null,
+      "request": {
+        "contracts": [
+          [
+            1,
+            41271,
+            "GCZ6"
+          ]
+        ],
+        "dataset": "GLBX.MDP3",
+        "end_ns": 1791158400000000000,
+        "record_limit": 1000000,
+        "schema": "definition",
+        "start_ns": 1790553600000000000,
+        "wire_byte_limit": 268435456
+      },
+      "request_sha256": "fc0f6e7a801070cec8dc511161f1736795ba43365663ac9caa4fe78f7dd2a8f1",
+      "retrieval_ns": 1791748165835004000,
+      "sdk_stype_in": "raw_symbol",
+      "sdk_symbols": [
+        "GCZ6"
+      ],
+      "start_utc": "2026-09-28T00:00:00Z"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_bytes": 791,
+      "archive_hash_reverified": true,
+      "archive_sha256": "31b5eb10fc861fcf9bce205137b75c65bf445f48b8371a2153a802e791406c1e",
+      "archive_status": "ARCHIVED",
+      "billing_status": "UNKNOWN",
+      "download_attempts": 1,
+      "end_utc_exclusive": "2026-10-05T00:00:00Z",
+      "evidence_kind": "AUTHENTIC_HISTORICAL_DOWNLOAD",
+      "group": "GC",
+      "ingestion_basis": "BULK_ARCHIVE_ADMISSION",
+      "local_availability_ns": 1791748183667047000,
+      "local_ingestion_ns": 1791748183667047000,
+      "manifest_name": "warmup-result-10.json",
+      "observation_basis": "LOCAL_ARCHIVE_ADMISSION",
+      "quarantine_sha256": null,
+      "request": {
+        "contracts": [
+          [
+            1,
+            41271,
+            "GCZ6"
+          ]
+        ],
+        "dataset": "GLBX.MDP3",
+        "end_ns": 1791158400000000000,
+        "record_limit": 1000000,
+        "schema": "status",
+        "start_ns": 1790553600000000000,
+        "wire_byte_limit": 268435456
+      },
+      "request_sha256": "2afe30a1bbb620a4845245afaa22dc3bc226c2d47ad89cee334961ca29aebfaa",
+      "retrieval_ns": 1791748183664983000,
+      "sdk_stype_in": "raw_symbol",
+      "sdk_symbols": [
+        "GCZ6"
+      ],
+      "start_utc": "2026-09-28T00:00:00Z"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_bytes": 125094,
+      "archive_hash_reverified": true,
+      "archive_sha256": "bb533292b555035888d9e29ac19a8c4de99df948d4f6da34e1e2b025fd0891c8",
+      "archive_status": "ARCHIVED",
+      "billing_status": "UNKNOWN",
+      "download_attempts": 1,
+      "end_utc_exclusive": "2026-10-05T00:00:00Z",
+      "evidence_kind": "AUTHENTIC_HISTORICAL_DOWNLOAD",
+      "group": "GC",
+      "ingestion_basis": "BULK_ARCHIVE_ADMISSION",
+      "local_availability_ns": 1791748200981394000,
+      "local_ingestion_ns": 1791748200981394000,
+      "manifest_name": "warmup-result-11.json",
+      "observation_basis": "LOCAL_ARCHIVE_ADMISSION",
+      "quarantine_sha256": null,
+      "request": {
+        "contracts": [
+          [
+            1,
+            41271,
+            "GCZ6"
+          ]
+        ],
+        "dataset": "GLBX.MDP3",
+        "end_ns": 1791158400000000000,
+        "record_limit": 1000000,
+        "schema": "ohlcv-1m",
+        "start_ns": 1790553600000000000,
+        "wire_byte_limit": 268435456
+      },
+      "request_sha256": "d5bfe77ad117985f3c366313bd678962d68fff7e2c3e106a88ec47779a48a1aa",
+      "retrieval_ns": 1791748200972092000,
+      "sdk_stype_in": "raw_symbol",
+      "sdk_symbols": [
+        "GCZ6"
+      ],
+      "start_utc": "2026-09-28T00:00:00Z"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_bytes": 667,
+      "archive_hash_reverified": true,
+      "archive_sha256": "fb1aca44cb0dee287701738b05fba2d0c0763eb5edecda144934f259b8dc98bc",
+      "archive_status": "ARCHIVED",
+      "billing_status": "UNKNOWN",
+      "download_attempts": 1,
+      "end_utc_exclusive": "2026-10-05T15:15:00Z",
+      "evidence_kind": "AUTHENTIC_HISTORICAL_DOWNLOAD",
+      "group": "ES_NQ",
+      "ingestion_basis": "BULK_ARCHIVE_ADMISSION",
+      "local_availability_ns": 1791777736346263000,
+      "local_ingestion_ns": 1791777736346263000,
+      "manifest_name": "result-00a5f0e0b98bf10a798ba649e58e0d852b56a3193eaf79e0dcf4e181e4763328.json",
+      "observation_basis": "LOCAL_ARCHIVE_ADMISSION",
+      "quarantine_sha256": null,
+      "request": {
+        "contracts": [
+          [
+            1,
+            261401,
+            "NQZ6"
+          ]
+        ],
+        "dataset": "GLBX.MDP3",
+        "end_ns": 1791213300000000000,
+        "record_limit": 100000,
+        "schema": "ohlcv-1m",
+        "start_ns": 1791212400000000000,
+        "wire_byte_limit": 16777216
+      },
+      "request_sha256": "00a5f0e0b98bf10a798ba649e58e0d852b56a3193eaf79e0dcf4e181e4763328",
+      "retrieval_ns": 1791777736344338000,
+      "sdk_stype_in": "raw_symbol",
+      "sdk_symbols": [
+        "NQZ6"
+      ],
+      "start_utc": "2026-10-05T15:00:00Z"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_bytes": 149719,
+      "archive_hash_reverified": true,
+      "archive_sha256": "92d50ca28e52ed3756a8e6bcc1e2c63be11a5ccb7b073f9de4c51fc19d074b70",
+      "archive_status": "ARCHIVED",
+      "billing_status": "UNKNOWN",
+      "download_attempts": 1,
+      "end_utc_exclusive": "2026-10-05T15:15:00Z",
+      "evidence_kind": "AUTHENTIC_HISTORICAL_DOWNLOAD",
+      "group": "ES_NQ",
+      "ingestion_basis": "BULK_ARCHIVE_ADMISSION",
+      "local_availability_ns": 1791777745695949000,
+      "local_ingestion_ns": 1791777745695949000,
+      "manifest_name": "result-3e0520c2298d6cc9712268b2dc2ce290ee80845c590933b7df326d7d9d9cb24c.json",
+      "observation_basis": "LOCAL_ARCHIVE_ADMISSION",
+      "quarantine_sha256": null,
+      "request": {
+        "contracts": [
+          [
+            1,
+            261401,
+            "NQZ6"
+          ]
+        ],
+        "dataset": "GLBX.MDP3",
+        "end_ns": 1791213300000000000,
+        "record_limit": 100000,
+        "schema": "trades",
+        "start_ns": 1791212400000000000,
+        "wire_byte_limit": 16777216
+      },
+      "request_sha256": "3e0520c2298d6cc9712268b2dc2ce290ee80845c590933b7df326d7d9d9cb24c",
+      "retrieval_ns": 1791777745685582000,
+      "sdk_stype_in": "raw_symbol",
+      "sdk_symbols": [
+        "NQZ6"
+      ],
+      "start_utc": "2026-10-05T15:00:00Z"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_bytes": 333,
+      "archive_hash_reverified": true,
+      "archive_sha256": "e4187d17145c85e26c32909adfb8a1c8ab78c355daf944821123fbcad733a50c",
+      "archive_status": "ARCHIVED",
+      "billing_status": "UNKNOWN",
+      "download_attempts": 1,
+      "end_utc_exclusive": "2026-10-05T15:00:00Z",
+      "evidence_kind": "AUTHENTIC_HISTORICAL_DOWNLOAD",
+      "group": "ES_NQ",
+      "ingestion_basis": "BULK_ARCHIVE_ADMISSION",
+      "local_availability_ns": 1791777055356725000,
+      "local_ingestion_ns": 1791777055356725000,
+      "manifest_name": "result-53d72765814515cb5dec45d206c5d97b255c62f3820f2005576d75949aa90bf2.json",
+      "observation_basis": "LOCAL_ARCHIVE_ADMISSION",
+      "quarantine_sha256": null,
+      "request": {
+        "contracts": [
+          [
+            1,
+            10252,
+            "ESZ6"
+          ]
+        ],
+        "dataset": "GLBX.MDP3",
+        "end_ns": 1791212400000000000,
+        "record_limit": 1000,
+        "schema": "definition",
+        "start_ns": 1791158400000000000,
+        "wire_byte_limit": 16777216
+      },
+      "request_sha256": "53d72765814515cb5dec45d206c5d97b255c62f3820f2005576d75949aa90bf2",
+      "retrieval_ns": 1791777055355011000,
+      "sdk_stype_in": "raw_symbol",
+      "sdk_symbols": [
+        "ESZ6"
+      ],
+      "start_utc": "2026-10-05T00:00:00Z"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_bytes": 486,
+      "archive_hash_reverified": true,
+      "archive_sha256": "ec5983137ef8a9c095313b52826477aa9fca003f94adb3cb5229daea1c7c6e3c",
+      "archive_status": "ARCHIVED",
+      "billing_status": "UNKNOWN",
+      "download_attempts": 1,
+      "end_utc_exclusive": "2026-10-05T15:15:00Z",
+      "evidence_kind": "AUTHENTIC_HISTORICAL_DOWNLOAD",
+      "group": "ES_NQ",
+      "ingestion_basis": "BULK_ARCHIVE_ADMISSION",
+      "local_availability_ns": 1791777716451129000,
+      "local_ingestion_ns": 1791777716451129000,
+      "manifest_name": "result-62ce8f401b9090b411e73b8c24fd930a7ebe62f2cf186ebb98a5a400430c9b2a.json",
+      "observation_basis": "LOCAL_ARCHIVE_ADMISSION",
+      "quarantine_sha256": null,
+      "request": {
+        "contracts": [
+          [
+            1,
+            10252,
+            "ESZ6"
+          ]
+        ],
+        "dataset": "GLBX.MDP3",
+        "end_ns": 1791213300000000000,
+        "record_limit": 100000,
+        "schema": "ohlcv-1m",
+        "start_ns": 1791212400000000000,
+        "wire_byte_limit": 16777216
+      },
+      "request_sha256": "62ce8f401b9090b411e73b8c24fd930a7ebe62f2cf186ebb98a5a400430c9b2a",
+      "retrieval_ns": 1791777716449103000,
+      "sdk_stype_in": "raw_symbol",
+      "sdk_symbols": [
+        "ESZ6"
+      ],
+      "start_utc": "2026-10-05T15:00:00Z"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_bytes": 337,
+      "archive_hash_reverified": true,
+      "archive_sha256": "0f3e228bc17edd1a16fe7f27dcbbef8f248d124983d2c80e5af4137a0eec1bf3",
+      "archive_status": "ARCHIVED",
+      "billing_status": "UNKNOWN",
+      "download_attempts": 1,
+      "end_utc_exclusive": "2026-10-05T15:00:00Z",
+      "evidence_kind": "AUTHENTIC_HISTORICAL_DOWNLOAD",
+      "group": "ES_NQ",
+      "ingestion_basis": "BULK_ARCHIVE_ADMISSION",
+      "local_availability_ns": 1791777709109973000,
+      "local_ingestion_ns": 1791777709109973000,
+      "manifest_name": "result-baa0fd6077d526127d1ca3b45307d771c8388243c91c1db17824a1a1735860e7.json",
+      "observation_basis": "LOCAL_ARCHIVE_ADMISSION",
+      "quarantine_sha256": null,
+      "request": {
+        "contracts": [
+          [
+            1,
+            261401,
+            "NQZ6"
+          ]
+        ],
+        "dataset": "GLBX.MDP3",
+        "end_ns": 1791212400000000000,
+        "record_limit": 1000,
+        "schema": "definition",
+        "start_ns": 1791158400000000000,
+        "wire_byte_limit": 16777216
+      },
+      "request_sha256": "baa0fd6077d526127d1ca3b45307d771c8388243c91c1db17824a1a1735860e7",
+      "retrieval_ns": 1791777709108001000,
+      "sdk_stype_in": "raw_symbol",
+      "sdk_symbols": [
+        "NQZ6"
+      ],
+      "start_utc": "2026-10-05T00:00:00Z"
+    },
+    {
+      "actual_billed_usd": null,
+      "archive_bytes": 158243,
+      "archive_hash_reverified": true,
+      "archive_sha256": "a57391579b17d5202d618f080fbe5da0d3e926b1d6069aa252d55d150e1dfb35",
+      "archive_status": "ARCHIVED",
+      "billing_status": "UNKNOWN",
+      "download_attempts": 1,
+      "end_utc_exclusive": "2026-10-05T15:15:00Z",
+      "evidence_kind": "AUTHENTIC_HISTORICAL_DOWNLOAD",
+      "group": "ES_NQ",
+      "ingestion_basis": "BULK_ARCHIVE_ADMISSION",
+      "local_availability_ns": 1791777725021532000,
+      "local_ingestion_ns": 1791777725021532000,
+      "manifest_name": "result-f2c606870bbefaea80e2c644d2040e55e00a28d0d4f588991a8057418acd37be.json",
+      "observation_basis": "LOCAL_ARCHIVE_ADMISSION",
+      "quarantine_sha256": null,
+      "request": {
+        "contracts": [
+          [
+            1,
+            10252,
+            "ESZ6"
+          ]
+        ],
+        "dataset": "GLBX.MDP3",
+        "end_ns": 1791213300000000000,
+        "record_limit": 100000,
+        "schema": "trades",
+        "start_ns": 1791212400000000000,
+        "wire_byte_limit": 16777216
+      },
+      "request_sha256": "f2c606870bbefaea80e2c644d2040e55e00a28d0d4f588991a8057418acd37be",
+      "retrieval_ns": 1791777725009522000,
+      "sdk_stype_in": "raw_symbol",
+      "sdk_symbols": [
+        "ESZ6"
+      ],
+      "start_utc": "2026-10-05T15:00:00Z"
+    }
+  ],
+  "schema": "monatise-preserved-acquisitions-v1",
+  "source_code_commit": "3ce3d384df03aeffd90efa79c7cf33bde9f320eb"
+}

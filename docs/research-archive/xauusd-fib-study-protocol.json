@@ -1,0 +1,84 @@
+{
+  "study_id": "monatise-xauusd-fib-extension-v1",
+  "prepared_date": "2026-10-07",
+  "timezone": "Africa/Lagos",
+  "status": "PREPARED_AWAITING_VERIFIED_DATA_AND_RUNNER",
+  "mode": "offline_research_then_forward_shadow",
+  "production_changes": false,
+  "order_execution": false,
+  "production_risk_allocation_pct": 0,
+  "canonical_source": {
+    "repository": "Patrick8552/monatise-live",
+    "commit": "0f12862b8d11f6559bc77a5df1dd2a6dbd6c1b18",
+    "policy": "gold-sweep-reversal-technical-v1",
+    "fib_engine": "monatise.engines.fibonacci_liquidity.engine.FibonacciLiquidityEngine",
+    "broker_candles": "monatise.application.hierarchy.broker_candles.BrokerCandleService",
+    "release_document": "docs/xauusd-operator-release.md",
+    "reuse_existing_engines": true,
+    "freeze_anchor_at_assessment": true
+  },
+  "question": "For the same qualifying XAU/USD setup and frozen canonical anchor, how often is each forward extension reached before structural stop, strategy invalidation or the applicable observation deadline, and what are the simulated net outcomes?",
+  "comparison": {
+    "extension_ratios": [1.618, 2.0, 2.618],
+    "anchor_timeframe_primary": "1h",
+    "same_setups_anchors_entry_and_stop_for_all_ratios": true,
+    "primary_common_cohort": "Only cases where all three targets lie forward of the observation/eligible simulated entry on the profitable side; excluded cases remain in the screening ledger.",
+    "no_fib_baseline": "Unchanged canonical Gold target builder, where it produces a valid setup; no invented target when it does not.",
+    "secondary_exploratory": "Existing 1.272/1.414 and other hierarchy layers, reported separately with multiple-comparison disclosure.",
+    "inference_warning": "Nearer targets naturally have greater touch probabilities. Higher hit rate alone does not establish the better strategy or an optimal cutoff. Extension ratios are swing geometry, not R multiples."
+  },
+  "data_requirements": {
+    "source": "Exact intended MT5 broker XAU/USD executable instrument, with broker/server identity retained privately.",
+    "canonical_bars": ["1h", "15m", "5m", "1m"],
+    "advisory_bars": ["4h"],
+    "quotes": "Timestamped historical Bid and Ask ticks, tick flags, export errors and gap/coverage ledger. Native broker bars and documented timestamp/finalization semantics are required.",
+    "sessions": "Authoritative broker trading intervals, maintenance, holidays and historical DST/UTC offset eras, validated against Gold session manifest rules.",
+    "specifications": "Point, tick size, permitted volume/contract specifications and historical commission/swap where net monetary performance is reported.",
+    "initial_ingestion_pilot": "First 20 complete available broker sessions; engineering validation only, not a performance sample-size guarantee.",
+    "historical_study_goal": "6-12 months if broker coverage permits; actual dates and shortages recorded before evaluating outcomes.",
+    "current_availability": "UNVERIFIED",
+    "alternative_feed_policy": "FXCM/other spot data may support a separately labelled feed sensitivity study; GC futures cannot stand in for executable XAU/USD prices."
+  },
+  "admission_and_chronology": {
+    "gate_policy": "Preserve every canonical Gold structure, causal sweep/displacement/retest, confirmation, freshness, session, risk and evidence requirement. Record rejected and unavailable cases.",
+    "point_in_time": "Only finalized candles and evidence available at each historical assessment time; pivot confirmation time must precede use. Replay the frozen engine without peeking at future bars.",
+    "snapshot": "Record decision, anchor prices/times, direction, entry zone, structural stop, normal targets, expiry, invalidation and all required provenance before reading future ticks.",
+    "missing_evidence": "Unavailable/ineligible, never a qualified observation. If complete canonical admission cannot be reproduced, downgrade the run to an anchor-only study and do not claim qualified-setup probabilities.",
+    "overlap": "One observation per unique setup/anchor episode for the primary analysis. Retain chronological dependencies; do not count each scan as an independent trade."
+  },
+  "outcome_contract": {
+    "price_observation": "Observed Bid/Ask remain separate from approved entry zone. No quote is moved into a zone.",
+    "two_populations": "Report pre-entry setup observations separately from eligible simulated entries. No actual Telegram approval or broker order is generated.",
+    "pre_entry_expiry": "Use the original setup valid-until deadline. No simulated order can enter after expiry/invalidation.",
+    "post_entry_horizon": "Setup/order expiry is not an automatic exit for an already filled trade. Preserve canonical management/invalidation; any extra research follow-up cap must be preregistered before outcomes and results at that cap reported separately.",
+    "entry_model": "First later eligible executable quote, or the correct limit/stop fill model inside the original zone; preserve entry eligibility. Approval latency is an explicitly labelled simulation assumption, not a real approval.",
+    "quote_side": "Long entries use Ask and long exits/target/stop touches use Bid; short entries use Bid and short exits/target/stop touches use Ask.",
+    "ordering": "Use tick chronology. OHLC-only target/stop ordering is indeterminate if both occur in a bar; do not assume target first.",
+    "outcomes": ["TARGET_FIRST", "STOP_FIRST", "INVALIDATION_FIRST", "EXPIRED_UNFILLED", "DEADLINE_NOT_REACHED", "CENSORED_MISSING_DATA", "INDETERMINATE"],
+    "costs": "Observed spread, documented commission/swap where applicable, and preregistered slippage sensitivity. Unknown costs prevent net monetary claims.",
+    "virtual_exits": "Fixed single-target research variants are counterfactuals. Preserve SL/entry/gates and label separately from the canonical multi-TP baseline. Do not imply they reproduce existing position management."
+  },
+  "statistics": {
+    "outputs": ["screened/qualified/entered counts", "target-first probability", "expiry/invalidation/censoring rates", "time to target", "maximum favorable/adverse excursion", "net expectancy in actual entry-to-stop R units", "drawdown in chronological replay", "paired differences versus baseline"],
+    "uncertainty": "95% confidence intervals; day/episode-block bootstrap for correlated observations; effective sample size and raw counts disclosed. No invented confidence when cases are too few.",
+    "data_split": "Chronological development/validation/untouched test periods locked before outcome inspection; no random time-series shuffle.",
+    "regimes": "Predeclared long/short, broker session and volatility groups; discovery-only subgroups labelled exploratory.",
+    "precision": "Choose sample requirement from observed eligible-event rate and desired uncertainty before confirmatory testing. Calendar duration alone is insufficient.",
+    "claim_boundary": "No optimal-cutoff, profitability or calibrated-probability claim until the untouched test and independent forward sample support it."
+  },
+  "phases": [
+    "Validate export identity, broker sessions, tick/bar coverage and timestamp semantics.",
+    "Build isolated engine replay runner and causal/quote-side/expiry/duplicate regression tests.",
+    "Run ingestion pilot; report counts and gaps without strategy-performance claims.",
+    "Lock the statistical analysis plan and chronological periods; execute historical comparison.",
+    "Collect a later forward shadow sample after collector readiness, without trade proposals or orders.",
+    "Review comparative evidence before any separately authorized production change."
+  ],
+  "blockers": [
+    "Verified historical broker candles and Bid/Ask ticks not yet supplied or inspected.",
+    "Authoritative historical broker session/timezone mapping not yet supplied or inspected.",
+    "Gold-specific causal replay/comparison runner is not implemented by this preparation step.",
+    "Existing documented Gold route is shadow-only and lacks full live certification; research preparation does not activate it."
+  ],
+  "results": null
+}

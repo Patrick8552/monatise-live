@@ -1,0 +1,25 @@
+{
+  "files": [
+    {
+      "original_sha256": "1168142502ad7a2df831d7b041b2b2874135edcd7665a12a1d2261bcce26d29b",
+      "path": "docs/research-archive/gold-h1-fib-specification.md",
+      "status": "ARCHIVED_DESIGN_OR_EMPTY_PROTOCOL_NOT_EXECUTED_RESEARCH"
+    },
+    {
+      "original_sha256": "109ac33da3541f58b4a25c3f1aaf83426106a115766d822d16bd7b6209e18227",
+      "path": "docs/research-archive/xauusd-fib-study-protocol.json",
+      "status": "ARCHIVED_DESIGN_OR_EMPTY_PROTOCOL_NOT_EXECUTED_RESEARCH"
+    },
+    {
+      "original_sha256": "2078d88c824297ed88a7314482c0b5ce944477d4cb2df9468d91573b0d9195f7",
+      "path": "docs/research-archive/xauusd-fib-study-readme.txt",
+      "status": "ARCHIVED_DESIGN_OR_EMPTY_PROTOCOL_NOT_EXECUTED_RESEARCH"
+    },
+    {
+      "original_sha256": "a1e3a68fe9e0d050b071007fe73e1d6285da86f4ce92628a830ea4d7d80bf2e6",
+      "path": "docs/research-archive/xauusd-fib-study-empty-ledger.csv",
+      "status": "ARCHIVED_DESIGN_OR_EMPTY_PROTOCOL_NOT_EXECUTED_RESEARCH"
+    }
+  ],
+  "schema": "monatise-archived-design-v1"
+}

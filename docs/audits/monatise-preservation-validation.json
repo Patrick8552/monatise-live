@@ -1,0 +1,57 @@
+{
+  "as_of": "2026-10-12",
+  "backup": {
+    "authenticated": true,
+    "credentials_excluded": true,
+    "encrypted_backup_bytes": 381769917,
+    "encrypted_backup_sha256": "f8b57d0e60177ba1f2b41d3fabe425b27a7b20ce35c14306557c4117862a25ef",
+    "evidence_bytes": 1907759603,
+    "files_verified": 2166,
+    "independent_backup_verified": false,
+    "key_escrow_verified": false,
+    "private_manifest_sha256": "f833b9caf06cf8417958f5f98ecef3f45e9b4305ea0f02b12bd462e20834775f",
+    "source_files_unchanged": true
+  },
+  "broken_relative_document_links": 0,
+  "complete_native_archives_rehashed": 30,
+  "deployments": 0,
+  "downloads": 0,
+  "existing_branches_overwritten": false,
+  "frozen_counts_recomputed_from_saved_replay": {
+    "assessments": 557,
+    "distinct_valid_h1_episodes": 12,
+    "qualified_gold_setups": 0,
+    "trade_win_rate": null,
+    "valid_constrained_fibonacci_assessments": 69
+  },
+  "frozen_earlier_and_broker_checkouts_clean": true,
+  "frozen_selector": {
+    "errors": 0,
+    "failures": 0,
+    "skipped": 0,
+    "tests": 53
+  },
+  "frozen_test_xml_sha256": "9479a38439840e00779e227176679f4b9200179583ce17a8357c8f085878e22b",
+  "main_modified": false,
+  "new_backup_integrity_tests": 8,
+  "new_file_secret_pattern_findings": 0,
+  "new_history_blobs_scanned": 190,
+  "new_history_secret_pattern_findings": 0,
+  "new_json_documents_parsed": true,
+  "original_tracked_files_unchanged": 561,
+  "production_activation": false,
+  "provider_credit_spent": 0,
+  "quarantined_native_manifests_preserved": 2,
+  "replay_pair_hashes_reverified": 5,
+  "repository": {
+    "errors": 0,
+    "failures": 0,
+    "skipped": 0,
+    "tests": 2131
+  },
+  "repository_test_xml_sha256": "3be6e625b6ee903a7c9be79a734bb42fe3b18fe1092a81cc29a2e8c4a3600c09",
+  "reviewed_new_files": 14,
+  "schema": "monatise-preservation-validation-v1",
+  "scope": "New research history and reviewed new files; does not certify all pre-existing GitHub history or runtime state.",
+  "source_code_commit": "3ce3d384df03aeffd90efa79c7cf33bde9f320eb"
+}
