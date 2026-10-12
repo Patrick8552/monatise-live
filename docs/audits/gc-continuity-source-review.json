@@ -1,0 +1,42 @@
+{
+  "schema": "gc-continuity-public-source-review-v1",
+  "review_date": "2026-10-12",
+  "purpose": "Independent schema/session cross-checks; no exchange continuity certification or calendar override",
+  "sources": [
+    {
+      "title": "Databento aggregate bars",
+      "url": "https://databento.com/docs/schemas-and-data-formats/ohlcv",
+      "findings": "OHLCV buckets use trade receive timestamps; empty trade intervals emit no record. Supported native intervals are second, minute, hour and day. Vendor construction can differ in conditions, trade breaks and publication timing."
+    },
+    {
+      "title": "Databento trades",
+      "url": "https://databento.com/docs/schemas-and-data-formats/trades",
+      "findings": "Receive and matching-engine timestamps are distinct. Executed trades have action T and preserve price, quantity, sequence, flags and side; the documented fields do not provide a unique execution identifier."
+    },
+    {
+      "title": "Databento status",
+      "url": "https://databento.com/docs/schemas-and-data-formats/status",
+      "findings": "Trading state is best-effort tri-state. Action None denotes no change. Historical midnight snapshots repeat a last status whose effective event timestamp may precede the request."
+    },
+    {
+      "title": "Databento CME supplement",
+      "url": "https://databento.com/docs/venues-and-datasets/glbx-mdp3",
+      "findings": "CME trade summaries become Trade records; passive fills are separate MBO detail and are absent from trades/MBP-n. Receive and exchange clocks retain nanosecond precision."
+    },
+    {
+      "title": "Databento common flags",
+      "url": "https://databento.com/docs/standards-and-conventions/common-fields-enums-types",
+      "findings": "Bad-receive-clock, unrecoverable-gap and snapshot flags need explicit handling. A native sequence or serialized-byte equality is not an independent trade identifier."
+    },
+    {
+      "title": "CME Gold futures fact card",
+      "url": "https://www.cmegroup.com/market-regulation/files/gold-futures-and-options-fact-card.pdf",
+      "findings": "GC is the standard 100-ounce contract. Regular Globex trading runs Sunday 17:00 to Friday 16:00 Chicago time, with the daily 16:00-17:00 maintenance interruption. This is a nominal cross-check, not a substitute for historical holiday/contract status evidence."
+    },
+    {
+      "title": "CME trading hours and holidays",
+      "url": "https://www.cmegroup.com/trading-hours.html",
+      "findings": "Pre-open, pause and closed states differ from matching-enabled open. The 2026 Labor Day schedule concerns September 6-8; dynamic product-specific hours and native reviewed exceptions take priority. September 21 is not a listed US Globex holiday; unrelated product/platform holiday tables must not be applied to GC."
+    }
+  ]
+}

@@ -240,6 +240,11 @@ def qualify(value):
             "target reversed, duplicated or insufficiently spaced")) for e in r["rejection_reasons"]) for r in records),
         risk_or_entry_rejected=sum(any("risk_proposal_rejected" in e for e in r["rejection_reasons"]) for r in records),
         freshness_rejected=sum(any("expired" in e or "stale" in e for e in r["rejection_reasons"]) for r in records),
+        quote_freshness_rejected=sum("quote_stale" in r["rejection_reasons"] for r in records),
+        candle_transport_freshness_rejected=sum(any(":canonical_source_stale" in e for e in r["rejection_reasons"]) for r in records),
+        continuity_rejected=sum(any(":missing_or_no_trade_bar" in e or ":latest_expected_bar_missing" in e
+                                   for e in r["rejection_reasons"]) for r in records),
+        closed_session_rejected=sum("exchange_closed_or_unreviewed_session" in r["rejection_reasons"] for r in records),
         incomplete_market_evidence=sum(not r["data_admissible"] for r in records),
         unadmitted_price_diagnostics_executed=sum(r.get("unadmitted_price_diagnostic",{}).get("engines_executed",False) for r in records),
         instrument_assumptions_prevented=sum(any("instrument" in e for e in r["rejection_reasons"]) for r in records),

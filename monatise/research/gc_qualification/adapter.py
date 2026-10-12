@@ -7,10 +7,21 @@ from monatise.application.gold_analysis import GoldLayerEvaluator
 from monatise.application.hierarchy.coordinator import HierarchyConfiguration
 from monatise.application.target_evidence import crypto_layer_candidates
 from monatise.application.take_profit import build_plan
+from monatise.engines.regime import RegimeRequest
 from monatise.research.gc_fib.candles import INTERVALS
 from monatise.research.gc_fib.worker import snapshot, instant
 
 NS = 10**9
+
+
+def required_history(timeframe):
+    # H4 regime's returns baseline needs slow_window + 1, not 50. The other
+    # roles retain the canonical transport/liquidity floor of 50. This is a
+    # stricter warmup correction; history remains capped at 200 unchanged.
+    if timeframe == "4h":
+        fields = RegimeRequest.__dataclass_fields__
+        return max(50,*(fields[k].default+1 for k in ("slow_window","atr_window","compression_window")))
+    return 50
 
 
 class CutoffAdapter:
@@ -48,7 +59,7 @@ class CutoffAdapter:
         for tf,width in INTERVALS.items():
             index = bisect_right(self.clocks[tf],cutoff)
             rows = self.rows[tf][max(0,index-200):index]
-            if len(rows) < 50:
+            if len(rows) < required_history(tf):
                 issues.append(tf+":canonical_history_insufficient"); continue
             expected = self.expected[tf]
             last_expected = bisect_right(expected,cutoff-(width+10)*NS)

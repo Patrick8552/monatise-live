@@ -13,6 +13,7 @@ from monatise.research.gc_fib.worker import parse_bar
 from monatise.research.gc_qualification import AVAILABILITY, BASELINE, FROZEN, SAFETY, VERSION
 from monatise.research.gc_qualification.models import NativeContract, digest, research_sources
 from monatise.application.take_profit import encode
+from monatise.research.gc_qualification.adapter import required_history
 
 # Declared by admitted MBP-1 request boundaries BEFORE qualification is run.
 START = 1791158400 * 10**9
@@ -144,6 +145,9 @@ def prepare(root, output, *, repository):
         raise ValueError("changed_frozen_associations")
     config = dict(schema=VERSION,decision_grid="UTC_M1_CLOSE_PLUS_10S",start_ns=START,end_ns=END,
         quote_max_age_ns=QUOTE_MAX_AGE_NS,history_limit=200,minimum_history=50,
+        admission_policy_version="gc-admission-v2-h4-regime-warmup-correction",
+        minimum_history_by_timeframe={tf:required_history(tf) for tf in ("4h","1h","15m","5m","1m")},
+        continuity_policy_amendment_approved=False,
         native_point_convention="MINIMUM_EXCHANGE_PRICE_QUANTUM_EQUALS_TICK",
         session_policy="REVIEWED_NATIVE_STATUS_COMPLETE_MINUTES",h4_anchor="UTC_GRID_UNCHANGED",
         continuity_policy="REJECT_ANY_MISSING_EXPECTED_BAR_IN_CONFIGURED_200_BAR_WINDOW",
