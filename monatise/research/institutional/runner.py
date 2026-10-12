@@ -19,12 +19,13 @@ def source_hashes(repository):
     return {str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(files)}
 
 
-def isolated(request_file,output_file):
+def isolated(request_file,output_file,*,bootstrap='bootstrap.py'):
     repository=Path(__file__).resolve().parents[3]
     output_file=Path(output_file).resolve()
     if output_file.exists(): raise ValueError('fresh_preview_output_required')
+    if bootstrap not in {'bootstrap.py','phase5_bootstrap.py'}:raise ValueError('reviewed_worker_entry_required')
     env={'PATH':str(Path(sys.executable).parent)+os.pathsep+'/usr/bin:/bin','LANG':'C'}
-    result=subprocess.run([sys.executable,'-I',str(Path(__file__).with_name('bootstrap.py')),
+    result=subprocess.run([sys.executable,'-I',str(Path(__file__).with_name(bootstrap)),
         str(repository),str(Path(request_file).resolve()),str(output_file)],env=env,capture_output=True,text=True,timeout=900)
     if result.returncode:
         raise RuntimeError('isolated_institutional_worker_failed: '+result.stderr[-3000:])

@@ -130,13 +130,15 @@ def dt_parse(value):
 
 
 async def broker_preview(*, asset, instrument, now_ns, evidence=None, positioning=None,
-                         institutional_instrument=None, mapping_status="MAPPING_UNAVAILABLE"):
+                         institutional_instrument=None, mapping_status="MAPPING_UNAVAILABLE", include_canonical=False):
     if asset not in {'GC','ES','NQ'} or instrument != {'GC':'XAU/USD','ES':'US500.cash','NQ':'US100.cash'}[asset]:
         raise ValueError("canonical_asset_route_mismatch")
     registered = FTMO_REGISTRY.resolve(instrument)
+    def output(value, canonical=None):
+        return dict(preview=encode(value),canonical=encode(canonical)) if include_canonical else value
     if evidence is None:
-        return preview(asset=asset,broker_instrument=instrument,institutional_instrument=institutional_instrument,
-            now_ns=now_ns,mapping_status=mapping_status,reasons=('verified_broker_candles_unavailable',))
+        return output(preview(asset=asset,broker_instrument=instrument,institutional_instrument=institutional_instrument,
+            now_ns=now_ns,mapping_status=mapping_status,reasons=('verified_broker_candles_unavailable',)))
     try:
         if evidence.confirmation_ns is not None and evidence.confirmation_ns > now_ns:
             raise ValueError("confirmation_not_available_at_decision")
@@ -167,15 +169,15 @@ async def broker_preview(*, asset, instrument, now_ns, evidence=None, positionin
             if evidence.confirmation_sha256 is not None:
                 result = await analysis.analyse(registered,context=positioning,now=dt(now_ns))
             path = 'validate_flashalpha_context/AssetHierarchyAnalysis/HierarchyLayerEvaluator'
-        return preview(asset=asset,broker_instrument=instrument,institutional_instrument=institutional_instrument,
+        return output(preview(asset=asset,broker_instrument=instrument,institutional_instrument=institutional_instrument,
             now_ns=now_ns,canonical=result,evidence_kind=evidence.evidence_kind,
             provenance=(evidence.source_sha256,digest(positioning or {}))+((evidence.confirmation_sha256,) if evidence.confirmation_sha256 else ()),mapping_status=mapping_status,path=path,
-            limitations=('Institutional observations are separate context; no new scoring or price substitution.',))
+            limitations=('Institutional observations are separate context; no new scoring or price substitution.',)),result)
     except (ValueError, TypeError, KeyError, ArithmeticError) as exc:
-        return preview(asset=asset,broker_instrument=instrument,institutional_instrument=institutional_instrument,
+        return output(preview(asset=asset,broker_instrument=instrument,institutional_instrument=institutional_instrument,
             now_ns=now_ns,canonical={'decision':'INSUFFICIENT_MARKET_DATA'},evidence_kind=evidence.evidence_kind,
             provenance=(evidence.source_sha256,),mapping_status=mapping_status,reasons=(str(exc),),
-            path='canonical_input_boundary')
+            path='canonical_input_boundary'))
 
 
 def _crypto_preview(*, asset, now_ns, evidence=None, derivatives=None):

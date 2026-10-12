@@ -296,7 +296,12 @@ class SDKHistoricalSource:
                             if written > request.wire_byte_limit:
                                 raise ValueError("wire byte limit exceeded; partial request may have been billed")
                             target.write(chunk)
-                return databento.DBNStore.from_file(path)
+                store = databento.DBNStore.from_file(path)
+                # This private transport returns only metadata to the SDK caller;
+                # authoritative reading happens later through dbn_records. Close
+                # the SDK's lazy reader so successful downloads do not leak an FD.
+                store.reader.close()
+                return store
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("error")

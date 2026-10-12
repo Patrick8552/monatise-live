@@ -1,0 +1,117 @@
+{
+  "acceptance_run": "phase5-acceptance-v5",
+  "actual_downloads": 0,
+  "approval_eligible": false,
+  "authentic_options_status": "BLOCKED_AUTHENTIC_INPUTS",
+  "authentic_status": {
+    "BTC": "BLOCKED_AUTHENTIC_INPUTS",
+    "ES": "BLOCKED_AUTHENTIC_INPUTS",
+    "GC": "BLOCKED_AUTHENTIC_INPUTS",
+    "NQ": "BLOCKED_AUTHENTIC_INPUTS"
+  },
+  "baseline": "3007cbc96082a0c09078e3160482dcdd4cdd3af1",
+  "baseline_tracked_files": 542,
+  "cash_spent_usd": "0",
+  "changed_existing_files": [
+    "monatise/research/databento/acquisition.py",
+    "monatise/research/institutional/runner.py",
+    "monatise/research/institutional/signals.py"
+  ],
+  "checkouts": {
+    "broker_research": {
+      "clean": true,
+      "head": "890b8f7deba379931a3ce7df5b6e6fb5760f2d73"
+    },
+    "earlier": {
+      "clean": true,
+      "head": "a144db7f89e7bb3bb5748b83660d51243f69dc51"
+    },
+    "frozen": {
+      "clean": true,
+      "head": "f1de9d46cb5f3458726b81cfbc9f1d0dfba73f35"
+    }
+  },
+  "credit_used_usd": "0",
+  "engineering_decisions": {
+    "BTC": "NO_TRADE",
+    "ES": "NO_TRADE",
+    "GC": "LONG",
+    "NQ": "NO_TRADE"
+  },
+  "execution_eligible": false,
+  "gil_enabled": false,
+  "incremental_usage_usd": "0",
+  "input_sha256": "6a43e6e372068be8f2ae42b91651e1100125a7d700c37e83822de72e68dd0d75",
+  "limitations": [
+    "Authentic ES/NQ downloaded, normalized and replayed; billing remains unreconciled, admission disabled.",
+    "Canonical broker/positioning and authentic OG/crypto inputs remain insufficient.",
+    "15-minute sources cannot supply complete H1 or higher-timeframe history.",
+    "Original GC billing remains unreconciled; provider account aggregate is not per-request settlement."
+  ],
+  "live_enabled": false,
+  "native_esnq_counts": {
+    "ES": {
+      "candles": 15,
+      "definitions": 1,
+      "trades": 9094
+    },
+    "NQ": {
+      "candles": 15,
+      "definitions": 1,
+      "trades": 7750
+    }
+  },
+  "native_esnq_normalized_sha256": {
+    "ES": "d671c2e13fc16274b9f3682cef5d0c1878156fcacf38e29d9322cbbb714cf687",
+    "NQ": "d224d1120402f154e91cc73f1721967ee3197a01c3ff314738309dcaddcc1817"
+  },
+  "native_gc_counts": {
+    "book_snapshots": 1,
+    "candles": 15,
+    "trades": 1014
+  },
+  "new_data_billing_quarantined": true,
+  "new_phase5_tests": 63,
+  "normalized_gc_sha256": "2c9d0fb72a2a04ed5dc635010c652bc9aac05a562f737883445da7433ccc67ba",
+  "operator_acquisition": {
+    "billing_status": "UNRECONCILED_PER_REQUEST",
+    "cash_authorized": false,
+    "cash_spent_observed_usd": "0",
+    "downloads": 6,
+    "exact_actual_usage_usd": null,
+    "exact_credit_consumed_usd": null,
+    "observed_credit_delta_rounded_usd": "0.02",
+    "paid_retries": 0,
+    "provider_estimate_usd": "0.026535756885",
+    "provider_rounded_total_usage_usd": "1.56",
+    "schemas": [
+      "definition",
+      "trades",
+      "ohlcv-1m"
+    ]
+  },
+  "phase4_normalized_gc_identical": true,
+  "phase5_test_source_sha256": "f3d79341b4a43cd836068508a0e4932dbe9e280dead533b7291619a306463d2d",
+  "prepared_input_sha256": "036eba3d67420b80d5e3f6ea5d4c03f24bbf4c58cfc6e4d6e3e14778101849a3",
+  "publication_eligible": false,
+  "regressions": 0,
+  "repeat_equal": true,
+  "replay_sha256": "70a320f2c96aa72c71c4dcf2fb3f4cb3eb53017c0cb588770c3b5f392b73fbc2",
+  "runtime": {
+    "databento": "0.87.0",
+    "databento_dbn": "0.70.0",
+    "python": "3.14.6 (main, Jun 10 2026, 10:03:53) [Clang 21.0.0 (clang-2100.0.123.102)]"
+  },
+  "schema": "monatise-phase5-acceptance-v1",
+  "source_acquisition_downloads": 6,
+  "source_hashes_sha256": "6c55aa06c24cbcf00d1dc4673f8aaa65c0a9773a39f03c878d46f4ac4ebf6baf",
+  "source_hashes_verified": true,
+  "test_report_sha256": "ba20d5a36916f8d825d4e231c00a9d586c12baeae04ced520a62c0330b42ed41",
+  "tests": {
+    "errors": 0,
+    "failures": 0,
+    "skipped": 0,
+    "tests": 2123
+  },
+  "worker_network_downloads": 0
+}
