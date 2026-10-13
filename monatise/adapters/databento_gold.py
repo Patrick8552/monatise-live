@@ -7,7 +7,6 @@ Licensed raw DBN records remain in operator-controlled local storage.
 
 from __future__ import annotations
 
-import asyncio
 import re
 from collections import Counter, deque
 from dataclasses import dataclass
@@ -390,96 +389,12 @@ class DatabentoGoldAdapter:
     async def snapshot(self, instrument, *, now):
         return self.replay.snapshot(now=now)
 
-    @staticmethod
-    def sdk_client(api_key):
-        import databento as db  # optional; only on separately authorized use
-
-        return db.Live(key=api_key, reconnect_policy="none")
-
     async def stream(self, *, api_key, authorized=False, duration_seconds=60):
-        if (
-            not authorized
-            or not 1 <= duration_seconds <= 300
-            or self.replay.contract is None
-        ):
-            raise ValueError(
-                "explicit live authorization, bounded duration and selected GC required"
-            )
-        if self.client is not None:
-            raise ValueError("reuse the running Gold stream")
-        queue = asyncio.Queue(maxsize=2048)
-        loop = asyncio.get_running_loop()
-        client = (self.client_factory or self.sdk_client)(api_key)
-        self.client = client
+        """Retired legacy transport; Boolean authorization cannot open a feed.
 
-        def enqueue(record):
-            try:
-                queue.put_nowait(record)
-            except asyncio.QueueFull:
-                self.replay.mark_gap("stream_backpressure")
-
-        # SDK callback runs on another thread. Schedule only a bounded number
-        # of deliveries; a semaphore guards the event-loop callback backlog.
-        import threading
-
-        pending = threading.BoundedSemaphore(2048)
-        overflow_notified = threading.Event()
-
-        def callback(record):
-            if not pending.acquire(blocking=False):
-                if not overflow_notified.is_set():
-                    overflow_notified.set()
-                    loop.call_soon_threadsafe(
-                        self.replay.mark_gap, "callback_backpressure"
-                    )
-                return
-
-            def deliver():
-                try:
-                    enqueue(record)
-                finally:
-                    pending.release()
-
-            loop.call_soon_threadsafe(deliver)
-
-        try:
-            client.add_callback(callback)
-            for schema in ("trades", "mbp-1", "statistics"):
-                await asyncio.to_thread(
-                    client.subscribe,
-                    dataset="GLBX.MDP3",
-                    schema=schema,
-                    symbols=[self.replay.contract.instrument_id],
-                    stype_in="instrument_id",
-                    start=self.replay.session[0],
-                )
-            client.start()
-            async with asyncio.timeout(duration_seconds):
-                while True:
-                    record = await queue.get()
-                    name = type(record).__name__
-                    schema = {
-                        "TradeMsg": "trades",
-                        "MBP1Msg": "mbp-1",
-                        "StatMsg": "statistics",
-                    }.get(name)
-                    if schema:
-                        try:
-                            self.replay.ingest(schema, record, now=datetime.now(UTC))
-                        except ValueError:
-                            self.replay.mark_gap("stream_record_rejected")
-                    elif name in {"ErrorMsg", "SystemMsg"}:
-                        # Unknown system status cannot certify gap-free flow.
-                        self.replay.mark_gap("stream_status_requires_review")
-        except TimeoutError:
-            pass
-        except asyncio.CancelledError:
-            self.replay.mark_gap("stream_cancelled")
-            raise
-        except Exception:
-            self.replay.mark_gap("stream_disconnected_or_permission_failed")
-            raise
-        finally:
-            client.terminate()
-            self.client = None
-            self.replay.mark_gap("stream_stopped_requires_replay")
+        Use the separately prepared native CME research capture API with reviewed
+        entitlement, native metadata, cost approval and a durable one-use permit.
+        Keeping that API separate preserves the production/research boundary.
+        Offline replay, snapshot and legacy definition defaults are unchanged.
+        """
+        raise ValueError("prepared_native_live_capture_and_one_use_permit_required")

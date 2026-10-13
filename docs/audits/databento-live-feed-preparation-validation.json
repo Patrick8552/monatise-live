@@ -1,0 +1,67 @@
+{
+  "authentic_cached_definitions_accepted": [
+    "GCZ6",
+    "ESZ6",
+    "NQZ6"
+  ],
+  "branch": "codex/monatise-phase6",
+  "changed_preexisting_files": [
+    "monatise/adapters/databento_gold.py"
+  ],
+  "current_live_entitlement_verified": false,
+  "deployed": false,
+  "frozen_baseline_branch_unchanged": true,
+  "frozen_selector_unchanged": true,
+  "full_test_report_sha256": "31a38f08f20975bb8ef8374744f96635c125018ead3ca9e1d6df4a422dcea49c",
+  "incremental_provider_usage_usd": "0",
+  "initial_regression": "Two existing tests rejected a research import from the shared adapter. Fixed the import boundary without weakening tests.",
+  "legacy_live_boolean_route_disabled": true,
+  "licenses_signed": false,
+  "limitations": [
+    "Real live latency/recovery/durability not yet certified",
+    "Subscription/license/cash approval required",
+    "Broker XAUUSD and options/canonical input gaps remain",
+    "Prior historical billing quarantines preserved"
+  ],
+  "live_connections": 0,
+  "live_schema_scope": [
+    "definition",
+    "trades",
+    "mbp-1"
+  ],
+  "metadata_recent_historical_symbol_resolution": {
+    "end_exclusive": "2026-10-12",
+    "identities": {
+      "ESZ6": 10252,
+      "GCZ6": 41271,
+      "NQZ6": 261401
+    },
+    "not_found": [],
+    "partial": [],
+    "start": "2026-10-11"
+  },
+  "metadata_source_sha256": "23acf6b1a6fcb7e86c1fbd55d74ccf28b74703657550e24afdc5b7fb713146e8",
+  "new_historical_acquisitions": 0,
+  "new_live_tests": 58,
+  "phase6_commit": "94fd8a7db0abec457a9a6c96d889a3fca288cc52",
+  "phase6_original_files_unchanged": true,
+  "production_research_import_boundary_preserved": true,
+  "production_trading_changed": false,
+  "schema": "databento-live-feed-preparation-validation-v1",
+  "source_sha256": {
+    "monatise/adapters/databento_gold.py": "9f55a40a0d55eb8888b93ebc7602ecfcfed747ac438505ceaaa7313efc50af37",
+    "monatise/research/databento/live_feed.py": "2f2924a287791d317d2489a2328e7b41de9b29b3815da04dea28d18c89dfb93b",
+    "monatise/research/databento/live_journal.py": "cfd914df007206f2db32d31cbd973c9b8f46b4e2ade0a1b70aafb8f4a3348ac9",
+    "monatise/research/databento/live_models.py": "bbb7ccfd6770d0841597cba667fa07ddf7551cb97598839cb13c2f854a0caf41",
+    "monatise/research/databento/live_state.py": "7bdf85db9f826ad029347e411a93022d09b4daeea6c9ae2085f39a43282a304d",
+    "tests/research/test_databento_live_preparation.py": "581612f17cf0025d50f36ebab652a44b0a76fc7f4c8a096c322f968f1fb470f7"
+  },
+  "subscription_purchased": false,
+  "tests": {
+    "errors": 0,
+    "failures": 0,
+    "seconds": 48.626,
+    "skipped": 0,
+    "tests": 2290
+  }
+}
