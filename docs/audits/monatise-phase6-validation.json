@@ -1,0 +1,115 @@
+{
+  "ES_NQ_estimate_usd": "0.026535756885",
+  "ES_NQ_unsettled_reservations_usd": "6.00",
+  "GC_CVD": {
+    "buy_volume": 671,
+    "classified_volume_coverage": "0.9979591836734693877551020408",
+    "cvd_known": -125,
+    "cvd_lower": -128,
+    "cvd_upper": -122,
+    "quote_inference": {
+      "buy_volume": 1,
+      "certified": false,
+      "combined_delta": -126,
+      "combined_lower": -126,
+      "combined_upper": -126,
+      "inferred_is_exchange_reported": false,
+      "sell_volume": 2,
+      "unresolved_volume": 0
+    },
+    "sell_volume": 796,
+    "unknown_volume": 3
+  },
+  "actual_ES_NQ_cash_usd": null,
+  "actual_ES_NQ_credit_usd": null,
+  "actual_ES_NQ_usage_usd": null,
+  "approval_eligible": false,
+  "authentic_basis_status": "MAPPING_UNAVAILABLE",
+  "authentic_canonical": {
+    "BTC": "BLOCKED_AUTHENTIC_INPUTS",
+    "ES": "BLOCKED_AUTHENTIC_INPUTS",
+    "GC": "BLOCKED_AUTHENTIC_INPUTS",
+    "NQ": "BLOCKED_AUTHENTIC_INPUTS"
+  },
+  "authentic_options_status": "BLOCKED_AUTHENTIC_INPUTS",
+  "baseline": "51988f0ced35ee6bbe378174e80b57f2c9943a47",
+  "baseline_files_unchanged": 575,
+  "billing_status": "BILLING_OR_QUALITY_QUARANTINE_RETAINED",
+  "branch": "codex/monatise-phase6",
+  "cash_spent_usd": "0",
+  "changed_existing_files": [],
+  "credit_consumed_usd": "0",
+  "engineering_canonical": {
+    "ES": "NO_TRADE",
+    "GC": "LONG",
+    "GC_NO_TRADE": "NO_TRADE",
+    "GC_SHORT": "SHORT",
+    "NQ": "NO_TRADE"
+  },
+  "execution_eligible": false,
+  "first_test_run_harness_failure": "CLI absent from PATH; integration-service environment absent. Corrected with existing offline harness.",
+  "frozen_H1_evidence": {
+    "assessments": 557,
+    "distinct_valid_H1_episodes": 12,
+    "previous_outputs_unchanged": true,
+    "qualified_gold_setups": 0,
+    "selector_commit": "f1de9d46cb5f3458726b81cfbc9f1d0dfba73f35",
+    "source_sha256": "7d333eaa6929aaa9f9593c1d69d076ed4313f004297c323ae014a568502bf78d",
+    "valid_assessments": 69,
+    "win_rate": null
+  },
+  "frozen_tests": {
+    "errors": 0,
+    "failures": 0,
+    "seconds": 58.926,
+    "skipped": 0,
+    "tests": 53
+  },
+  "full_test_report_sha256": "dc74a6715f47cd838b6a8e2f74355ce792c072ed0a007efdc5c878c216025060",
+  "gil_enabled": false,
+  "historical_win_rate": null,
+  "incremental_provider_usage_usd": "0",
+  "input_sha256": "b0355dde3c0f29f30f634e89d5da0db192b3917c1e25bd2290816033f45956e0",
+  "ledger_unchanged": true,
+  "live_enabled": false,
+  "model_versions": {
+    "basis": "gc-causal-basis-candidates-v1",
+    "canonical": "unchanged-baseline-engines",
+    "cvd": "exchange-side-CVD-plus-unknown-volume-bounds-v1",
+    "options": "existing-American-IV-plus-European-benchmark-scenarios-v1"
+  },
+  "new_acquisitions": 0,
+  "new_paid_downloads": 0,
+  "normalized_gc_sha256": "2c9d0fb72a2a04ed5dc635010c652bc9aac05a562f737883445da7433ccc67ba",
+  "normalized_index_sha256": {
+    "ES": "d671c2e13fc16274b9f3682cef5d0c1878156fcacf38e29d9322cbbb714cf687",
+    "NQ": "d224d1120402f154e91cc73f1721967ee3197a01c3ff314738309dcaddcc1817"
+  },
+  "phase6_tests": 101,
+  "previous_replay_pairs": 5,
+  "private_results_location": "phase6-acceptance-v3",
+  "production_provider_routing_changed": false,
+  "provider_invoice_available": "2026-11-01",
+  "publication_eligible": false,
+  "regressions": 0,
+  "repeat_equal": true,
+  "replay_sha256": "1e8bad9e7adfa7f7302e2aab3df66a06f1b035d793a78e7b5cfbbace662067d5",
+  "research_GIL_policy_scope": "ISOLATED_GC_OPTIONS_ONLY_NO_MANDATORY_EXTERNAL_PROVIDERS",
+  "research_admission_eligible": false,
+  "runtime": {
+    "databento": "0.87.0",
+    "databento_dbn": "0.70.0",
+    "python": "3.14.6 (main, Jun 10 2026, 10:03:53) [Clang 21.0.0 (clang-2100.0.123.102)]"
+  },
+  "schema": "monatise-phase6-acceptance-v1",
+  "source_hashes_sha256": "2256fef617cf70b158bc98b24272514051319a437b81d93b36464240ae3e5308",
+  "tests": {
+    "errors": 0,
+    "failures": 0,
+    "seconds": 50.654,
+    "skipped": 0,
+    "tests": 2232
+  },
+  "unchanged_native_archives": 30,
+  "unchanged_previous_evidence_files": 13
+}
