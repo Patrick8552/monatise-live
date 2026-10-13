@@ -236,8 +236,10 @@ def test_european_sensitivities_agree_with_finite_differences(kind):
 
 def test_american_has_independent_price_and_Greek_checks():
     r=validated(greek_input('American'))
-    assert r['status']=='VALIDATED_MODEL_SENSITIVITIES';assert len(r['diagnostics'])==4
-    assert r['gamma']>0;assert r['iv']==pytest.approx(.2,abs=1e-6)
+    assert r['status']=='REJECTED';assert len(r['diagnostics'])==4
+    assert r['gamma'] is None;assert r['iv']==pytest.approx(.2,abs=1e-6)
+    assert r['rejection_reasons']==['fine_bump_lattice_gamma_instability']
+    assert len(r['fine_gamma_diagnostics'])==4
 
 
 def test_american_FD_respects_intrinsic_and_zero_rate_european_reference():
@@ -340,3 +342,45 @@ def test_missing_genuine_archive_not_reconstructed(tmp_path):
         run(capture=tmp_path,basis_reference=tmp_path/'basis',technical_reference=tmp_path/'technical',
             user_evidence_json=tmp_path/'user.json',user_evidence_text=tmp_path/'user.txt',output=tmp_path/'output')
     assert not (tmp_path/'output').exists()
+
+
+def udi_record(**changes):
+    import databento_dbn as dbn
+    args=dict(publisher_id=1,instrument_id=42635889,ts_event=NOW-86400*S,ts_recv=NOW-86400*S+1000,
+        min_price_increment=100000000,display_factor=10000000,raw_symbol='OGX6 C4200',asset='OG',
+        security_type='OOF',instrument_class=dbn.InstrumentClass.CALL,security_update_action=dbn.SecurityUpdateAction.ADD,expiration=NOW+14*86400*S,
+        unit_of_measure_qty=100*S,min_price_increment_amount=100000000,strike_price=4200*S,
+        underlying_id=41271,maturity_year=2026,maturity_month=11,currency='USD',exchange='XCEC',
+        cfi='OCAXPS',unit_of_measure='TRYOZ',underlying='GCZ6',strike_price_currency='USD',user_defined_instrument=dbn.UserDefinedInstrument.YES)
+    args.update(changes);return dbn.InstrumentDefMsg(**args)
+
+
+def test_reviewed_UDI_preserves_original_native_flag_and_hash():
+    from monatise.research.institutional.phase7.udi import reviewed_definition,UDIReview
+    from monatise.research.databento.datasets import DatasetCapability,discover
+    row=udi_record();raw=bytes(row);h=hashlib.sha256(raw).hexdigest()
+    cap=DatasetCapability('GLBX.MDP3',('definition',),NOW-S,'a'*64)
+    with pytest.raises(ValueError):discover(row,publishers={1:('GLBX.MDP3','GLBX')},capability=cap,as_of_ns=NOW)
+    c=reviewed_definition(row,underlying=contract(41271),capability=cap,publishers={1:('GLBX.MDP3','GLBX')},
+        as_of_ns=NOW,review=UDIReview(h,'ENGINEERING_UDI_REVIEW'))
+    assert bytes(row)==raw;assert c.metadata.definition_sha256==h
+    assert dict(c.metadata.native_terms)['user_defined_instrument']=='Y'
+
+
+@pytest.mark.parametrize('defect',['review','hash','legs','type','cfi','underlying','symbol','currency','multiplier'])
+def test_UDI_extension_does_not_admit_unreviewed_or_multileg_records(defect):
+    from monatise.research.institutional.phase7.udi import reviewed_definition,UDIReview
+    from monatise.research.databento.datasets import DatasetCapability
+    changes={}
+    if defect=='legs':changes={'leg_count':2}
+    if defect=='type':changes={'security_type':'MLEG'}
+    if defect=='cfi':changes={'cfi':'OCEXPS'}
+    if defect=='underlying':changes={'underlying_id':1}
+    if defect=='symbol':changes={'raw_symbol':'OGX6 C4205'}
+    if defect=='currency':changes={'currency':'EUR'}
+    if defect=='multiplier':changes={'unit_of_measure_qty':10*S}
+    row=udi_record(**changes);h=hashlib.sha256(bytes(row)).hexdigest()
+    review=None if defect=='review' else UDIReview('b'*64 if defect=='hash' else h,'ENGINEERING_REVIEW')
+    with pytest.raises(ValueError):reviewed_definition(row,underlying=contract(41271),
+        capability=DatasetCapability('GLBX.MDP3',('definition',),NOW-S,'a'*64),
+        publishers={1:('GLBX.MDP3','GLBX')},as_of_ns=NOW,review=review)

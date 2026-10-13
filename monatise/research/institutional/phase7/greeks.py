@@ -32,7 +32,7 @@ class GreekInput:
     native_instrument_id: int | None = None
 
 
-def american_fd(future,strike,years,rate,volatility,kind,*,space=400,time=400):
+def american_fd(future,strike,years,rate,volatility,kind,*,space=400,time=400,domain_upper=None):
     """Implicit Euler, uniform futures grid, Thomas solve, intrinsic obstacle.
 
     Futures drift is zero. Boundaries use American intrinsic/discounted payoff;
@@ -40,7 +40,9 @@ def american_fd(future,strike,years,rate,volatility,kind,*,space=400,time=400):
     """
     _inputs(future,strike,years,rate,volatility,kind)
     if not 100<=space<=1600 or not 100<=time<=1600: raise ValueError('bounded_FD_mesh_required')
-    ds=4*max(future,strike)/space;dt=years/time;sign=1 if kind=='C' else -1
+    upper_boundary=4*max(future,strike) if domain_upper is None else domain_upper
+    if not isfinite(upper_boundary) or upper_boundary<=max(future,strike):raise ValueError('FD_domain_must_cover_inputs')
+    ds=upper_boundary/space;dt=years/time;sign=1 if kind=='C' else -1
     intrinsic=[max(sign*(i*ds-strike),0) for i in range(space+1)];values=intrinsic[:]
     a=[-.5*volatility**2*i*i*dt for i in range(1,space)]
     diagonal=[1-2*v+rate*dt for v in a]; upper=a[:]
@@ -106,10 +108,31 @@ def validated(x: GreekInput, *, price_absolute_tolerance=.2, relative_tolerance=
                 def crr(f,k,t,r,v,kind,n=n):
                     return (american_futures(f,k,t,r,v,kind,steps=n)+american_futures(f,k,t,r,v,kind,steps=n+1))/2
                 diagnostics.append(sensitivities(crr,x,iv,fraction=h))
+            # Keep the FD domain fixed across price bumps. Rebuilding it with
+            # each bumped F was an additional unreviewed sensitivity source.
+            domain=4*max(x.future*1.02,x.strike)
             for n,h in ((400,.02),(800,.01)):
-                def fd(f,k,t,r,v,kind,n=n): return american_fd(f,k,t,r,v,kind,space=n,time=n)
+                def fd(f,k,t,r,v,kind,n=n): return american_fd(f,k,t,r,v,kind,space=n,time=n,domain_upper=domain)
                 diagnostics.append(sensitivities(fd,x,iv,fraction=h))
             primary=diagnostics[1];model='AMERICAN_FUTURES_CRR_INDEPENDENT_IMPLICIT_OBSTACLE_FD'
+            # Independent review found lattice gamma failures hidden by the
+            # original two coarse bumps. Every finer cross-product probe is
+            # mandatory; stable prices do not excuse unstable derivatives.
+            fine=[]
+            for n in (800,1600):
+                def crr(f,n=n):
+                    return (american_futures(f,x.strike,x.years,x.rate,iv,x.kind,steps=n-1)
+                            +american_futures(f,x.strike,x.years,x.rate,iv,x.kind,steps=n))/2
+                p=crr(x.future)
+                for h_fraction in (.005,.0025):
+                    h=x.future*h_fraction
+                    gamma=(crr(x.future+h)-2*p+crr(x.future-h))/(h*h)
+                    fine.append(dict(solver='CRR',steps=n,bump_fraction=h_fraction,price=p,gamma=gamma))
+            result['fine_gamma_diagnostics']=fine
+            if any(not isfinite(d['gamma']) or d['gamma']<0 or abs(d['gamma']-primary['gamma'])>
+                   max(1e-6,relative_tolerance*abs(primary['gamma'])) for d in fine):
+                result.update(diagnostics=diagnostics,model=model)
+                raise ValueError('fine_bump_lattice_gamma_instability')
         result.update(diagnostics=diagnostics,model=model,
             validation_tolerances=dict(price_absolute=price_absolute_tolerance,relative=relative_tolerance,
                 delta_absolute=.02,gamma_absolute=1e-6,vega_absolute=.05,theta_absolute=.005))

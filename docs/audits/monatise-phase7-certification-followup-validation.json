@@ -1,0 +1,50 @@
+{
+  "UDI_count": 6,
+  "actual_invoice_reconciliation": "UNVERIFIED",
+  "branch": "codex/monatise-phase7-certification",
+  "certified_basis": false,
+  "complete_exchange_chain": false,
+  "current_Greek_diagnostic_count": 8,
+  "current_Greek_diagnostics_passed": 6,
+  "current_replay_byte_equal": true,
+  "dealer_inventory_observed": false,
+  "decision": "NO_TRADE",
+  "execution_eligible": false,
+  "expected_incremental_usage_usd": "0",
+  "frozen_H1_commit": "f1de9d46cb5f3458726b81cfbc9f1d0dfba73f35",
+  "full_tests": {
+    "errors": 0,
+    "failures": 0,
+    "seconds": 62.462,
+    "skipped": 0,
+    "tests": 2391,
+    "xml_sha256": "5cb1859441724ea4b266dce86a91bcc7cb3d0a91c8729b33747dda9d6c71289d"
+  },
+  "gil_enabled": false,
+  "native_as_of_ns": 1791931089442307000,
+  "native_record_counts": {
+    "definition": 145,
+    "mbp-1": 5752,
+    "statistics": 32513
+  },
+  "new_subscription": false,
+  "normalized_options": 144,
+  "original_and_frozen_checkouts_clean": true,
+  "paid_acquisitions": 0,
+  "phase6_files_modified": 0,
+  "phase6_files_preserved": 601,
+  "production_changed": false,
+  "raw_market_records_committed": false,
+  "replay_sha256": "a2a8ac091b8fae6b867d8d53c32c7f787c76cef119707656e887877e80a2bbc6",
+  "schema": "monatise-phase7-certification-followup-validation-v1",
+  "source_hashes_sha256": "b07480647efb5df382db5fee893b1b2e58a91342c3b79c4e4adc72bec13c1436",
+  "starting_commit": "c6980ad7b39fca215fc0ed1a47f85866110ea331",
+  "targeted_tests": {
+    "errors": 0,
+    "failures": 0,
+    "seconds": 6.614,
+    "skipped": 0,
+    "tests": 76,
+    "xml_sha256": "ae1988413c12f84bef7319b28c8ea8e1f16abc8daed1087e6f6bf9775fa67c8e"
+  }
+}
