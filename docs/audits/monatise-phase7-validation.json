@@ -1,0 +1,103 @@
+{
+  "american_genuine_Greeks_validated": 0,
+  "baseline_files_modified": 0,
+  "baseline_files_preserved": 601,
+  "basis_rejection_reasons": [
+    "authoritative_local_clock_review_missing",
+    "timestamp_timezone_not_authoritative",
+    "unreviewed_time_price_change_bound"
+  ],
+  "chain_complete": false,
+  "complete_regression_tests": {
+    "errors": 0,
+    "failures": 0,
+    "seconds": 56.546,
+    "skipped": 0,
+    "tests": 2381,
+    "xml_sha256": "f6b88979108be54c113f474db3d6a5fe29aac97b1b7e66f826167f5a1e40c4ad"
+  },
+  "coverage_rejection_reasons": [
+    "missing_catalog_strikes_or_kinds",
+    "incomplete_expirations",
+    "insufficient_strike_breadth",
+    "authoritative_catalog_scope_unverified",
+    "invalid_or_incomplete_chain_inputs"
+  ],
+  "credit_consumed_usd": "0",
+  "decision": "NO_TRADE",
+  "execution_eligible": false,
+  "frozen_H1_commit": "f1de9d46cb5f3458726b81cfbc9f1d0dfba73f35",
+  "genuine_acceptance": {
+    "approval_created": false,
+    "basis_estimate": "23.20",
+    "cash_spent_usd": "0",
+    "conditional_uncertainty": "0.69242433393",
+    "credit_consumed_usd": "0",
+    "decision": "NO_TRADE",
+    "evidence_sha256s": {
+      "basis-and-options.json": "411c7f6cc8a4a86f71d1b4bb8f3288314fb7513105ed8eb02cb302c7a3b6d0d3",
+      "databento-options-basis-evidence-2026-10-13.json": "797f6ba42fb16bd4d584003b2e0c5762a6d10e83d9d3827e6c456a1191118141",
+      "definition.native": "f3f20aa66abe53fde0efd1bcc8e3b8ff3f348247883de55b8c6f8bf2d42f7435",
+      "mbp-1.native": "7008ebc2723c1e40fc31e363feecadbc6aa8e0a3a1841b87fb8a4ea6933f8f20",
+      "monatise-databento-options-basis-2026-10-13.txt": "fa59df8fba9ae90358a8637bca1ab0d8f1635f4593de9a07854d3fadf2654054",
+      "report.json": "c354b289767cdacd2264ce7c5643fd671091701d9d685077cd78347cec2b6da5",
+      "scope.json": "10087e354ab18a608dfc75ebb39b0187ef73de63952262f090a656060ecabdfc",
+      "statistics.native": "f681bb7028464e71b47f82ae2d9182354105dacf2b38466df1857489640a1668",
+      "verified-context.json": "58c8c067f7e3ec658fea5b19589c228b4c8610509acf38c750c8b409f1188c31"
+    },
+    "execution_eligible": false,
+    "execution_price_authority": false,
+    "genuine_basis_status": "INDICATIVE",
+    "gil_enabled": false,
+    "greeks_statuses": [
+      "REJECTED",
+      "REJECTED",
+      "REJECTED",
+      "REJECTED",
+      "REJECTED",
+      "REJECTED"
+    ],
+    "incremental_provider_usage_usd": "0",
+    "new_acquisitions": 0,
+    "options_status": "INSUFFICIENT_CHAIN_COVERAGE",
+    "repeat_equal": true,
+    "replay_sha256": "4b62467a6da89475dfa15a413ebe287c28d0b7dbea1e960dc41f248a0a298a7c",
+    "request_sha256": "a8dd4ef0aec8cac033e4a98ab521c0625fe9c339497b431a5b12be6a70cb86f0",
+    "research_only": true,
+    "runtime": {
+      "databento": "0.87.0",
+      "databento_dbn": "0.70.0",
+      "python": "3.14.6 (main, Jun 10 2026, 10:03:53) [Clang 21.0.0 (clang-2100.0.123.102)]"
+    },
+    "schema": "monatise-phase7-acceptance-v1",
+    "selected_contracts": 6,
+    "source_hashes_sha256": "2d396d6701b148ca8567fad1e4c294a5312a7389a022fa68071515ee726704f9",
+    "source_unchanged": true
+  },
+  "gil_enabled": false,
+  "implementation_branch": "codex/monatise-phase7",
+  "incremental_acquisitions": 0,
+  "incremental_data_cost_usd": "0",
+  "native_frames": {
+    "definition": 42,
+    "mbp-1": 24004,
+    "statistics": 2790
+  },
+  "original_and_frozen_checkouts_clean": true,
+  "production_deployment": false,
+  "raw_licensed_data_committed": false,
+  "raw_option_identities": 8,
+  "schema": "monatise-phase7-sanitized-validation-v1",
+  "standard_normalized_options": 6,
+  "starting_branch": "codex/monatise-phase6",
+  "starting_commit": "43d80956dcc5670916863326b7cc91b48887bc0d",
+  "synthetic_engineering_tests": {
+    "errors": 0,
+    "failures": 0,
+    "seconds": 2.82,
+    "skipped": 0,
+    "tests": 66,
+    "xml_sha256": "b010a72160de339c61bc814fdbca647be3871d2427c3c995d3a2d46bbd01992b"
+  },
+  "unreviewed_user_defined_option_identities": 2
+}
