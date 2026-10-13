@@ -11,7 +11,7 @@ import pytest
 
 from monatise.adapters.databento_gold import DatabentoGoldAdapter
 from monatise.research.databento.datasets import DatasetCapability
-from monatise.research.databento.live_models import LiveScope,LivePermit,native_definition,consume_permit,SCHEMAS
+from monatise.research.databento.live_models import ClockReview,LiveScope,LivePermit,native_definition,consume_permit,SCHEMAS
 from monatise.research.databento.live_state import Cursor,FeedState
 from monatise.research.databento.live_journal import NativeJournal,verify
 from monatise.research.databento.live_feed import CMELiveCapture
@@ -313,3 +313,103 @@ def test_live_symbol_mapping_binds_exact_numeric_selection(fault):
         stype_out_symbol='41271',start_ts=NOW_NS-10**9,end_ts=NOW_NS if fault=='expired' else NOW_NS+10**9)
     state.ingest('trades',row,capture_ns=NOW_NS,ordinal=99)
     assert state.health(NOW_NS)['quarantined']==(fault is not None)
+
+
+@pytest.mark.parametrize('product',['GC','ES','NQ'])
+def test_live_gateway_numeric_to_raw_mapping_matches_reviewed_contract(product):
+    state=FeedState(scope());populate(state)
+    c=contract(product)
+    row=dbn.SymbolMappingMsg(publisher_id=0,instrument_id=c.metadata.instrument_id,ts_event=NOW_NS,
+        stype_in=dbn.SType.INSTRUMENT_ID,stype_out=dbn.SType.RAW_SYMBOL,
+        stype_in_symbol=str(c.metadata.instrument_id),stype_out_symbol=c.metadata.raw_symbol,
+        start_ts=NOW_NS-10**9,end_ts=2**64-1)
+    state.ingest('definition',row,capture_ns=NOW_NS,ordinal=100)
+    assert state.health(NOW_NS)['status']=='CAPTURED_CONTEXT_FRESH'
+
+
+@pytest.mark.parametrize('output',['GCG7','GC.FUT','GC.c.0','41271','ESZ6'])
+def test_live_gateway_raw_mapping_cannot_change_exact_contract(output):
+    state=FeedState(scope());populate(state)
+    row=dbn.SymbolMappingMsg(publisher_id=0,instrument_id=41271,ts_event=NOW_NS,
+        stype_in=dbn.SType.INSTRUMENT_ID,stype_out=dbn.SType.RAW_SYMBOL,
+        stype_in_symbol='41271',stype_out_symbol=output,start_ts=NOW_NS-10**9,end_ts=2**64-1)
+    state.ingest('trades',row,capture_ns=NOW_NS,ordinal=100)
+    assert state.health(NOW_NS)['quarantined']
+
+
+def test_provider_clock_ahead_of_actual_local_capture_is_rejected():
+    state=FeedState(scope());populate(state)
+    with pytest.raises(ValueError,match='clocks'):
+        state.ingest('trades',trade(t=NOW_NS+100*10**6),capture_ns=NOW_NS,ordinal=100)
+    assert state.cursors['trades:41271'].event_ns==NOW_NS-10**9
+
+
+def clock_review(**changes):
+    values=dict(observed_at_ns=NOW_NS-10**9,expires_ns=NOW_NS+60*10**9,
+        offset_lower_ns=100*10**6,offset_upper_ns=250*10**6,
+        source_sha256=digest('ENGINEERING_INDEPENDENT_CLOCK_SAMPLES'),
+        review_reference='ENGINEERING_TWO_SOURCE_CLOCK_INTERVAL',drift_bound_ppm=100)
+    values.update(changes);return ClockReview(**values)
+
+
+@pytest.mark.parametrize('changes',[{'source_sha256':'missing'},{'review_reference':''},
+    {'offset_lower_ns':True},{'offset_upper_ns':10**9+1},{'offset_lower_ns':300*10**6},
+    {'offset_lower_ns':-300*10**6},{'expires_ns':NOW_NS+300*10**9},
+    {'drift_bound_ppm':1001},{'drift_bound_ppm':False}])
+def test_clock_review_cannot_supply_unbounded_or_unproven_timestamp_tolerance(changes):
+    with pytest.raises(ValueError):clock_review(**changes)
+
+
+def test_reviewed_clock_preserves_original_record_and_local_capture_timestamps():
+    state=FeedState(scope(clock_review=clock_review()));populate(state)
+    row=trade(t=NOW_NS+150*10**6)
+    value=state.ingest('trades',row,capture_ns=NOW_NS,ordinal=100)
+    assert value['capture_ns']==NOW_NS and value['receive_ns']==row.ts_recv
+    assert value['event_ns']==row.ts_event
+    assert value['capture_utc_bounds_ns'][0]<value['receive_ns']<value['capture_utc_bounds_ns'][1]
+    assert value['clock_review_sha256']==digest(state.scope.clock_review)
+    assert not value['execution_eligible']
+
+
+def test_future_record_beyond_independently_reviewed_uncertainty_still_rejects():
+    state=FeedState(scope(clock_review=clock_review()));populate(state)
+    with pytest.raises(ValueError,match='clocks'):
+        state.ingest('trades',trade(t=NOW_NS+300*10**6),capture_ns=NOW_NS,ordinal=100)
+    assert state.cursors['trades:41271'].event_ns==NOW_NS-10**9
+
+
+def test_market_freshness_uses_worst_age_over_reviewed_clock_interval():
+    state=FeedState(scope(clock_review=clock_review()));populate(state)
+    # Raw subtraction is 9.9 seconds; upper UTC bound makes it over 10.
+    result=state.health(NOW_NS+8900*10**6)
+    assert result['stale_market_inputs'] and result['status']=='UNAVAILABLE'
+    assert not result['authenticated_clock_certified']
+
+
+def test_expired_clock_review_blocks_clients_and_invalidates_context(tmp_path):
+    review=clock_review(expires_ns=NOW_NS)
+    s=scope(clock_review=review)
+    def never(*args):raise AssertionError('network_must_not_open')
+    with pytest.raises(ValueError,match='clock_review'):
+        asyncio.run(CMELiveCapture(s,client_factory=never,clock_ns=lambda:NOW_NS).run(
+            api_key='ENGINEERING_DUMMY',permit=permit(s),permit_ledger=tmp_path/'permits.sqlite',output=tmp_path/'run'))
+    assert FeedState(s).health(NOW_NS)['quarantined']
+
+
+def test_clock_bounds_expand_only_by_explicit_bounded_drift_and_expire():
+    review=clock_review()
+    assert review.bounds(NOW_NS)==(99900000,250100000)
+    with pytest.raises(ValueError,match='not_yet_available'):review.bounds(NOW_NS-2*10**9)
+    with pytest.raises(ValueError,match='expired'):review.bounds(review.expires_ns)
+
+
+def test_capture_duration_cannot_cross_session_end_under_reviewed_clock_uncertainty():
+    s=scope(duration_seconds=30,session_end_ns=NOW_NS+30*10**9+200*10**6,clock_review=clock_review())
+    with pytest.raises(ValueError,match='session'):s.validate_at(NOW_NS)
+
+
+def test_uncertain_capture_at_session_boundary_cannot_report_fresh_context():
+    state=FeedState(scope(session_end_ns=NOW_NS+200*10**6,clock_review=clock_review()))
+    assert state.health(NOW_NS)['status']=='UNAVAILABLE'
+    with pytest.raises(ValueError,match='session'):
+        state.ingest('trades',trade(),capture_ns=NOW_NS,ordinal=0)

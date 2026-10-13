@@ -5,6 +5,9 @@ Prepared on 13 October 2026 from Phase 6 commit
 This is a separately authorized read-only research capture interface. It is not
 registered with application engines, trading, approval, Telegram or deployment.
 No subscription was purchased and no live connection was opened during preparation.
+The separately authorized [native live pilot](audits/databento-live-pilot-report.md)
+subsequently verified Standard live access on the same date. This preparation record
+does not describe the account's current activation status.
 
 ## Current price and appropriate initial scope
 
@@ -76,7 +79,8 @@ No broad product replay is made.
 
 Heartbeat/acknowledgement/replay-completed codes have separate roles. Heartbeats prove
 connection activity only; they cannot make an old quote or execution fresh. Native
-symbol mappings must match numeric input/output selection and active intervals.
+symbol mappings bind numeric input to either the exact reviewed raw exchange symbol
+returned by the actual gateway or the same numeric identity, with active intervals.
 Errors, unknown controls, slow-reader warnings, overflow, future/invalid clocks,
 changed contract economics, session expiry and lost connections stop/quarantine
 usable context. All definitions and schema replay watermarks must pass before fresh
@@ -146,3 +150,19 @@ current exact metadata/definitions/session review, then an explicitly permitted
 real pilot. Genuine live latency, disconnect/recovery and sustained durability have
 not been certified by these offline tests. The Phase 1–5 encrypted backup is intact;
 new private reports require a later separate backup checkpoint.
+
+## Explicit clock uncertainty for research
+
+The genuine pilot exposed a local clock behind provider clocks. The default remains
+strict cross-host ordering with no tolerance. An optional `ClockReview` can bind a
+specific independently reviewed offset interval and source hash into `LiveScope`
+and its one-use permit. It expires within five minutes, bounds the absolute offset
+to one second and initial interval width to 500 milliseconds, and carries an explicit
+bounded drift allowance. Missing, expired or contradictory reviews fail closed.
+
+Original provider event/receive times and the original local capture clock remain
+unchanged. Normalized records also carry UTC capture bounds and the review hash.
+Future records outside those bounds reject; freshness uses the worst age, and capture
+duration, records and fresh context cannot extend through the reviewed session end.
+No OS clock setting is modified. Public unauthenticated SNTP diagnostics can support
+this bounded research experiment; they do not certify production timing or latency.

@@ -4,7 +4,7 @@ from dataclasses import dataclass,field
 import hashlib
 
 from monatise.adapters.databento_identity import timestamp_ns
-from monatise.research.institutional.models import encode,hash_required
+from monatise.research.institutional.models import encode,hash_required,digest
 from monatise.research.databento.advanced import AdvancedAdapters
 from .live_models import native_definition,SAFETY
 
@@ -92,25 +92,34 @@ class FeedState:
                 self.completed.add(schema);return None
             self.quarantine('slow_reader_or_unknown_control_code_'+str(code));return None
         if isinstance(record,dbn.SymbolMappingMsg):
-            if (record.instrument_id not in self.contracts
-                    or record.stype_in!=dbn.SType.INSTRUMENT_ID or record.stype_out!=dbn.SType.INSTRUMENT_ID
+            contract=self.contracts.get(record.instrument_id)
+            # The live gateway maps numeric subscriptions back to raw exchange
+            # symbols. Bind that output to the independently reviewed contract;
+            # never accept a different expiry, parent or continuous symbol.
+            output_matches=(contract is not None and (
+                record.stype_out==dbn.SType.RAW_SYMBOL
+                and str(record.stype_out_symbol)==contract.metadata.raw_symbol
+                or record.stype_out==dbn.SType.INSTRUMENT_ID
+                and str(record.stype_out_symbol)==str(record.instrument_id)))
+            if (contract is None or not output_matches
+                    or record.stype_in!=dbn.SType.INSTRUMENT_ID
                     or str(record.stype_in_symbol)!=str(record.instrument_id)
-                    or str(record.stype_out_symbol)!=str(record.instrument_id)
                     or record.start_ts>capture_ns or capture_ns>=record.end_ts):
                 self.quarantine('symbol_mapping_conflicts_with_exact_native_selection')
             return None
         iid=getattr(record,'instrument_id',None);contract=self.contracts.get(iid)
         if contract is None:raise ValueError('unrequested_instrument')
         event=timestamp_ns(record.ts_event);received=timestamp_ns(getattr(record,'ts_recv',record.ts_event))
-        if (record.publisher_id!=contract.metadata.publisher_id or not event<=received<=capture_ns
+        lower,upper=self.scope.clock_bounds(capture_ns)
+        if (record.publisher_id!=contract.metadata.publisher_id or not event<=received<=capture_ns+upper
                 or not (contract.metadata.event_ns if schema=='definition' else self.scope.start_ns)<=event<self.scope.session_end_ns
-                or capture_ns>=self.scope.session_end_ns or int(getattr(record,'flags',0))&(4|8|32)):
+                or capture_ns+max(0,upper)>=self.scope.session_end_ns or int(getattr(record,'flags',0))&(4|8|32)):
             raise ValueError('live_record_identity_clocks_session_or_quality_rejected')
         key=f'{schema}:{iid}';previous=self.cursors[key]
         cursor=Cursor(previous.event_ns,list(previous.hashes_at_event),previous.replay_prefix,previous.skipped)
         if schema=='definition':
             value=native_definition(record,capability=self.scope.capability,
-                publishers={p:(d,v) for p,d,v in self.scope.publishers},as_of_ns=capture_ns)
+                publishers={p:(d,v) for p,d,v in self.scope.publishers},as_of_ns=capture_ns+max(0,upper))
             signature=lambda c:(c.identity,c.tick_size,c.multiplier,c.price_unit,c.metadata.native_terms)
             if signature(value)!=signature(contract):raise ValueError('contract_roll_or_definition_economics_changed')
             result=dict(contract=encode(value),record_sha256=native_hash)
@@ -126,6 +135,8 @@ class FeedState:
             self.counts['replay_duplicates_skipped']+=1;return None
         self.counts[schema]+=1
         result=dict(result,capture_ns=capture_ns,native_ordinal=ordinal,
+                    capture_utc_bounds_ns=(capture_ns+lower,capture_ns+upper),
+                    clock_review_sha256=digest(self.scope.clock_review) if self.scope.clock_review else None,
                     availability_basis='ACTUAL_LOCAL_LIVE_CAPTURE',context_only=True,**SAFETY)
         self.normalized.append(result)
         if len(self.normalized)>2048:self.normalized.pop(0)
@@ -133,20 +144,26 @@ class FeedState:
 
     def health(self,now_ns):
         timestamp_ns(now_ns)
+        try:lower,upper=self.scope.clock_bounds(now_ns)
+        except ValueError:
+            self.quarantine('independent_clock_review_expired_or_invalid');lower=upper=0
         stalled=[s for s in self.scope.schemas if now_ns-self.last_message.get(s,self.started.get(s,now_ns))>
                  (self.scope.heartbeat_seconds+10)*10**9]
         stale=[f'{s}:{i}' for s in self.scope.schemas if s!='definition' for i in self.contracts
-               if not 0<=now_ns-self.latest.get((s,i),0)<=self.scope.maximum_market_age_ns]
+               if not 0<=now_ns+upper-self.latest.get((s,i),0)<=self.scope.maximum_market_age_ns]
         unusable_quotes=[i for i in self.contracts if 'mbp-1' in self.scope.schemas and (i not in self.quotes
             or self.quotes[i][0] is None or self.quotes[i][3] is None
             or self.quotes[i][0]==self.quotes[i][3] or min(self.quotes[i][1],self.quotes[i][4])<=0)]
         ready=(not self.quality_reasons and not stalled and not stale and not unusable_quotes
                and self.completed==set(self.scope.schemas) and self.verified_definitions==set(self.contracts)
-               and now_ns<self.scope.session_end_ns)
+               and now_ns+max(0,upper)<self.scope.session_end_ns)
         return dict(status='CAPTURED_CONTEXT_FRESH' if ready else 'UNAVAILABLE',
             quarantined=bool(self.quality_reasons or stalled or self.completed!=set(self.scope.schemas)
                              or self.verified_definitions!=set(self.contracts)),reasons=sorted(self.quality_reasons),
             stalled_connections=stalled,stale_market_inputs=stale,replay_completed=sorted(self.completed),
             unusable_quote_instruments=unusable_quotes,
             definitions_verified=sorted(self.verified_definitions),counts=dict(self.counts),
+            local_clock_offset_bounds_ns=(lower,upper),
+            clock_review_sha256=digest(self.scope.clock_review) if self.scope.clock_review else None,
+            authenticated_clock_certified=False,
             complete_exchange_continuity_certified=False,context_only=True,**SAFETY)

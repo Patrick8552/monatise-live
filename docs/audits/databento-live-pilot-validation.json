@@ -1,0 +1,116 @@
+{
+  "GIL_changed": false,
+  "OS_clock_settings_changed": false,
+  "accepted_normalization_stream_sha256": "72c2bf546c34f4c43417a524449c4335bd14b17ee402c6bb631d72b2c2472f16",
+  "all_definitions_verified": true,
+  "all_quote_books_usable": true,
+  "all_schema_replays_completed": true,
+  "authenticated_clock_certified": false,
+  "automatic_retries": 0,
+  "background_service_activated": false,
+  "backpressure_reported": false,
+  "branch": "codex/monatise-phase6",
+  "broker_prices_manufactured": false,
+  "clock_review_source_hashed_and_expiring": true,
+  "connections_closed": true,
+  "dataset": "GLBX.MDP3",
+  "date": "2026-10-13",
+  "disconnects_reported": 0,
+  "final_combined_context": "UNAVAILABLE",
+  "final_stale_input": "trades:10252",
+  "fresh_combined_context_observed_during_capture": true,
+  "frozen_selector_changed": false,
+  "full_offline_tests": {
+    "errors": 0,
+    "failures": 0,
+    "seconds": 52.901,
+    "skipped": 0,
+    "tests": 2315
+  },
+  "incremental_live_usage_charge_expected_usd": "0",
+  "independent_clock_sources": 2,
+  "independent_replay_module_source_sha256": {
+    "monatise/research/databento/live_feed.py": "2f2924a287791d317d2489a2328e7b41de9b29b3815da04dea28d18c89dfb93b",
+    "monatise/research/databento/live_journal.py": "cfd914df007206f2db32d31cbd973c9b8f46b4e2ade0a1b70aafb8f4a3348ac9",
+    "monatise/research/databento/live_models.py": "82e5287404a713fff6585fa88df35800dc6b4fb40b358cdcccf25d0711b001e3",
+    "monatise/research/databento/live_state.py": "f2bbdb3c5c548941fe068446aa4aeb3dab7406d2b4bcf5c46e2556b7814bf372",
+    "tests/research/test_databento_live_preparation.py": "19e776450722bb9796c9a5e90b14b721b0789fe33ee3f2033207950d9bb1d74f"
+  },
+  "initial_attempt_quarantine_preserved": true,
+  "live_raw_archives_in_original_backup": false,
+  "maximum_clock_review_age_seconds": 300,
+  "new_historical_timeseries_acquisitions": 0,
+  "new_offline_tests": 25,
+  "offline_replay_sha256": "64e376233f77fe81c017e736cc21f872009ed7238a3d203e8b81be8e1ffa32a1",
+  "original_local_capture_clocks_preserved": true,
+  "per_contract_observation_counts": {
+    "ESZ6": {
+      "definition": 1,
+      "mbp-1": 2440,
+      "trades": 57
+    },
+    "GCZ6": {
+      "definition": 1,
+      "mbp-1": 593,
+      "trades": 17
+    },
+    "NQZ6": {
+      "definition": 1,
+      "mbp-1": 8828,
+      "trades": 38
+    }
+  },
+  "prior_history_billing_quarantines_released": false,
+  "private_evidence_committed": false,
+  "production_certified": false,
+  "production_trading_changed": false,
+  "provider_errors": 0,
+  "provider_event_receive_clocks_preserved": true,
+  "remaining_dependencies": [
+    "Trusted sustained clock synchronization",
+    "Explicit live disconnect/recovery validation",
+    "Session transitions and rollover validation",
+    "Broker-native and canonical input/certification gaps",
+    "Separate preservation checkpoint for new private evidence"
+  ],
+  "reviewed_live_attempts": 2,
+  "schema": "databento-live-pilot-sanitized-validation-v1",
+  "schemas": [
+    "definition",
+    "trades",
+    "mbp-1"
+  ],
+  "settled_incremental_provider_invoice_verified": false,
+  "source_checks": {
+    "definition": {
+      "SHA256_verified": true,
+      "bytes": 7401,
+      "framing_count_verified": true,
+      "native_byte_roundtrip_verified": true,
+      "raw_sha256": "b8a32cbfdb2238ad1b7895dc720437380d01721699b940638353205ef309ac0f",
+      "records": 23
+    },
+    "mbp-1": {
+      "SHA256_verified": true,
+      "bytes": 1092469,
+      "framing_count_verified": true,
+      "native_byte_roundtrip_verified": true,
+      "raw_sha256": "b90a1e24815c2735a55eab745fc11a71bccf05e57f558d9f9dfe2eec0f1b9e26",
+      "records": 11866
+    },
+    "trades": {
+      "SHA256_verified": true,
+      "bytes": 7977,
+      "framing_count_verified": true,
+      "native_byte_roundtrip_verified": true,
+      "raw_sha256": "cddc7522ec776f244788524ff871384164b63ee9bdec7036ae70b0b464602482",
+      "records": 117
+    }
+  },
+  "starting_commit": "5f8e50ebfe1ab03e31edde7acd18bbf315915a39",
+  "successful_bounded_capture_seconds": 60,
+  "successful_capture_quarantined": false,
+  "targeted_live_tests": 83,
+  "test_report_sha256": "3235b54bcffe4c5acf91ec8f6ffa097c415fe18ef96c69ac89012364c6f19255",
+  "two_offline_replays_identical": true
+}

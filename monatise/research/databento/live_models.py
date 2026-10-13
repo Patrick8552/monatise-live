@@ -6,7 +6,7 @@ from pathlib import Path
 import sqlite3
 
 from monatise.adapters.databento_identity import timestamp_ns
-from monatise.research.institutional.models import Contract,number,digest
+from monatise.research.institutional.models import Contract,number,digest,hash_required
 from monatise.research.institutional.normalize import definition,EconomicConvention
 from monatise.research.institutional.native_index import validate as index_definition
 from monatise.research.databento.datasets import DatasetCapability
@@ -14,6 +14,41 @@ from monatise.research.databento.datasets import DatasetCapability
 SCHEMAS=('definition','trades','mbp-1')
 SAFETY=dict(execution_eligible=False,publication_eligible=False,approval_eligible=False,
             production_registered=False,gil_enabled=False)
+
+
+@dataclass(frozen=True)
+class ClockReview:
+    """Explicit short-lived independent UTC uncertainty, never a clock rewrite.
+
+    Offsets are UTC minus the original local wall clock. Receipts remain raw;
+    bounds only qualify cross-host ordering and conservative freshness. This is
+    an operator research review, not authenticated production time certification.
+    """
+    observed_at_ns: int
+    expires_ns: int
+    offset_lower_ns: int
+    offset_upper_ns: int
+    source_sha256: str
+    review_reference: str
+    drift_bound_ppm: int=100
+
+    def __post_init__(self):
+        timestamp_ns(self.observed_at_ns);timestamp_ns(self.expires_ns)
+        hash_required(self.source_sha256)
+        if (not 0<self.expires_ns-self.observed_at_ns<=300*10**9
+                or type(self.offset_lower_ns) is not int or type(self.offset_upper_ns) is not int
+                or not -10**9<=self.offset_lower_ns<=self.offset_upper_ns<=10**9
+                or self.offset_upper_ns-self.offset_lower_ns>500*10**6
+                or type(self.drift_bound_ppm) is not int or not 0<=self.drift_bound_ppm<=1000
+                or not isinstance(self.review_reference,str) or not self.review_reference.strip()):
+            raise ValueError('bounded_independent_research_clock_review_required')
+
+    def bounds(self,now_ns):
+        timestamp_ns(now_ns)
+        if not self.observed_at_ns<=now_ns<self.expires_ns:
+            raise ValueError('independent_clock_review_expired_or_not_yet_available')
+        drift=(now_ns-self.observed_at_ns)*self.drift_bound_ppm//10**6
+        return self.offset_lower_ns-drift,self.offset_upper_ns+drift
 
 
 def native_definition(record, *, capability,publishers,as_of_ns):
@@ -52,6 +87,7 @@ class LiveScope:
     maximum_market_age_ns: int=10*10**9
     maximum_records: int=100000
     maximum_bytes: int=32*1024**2
+    clock_review: ClockReview|None=None
 
     def __post_init__(self):
         timestamp_ns(self.start_ns);timestamp_ns(self.session_end_ns)
@@ -71,6 +107,7 @@ class LiveScope:
                 or type(self.maximum_market_age_ns) is not int or not 0<self.maximum_market_age_ns<=30*10**9
                 or type(self.maximum_records) is not int or not 1<=self.maximum_records<=1000000
                 or type(self.maximum_bytes) is not int or not 1024<=self.maximum_bytes<=1024**3
+                or self.clock_review is not None and not isinstance(self.clock_review,ClockReview)
                 or not self.start_ns<self.session_end_ns
                 or any(not c.metadata.receive_ns<=self.start_ns<self.session_end_ns<=c.metadata.expiration_ns for c in self.contracts)):
             raise ValueError('reviewed_bounded_exact_live_scope_required')
@@ -80,11 +117,15 @@ class LiveScope:
 
     def validate_at(self,now_ns):
         timestamp_ns(now_ns)
+        lower,upper=self.clock_bounds(now_ns)
         if (not self.start_ns<=now_ns<self.session_end_ns or now_ns-self.start_ns>24*3600*10**9
-                or now_ns+self.duration_seconds*10**9>self.session_end_ns
+                or now_ns+self.duration_seconds*10**9+max(0,upper)>self.session_end_ns
                 or not 0<=now_ns-self.capability.observed_at_ns<=300*10**9):
             raise ValueError('current_reviewed_session_and_bounded_replay_required')
         for schema in self.schemas:self.capability.require(schema,at_ns=now_ns)
+
+    def clock_bounds(self,now_ns):
+        return self.clock_review.bounds(now_ns) if self.clock_review else (0,0)
 
 
 @dataclass(frozen=True)
