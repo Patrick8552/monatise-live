@@ -1,0 +1,237 @@
+{
+  "actual_invoice_reconciled": false,
+  "basis_certified": false,
+  "branch": "codex/monatise-phase7-quote-chain",
+  "clearing_reference": {
+    "binary_pdf_captured": false,
+    "bulletin_number": 196,
+    "current_reference_legs": 1772,
+    "databento_observed_reference_totals": {
+      "DEC26_C": 324124,
+      "DEC26_P": 96996,
+      "NOV26_C": 102646,
+      "NOV26_P": 64288
+    },
+    "edition": "FINAL",
+    "individual_contract_clearing_finality_certified": false,
+    "local_binary_download": "Timed out; official web PDF text and page observations used",
+    "missing_OI_inferred_zero": false,
+    "native_MDP_validated": false,
+    "reference_date": "2026-10-12",
+    "reference_policy_url": "https://www.cmegroup.com/market-data/daily-bulletin.html",
+    "source_pages_one_based": {
+      "DEC26_C": 27,
+      "DEC26_P": 11,
+      "NOV26_C": 23,
+      "NOV26_P": 8
+    },
+    "source_url": "https://www.cmegroup.com/daily_bulletin/current/Section64_Metals_Option_Products.pdf",
+    "status": "DATED_REFERENCE_TOTALS_MATCH_ONLY",
+    "totals": {
+      "DEC26_C": 324124,
+      "DEC26_P": 96996,
+      "NOV26_C": 102646,
+      "NOV26_P": 64288
+    }
+  },
+  "execution_enabled": false,
+  "expected_incremental_cost_usd": "0",
+  "final_capture_local_utc": "2026-10-13T23:59:39.140092+00:00",
+  "final_quote_provider_receive_utc": "2026-10-13T23:59:39.337358+00:00",
+  "full_suite": {
+    "disposable_postgres_redis": true,
+    "errors": 0,
+    "exit_code": 0,
+    "failures": 0,
+    "seconds": 59.906,
+    "skipped": 0,
+    "tests": 2411,
+    "xml_sha256": "da1cfaf3a217f4b5edee43a3053ca455209c7ff2d8f198463adf5c507f6f2e63"
+  },
+  "genuine_replay_byte_identical": true,
+  "genuine_replay_runs": 2,
+  "genuine_replay_sha256": "787b98c957ba27cbf60ab2213f0c91bddfc4cc9e548f618dfcbbd1604ab40a9f",
+  "native_manifest_hashes": [
+    {
+      "approval_eligible": false,
+      "bytes": 32848177,
+      "checkpoint": {
+        "closed_ns": 1791933239062142000,
+        "replay_completed": true
+      },
+      "evidence_kind": "AUTHENTIC_LIVE_CAPTURE",
+      "execution_eligible": false,
+      "gil_enabled": false,
+      "production_registered": false,
+      "publication_eligible": false,
+      "quality": {
+        "errors": [],
+        "quarantined": false
+      },
+      "raw_sha256": "020c7a743a1f8ed971760248f03ef18b3cfbb9e15d427a6f2b5ee6cde1e75735",
+      "record_count": 105589,
+      "schema": "definition",
+      "scope_sha256": "12f70d5c919bffbe5ad3aa5299a8d6e089479db07af5727c41d3d942933a61e4",
+      "source_filename": "records.sealed",
+      "source_format": "framed-original-DBN-record-bytes",
+      "version": "native-live-journal-v1"
+    },
+    {
+      "approval_eligible": false,
+      "bytes": 3276545,
+      "checkpoint": {
+        "closed_ns": 1791933239062142000,
+        "replay_completed": true
+      },
+      "evidence_kind": "AUTHENTIC_LIVE_CAPTURE",
+      "execution_eligible": false,
+      "gil_enabled": false,
+      "production_registered": false,
+      "publication_eligible": false,
+      "quality": {
+        "errors": [],
+        "quarantined": false
+      },
+      "raw_sha256": "a9eccbf199e47277caeade18a391296616949afc10c8e4bc6870c4669798661c",
+      "record_count": 32415,
+      "schema": "mbp-1",
+      "scope_sha256": "12f70d5c919bffbe5ad3aa5299a8d6e089479db07af5727c41d3d942933a61e4",
+      "source_filename": "records.sealed",
+      "source_format": "framed-original-DBN-record-bytes",
+      "version": "native-live-journal-v1"
+    },
+    {
+      "approval_eligible": false,
+      "bytes": 56597545,
+      "checkpoint": {
+        "closed_ns": 1791933239062142000,
+        "replay_completed": true
+      },
+      "evidence_kind": "AUTHENTIC_LIVE_CAPTURE",
+      "execution_eligible": false,
+      "gil_enabled": false,
+      "production_registered": false,
+      "publication_eligible": false,
+      "quality": {
+        "errors": [],
+        "quarantined": false
+      },
+      "raw_sha256": "426e23064df8e190e2a121820f9f88a9193be71f5b7eef4b5ebe896f0ddd0315",
+      "record_count": 608797,
+      "schema": "statistics",
+      "scope_sha256": "12f70d5c919bffbe5ad3aa5299a8d6e089479db07af5727c41d3d942933a61e4",
+      "source_filename": "records.sealed",
+      "source_format": "framed-original-DBN-record-bytes",
+      "version": "native-live-journal-v1"
+    },
+    {
+      "approval_eligible": false,
+      "bytes": 6381713,
+      "checkpoint": {
+        "closed_ns": 1791935979140092000,
+        "replay_completed": true
+      },
+      "evidence_kind": "AUTHENTIC_LIVE_CAPTURE",
+      "execution_eligible": false,
+      "gil_enabled": false,
+      "production_registered": false,
+      "publication_eligible": false,
+      "quality": {
+        "errors": [],
+        "quarantined": false
+      },
+      "raw_sha256": "e4b6a660e1e242a4165cf8045c401b7f6e9e84c6e8e4b1304fbb45d84d9691f1",
+      "record_count": 33923,
+      "schema": "definition",
+      "scope_sha256": "d896c294b9390e1587da831300b3a1be1aa77ccc0ab3a5c61d53cd9714e7a698",
+      "source_filename": "records.sealed",
+      "source_format": "framed-original-DBN-record-bytes",
+      "version": "native-live-journal-v1"
+    },
+    {
+      "approval_eligible": false,
+      "bytes": 2801549,
+      "checkpoint": {
+        "closed_ns": 1791935979140092000,
+        "replay_completed": true
+      },
+      "evidence_kind": "AUTHENTIC_LIVE_CAPTURE",
+      "execution_eligible": false,
+      "gil_enabled": false,
+      "production_registered": false,
+      "publication_eligible": false,
+      "quality": {
+        "errors": [],
+        "quarantined": false
+      },
+      "raw_sha256": "1228288ca5c3aa865726fc81b97565571f1ca76becfcdf66ed4e8b1a4f08c1b8",
+      "record_count": 27252,
+      "schema": "mbp-1",
+      "scope_sha256": "d896c294b9390e1587da831300b3a1be1aa77ccc0ab3a5c61d53cd9714e7a698",
+      "source_filename": "records.sealed",
+      "source_format": "framed-original-DBN-record-bytes",
+      "version": "native-live-journal-v1"
+    },
+    {
+      "approval_eligible": false,
+      "bytes": 3108389,
+      "checkpoint": {
+        "closed_ns": 1791935979140092000,
+        "replay_completed": true
+      },
+      "evidence_kind": "AUTHENTIC_LIVE_CAPTURE",
+      "execution_eligible": false,
+      "gil_enabled": false,
+      "production_registered": false,
+      "publication_eligible": false,
+      "quality": {
+        "errors": [],
+        "quarantined": false
+      },
+      "raw_sha256": "1cebf3eead2c894921b3604de5874bac41a44df3c9d4b3d78ca5846af366eeae",
+      "record_count": 30582,
+      "schema": "statistics",
+      "scope_sha256": "d896c294b9390e1587da831300b3a1be1aa77ccc0ab3a5c61d53cd9714e7a698",
+      "source_filename": "records.sealed",
+      "source_format": "framed-original-DBN-record-bytes",
+      "version": "native-live-journal-v1"
+    }
+  ],
+  "paid_acquisitions": 0,
+  "preservation": {
+    "Phase6_all_tracked_changes": [],
+    "Phase6_all_tracked_files_checked": 601,
+    "Phase6_changes": [],
+    "Phase6_source_test_files_checked": 409,
+    "checkouts": {
+      "frozen_H1": {
+        "head": "f1de9d46cb5f3458726b81cfbc9f1d0dfba73f35",
+        "tracked_clean": true
+      },
+      "phase6": {
+        "head": "43d80956dcc5670916863326b7cc91b48887bc0d",
+        "tracked_clean": true
+      }
+    },
+    "targeted": {
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0,
+      "tests": 96,
+      "xml_sha256": "3dbe5e9889675d6a17c8090f300cdaa4d945c9b3768f33e3d887947e615a2583"
+    }
+  },
+  "replay_input_sha256": "41d715bab907ca53e5dea266421516f9f612e9e976d9c8c636761f1fda961bd4",
+  "schema": "monatise-phase7-quote-chain-validation-v1",
+  "source_hashes_sha256": "3843d3cf11b7be897aea9225beb5c86d57dd00cc74c7d07a9621f08bc39af1de",
+  "spot_mapping": null,
+  "starting_commit": "2b50d54a20dd5c05d776c93aaeb88db58dbd90de",
+  "targeted": {
+    "errors": 0,
+    "failures": 0,
+    "skipped": 0,
+    "tests": 96,
+    "xml_sha256": "3dbe5e9889675d6a17c8090f300cdaa4d945c9b3768f33e3d887947e615a2583"
+  },
+  "whole_exchange_chain_certified": false
+}
