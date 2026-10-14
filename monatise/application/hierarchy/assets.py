@@ -593,19 +593,14 @@ class AssetHierarchyAnalysis:
                     else None
                 )
                 if layer:
-                    assessment = FibonacciLiquidityEngine().assess(
-                        FibonacciRequest(
-                            layer.market,
-                            layer.structure,
-                            layer.liquidity,
-                            layer.zones,
-                            layer.reclaim,
-                        )
-                    )
+                    assessment = evaluator._fibonacci_assessment(layer)
                     fib[tf] = {
                         "has_valid_anchor": assessment.has_valid_anchor,
                         "direction": assessment.direction.value,
                     }
+                    if "gold_profile" in assessment.metadata:
+                        fib[tf]["profile"] = assessment.metadata["gold_profile"]
+                        fib[tf]["target_anchor_eligible_timeframe"] = tf == "1h"
             result["fibonacci"] = fib
             from monatise.engines.order_flow import (
                 OrderFlowIntelligenceEngine,

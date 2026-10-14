@@ -150,6 +150,16 @@ class _MarketAwareEngine:
 
 
 class GoldLayerEvaluator(HierarchyLayerEvaluator):
+    def _fibonacci_assessment(self, layer):
+        from monatise.application.gold_fibonacci import assess_gold_fibonacci
+
+        return assess_gold_fibonacci(layer, require_h1=False)
+
+    def _target_candidates(self, layer, **kwargs):
+        from monatise.application.gold_fibonacci import gold_layer_candidates
+
+        return gold_layer_candidates(layer, **kwargs)
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         for attr in (
@@ -214,6 +224,10 @@ class GoldLayerEvaluator(HierarchyLayerEvaluator):
 
     def _layer_evidence(self, layer):
         evidence = super()._layer_evidence(layer)
+        if layer.market.interval == "1h":
+            from monatise.application.gold_fibonacci import PROFILE
+
+            evidence["gold_fibonacci_profile"] = dict(PROFILE)
         if layer.market.interval == "15m":
             direction = (
                 "long"

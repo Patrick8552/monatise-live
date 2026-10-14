@@ -1,0 +1,79 @@
+{
+  "Gold_target_anchor_timeframe": "1h",
+  "base": "d6be0b1ff69bd88ee88fcd76c9020602dc686171",
+  "branch": "codex/gold-tradingview-default-fib",
+  "changed_existing_files": [
+    "monatise/application/gold_analysis.py",
+    "monatise/application/hierarchy/assets.py",
+    "monatise/application/hierarchy/evaluator.py",
+    "monatise/application/target_evidence.py"
+  ],
+  "chart_settings": {
+    "changed_this_update": false,
+    "depth": 10,
+    "deviation": 3,
+    "reverse": false
+  },
+  "extensions": [
+    1,
+    1.618,
+    2.618,
+    3.618,
+    4.236
+  ],
+  "frozen_F0_remains_historical_comparison": true,
+  "frozen_H1_source_preserved": true,
+  "full_suite": {
+    "disposable_postgres_redis": true,
+    "errors": 0,
+    "exit_code": 0,
+    "failures": 0,
+    "seconds": 64.852,
+    "skipped": 0,
+    "tests": 2435,
+    "xml_sha256": "211b46da0cad0423d11e858d8771297eeb8149f8c8f3615aeb2a3f7e4a07bb2c"
+  },
+  "non_Gold_shared_request_defaults_preserved": true,
+  "policy_id": "gold-tradingview-default-ratios-v1",
+  "preserved_existing_file_count": 638,
+  "ratio_adoption_not_exact_Pine_ZigZag_or_chart_price_parity": true,
+  "retracements": [
+    0.236,
+    0.382,
+    0.5,
+    0.618,
+    0.786
+  ],
+  "safety": {
+    "deployments": 0,
+    "live_management_changes": 0,
+    "main_merges": 0,
+    "orders": 0,
+    "paid_data_acquisitions": 0
+  },
+  "saved_Gold_workflow_applied": true,
+  "skill_update_hashes": {
+    "SKILL.md": {
+      "original_sha256": "6b0a731167a696a04ce85489764c6ea3cd1d119fef024252731f60bdf0db6c6a",
+      "updated_sha256": "eee8579c8805f9fc78bff9bc6af14a3a42c26b71f9678d389c6623116fda5b4e"
+    },
+    "references/analytical-contract.md": {
+      "original_sha256": "f0f11776d1b557ad2e8391eb13a0f20de224e7abefbc6ae7cd02ae9ab7073d2a",
+      "updated_sha256": "7bcf9cf59ed02f7bd2b586ade52758747949bbbdbddad46407f9ef5c0cae9dca"
+    },
+    "references/monatise-framework.md": {
+      "original_sha256": "f91bccf4b8fc4fd0a75880497b175269239964388f1e0e5597b6371f3e6d8bd1",
+      "updated_sha256": "defb22296a178fc928976d07d31ed235b57b324ef9d6ea2069658968711e4b0e"
+    }
+  },
+  "skill_validator": "Skill is valid!",
+  "source_file_sha256": {
+    "docs/gold-tradingview-default-fibonacci.md": "525981daa11036136c84b44227b0ce1a17e60c5a733b85215615b98d6d65f828",
+    "monatise/application/gold_analysis.py": "9244ac8eae14f30902698e9dfd6647f83a9cb40b7f183612f41ceacc4b628ba5",
+    "monatise/application/gold_fibonacci.py": "c9ce6efb73f0442fbca4487367ffa7e3ae41123e6934605445a0db614e1b3e60",
+    "monatise/application/hierarchy/assets.py": "88eff3e664ccee815733d836a6eb041efbf68b24205030ddd4d31ed9675a104a",
+    "monatise/application/hierarchy/evaluator.py": "3cd127d9851c2d1b7ce507b1149213e1633bb567faed013198f71b6f309c5663",
+    "monatise/application/target_evidence.py": "e8c34c2137d893d2625145dadbefcf3a9f0282ca72131dd47ec98170303ef40a",
+    "tests/test_gold_tradingview_fibonacci.py": "76179d4b56cc05c8e68135087c130a8bde9e98936ae056a3c7607dfae4d0dfd2"
+  }
+}

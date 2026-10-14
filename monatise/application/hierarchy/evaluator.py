@@ -111,6 +111,16 @@ class HierarchyLayerEvaluator:
         self.adapter = CanonicalEvidenceAdapter()
         self._state: dict[str, _SymbolState] = {}
 
+    def _target_candidates(self, layer, **kwargs):
+        return crypto_layer_candidates(layer, **kwargs)
+
+    def _fibonacci_assessment(self, layer):
+        from monatise.engines.fibonacci_liquidity import FibonacciLiquidityEngine, FibonacciRequest
+
+        return FibonacciLiquidityEngine().assess(FibonacciRequest(
+            layer.market, layer.structure, layer.liquidity, layer.zones, layer.reclaim,
+        ))
+
     def watching(self, symbol: str) -> bool:
         setup = self._state.get(symbol.upper(), _SymbolState()).setup_context
         return setup is not None and setup.state in {SetupState.WATCHING, SetupState.SETUP_CONFIRMED}
@@ -221,7 +231,7 @@ class HierarchyLayerEvaluator:
                             for tf, snap in state.snapshots.items():
                                 evidence_layer = self._analyse_structure(snap, state.regime_assessment)
                                 if evidence_layer is not None:
-                                    candidates.extend(crypto_layer_candidates(evidence_layer, timeframe=tf, observed=snap.latest_finalized.scheduled_close_time, provider=f"monatise_{self.asset_route}"))
+                                    candidates.extend(self._target_candidates(evidence_layer, timeframe=tf, observed=snap.latest_finalized.scheduled_close_time, provider=f"monatise_{self.asset_route}"))
                             target_plan = build_plan(candidates=candidates, direction=state.trigger_context.direction, entry=risk.reference_entry, stop=risk.final_stop, now=evaluated_at, expires_at=risk.expires_at, config=self.multi_tp)
                             risk = replace(risk, target_liquidity=float(target_plan.targets[0].price), calculated_reward_to_risk=float(target_plan.targets[0].rr), minimum_reward_to_risk=float(target_plan.minimum_rr))
                         bundle = EvidenceBundle.create(
