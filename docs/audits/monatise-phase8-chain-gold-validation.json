@@ -1,0 +1,123 @@
+{
+  "basis_status": "DEFERRED_NOT_CERTIFIED",
+  "branch": "codex/monatise-phase8-chain-gold-certification",
+  "default_parity": {
+    "market_certification": false,
+    "sha256": "aaf39a7c2511566979581c2f17ee36c2cbcbaa9bbd8059c6ba9a06dc3046762d",
+    "source_versions": [
+      "22a77940f4dad84af1046d4fdb63bd3e04a7daab",
+      "f1de9d46cb5f3458726b81cfbc9f1d0dfba73f35"
+    ],
+    "synthetic_default_outputs_byte_identical": true
+  },
+  "frozen_H1": {
+    "errors": 0,
+    "failures": 0,
+    "skipped": 0,
+    "tests": 53,
+    "xml_sha256": "832d72f24f10f9edaf164667a630d21ba27012ae2be305062b1a641f474d9a06"
+  },
+  "full_suite": {
+    "disposable_postgres_redis": true,
+    "errors": 0,
+    "exit_code": 0,
+    "failures": 0,
+    "seconds": 63.756,
+    "skipped": 0,
+    "tests": 2427,
+    "xml_sha256": "3c4393919d2bd6aab259d97213acbb4ba2f8392381cf3511a2bb6b6e55d65270"
+  },
+  "native_replay": {
+    "OI_unknown_reasons": {
+      "existing_four_day_OI_reference_age_gate": 10,
+      "no_OI_in_captured_window_is_not_evidence_of_zero_or_nonpublication": 4370
+    },
+    "native_replay_byte_identical": true,
+    "native_replay_sha256": "31679b184389e494dc069ea5353c804549b0a1257c9c5a445ec1278dfac8bef8",
+    "pair_reasons": {
+      "option_or_underlying_quote_ineligible": 4562,
+      "option_underlying_timestamp_mismatch_existing_1_second_gate": 391
+    },
+    "quote_reasons": {
+      "invalid_spread_existing_gate": 1570,
+      "no_observed_ask": 1054,
+      "no_observed_bid": 682,
+      "no_observed_quote_record": 1269,
+      "one_sided_market": 1326,
+      "stale_quote_existing_30_second_gate": 559
+    },
+    "source_bundle_sha256": "119d3eb6e32ee072b8460baaee8adfe57be9ee09ff79614d1a34abb1f5c14d44"
+  },
+  "paid_acquisitions": 0,
+  "preservation": {
+    "baseline_changes": [],
+    "baseline_files": 625,
+    "checkouts": {
+      "Phase6": {
+        "head": "43d80956dcc5670916863326b7cc91b48887bc0d",
+        "tracked_clean": true
+      },
+      "Phase7": {
+        "head": "22a77940f4dad84af1046d4fdb63bd3e04a7daab",
+        "tracked_clean": true
+      },
+      "frozenH1": {
+        "head": "f1de9d46cb5f3458726b81cfbc9f1d0dfba73f35",
+        "tracked_clean": true
+      }
+    },
+    "frozen_H1_source_files": {
+      "monatise/research/gold_fib/__init__.py": "91efe75d5160aa6f623d2a7009f173b6f5c8a00172b3864753340e3f6df82533",
+      "monatise/research/gold_fib/capture.py": "ed8221fde991e68053442fdcd9dad409b5fc129c1931c55086bba3d79ca5a752",
+      "monatise/research/gold_fib/diagnostics.py": "513d7234092cda10c2d509d4fa5bfbb18c28aca93a31b9c8eb94ee4779191e62",
+      "monatise/research/gold_fib/episode.py": "99b5349d971ccad1c213b1e681c69c8b80713d7b3222bc0ae1baaecdeadfc254",
+      "monatise/research/gold_fib/f0.py": "7a6e7d40a7d51d2e72ef0a12800316ecd2138da481857806355affc5327eca3a",
+      "monatise/research/gold_fib/models.py": "263810fca9989f4dbde73b6efc99b9e69201cb892bd2e93afcf59279a74971cf",
+      "monatise/research/gold_fib/replay.py": "2cc05ed44cb129d8962caf0a48602dd5b88ba2ce68e3056a6d8838188e1ed4ad"
+    }
+  },
+  "production_modified": false,
+  "safety": {
+    "actual_billing_reconciled": false,
+    "approvals": 0,
+    "deployments": 0,
+    "expected_subscription_incremental_cost": 0,
+    "orders": 0,
+    "paid_acquisitions": 0,
+    "production_changes": 0,
+    "routing_changes": 0
+  },
+  "scope": {
+    "canonical_Gold_pure_components_invoked": true,
+    "catalogued_active_options": 40932,
+    "declared_scope": 7830,
+    "frozen_selector_invoked": true,
+    "full_surface_certified": false,
+    "genuine_full_offline_graph_invoked": false,
+    "normalized": 7830,
+    "production_engine_invoked": false,
+    "spot_mapping": null,
+    "whole_exchange_chain_certified": false
+  },
+  "source_bundle_sha256": "119d3eb6e32ee072b8460baaee8adfe57be9ee09ff79614d1a34abb1f5c14d44",
+  "source_request_truncated": true,
+  "spot_replay": {
+    "H1_anchor_reason": "H1_EPISODE_UNAVAILABLE:latest_event_unresolvable",
+    "H1_parent_snapshot_sha256": "8d2c0c2e1a594f0ede066407a66e7a60b5ea37cb6f754dc29ca7feecc71c9645",
+    "M15_reason": "pattern_crosses_gap_or_session_boundary",
+    "archive_sha256": "10941a4933c5010c22b6d645b7ba7e5dafae18163d5aec6fbf9ce8f9845e119f",
+    "broker_certificate": false,
+    "byte_identical": true,
+    "genuine_chart_observations": 20,
+    "sha256": "9eb80f8ab437f8ba6048440e91e71c6f8a7fe8f23d636f0088aa6e9018c5fd90",
+    "technical_certificate": "UNQUALIFIED"
+  },
+  "starting_commit": "22a77940f4dad84af1046d4fdb63bd3e04a7daab",
+  "targeted": {
+    "errors": 0,
+    "failures": 0,
+    "skipped": 0,
+    "tests": 112,
+    "xml_sha256": "974da8f496bad22f64bdf56a1b6c02aaf866e327360f13c25fc59c54bb4bf3e7"
+  }
+}
