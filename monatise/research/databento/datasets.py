@@ -13,7 +13,7 @@ from monatise.research.databento.acquisition import canonical_hash
 
 EXTENSION_DATASETS = frozenset({"XNAS.ITCH", "XNYS.PILLAR", "OPRA.PILLAR",
                                "XCBF.PITCH", "XEUR.EOBI", "IFUS.IMPACT"})
-CME_SCHEMAS = frozenset({"definition", "statistics", "status", "ohlcv-1m", "ohlcv-1h",
+CME_SCHEMAS = frozenset({"definition", "statistics", "status", "ohlcv-1s", "ohlcv-1m", "ohlcv-1h",
                         "trades", "mbp-1", "mbp-10", "mbo"})
 PRODUCTS = {"GC": ("XCEC", "COMEX", "GC.FUT"),
             "OG": ("XCEC", "COMEX", "OG.OPT"),

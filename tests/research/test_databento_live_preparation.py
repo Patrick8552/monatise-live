@@ -100,7 +100,7 @@ def test_native_GC_contradictions_rejected(changes):
         publishers={1:('GLBX.MDP3','GLBX')},as_of_ns=NOW_NS)
 
 
-@pytest.mark.parametrize('changes',[{'schemas':('trades','mbo')},{'schemas':('definition','mbp-10')},
+@pytest.mark.parametrize('changes',[{'schemas':('trades','mbo')},{'schemas':('definition','unreviewed-schema')},
     {'contracts':()},{'duration_seconds':True},{'duration_seconds':86401},{'maximum_records':0},
     {'maximum_bytes':0},{'publishers':((1,'WRONG','GLBX'),)},{'session_review_reference':''}])
 def test_scope_expensive_broad_or_invalid_inputs_rejected(changes):

@@ -12,6 +12,7 @@ from monatise.research.institutional.native_index import validate as index_defin
 from monatise.research.databento.datasets import DatasetCapability
 
 SCHEMAS=('definition','trades','mbp-1')
+SUPPORTED_SCHEMAS=SCHEMAS+('mbp-10','ohlcv-1s','ohlcv-1m','ohlcv-1h','statistics','status')
 SAFETY=dict(execution_eligible=False,publication_eligible=False,approval_eligible=False,
             production_registered=False,gil_enabled=False)
 
@@ -59,16 +60,8 @@ def native_definition(record, *, capability,publishers,as_of_ns):
     if product in {'ES','NQ'}:
         return index_definition(record,capability=capability,publishers=publishers,as_of_ns=as_of_ns)
     if product!='GC':raise ValueError('only_reviewed_GC_ES_NQ_native_futures_supported')
-    if (str(record.unit_of_measure)!='TRYOZ' or record.main_fraction!=255
-            or str(record.instrument_class)!='F' or str(record.security_type)!='FUT'
-            or record.leg_count!=0 or str(record.user_defined_instrument)!='N'):
-        raise ValueError('native_GC_outright_terms_required')
-    tick=number(record.min_price_increment)/10**9
-    size=number(record.unit_of_measure_qty)/10**9
-    display=number(record.display_factor,positive=True)/10**9
-    amount=number(record.min_price_increment_amount,positive=True)/10**9
-    if tick!=Decimal('.1') or size!=100 or amount/display!=tick*size:
-        raise ValueError('native_GC_economics_contradictory')
+    from monatise.adapters.databento_identity import native_gc_economics
+    tick,size=native_gc_economics(record)
     return definition(record,capability=capability,publishers=publishers,as_of_ns=as_of_ns,
         convention=EconomicConvention('GC',tick,size,'USD_PER_TRYOZ','native-CME-live-GC-v1'))
 
@@ -88,6 +81,7 @@ class LiveScope:
     maximum_records: int=100000
     maximum_bytes: int=32*1024**2
     clock_review: ClockReview|None=None
+    session_drain_seconds: int=0
 
     def __post_init__(self):
         timestamp_ns(self.start_ns);timestamp_ns(self.session_end_ns)
@@ -95,13 +89,14 @@ class LiveScope:
                 or len({c.identity for c in self.contracts})!=len(self.contracts)
                 or any(c.asset_class!='futures' or c.metadata.product not in {'GC','ES','NQ'} for c in self.contracts)
                 or not isinstance(self.schemas,tuple) or not self.schemas or len(set(self.schemas))!=len(self.schemas)
-                or not set(self.schemas)<=set(SCHEMAS) or 'definition' not in self.schemas
+                or not set(self.schemas)<=set(SUPPORTED_SCHEMAS) or 'definition' not in self.schemas
                 or not self.session_review_reference
                 or not isinstance(self.capability,DatasetCapability)
                 or not isinstance(self.publishers,tuple) or not self.publishers
                 or len({row[0] for row in self.publishers})!=len(self.publishers)
                 or any(tuple(row[1:])!=('GLBX.MDP3','GLBX') for row in self.publishers)
                 or any(c.metadata.publisher_id not in {row[0] for row in self.publishers} for c in self.contracts)
+                or type(self.session_drain_seconds) is not int or not 0<=self.session_drain_seconds<=120
                 or type(self.duration_seconds) is not int or not 1<=self.duration_seconds<=86400
                 or type(self.heartbeat_seconds) is not int or not 1<=self.heartbeat_seconds<=30
                 or type(self.maximum_market_age_ns) is not int or not 0<self.maximum_market_age_ns<=30*10**9
@@ -119,7 +114,7 @@ class LiveScope:
         timestamp_ns(now_ns)
         lower,upper=self.clock_bounds(now_ns)
         if (not self.start_ns<=now_ns<self.session_end_ns or now_ns-self.start_ns>24*3600*10**9
-                or now_ns+self.duration_seconds*10**9+max(0,upper)>self.session_end_ns
+                or now_ns+self.duration_seconds*10**9+max(0,upper)>self.session_end_ns+self.session_drain_seconds*10**9
                 or not 0<=now_ns-self.capability.observed_at_ns<=300*10**9):
             raise ValueError('current_reviewed_session_and_bounded_replay_required')
         for schema in self.schemas:self.capability.require(schema,at_ns=now_ns)

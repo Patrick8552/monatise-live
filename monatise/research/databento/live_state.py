@@ -50,17 +50,35 @@ class Cursor:
 
 class FeedState:
     def __init__(self,scope, *, checkpoints=None,recovery_review_reference=None):
-        self.scope=scope;self.contracts={c.metadata.instrument_id:c for c in scope.contracts}
-        self.started={};self.completed=set();self.acknowledged=set();self.last_message={}
+        self.scope=scope;self.clock_review=scope.clock_review;self.clock_history=[scope.clock_review] if scope.clock_review else [];self.contracts={c.metadata.instrument_id:c for c in scope.contracts}
+        self.interval_watermarks={};self.started={};self.completed=set();self.acknowledged=set();self.last_message={}
         self.latest={};self.quotes={};self.verified_definitions=set();self.quality_reasons=set();self.counts=defaultdict(int)
-        self.cursors={};self.normalized=[]
+        self.cursors={};self.normalized=[];self.component_reasons=defaultdict(set)
         if checkpoints and not recovery_review_reference:raise ValueError('explicit_recovery_review_required')
         for schema in scope.schemas:
             for iid in self.contracts:
                 key=f'{schema}:{iid}'
                 self.cursors[key]=Cursor.recover(checkpoints[key]) if checkpoints and key in checkpoints else Cursor()
 
+    def update_clock_review(self,review):
+        from .live_models import ClockReview
+        if (not isinstance(review,ClockReview) or len(self.clock_history)>=4096 or
+                self.clock_review is not None and not self.clock_review.observed_at_ns<review.observed_at_ns<self.clock_review.expires_ns):
+            raise ValueError('ordered_overlapping_clock_review_required')
+        self.clock_history.append(review);self.clock_review=review
+
+    def review_at(self,capture_ns):
+        if not self.clock_history:return None
+        for review in reversed(self.clock_history):
+            if review.observed_at_ns<=capture_ns<review.expires_ns:return review
+        raise ValueError('capture_has_no_contemporaneous_clock_review')
+
     def quarantine(self,reason):self.quality_reasons.add(reason)
+
+    def reject_component(self,schema,record,reason):
+        iid=getattr(record,'instrument_id',None)
+        if iid in self.contracts:self.component_reasons[(schema,iid)].add(reason)
+        else:self.quarantine(reason)
 
     def checkpoint(self):return {k:c.snapshot() for k,c in sorted(self.cursors.items())}
 
@@ -82,6 +100,18 @@ class FeedState:
             code=int(record.code)
             if code==int(dbn.SystemCode.HEARTBEAT):return None
             if code==int(dbn.SystemCode.SUBSCRIPTION_ACK):self.acknowledged.add(schema);return None
+            if code==int(dbn.SystemCode.END_OF_INTERVAL):
+                from .candles import WIDTHS
+                event=timestamp_ns(record.ts_event)
+                review=self.review_at(capture_ns)
+                _,upper=review.bounds(capture_ns) if review else (0,0)
+                width=WIDTHS.get(schema[6:]) if schema.startswith('ohlcv-') else None
+                if (width is None or schema not in self.acknowledged or event%width or
+                        event<self.interval_watermarks.get(schema,0) or event>capture_ns+upper):
+                    self.quarantine('invalid_native_interval_watermark');return None
+                self.interval_watermarks[schema]=event
+                self.counts['end_of_interval:'+schema]+=1
+                return None
             if code==int(dbn.SystemCode.REPLAY_COMPLETED):
                 if schema not in self.acknowledged or schema in self.completed:
                     self.quarantine('unexpected_replay_watermark');return None
@@ -110,11 +140,15 @@ class FeedState:
         iid=getattr(record,'instrument_id',None);contract=self.contracts.get(iid)
         if contract is None:raise ValueError('unrequested_instrument')
         event=timestamp_ns(record.ts_event);received=timestamp_ns(getattr(record,'ts_recv',record.ts_event))
-        lower,upper=self.scope.clock_bounds(capture_ns)
+        review=self.review_at(capture_ns)
+        lower,upper=review.bounds(capture_ns) if review else (0,0)
         if (record.publisher_id!=contract.metadata.publisher_id or not event<=received<=capture_ns+upper
                 or not (contract.metadata.event_ns if schema=='definition' else self.scope.start_ns)<=event<self.scope.session_end_ns
-                or capture_ns+max(0,upper)>=self.scope.session_end_ns or int(getattr(record,'flags',0))&(4|8|32)):
+                or capture_ns+max(0,upper)>=self.scope.session_end_ns+self.scope.session_drain_seconds*10**9 or int(getattr(record,'flags',0))&(4|8|32)):
             raise ValueError('live_record_identity_clocks_session_or_quality_rejected')
+        if schema.startswith('ohlcv-'):
+            from .candles import WIDTHS
+            if event+WIDTHS[schema[6:]]<=self.interval_watermarks.get(schema,0):raise ValueError('bar_after_native_interval_watermark')
         key=f'{schema}:{iid}';previous=self.cursors[key]
         cursor=Cursor(previous.event_ns,list(previous.hashes_at_event),previous.replay_prefix,previous.skipped)
         if schema=='definition':
@@ -123,12 +157,21 @@ class FeedState:
             signature=lambda c:(c.identity,c.tick_size,c.multiplier,c.price_unit,c.metadata.native_terms)
             if signature(value)!=signature(contract):raise ValueError('contract_roll_or_definition_economics_changed')
             result=dict(contract=encode(value),record_sha256=native_hash)
-        else:
+        elif schema in {'trades','mbp-1','mbp-10'}:
             result=encode(AdvancedAdapters(identity=contract.metadata,enabled_schemas=(schema,)).normalize(schema,record))
+        else:
+            from monatise.research.institutional.normalize import observation
+            if schema=='statistics' and isinstance(record,dbn.StatMsg) and record.stat_type!=dbn.StatType.OPEN_INTEREST:
+                self.counts['unsupported_statistics_preserved_raw']+=1
+                return None
+            result=encode(observation(record,schema=schema,contract=contract,archive_sha256=native_hash,
+                ordinal=ordinal,retrieval_ns=capture_ns,admission_ns=capture_ns,
+                evidence_kind='AUTHENTIC_LIVE_CAPTURE',enabled_schemas=self.scope.schemas,clock_review=review))
         accepted=cursor.accept(event,native_hash)
         if schema=='definition':self.verified_definitions.add(iid)
         else:
-            self.latest[(schema,iid)]=received
+            from .candles import WIDTHS
+            self.latest[(schema,iid)]=event+WIDTHS[schema[6:]] if schema.startswith('ohlcv-') else received
             if schema=='mbp-1':self.quotes[iid]=result['payload'][0]
         self.cursors[key]=cursor
         if not accepted:
@@ -136,7 +179,7 @@ class FeedState:
         self.counts[schema]+=1
         result=dict(result,capture_ns=capture_ns,native_ordinal=ordinal,
                     capture_utc_bounds_ns=(capture_ns+lower,capture_ns+upper),
-                    clock_review_sha256=digest(self.scope.clock_review) if self.scope.clock_review else None,
+                    clock_review_sha256=digest(review) if review else None,
                     availability_basis='ACTUAL_LOCAL_LIVE_CAPTURE',context_only=True,**SAFETY)
         self.normalized.append(result)
         if len(self.normalized)>2048:self.normalized.pop(0)
@@ -144,26 +187,49 @@ class FeedState:
 
     def health(self,now_ns):
         timestamp_ns(now_ns)
-        try:lower,upper=self.scope.clock_bounds(now_ns)
+        try:lower,upper=self.clock_review.bounds(now_ns) if self.clock_review else (0,0)
         except ValueError:
             self.quarantine('independent_clock_review_expired_or_invalid');lower=upper=0
         stalled=[s for s in self.scope.schemas if now_ns-self.last_message.get(s,self.started.get(s,now_ns))>
                  (self.scope.heartbeat_seconds+10)*10**9]
+        from .candles import WIDTHS
+        def age_limit(schema):
+            return max(self.scope.maximum_market_age_ns,2*WIDTHS[schema[6:]]) if schema.startswith('ohlcv-') else self.scope.maximum_market_age_ns
         stale=[f'{s}:{i}' for s in self.scope.schemas if s!='definition' for i in self.contracts
-               if not 0<=now_ns+upper-self.latest.get((s,i),0)<=self.scope.maximum_market_age_ns]
+               if not 0<=now_ns+upper-self.latest.get((s,i),0)<=age_limit(s)]
         unusable_quotes=[i for i in self.contracts if 'mbp-1' in self.scope.schemas and (i not in self.quotes
             or self.quotes[i][0] is None or self.quotes[i][3] is None
             or self.quotes[i][0]==self.quotes[i][3] or min(self.quotes[i][1],self.quotes[i][4])<=0)]
-        ready=(not self.quality_reasons and not stalled and not stale and not unusable_quotes
+        ready=(not self.component_reasons and not self.quality_reasons and not stalled and not stale and not unusable_quotes
                and self.completed==set(self.scope.schemas) and self.verified_definitions==set(self.contracts)
                and now_ns+max(0,upper)<self.scope.session_end_ns)
+        components={}
+        for iid,contract in self.contracts.items():
+            streams={}
+            for schema in self.scope.schemas:
+                reasons=sorted(self.component_reasons.get((schema,iid),()))
+                if schema in stalled:reasons.append('connection_stalled')
+                if schema not in self.completed:reasons.append('replay_not_completed')
+                if iid not in self.verified_definitions:reasons.append('definition_unverified')
+                if f'{schema}:{iid}' in stale:reasons.append('stream_stale_or_missing')
+                if schema=='mbp-1' and iid in unusable_quotes:reasons.append('quote_unusable')
+                if now_ns+max(0,upper)>=self.scope.session_end_ns:reasons.append('session_ended')
+                # An uncertain transport fault remains fail-closed. Simple
+                # staleness/absence is independently attributed above.
+                reasons.extend(sorted(self.quality_reasons))
+                streams[schema]=dict(status='UNAVAILABLE' if reasons else 'CAPTURED_CONTEXT_FRESH',
+                    reasons=reasons,event_ns=self.cursors[f'{schema}:{iid}'].event_ns,
+                    provider_receive_ns=self.latest.get((schema,iid)),
+                    complete_exchange_continuity_certified=False,**SAFETY)
+            components[contract.metadata.raw_symbol]=streams
         return dict(status='CAPTURED_CONTEXT_FRESH' if ready else 'UNAVAILABLE',
-            quarantined=bool(self.quality_reasons or stalled or self.completed!=set(self.scope.schemas)
+            quarantined=bool(self.component_reasons or self.quality_reasons or stalled or self.completed!=set(self.scope.schemas)
                              or self.verified_definitions!=set(self.contracts)),reasons=sorted(self.quality_reasons),
-            stalled_connections=stalled,stale_market_inputs=stale,replay_completed=sorted(self.completed),
-            unusable_quote_instruments=unusable_quotes,
+            component_rejections={f'{s}:{i}':sorted(v) for (s,i),v in self.component_reasons.items()},
+            stalled_connections=stalled,stale_market_inputs=stale,replay_completed=sorted(self.completed),interval_watermarks=dict(self.interval_watermarks),
+            unusable_quote_instruments=unusable_quotes,component_health=components,
             definitions_verified=sorted(self.verified_definitions),counts=dict(self.counts),
             local_clock_offset_bounds_ns=(lower,upper),
-            clock_review_sha256=digest(self.scope.clock_review) if self.scope.clock_review else None,
+            clock_review_sha256=digest(self.clock_review) if self.clock_review else None,
             authenticated_clock_certified=False,
             complete_exchange_continuity_certified=False,context_only=True,**SAFETY)

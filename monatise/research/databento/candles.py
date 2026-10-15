@@ -15,7 +15,7 @@ from monatise.adapters.databento_identity import timestamp_ns
 from monatise.research.databento.acquisition import canonical_hash, json_document
 from monatise.research.databento.datasets import InstrumentMetadata
 
-WIDTHS = {"1m":60*10**9,"5m":300*10**9,"15m":900*10**9,
+WIDTHS = {"1s":10**9,"5s":5*10**9,"1m":60*10**9,"5m":300*10**9,"15m":900*10**9,
           "1h":3600*10**9,"4h":14400*10**9}
 
 
@@ -70,6 +70,7 @@ class HistoricalBar:
     source_hashes: tuple[str, ...]
     schema: str
     evidence_kind: str
+    clock_review: object | None = None
 
     def __post_init__(self):
         if not isinstance(self.identity, InstrumentMetadata) or self.identity.kind != "F":
@@ -78,7 +79,12 @@ class HistoricalBar:
         width = WIDTHS.get(self.timeframe)
         if not width or self.open_ns % width or self.close_ns != self.open_ns+width:
             raise ValueError("UTC-aligned fixed-duration bar required")
-        if not self.identity.event_ns <= self.open_ns < self.close_ns <= min(self.retrieval_ns,self.identity.expiration_ns):
+        upper=0
+        if self.clock_review is not None:
+            from .live_models import ClockReview
+            if not isinstance(self.clock_review,ClockReview):raise ValueError('reviewed_bar_capture_clock_required')
+            _,upper=self.clock_review.bounds(self.retrieval_ns)
+        if not self.identity.event_ns <= self.open_ns < self.close_ns <= min(self.retrieval_ns+upper,self.identity.expiration_ns):
             raise ValueError("forming or expired-contract candle")
         if (not isinstance(self.prices_fixed, tuple) or len(self.prices_fixed) != 4
                 or any(type(p) is not int or not -(2**63) < p < 2**63-1 for p in self.prices_fixed)
@@ -92,8 +98,8 @@ class HistoricalBar:
             raise ValueError("invalid OHLCV geometry or volume")
         if (not isinstance(self.source_hashes,tuple) or not self.source_hashes
                 or any(not re.fullmatch(r"[a-f0-9]{64}", h) for h in self.source_hashes)
-                or self.schema not in {"ohlcv-1m","ohlcv-1h","derived-ohlcv-v1"}
-                or self.evidence_kind not in {"AUTHENTIC_HISTORICAL_DOWNLOAD","ENGINEERING_SYNTHETIC"}):
+                or self.schema not in {"ohlcv-1s","ohlcv-1m","ohlcv-1h","derived-ohlcv-v1"}
+                or self.evidence_kind not in {"AUTHENTIC_HISTORICAL_DOWNLOAD","AUTHENTIC_LIVE_CAPTURE","ENGINEERING_SYNTHETIC"}):
             raise ValueError("explicit source provenance required")
 
     @property
@@ -101,9 +107,9 @@ class HistoricalBar:
         return canonical_hash(asdict(self))
 
 
-def normalize_candle(record, *, schema, identity, retrieval_ns, evidence_kind):
+def normalize_candle(record, *, schema, identity, retrieval_ns, evidence_kind, clock_review=None):
     import databento_dbn as dbn
-    expected = {"ohlcv-1m":("1m",dbn.RType.OHLCV_1M),"ohlcv-1h":("1h",dbn.RType.OHLCV_1H)}
+    expected = {"ohlcv-1s":("1s",dbn.RType.OHLCV_1S),"ohlcv-1m":("1m",dbn.RType.OHLCV_1M),"ohlcv-1h":("1h",dbn.RType.OHLCV_1H)}
     if schema not in expected:
         raise ValueError("historical candle schema unsupported")
     tf,rtype = expected[schema]
@@ -112,7 +118,7 @@ def normalize_candle(record, *, schema, identity, retrieval_ns, evidence_kind):
         raise ValueError("native OHLCV schema/contract mismatch")
     return HistoricalBar(identity,tf,record.ts_event,record.ts_event+WIDTHS[tf],
         (record.open,record.high,record.low,record.close),record.volume,retrieval_ns,
-        (hashlib.sha256(bytes(record)).hexdigest(),),schema,evidence_kind)
+        (hashlib.sha256(bytes(record)).hexdigest(),),schema,evidence_kind,clock_review)
 
 
 def quality(bars, *, identity, timeframe, start_ns, end_ns, as_of_ns, calendar):
@@ -175,7 +181,7 @@ def aggregate(bars, *, target, calendar):
             (children[0].prices_fixed[0],max(c.prices_fixed[1] for c in children),
              min(c.prices_fixed[2] for c in children),children[-1].prices_fixed[3]),
             sum(c.volume for c in children),max(c.retrieval_ns for c in children),
-            tuple(h for c in children for h in c.source_hashes),"derived-ohlcv-v1",category))
+            tuple(h for c in children for h in c.source_hashes),"derived-ohlcv-v1",category,max(children,key=lambda c:c.retrieval_ns).clock_review))
     return tuple(output),tuple(rejected)
 
 

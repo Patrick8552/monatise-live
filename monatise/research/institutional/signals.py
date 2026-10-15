@@ -138,7 +138,8 @@ async def broker_preview(*, asset, instrument, now_ns, evidence=None, positionin
         return dict(preview=encode(value),canonical=encode(canonical)) if include_canonical else value
     if evidence is None:
         return output(preview(asset=asset,broker_instrument=instrument,institutional_instrument=institutional_instrument,
-            now_ns=now_ns,mapping_status=mapping_status,reasons=('verified_broker_candles_unavailable',)))
+            now_ns=now_ns,mapping_status="NOT_EVALUATED",canonical={"decision":"INSUFFICIENT_MARKET_DATA"},
+            reasons=('verified_broker_candles_unavailable',)))
     try:
         if evidence.confirmation_ns is not None and evidence.confirmation_ns > now_ns:
             raise ValueError("confirmation_not_available_at_decision")

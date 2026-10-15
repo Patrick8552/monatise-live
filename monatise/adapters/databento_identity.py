@@ -134,3 +134,25 @@ class DatabentoPublisherPolicy:
                 raise ValueError("unsupported standard OG identity")
         else:
             raise ValueError("unsupported GC/OG contract class")
+
+
+def native_gc_economics(record):
+    """Pure native GC economic validation, shared by opt-in adapter and research.
+
+    Feed/publisher identity and point-in-time availability are separate checks.
+    DBN prices stay in economic units; display_factor is never a price rescaler.
+    """
+    from decimal import Decimal
+    if (str(record.asset)!='GC' or str(record.exchange)!='XCEC' or str(record.currency)!='USD'
+            or str(record.unit_of_measure)!='TRYOZ' or record.main_fraction!=255
+            or str(record.instrument_class)!='F' or str(record.security_type)!='FUT'
+            or record.leg_count!=0 or str(record.user_defined_instrument)!='N'
+            or str(record.security_update_action) not in {'A','M'}):
+        raise ValueError('native_GC_outright_terms_required')
+    fields=(record.min_price_increment,record.unit_of_measure_qty,record.display_factor,record.min_price_increment_amount)
+    if any(type(v) is not int or not 0<v<2**63-1 for v in fields):
+        raise ValueError('finite_native_GC_economics_required')
+    tick,size,display,amount=(Decimal(v)/10**9 for v in fields)
+    if tick!=Decimal('.1') or size!=100 or amount/display!=tick*size:
+        raise ValueError('native_GC_economics_contradictory')
+    return tick,size
