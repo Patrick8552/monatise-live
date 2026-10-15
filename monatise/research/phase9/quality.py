@@ -87,13 +87,32 @@ class QualityGate:
         self.latest, self.faults, self.quarantine = {}, {}, deque(maxlen=256)
         self.reviews = deque(maxlen=64)
         self.fault_event_ns = {}
+        self.fault_details = {}
         self.accepted = deque(maxlen=capacity)
 
     def reject(self, value, reason):
         self.faults[value.schema] = reason
         self.fault_event_ns[value.schema] = min(self.fault_event_ns.get(value.schema,value.event_ns),value.event_ns)
+        policy=self.schema_policies.get(value.schema,self.policy)
+        guard=self.guards.get(value.schema,self.guard)
+        if value.schema not in self.fault_details:
+            detail=dict(reason=reason,event_ns=value.event_ns,record_sha256=value.source.record_sha256,
+                policy_sha256=policy.sha256,anchor_ns=guard.anchor_ns,anchor_sha256=guard.anchor_sha256,
+                last_accepted_event_ns=self.last_events.get(value.schema),
+                anchor_to_record_ns=value.event_ns-guard.anchor_ns,rolling_increment_count=len(guard.changes),
+                corrupt_exchange_record_proven=False,automatic_admission=False)
+            if reason=='suspicious_price_discontinuity_requires_review':
+                from .calibration import prices
+                changes=list(guard.changes);center=median(changes) if changes else Decimal(0)
+                mad=median(abs(x-center) for x in changes) if changes else Decimal(0)
+                bound=max(self.contract.tick_size*policy.floor_ticks,center+policy.scale*Decimal('1.4826')*mad)
+                detail.update(bound_ticks=str(bound/self.contract.tick_size),
+                    excursion_ticks=str(max(abs(p-guard.last)/self.contract.tick_size for p in prices(value))),
+                    classification='PLAUSIBILITY_THRESHOLD_EXCEEDED',
+                    startup_anchor_bridge_review_required=not bool(changes))
+            self.fault_details[value.schema]=detail
         self.quarantine.append(dict(source=value.source, reason=reason, record_sha256=value.source.record_sha256,
-            raw_source_reference_required=True, policy_sha256=self.policy.sha256))
+            raw_source_reference_required=True, policy_sha256=policy.sha256))
         return dict(accepted=False, duplicate=False, reason=reason, **SAFETY)
 
     def ingest(self, value, *, now_ns):
@@ -158,8 +177,9 @@ class QualityGate:
         self.latest.pop(schema,None)
         self.faults.pop(schema)
         self.fault_event_ns.pop(schema,None)
+        old_detail=self.fault_details.pop(schema,None)
         self.reviews.append(dict(schema=schema,anchor_sha256=anchor_sha256,review_reference=review_reference,
-            prior_fault_sha256=expected_fault_sha256,anchor_ns=anchor_ns))
+            prior_fault_sha256=expected_fault_sha256,anchor_ns=anchor_ns,prior_fault_detail=old_detail))
 
     def transport_gap(self, schema, reason, *, event_ns=None):
         self.faults[schema] = 'transport_gap:'+reason

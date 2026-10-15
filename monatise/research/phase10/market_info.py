@@ -12,9 +12,31 @@ from monatise.research.phase9.availability import inherited_policy
 from monatise.research.phase9.candles import aggregate_complete
 from monatise.research.phase9.lineage import verify_bar_lineage
 from .access import AnalysisRequest
+from monatise.research.native_futures.analysis import analyse_frame, alignment
 from .diagnostics import second_intervals
 
 SAFETY = dict(execution_eligible=False, orders_placed=0, production_registered=False)
+
+
+def quarantine_scope(health, iid):
+    """Keep global integrity failures global and typed component faults local."""
+    if health.get('stale_checkpoint') or health.get('reasons') or health.get('stalled_connections'):
+        return 'GLOBAL_SOURCE_QUARANTINE'
+    scoped=dict(health.get('component_rejections',{}))
+    for key in health.get('native_rejection_reviews',{}):
+        scoped.setdefault(key,['native_record_or_recovery_validation_failed'])
+    if health.get('quarantined') and not scoped:return 'GLOBAL_SOURCE_QUARANTINE'
+    relevant=[]
+    for key in scoped:
+        schema,instrument=key.rsplit(':',1)
+        if int(instrument)==iid:relevant.append(key)
+    if relevant:
+        reviews=health.get('native_rejection_reviews',{})
+        if all(key.startswith('trades:') and reviews.get(key,{}).get('verified_trade_timestamp_scope')
+                and set(scoped[key]) <= {'native_record_or_recovery_validation_failed'} for key in relevant):
+            return 'COMPONENT_SOURCE_QUARANTINE'
+        return 'INSTRUMENT_SOURCE_QUARANTINE'
+    return 'NONE'
 
 
 class FuturesMarketInfo:
@@ -85,7 +107,8 @@ class FuturesMarketInfo:
                     start_ns=rows[0].open_ns,end_ns=rows[-1].close_ns,
                     age_ns=request.cutoff_ns-rows[-1].close_ns,
                     gaps_between_observed_buckets=gaps, coverage='OBSERVED_VALIDATED_BUCKETS; NO_GAP_FILLING',
-                    source_sha256=digest(rows), selector_applied=False, fixed_selector_expiry_applied=False)
+                    source_sha256=digest(rows), selector_applied=False, fixed_selector_expiry_applied=False,
+                    native_analysis=analyse_frame(rows,tick_size=c.tick_size,cutoff_ns=request.cutoff_ns))
             except (ValueError,TypeError,ArithmeticError) as exc:
                 parts['price:'+tf] = dict(available=False,reason=str(exc))
         policy = inherited_policy(c,'trades')
@@ -100,10 +123,20 @@ class FuturesMarketInfo:
         parts.update({k:dict(available=False,reason='not_captured_or_not_validated') for k in ('mbp-1','mbp-10','oi_change')})
         available = [k for k,v in parts.items() if v['available']]
         state = 'PARTIAL_MARKET_INFORMATION' if available else 'UNAVAILABLE'
-        if health.get('quarantined') or health.get('stale_checkpoint'):
-            state = 'UNAVAILABLE'
+        source_scope=quarantine_scope(health,iid)
+        if source_scope in {'GLOBAL_SOURCE_QUARANTINE','INSTRUMENT_SOURCE_QUARANTINE'}:state='UNAVAILABLE'
+        elif source_scope=='COMPONENT_SOURCE_QUARANTINE':
+            # Native OHLCV has its own source lineage and price gate. Never use
+            # rejected trades to supply its candles, flow, VWAP or profile.
+            parts['trade_features']=dict(available=False,reason='provider_receive_timestamp_quality_requires_review')
+            state='PARTIAL_MARKET_INFORMATION' if any(v['available'] for v in parts.values()) else 'UNAVAILABLE'
         result = dict(instrument=c.metadata.raw_symbol, availability=state,components=parts,
             capture_health=health,analysis_access='READ_ONLY',live_analysis_certified=False,
+            validation=dict(source_quarantine_scope=source_scope,faults=dict(gate.faults),first_fault_details=dict(getattr(gate,'fault_details',{})),
+                source_record_reviews={k:v for k,v in health.get('native_rejection_reviews',{}).items() if k.endswith(':'+str(iid))},
+                price_fault_reviews=health.get('reader_price_fault_reviews',{}).get(c.metadata.raw_symbol,{}),
+                thresholds_relaxed=False,rejected_records_readmitted=False),
+            multi_timeframe=alignment({tf:parts['price:'+tf].get('native_analysis',{}) for tf in request.timeframes}),
             information_scope='RETAINED_VALIDATED_CAPTURE_WINDOW',
             participant_identity='UNAVAILABLE_ANONYMOUS_EXCHANGE_DATA',
             crypto_engines_used=False, frozen_H1_selector_used=False, GIL_rules_used=False,
@@ -112,7 +145,7 @@ class FuturesMarketInfo:
             result['history_warmup'] = history
         result['seconds_bar_diagnostics'] = second_intervals(p.gates[iid],cutoff_ns=request.cutoff_ns,
             watermark_ns=health.get('interval_watermarks',{}).get('ohlcv-1s'),
-            source_unreliable=bool(health.get('quarantined') or health.get('stale_checkpoint')))
+            source_unreliable=source_scope!='NONE')
         result['reproducibility_sha256'] = digest(result)
         return result
 

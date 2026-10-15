@@ -1,0 +1,63 @@
+{
+  "GIL_rules_used": false,
+  "active_collector_kept_on_379c1fc": true,
+  "bootstrap_bridge_verified_offline": true,
+  "calibration_candidate_created": false,
+  "crypto_engines_used": false,
+  "deployed": false,
+  "first_genuine_pair_variations_ns": [
+    -30,
+    -31,
+    -41
+  ],
+  "focused_tests_passed": 261,
+  "frozen_H1_selector_used": false,
+  "generic_recovery_byte_exact": true,
+  "genuine_bootstrap_live_validation": "SECOND_REVIEWED_ATTEMPT_COMPLETED_ALL_REPLAYS; EARLY_NO_FAULTS; LATER_GC_RECEIVE_FLAGS_AND_PRICE_FAULTS_WITHHELD",
+  "global_quarantines_remain_global": true,
+  "initial_trade_clock_equivalence": "EXPLICIT_REVIEW_ONLY; MAX1000NS; SAME_SECOND; ALL_EXCHANGE_FIELDS_AND_PUBLISHER_SEND_TIME_EXACT",
+  "instrument_scoped_quarantine_preserves_other_instruments": true,
+  "native_quality_reader_correction": {
+    "all_original_price_rejections_preserved": true,
+    "calibration_refitted": false,
+    "collector_unchanged": true,
+    "focused_tests_passed": 187,
+    "full_suite": {
+      "disposable_postgres_redis": true,
+      "errors": 0,
+      "exit_code": 0,
+      "failures": 0,
+      "seconds": 70.839,
+      "skipped": 0,
+      "tests": 2622,
+      "xml_sha256": "e8a0a2b8f514b1958a446b4aec133bba1f79f829d6e68d16cccd8c9c83ce658f"
+    },
+    "new_provider_requests": 0,
+    "new_regression_cases": 9,
+    "price_guard_math_unchanged": true,
+    "same_provider_corroboration_is_diagnostic_only": true,
+    "source_normalizers_unchanged": true,
+    "status": "PARTIAL_CANDLE_INFORMATION; TRADE_METRICS_UNAVAILABLE",
+    "typed_trade_dependency_preserves_native_candles": true
+  },
+  "new_purchases": 0,
+  "offline_full_suite": {
+    "disposable_postgres_redis": true,
+    "errors": 0,
+    "exit_code": 0,
+    "failures": 0,
+    "seconds": 72.906,
+    "skipped": 0,
+    "tests": 2613,
+    "xml_sha256": "167a926ae0b43fa1a974be52ef38e37c426c32ac53acd21cd5be3c87bf3edeed"
+  },
+  "old_quarantines_cleared": false,
+  "original_native_bytes_preserved": true,
+  "paid_history_downloads": 0,
+  "price_guard_math_changed": false,
+  "schema_policy_hash_reporting_corrected": true,
+  "scope": "UNDEPLOYED_RESEARCH_ONLY",
+  "source_flags_or_rejections_cleared": false,
+  "trading_enabled": false,
+  "version": "native-futures-phase-v1"
+}

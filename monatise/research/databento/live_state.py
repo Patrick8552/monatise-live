@@ -49,7 +49,10 @@ class Cursor:
 
 
 class FeedState:
-    def __init__(self,scope, *, checkpoints=None,recovery_review_reference=None):
+    def __init__(self,scope, *, checkpoints=None,recovery_review_reference=None,bootstrap_prefixes=None):
+        if bootstrap_prefixes and (not checkpoints or not recovery_review_reference):raise ValueError("reviewed_initial_prefix_requires_checkpoints")
+        self.bootstrap_prefixes=bootstrap_prefixes or {}
+        self.bootstrap_clock_translations=[]
         self.scope=scope;self.clock_review=scope.clock_review;self.clock_history=[scope.clock_review] if scope.clock_review else [];self.contracts={c.metadata.instrument_id:c for c in scope.contracts}
         self.interval_watermarks={};self.started={};self.completed=set();self.acknowledged=set();self.last_message={}
         self.latest={};self.quotes={};self.verified_definitions=set();self.quality_reasons=set();self.counts=defaultdict(int)
@@ -167,7 +170,20 @@ class FeedState:
             result=encode(observation(record,schema=schema,contract=contract,archive_sha256=native_hash,
                 ordinal=ordinal,retrieval_ns=capture_ns,admission_ns=capture_ns,
                 evidence_kind='AUTHENTIC_LIVE_CAPTURE',enabled_schemas=self.scope.schemas,clock_review=review))
-        accepted=cursor.accept(event,native_hash)
+        cursor_hash=native_hash
+        prefix=self.bootstrap_prefixes.get(key)
+        if prefix and cursor.replay_prefix and event==cursor.event_ns and cursor.skipped<len(cursor.replay_prefix):
+            from monatise.research.native_futures.replay_identity import verified_prefix_hash
+            if schema!='trades' or not prefix.get('review_reference') or len(prefix['expected'])!=len(cursor.replay_prefix):
+                raise ValueError('reviewed_initial_trade_prefix_required')
+            expected=prefix['expected'][cursor.skipped]
+            if expected['record_sha256']!=cursor.replay_prefix[cursor.skipped]:raise ValueError('initial_prefix_source_hash_mismatch')
+            cursor_hash=verified_prefix_hash(record,expected=expected,maximum_translation_ns=prefix['maximum_translation_ns'])
+            if cursor_hash!=native_hash:
+                self.bootstrap_clock_translations.append(dict(schema=schema,instrument_id=iid,event_ns=event,
+                    original_anchor_sha256=cursor_hash,replayed_native_sha256=native_hash,
+                    receive_time_difference_ns=record.ts_recv-expected['ts_recv'],review_reference=prefix['review_reference']))
+        accepted=cursor.accept(event,cursor_hash)
         if schema=='definition':self.verified_definitions.add(iid)
         else:
             from .candles import WIDTHS
