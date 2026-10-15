@@ -2018,7 +2018,34 @@ class OrchestrationRuntime:
         for instrument in instruments:
             if is_xauusd(instrument):
                 reference = next((a for a in tradingview_alerts if a.get("symbol") == "XAUUSD" and a.get("reference_only")), None)
-                analysis = await self._gold_coordinator().analyse(instrument, reference=reference)
+                try:
+                    analysis = await self._gold_coordinator().analyse(instrument, reference=reference)
+                except Exception as exc:
+                    # One instrument cannot abort independent results. Cancellation
+                    # remains a BaseException and must propagate to the scheduler.
+                    import traceback
+                    frames = [{"file": f.filename, "line": f.lineno, "function": f.name}
+                              for f in traceback.extract_tb(exc.__traceback__)]
+                    LOGGER.error("Gold analytical component failed", extra={
+                        "symbol": instrument.ftmo_symbol, "error_type": type(exc).__name__,
+                        "diagnostic_frames": frames,
+                    })
+                    invalidation_failed = False
+                    try:
+                        await self._gold_coordinator().technical.invalidate(instrument)
+                    except Exception:
+                        invalidation_failed = True
+                    failures.append({"symbol": instrument.ftmo_symbol, "error_type": type(exc).__name__,
+                                     "reason_code": "gold_component_failed"})
+                    analysis = {"ftmo_symbol": instrument.ftmo_symbol,
+                        "decision": "INSUFFICIENT_MARKET_DATA", "analytical_availability": "UNAVAILABLE",
+                        "pipeline_stage": "DATA_REJECTED", "reason_code": "gold_component_failed",
+                        "reasons": ["gold_component_failed"], "error_type": type(exc).__name__,
+                        "unexpected_error": not isinstance(exc, (OSError, TimeoutError, ValueError)),
+                        "invalidation_failed": invalidation_failed, "analysis_sources": [],
+                        "publication_valid": False, "execution_eligible": False,
+                        "approval_eligible": False, "pending_order_eligible": False,
+                        "execution": {"enabled": False, "orders_placed": 0}}
                 stamp_analysis(analysis, instrument.ftmo_symbol)
                 candidates.append((instrument, analysis))
                 continue

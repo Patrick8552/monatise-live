@@ -1,8 +1,13 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections import deque
+from collections.abc import Callable, Iterable, Mapping
+from concurrent.futures import Future, TimeoutError as FutureTimeout
 from datetime import datetime, timezone
+import hashlib
 from math import isfinite
+import reprlib
+from threading import Lock, Thread
 from typing import Any
 
 from monatise.core.models import Candle
@@ -29,12 +34,20 @@ class MarketDataEngine:
         *,
         derivatives_provider: DerivativesDataPort | None = None,
         clock: Callable[[], datetime] = utc_now,
+        derivatives_timeout_seconds: float = 2.0,
     ) -> None:
         if not providers:
             raise ValueError("at least one market-data provider is required")
         self._providers = dict(providers)
         self._derivatives_provider = derivatives_provider
         self._clock = clock
+        if not isfinite(derivatives_timeout_seconds) or not 0 < derivatives_timeout_seconds <= 30:
+            raise ValueError("bounded derivatives timeout required")
+        self._derivatives_timeout_seconds = derivatives_timeout_seconds
+        self._derivative_lock = Lock()
+        self._derivative_pending: Future | None = None
+        # Private, bounded quarantine; raw optional payloads never enter reports.
+        self._derivative_quarantine = deque(maxlen=16)
 
     def collect(self, request: MarketDataRequest) -> MarketSnapshot:
         request.validate()
@@ -123,6 +136,11 @@ class MarketDataEngine:
                         "price_type": "current" if current_price is not None else "reference",
                         "price_source": current_source or source_name,
                         "price_observed_at": observed_at.isoformat(),
+                        "derivatives_quality": {
+                            "status": "PARTIAL" if derivatives and derivative_issues else
+                                      "AVAILABLE" if derivatives else "UNAVAILABLE",
+                            "issues": tuple(derivative_issues),
+                        },
                     },
                 )
                 if status is DataStatus.READY:
@@ -184,28 +202,62 @@ class MarketDataEngine:
         if self._derivatives_provider is None:
             return {}, []
         try:
-            payload = self._derivatives_provider.derivatives_snapshot(symbol, interval)
+            with self._derivative_lock:
+                if self._derivative_pending is not None and not self._derivative_pending.done():
+                    return {}, ["derivatives: previous optional request still pending"]
+                pending: Future = Future()
+                self._derivative_pending = pending
+                def read():
+                    try:
+                        pending.set_result(self._derivatives_provider.derivatives_snapshot(symbol, interval))
+                    except BaseException as exc:
+                        pending.set_exception(exc)
+                # At most one outstanding call per engine. A hung optional
+                # adapter cannot hold shutdown or create an unbounded backlog.
+                Thread(target=read, daemon=True, name="optional-derivatives").start()
+            payload = pending.result(timeout=self._derivatives_timeout_seconds)
+        except FutureTimeout:
+            return {}, ["derivatives: optional provider timed out"]
         except Exception as exc:
-            return {}, [f"derivatives: provider error: {type(exc).__name__}: {exc}"]
+            return {}, [f"derivatives: provider error: {type(exc).__name__}"]
 
         normalized: dict[str, float | None] = {}
         issues: list[str] = []
-        for key, value in payload.items():
-            if value is None:
-                normalized[key] = None
-                issues.append(f"derivatives: {key} unavailable")
-                continue
+        try:
+            if not isinstance(payload, Mapping) or len(payload) > 64:
+                raise ValueError("bounded_mapping_required")
+            for index, (key, value) in enumerate(payload.items()):
+                if index >= 64 or not isinstance(key, str) or not key or len(key) > 128:
+                    raise ValueError("bounded_named_fields_required")
+                if value is None:
+                    normalized[key] = None
+                    issues.append(f"derivatives: {key} unavailable")
+                    continue
+                try:
+                    number = float(value)
+                except (TypeError, ValueError, OverflowError):
+                    normalized[key] = None
+                    issues.append(f"derivatives: {key} is not numeric")
+                    continue
+                if isinstance(value, bool) or not isfinite(number):
+                    normalized[key] = None
+                    issues.append(f"derivatives: {key} is not finite numeric data")
+                else:
+                    normalized[key] = number
+        except Exception as exc:
+            # Legacy providers expose objects, not wire bytes. Preserve a bounded
+            # private diagnostic representation, never claim a raw-feed archive.
             try:
-                number = float(value)
-            except (TypeError, ValueError):
-                normalized[key] = None
-                issues.append(f"derivatives: {key} is not numeric")
-                continue
-            if not isfinite(number):
-                normalized[key] = None
-                issues.append(f"derivatives: {key} is not finite")
-            else:
-                normalized[key] = number
+                raw = reprlib.repr(payload).encode()[:65536]
+            except Exception:
+                raw = type(payload).__name__.encode()
+            self._derivative_quarantine.append({
+                "reason": "malformed_optional_derivatives_payload",
+                "error_type": type(exc).__name__,
+                "representation_sha256": hashlib.sha256(raw).hexdigest(),
+                "representation": raw,
+            })
+            return {}, ["derivatives: malformed optional payload quarantined"]
         return normalized, issues
 
     @staticmethod

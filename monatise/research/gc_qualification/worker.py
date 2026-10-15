@@ -77,7 +77,21 @@ def link_frozen(record, frames, frozen, now):
 def unadmitted_diagnostic(contract, frames, now, spread):
     """Actual price engines, NEVER an eligibility path through a data rejection."""
     if set(frames) != {"4h","1h","15m","5m","1m"} or spread is None:
-        return dict(engines_executed=False,scope="UNADMITTED_PREFIX_DIAGNOSTIC_ONLY")
+        # Independent price mathematics has no spread/risk dependency. These
+        # results never become an admitted parent, seed, entry or candidate.
+        evaluator = NativeGoldEvaluator(contract)
+        layers, failures = {}, {}
+        for tf, frame in frames.items():
+            try:
+                layer = evaluator._analyse_structure(frame, None)
+                if layer is not None:
+                    layers[tf] = encode(layer)
+            except (ValueError, TypeError, ArithmeticError) as exc:
+                failures[tf] = type(exc).__name__
+        return dict(engines_executed=bool(layers),scope="UNADMITTED_PREFIX_DIAGNOSTIC_ONLY",
+                    analytical_availability="CONTEXT_ONLY" if layers else "UNAVAILABLE",
+                    price_layers=layers,failures=failures,candidate_eligible=False,
+                    quote_dependent_risk_available=False)
     evaluator = NativeGoldEvaluator(contract)
     try:
         result = evaluator.evaluate_native(frames,now=now,spread=spread)
