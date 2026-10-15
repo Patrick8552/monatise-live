@@ -19,8 +19,8 @@ def prices(value):
 
 def _ordered(rows,allow_tied_events):
     if len({v.source.position for v in rows})!=len(rows):return False
-    key=lambda v:(v.event_ns,v.receive_ns or v.event_ns,v.source.ordinal)
-    return all((key(b)>key(a) if allow_tied_events else b.event_ns>a.event_ns) for a,b in zip(rows,rows[1:]))
+    key=lambda v:(v.index_ns,v.source.ordinal)
+    return all((key(b)>key(a) if allow_tied_events else b.index_ns>a.index_ns) for a,b in zip(rows,rows[1:]))
 
 
 def fit(training, *, review_reference, minimum_samples=8, scale=Decimal(8),allow_tied_events=False):
@@ -70,20 +70,21 @@ class Calibration:
         if type(minimum_samples) is not int or minimum_samples<3 or not Decimal(0)<=number(maximum_rejection_fraction)<=Decimal(1):raise ValueError('bounded_holdout_parameters_required')
         rows=tuple(holdout);anchor=self.anchor_observation
         if len(rows)<minimum_samples:raise ValueError('insufficient_independent_holdout')
-        if any((v.contract.identity,v.contract.tick_size,v.contract.multiplier)!=(self.contract.identity,self.contract.tick_size,self.contract.multiplier) or v.schema!=self.schema or v.event_ns<=anchor.event_ns for v in rows):
+        if any((v.contract.identity,v.contract.tick_size,v.contract.multiplier)!=(self.contract.identity,self.contract.tick_size,self.contract.multiplier) or v.schema!=self.schema or v.index_ns<=anchor.index_ns for v in rows):
             raise ValueError('holdout_overlap_or_scope_mismatch')
         if not _ordered(rows,self.allow_tied_events):raise ValueError('ordered_holdout_required')
-        g=PriceGuard(self.contract,self.policy,anchor=prices(anchor)[-1],anchor_ns=anchor.event_ns,
+        g=PriceGuard(self.contract,self.policy,anchor=prices(anchor)[-1],anchor_ns=anchor.index_ns,
             anchor_sha256=anchor.source.record_sha256)
         rejected=[]
         for v in rows:
-            ps=prices(v);reason=g.inspect(ps,v.event_ns)
+            ps=prices(v);reason=g.inspect(ps,v.index_ns)
             if reason:rejected.append(dict(event_ns=v.event_ns,record_sha256=v.source.record_sha256,reason=reason))
-            else:g.commit(ps[-1])
+            else:g.commit(ps[-1],inspected_prices=ps)
         fraction=Decimal(len(rejected))/len(rows)
         return dict(status='HOLDOUT_PASSED' if fraction<=maximum_rejection_fraction else 'HOLDOUT_FAILED',
             calibration_sha256=self.sha256,training_sha256=self.training_sha256,holdout_sha256=digest(rows),
             training_count=self.training_count,holdout_count=len(rows),rejected_count=len(rejected),
             rejection_fraction=str(fraction),maximum_rejection_fraction=str(maximum_rejection_fraction),
             rejected=rejected,independent_chronological_holdout=True,full_regime_coverage_certified=False,
-            first_holdout_event_ns=rows[0].event_ns,last_training_event_ns=anchor.event_ns)
+            first_holdout_event_ns=rows[0].event_ns,last_training_event_ns=anchor.event_ns,
+            excursion_measurement='max-inspected-price-distance-from-previous-reference-v2',ordering_clock='PROVIDER_INDEX')

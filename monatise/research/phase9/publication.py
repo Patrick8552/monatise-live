@@ -67,7 +67,8 @@ class CandlePublisher:
                     source=max(candidates,key=lambda src:WIDTHS[src])
                     children=tuple(b for b in native[source] if b.open_ns>=last)
                     if not children:continue
-                    bars,errors=aggregate_complete(children,target=tf,calendar=pipeline.calendars[iid])
+                    bars,errors=aggregate_complete(children,target=tf,calendar=pipeline.calendars[iid],
+                        coverage_reviews=tuple(g.coverage_reviews.values()))
                     rejected.extend(dict(iid=iid,timeframe=tf,**e) for e in errors[-8:])
                     if bars:frames[tf]=bars;schemas[tf]=('ohlcv-'+source,)
                 candidates=tuple(bar for bars in frames.values() for bar in bars)
@@ -76,7 +77,7 @@ class CandlePublisher:
                     for bar in bars:
                         key=digest([g.contract.identity,tf,bar.open_ns])
                         sha=self._emit(key,'CANDLE_FINAL',dict(bar=bar,available_ns=now_ns,source_reference=source_reference,
-                            coverage='VALIDATED_NATIVE_BAR_OR_ALL_NATIVE_CHILDREN',price_clock='PROVIDER_OHLCV_RECEIVE_TIME_BUCKET',
+                            coverage='OBSERVED_VALID_AND_VERIFIED_PROVIDER_NO_TRADE' if bar.coverage_reviews else 'VALIDATED_NATIVE_BAR_OR_ALL_NATIVE_CHILDREN',price_clock='PROVIDER_OHLCV_RECEIVE_TIME_BUCKET',
                             complete_exchange_continuity=False,source_schemas=schemas[tf],frozen_H1_parent_qualified=False))
                         self.db.execute('INSERT OR IGNORE INTO active VALUES (?,?,?,?,?,?,?,1)',
                             (key,iid,tf,bar.open_ns,bar.close_ns,sha,json.dumps(schemas[tf])))

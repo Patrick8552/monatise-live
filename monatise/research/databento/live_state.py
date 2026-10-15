@@ -1,6 +1,6 @@
 """CME native live state, exact cursor recovery and fail-closed quality gates."""
 from collections import defaultdict
-from dataclasses import dataclass,field
+from dataclasses import dataclass,field,replace
 import hashlib
 
 from monatise.adapters.databento_identity import timestamp_ns
@@ -15,12 +15,19 @@ class Cursor:
     hashes_at_event: list=field(default_factory=list)
     replay_prefix: tuple=()
     skipped: int=0
+    index_ns: int|None=None
+    event_order_regressed: bool=False
 
-    def accept(self,event_ns,native_hash):
+    def accept(self,event_ns,native_hash, *, index_ns=None):
         timestamp_ns(event_ns)
+        if index_ns is not None:
+            timestamp_ns(index_ns)
+            if self.index_ns is not None and index_ns<self.index_ns and not self.replay_prefix:
+                raise ValueError('provider_index_order_regressed')
         if self.event_ns is not None and event_ns<self.event_ns:
             if self.replay_prefix:return False
-            raise ValueError('market_event_order_regressed')
+            if index_ns is None:raise ValueError('market_event_order_regressed')
+            self.event_order_regressed=True
         if self.event_ns==event_ns and self.skipped<len(self.replay_prefix):
             if native_hash!=self.replay_prefix[self.skipped]:
                 raise ValueError('replay_equal_timestamp_prefix_mismatch')
@@ -30,9 +37,13 @@ class Cursor:
             self.event_ns=event_ns;self.hashes_at_event=[];self.replay_prefix=();self.skipped=0
         if len(self.hashes_at_event)>=10000:raise ValueError('cursor_tie_capacity_exceeded')
         self.hashes_at_event.append(native_hash)
+        if index_ns is not None:self.index_ns=index_ns
         return True
 
-    def snapshot(self):return dict(event_ns=self.event_ns,hashes_at_event=list(self.hashes_at_event))
+    def snapshot(self):
+        result=dict(event_ns=self.event_ns,hashes_at_event=list(self.hashes_at_event))
+        if self.index_ns is not None:result.update(index_ns=self.index_ns,event_order_regressed=self.event_order_regressed)
+        return result
 
     def finish_recovery(self):
         if self.skipped<len(self.replay_prefix):raise ValueError('replay_prefix_incomplete')
@@ -40,12 +51,18 @@ class Cursor:
 
     @classmethod
     def recover(cls,value):
+        # Live replay start uses exchange time, unlike historical index order.
+        # A regressed exchange clock needs an explicitly reviewed overlap and
+        # source-prefix reconciliation, never an unsafe automatic last-event seek.
+        if value.get('event_order_regressed'):raise ValueError('nonmonotonic_event_recovery_requires_overlap_review')
         event=value['event_ns'];hashes=tuple(value['hashes_at_event'])
+        index=value.get('index_ns')
+        if index is not None:timestamp_ns(index)
         if event is not None:timestamp_ns(event)
         if (len(hashes)>10000 or event is None and hashes or any(not isinstance(h,str) or len(h)!=64 for h in hashes)):
             raise ValueError('reviewed_native_cursor_required')
         for h in hashes:hash_required(h)
-        return cls(event_ns=event,hashes_at_event=list(hashes),replay_prefix=hashes)
+        return cls(event_ns=event,hashes_at_event=list(hashes),replay_prefix=hashes,index_ns=index)
 
 
 class FeedState:
@@ -54,14 +71,18 @@ class FeedState:
         self.bootstrap_prefixes=bootstrap_prefixes or {}
         self.bootstrap_clock_translations=[]
         self.scope=scope;self.clock_review=scope.clock_review;self.clock_history=[scope.clock_review] if scope.clock_review else [];self.contracts={c.metadata.instrument_id:c for c in scope.contracts}
-        self.interval_watermarks={};self.started={};self.completed=set();self.acknowledged=set();self.last_message={}
+        self.interval_watermarks={};self.interval_receipts={};self.started={};self.completed=set();self.acknowledged=set();self.last_message={}
         self.latest={};self.quotes={};self.verified_definitions=set();self.quality_reasons=set();self.counts=defaultdict(int)
-        self.cursors={};self.normalized=[];self.component_reasons=defaultdict(set)
+        self.cursors={};self.coverage_start_ns={};self.normalized=[];self.component_reasons=defaultdict(set)
         if checkpoints and not recovery_review_reference:raise ValueError('explicit_recovery_review_required')
         for schema in scope.schemas:
             for iid in self.contracts:
                 key=f'{schema}:{iid}'
                 self.cursors[key]=Cursor.recover(checkpoints[key]) if checkpoints and key in checkpoints else Cursor()
+                if schema.startswith('ohlcv-'):
+                    from .candles import WIDTHS
+                    event=self.cursors[key].event_ns
+                    self.coverage_start_ns[key]=max(scope.start_ns,event+WIDTHS[schema[6:]] if event is not None else scope.start_ns)
 
     def update_clock_review(self,review):
         from .live_models import ClockReview
@@ -113,6 +134,7 @@ class FeedState:
                         event<self.interval_watermarks.get(schema,0) or event>capture_ns+upper):
                     self.quarantine('invalid_native_interval_watermark');return None
                 self.interval_watermarks[schema]=event
+                self.interval_receipts[schema]=dict(event_ns=event,capture_ns=capture_ns,ordinal=ordinal,record_sha256=native_hash)
                 self.counts['end_of_interval:'+schema]+=1
                 return None
             if code==int(dbn.SystemCode.REPLAY_COMPLETED):
@@ -145,7 +167,8 @@ class FeedState:
         event=timestamp_ns(record.ts_event);received=timestamp_ns(getattr(record,'ts_recv',record.ts_event))
         review=self.review_at(capture_ns)
         lower,upper=review.bounds(capture_ns) if review else (0,0)
-        if (record.publisher_id!=contract.metadata.publisher_id or not event<=received<=capture_ns+upper
+        if (record.publisher_id!=contract.metadata.publisher_id or max(event,received)>capture_ns+upper
+                or not contract.metadata.event_ns<=received<contract.metadata.expiration_ns
                 or not (contract.metadata.event_ns if schema=='definition' else self.scope.start_ns)<=event<self.scope.session_end_ns
                 or capture_ns+max(0,upper)>=self.scope.session_end_ns+self.scope.session_drain_seconds*10**9 or int(getattr(record,'flags',0))&(4|8|32)):
             raise ValueError('live_record_identity_clocks_session_or_quality_rejected')
@@ -153,7 +176,7 @@ class FeedState:
             from .candles import WIDTHS
             if event+WIDTHS[schema[6:]]<=self.interval_watermarks.get(schema,0):raise ValueError('bar_after_native_interval_watermark')
         key=f'{schema}:{iid}';previous=self.cursors[key]
-        cursor=Cursor(previous.event_ns,list(previous.hashes_at_event),previous.replay_prefix,previous.skipped)
+        cursor=replace(previous,hashes_at_event=list(previous.hashes_at_event))
         if schema=='definition':
             value=native_definition(record,capability=self.scope.capability,
                 publishers={p:(d,v) for p,d,v in self.scope.publishers},as_of_ns=capture_ns+max(0,upper))
@@ -183,7 +206,7 @@ class FeedState:
                 self.bootstrap_clock_translations.append(dict(schema=schema,instrument_id=iid,event_ns=event,
                     original_anchor_sha256=cursor_hash,replayed_native_sha256=native_hash,
                     receive_time_difference_ns=record.ts_recv-expected['ts_recv'],review_reference=prefix['review_reference']))
-        accepted=cursor.accept(event,cursor_hash)
+        accepted=cursor.accept(event,cursor_hash,index_ns=received if hasattr(record,'ts_recv') else None)
         if schema=='definition':self.verified_definitions.add(iid)
         else:
             from .candles import WIDTHS

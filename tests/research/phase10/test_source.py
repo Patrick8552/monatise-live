@@ -18,8 +18,11 @@ def capture(tmp_path):
     j.append(anchor,capture_ns=NOW_NS);j.close(quality={'quarantined':False},checkpoint={})
     scope=dict(contracts=[encode(c)],schemas=['trades'],session_end_ns=(NOW_NS//(60*NS))*60*NS+86400*NS,session_review_reference='ENGINEERING CALENDAR')
     key=c.metadata.raw_symbol+':trades';auth=dict(plan=dict(steps=[dict(scope=scope)]),calibration_references={key:dict(policy_sha256=g.policy.sha256,anchor_event_ns=anchor.ts_event,anchor_record_sha256=hashlib.sha256(bytes(anchor)).hexdigest())})
+    from monatise.research.databento.semantics import VERSION
+    auth['normalization_semantics']=VERSION
     (root/'authorization.json').write_text(json.dumps(auth))
-    inputs=dict(version='phase10-analysis-inputs-v1',authorization_sha256=digest(auth),anchor_root=str(anchor_root),session_open_ns=(NOW_NS//(60*NS))*60*NS-86400*NS,policies={key:encode(g.policy)})
+    from monatise.research.databento.semantics import VERSION
+    inputs=dict(version='phase10-analysis-inputs-v1',normalization_semantics=VERSION,authorization_sha256=digest(auth),anchor_root=str(anchor_root),session_open_ns=(NOW_NS//(60*NS))*60*NS-86400*NS,policies={key:encode(g.policy)})
     (root/'analysis-inputs.json').write_text(json.dumps(inputs))
     spool=RotatingSpool(root/'spool',policy=RotationPolicy(records_per_segment=2,bytes_per_segment=4096,maximum_segments=10,maximum_total_bytes=65536))
     for n in range(4):spool.append('trades',trade(c,t=NOW_NS-(4-n)*NS),capture_ns=NOW_NS,delivery_id=digest(auth['plan'])+':0:trades:'+str(n),evidence_kind='ENGINEERING_SYNTHETIC')
@@ -130,3 +133,8 @@ def test_campaign_excludes_reported_bad_schema_without_admitting_its_clean_prefi
     root,c=capture;p=root/'capture/attempt-00/report.json';value=json.loads(p.read_text());value['quality']['component_rejections']={'trades:'+str(c.metadata.instrument_id):['rejection']};p.write_text(json.dumps(value))
     samples,coverage,hashes=_collect([root],start_ns=NOW_NS-10*NS,end_ns=NOW_NS,training=True)
     assert not samples and coverage[0]['excluded_component_scopes']==[c.metadata.raw_symbol+':trades']
+
+
+def test_old_capture_cannot_be_silently_reinterpreted_with_new_normalization(capture):
+    root,c=capture;path=root/'authorization.json';auth=json.loads(path.read_text());auth.pop('normalization_semantics');path.write_text(json.dumps(auth))
+    with pytest.raises(ValueError,match='original_reader_or_separate_review'):load_capture(root,cutoff_ns=NOW_NS)

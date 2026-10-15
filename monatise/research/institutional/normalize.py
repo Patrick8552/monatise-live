@@ -74,4 +74,5 @@ def observation(record, *, schema, contract, archive_sha256, ordinal,
         payload = (str(record.is_trading), str(record.is_quoting), int(record.action), int(record.reason))
     else:
         raise ValueError("schema_not_implemented")
-    return MarketObservation(contract, schema, event, receive, source, payload, flags, sequence)
+    return MarketObservation(contract, schema, event, receive, source, payload, flags, sequence,
+        ts_in_delta=getattr(record,'ts_in_delta',None))

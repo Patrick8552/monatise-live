@@ -63,6 +63,9 @@ def load_capture(root,*,cutoff_ns,maximum_records=2000000,observation_sink=None,
     if root.is_symlink() or type(maximum_records) is not int or not 1<=maximum_records<=10000000:
         raise ValueError('bounded_private_capture_required')
     auth=read_json(root/'authorization.json');inputs=read_json(root/'analysis-inputs.json')
+    from monatise.research.databento.semantics import VERSION
+    if inputs.get('normalization_semantics')!=VERSION or auth.get('normalization_semantics')!=VERSION:
+        raise ValueError('source_normalization_version_requires_original_reader_or_separate_review')
     if inputs.get('version')!='phase10-analysis-inputs-v1' or inputs.get('authorization_sha256')!=digest(auth):
         raise ValueError('analysis_inputs_authorization_mismatch')
     steps=auth['plan']['steps']
@@ -112,6 +115,7 @@ def load_capture(root,*,cutoff_ns,maximum_records=2000000,observation_sink=None,
         segments=checkpoint(state,'segments');cursor=checkpoint(state,'feed_cursor');limit=cursor['spool_records']
         if type(limit) is not int or not 0<=limit<=maximum_records:raise ValueError('analysis_replay_record_budget_exceeded')
         count=0;accepted=0;rejected=0;last_global=0;kinds=set();last_captures={};delivery_prefix=digest(auth['plan'])+':0:'
+        acks=set();replays=set();markers={};native_prefix=digest([]);clock_cache={};prefix_last_ns=0;prefix_clock=None
         for segment in segments:
             base=segment['base'];path=root/'spool'/segment['path']
             if path.parent!=root/'spool' or path.is_symlink() or base!=count:raise ValueError('source_segment_position_mismatch')
@@ -139,17 +143,32 @@ def load_capture(root,*,cutoff_ns,maximum_records=2000000,observation_sink=None,
                     if len(records)!=1 or bytes(records[0])!=raw:raise ValueError('source_native_roundtrip_failed')
                     record=records[0]
                     if at>cutoff_ns:continue
+                    if review not in clock_cache:
+                        clock=json.loads(review);clock_cache[review]=ClockReview(**clock) if clock else None
+                    record_clock=clock_cache[review]
+                    _,clock_upper=record_clock.bounds(at) if record_clock else (0,0)
+                    if at>=prefix_last_ns:prefix_last_ns=at;prefix_clock=record_clock
+                    native_prefix=digest([native_prefix,schema,at,sha,ordinal+base])
+                    if isinstance(record,dn.SystemMsg):
+                        if record.code==dn.SystemCode.SUBSCRIPTION_ACK:acks.add(schema)
+                        elif record.code==dn.SystemCode.REPLAY_COMPLETED and schema in acks:replays.add(schema)
+                        elif record.code==dn.SystemCode.END_OF_INTERVAL and schema.startswith('ohlcv-'):
+                            from monatise.research.databento.candles import WIDTHS
+                            width=WIDTHS[schema[6:]]
+                            prior=markers.get(schema,[])
+                            if (schema in acks and not record.ts_event%width and (prior[-1]['end_ns'] if prior else 0)<=record.ts_event<=at+clock_upper):
+                                markers[schema]=[*prior[-15:],dict(end_ns=record.ts_event,available_ns=at,sha256=sha)]
                     if rejection:
                         if record.instrument_id in gates:
                             gates[record.instrument_id].transport_gap(schema,rejection,event_ns=record.ts_event)
-                            clock=json.loads(review);clock=ClockReview(**clock) if clock else None
+                            clock=record_clock
                             _,upper=clock.bounds(at) if clock else (0,0)
                             contextual=(scope.get('start_ns',contracts[record.instrument_id].metadata.event_ns)<=record.ts_event<scope['session_end_ns']
                                 and getattr(record,'ts_recv',record.ts_event)<=at+upper
                                 and at+max(0,upper)<scope['session_end_ns']+scope.get('session_drain_seconds',30)*10**9)
                             native_review.rejection(schema,record,contracts[record.instrument_id],original_reason=rejection,context_valid=contextual)
                     if not admitted or isinstance(record,(dn.SystemMsg,dn.SymbolMappingMsg,dn.ErrorMsg)):continue
-                    evidence=json.loads(review);evidence=ClockReview(**evidence) if evidence else None
+                    evidence=record_clock
                     outcome=pipeline.ingest(record,schema=schema,archive_sha256=sha,ordinal=ordinal+base,
                         capture_ns=at,admission_ns=at,evidence_kind=kind,clock_review=evidence)
                     native_review.observe(schema,record,contracts[record.instrument_id],admitted=bool(admitted),gate=gates[record.instrument_id])
@@ -191,6 +210,24 @@ def load_capture(root,*,cutoff_ns,maximum_records=2000000,observation_sink=None,
         cursor_prefix_sha256=digest(cursor),source_evidence_kind=next(iter(kinds),None),complete_exchange_continuity_certified=False,
         retained_market_records_per_instrument=50000,network_requests=0,source_mutations=0,
         verification_scope='spool byte/metadata hashes and committed cursor prefix; independent framed-journal reconciliation remains separate')
+    # Reconstruct provider-empty coverage only from native controls inside the
+    # verified committed prefix. A status JSON or heartbeat cannot supply it.
+    from monatise.research.databento.bar_coverage import NativeBarCoverage
+    from monatise.research.databento.candles import WIDTHS
+    if not health['reasons'] and not health['stalled_connections']:
+        for iid,gate in gates.items():
+            for schema,controls in markers.items():
+                marker=next((r for r in reversed(controls) if r['end_ns']<=prefix_last_ns),None)
+                if marker is None:continue
+                if schema not in replays or schema in gate.faults or f'{schema}:{iid}' in health['component_rejections']:continue
+                step=WIDTHS[schema[6:]];ref=refs[gate.contract.metadata.raw_symbol+':'+schema]
+                begin=max(scope.get('start_ns',0),ref['anchor_event_ns']+step)
+                begin=(begin+step-1)//step*step
+                if begin>=marker['end_ns']:continue
+                proof=NativeBarCoverage(gate.contract.identity,schema,begin,marker['end_ns'],prefix_last_ns,
+                    marker['sha256'],native_prefix,'verified-read-only-native-control-prefix',prefix_clock)
+                gate.coverage_reviews[proof.sha256]=proof
+    health['normalization_semantics']=VERSION
     if history_manifest is not None:
         from .history import load_history,WarmedPipeline
         try:
@@ -215,13 +252,15 @@ def prepare_inputs(root,*,policies,anchor_root,session_open_ns):
     """
     from monatise.research.institutional.models import encode
     root=Path(root).absolute();auth=read_json(root/'authorization.json');refs=auth['calibration_references']
+    from monatise.research.databento.semantics import VERSION
+    if auth.get('normalization_semantics')!=VERSION:raise ValueError('new_versioned_collector_authorization_required')
     if set(policies)!=set(refs):raise ValueError('exact_reviewed_analysis_policies_required')
     if any(digest(policies[key])!=ref['policy_sha256'] for key,ref in refs.items()):raise ValueError('source_policy_hash_mismatch')
     if type(session_open_ns) is not int or session_open_ns<=0:raise ValueError('reviewed_session_open_required')
     anchor_root=Path(anchor_root).absolute()
     if anchor_root.is_symlink() or not anchor_root.is_dir():raise ValueError('regular_source_anchor_directory_required')
     value=dict(version='phase10-analysis-inputs-v1',authorization_sha256=digest(auth),anchor_root=str(anchor_root),
-        session_open_ns=session_open_ns,policies=encode(policies))
+        session_open_ns=session_open_ns,policies=encode(policies),normalization_semantics=VERSION)
     path=root/'analysis-inputs.json';fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o400)
     with os.fdopen(fd,'w') as stream:json.dump(value,stream,sort_keys=True);stream.flush();os.fsync(stream.fileno())
     return path

@@ -1,0 +1,160 @@
+{
+  "GIL_rules_used": false,
+  "baseline_commit": "0c1f1bc7644bc4a172a18b9c64c05eef1aa5542e",
+  "criteria": [
+    {
+      "component": "DBN mapping",
+      "evidence": "test_receive_index_allows_nonmonotonic_exchange_time_without_rewriting_clocks",
+      "required_outcome": "Provider clocks, fixed prices, flags and positions remain traceable",
+      "status": "PASS_OFFLINE"
+    },
+    {
+      "component": "Candle sampling",
+      "evidence": "test_full_excursion_calibration_screening_and_adaptation_agree_for_128_flat_closes",
+      "required_outcome": "Calibration, screening and adaptation use full OHLC excursion",
+      "status": "PASS_OFFLINE"
+    },
+    {
+      "component": "Outlier rejection",
+      "evidence": "test_rolling_gate_uses_excursion_and_preserves_rejected_wick",
+      "required_outcome": "Rejected spikes do not train guard or advertise analytical eligibility",
+      "status": "PASS_OFFLINE"
+    },
+    {
+      "component": "Malformed OHLC and identity",
+      "evidence": "test_missing_anchor_bad_ohlc_and_changed_contract_tick_fail_closed",
+      "required_outcome": "Bad geometry, contract/tick contradictions fail closed",
+      "status": "PASS_OFFLINE"
+    },
+    {
+      "component": "Timestamps and multiplicity",
+      "evidence": "test_cross_clock_order_is_not_causality_but_flags_and_future_bounds_still_reject",
+      "required_outcome": "Receive order and equal native positions preserve economic events",
+      "status": "PASS_OFFLINE"
+    },
+    {
+      "component": "Late events",
+      "evidence": "test_late_event_retracts_final_event_time_bucket_even_with_valid_receive_order",
+      "required_outcome": "Final event-time candle retracts when late record changes its evidence",
+      "status": "PASS_OFFLINE"
+    },
+    {
+      "component": "Replay safety",
+      "evidence": "test_receive_index_allows_nonmonotonic_exchange_time_without_rewriting_clocks",
+      "required_outcome": "Nonmonotonic exchange cursor requires explicit overlap review",
+      "status": "PASS_OFFLINE"
+    },
+    {
+      "component": "MBO flags",
+      "evidence": "test_mbo_snapshot_exception_requires_review_and_never_applies_to_trades",
+      "required_outcome": "Reviewed snapshot seeds only; ordinary trade flags still reject",
+      "status": "PASS_OFFLINE_NO_MBO_ENABLED"
+    },
+    {
+      "component": "Sparse aggregation",
+      "evidence": "test_sparse_parent_uses_only_observed_prices_volume_and_verified_empty_children",
+      "required_outcome": "Observed OHLCV plus proven provider-empty children; no invented bar/volume",
+      "status": "PASS_OFFLINE"
+    },
+    {
+      "component": "Unknown/rejected coverage",
+      "evidence": "test_unknown_rejected_future_or_wrong_instrument_coverage_cannot_repair_sparse_bars",
+      "required_outcome": "Unknown, wrong instrument, future or faulted evidence cannot repair gaps",
+      "status": "PASS_OFFLINE"
+    },
+    {
+      "component": "Coverage source boundary",
+      "evidence": "test_heartbeat_is_not_coverage_and_recovery_does_not_claim_uncaptured_prefix",
+      "required_outcome": "Heartbeat alone and skipped recovery prefix never prove coverage",
+      "status": "PASS_OFFLINE"
+    },
+    {
+      "component": "Clock renewal",
+      "evidence": "test_sparse_coverage_uses_its_contemporaneous_clock_not_an_expired_child_clock",
+      "required_outcome": "Quiet sparse parent uses a valid coverage clock",
+      "status": "PASS_OFFLINE"
+    },
+    {
+      "component": "Publication/native integration",
+      "evidence": "test_utc_sparse_publication_and_native_request_do_not_call_legacy_graph",
+      "required_outcome": "Native request consumes sparse parents without legacy engines",
+      "status": "PASS_OFFLINE"
+    },
+    {
+      "component": "Reader reconstruction",
+      "evidence": "test_reader_rebuilds_sparse_coverage_only_from_verified_native_controls",
+      "required_outcome": "Byte-verified controls reconstruct coverage; global quarantine remains",
+      "status": "PASS_OFFLINE"
+    },
+    {
+      "component": "Prospective calibration version",
+      "evidence": "test_prospective_calibration_uses_same_receive_order_as_live_guard",
+      "required_outcome": "Provider-index order matches live guard; existing heldout policy stays immutable",
+      "status": "PASS_OFFLINE_NO_REAL_FIT"
+    },
+    {
+      "component": "SDK semantics",
+      "evidence": "test_actual_sdk_read_buffer_is_bounded_and_wire_probe_preserves_decoder_bytes",
+      "required_outcome": "Real pinned SDK read view is bounded and original decoder bytes unchanged",
+      "status": "PASS_OFFLINE"
+    },
+    {
+      "component": "Overload",
+      "evidence": "test_nonblocking_callback_overload_is_counted_quarantined_and_never_retried",
+      "required_outcome": "Overflow count/hash chain visible; quarantine and no retry",
+      "status": "PASS_OFFLINE"
+    },
+    {
+      "component": "Durable market burst",
+      "evidence": "test_controlled_peak_burst_honours_socket_pause_and_durably_preserves_every_record",
+      "required_outcome": "Native counts, spool, checkpoints and analytical admission reconcile",
+      "status": "PASS_OFFLINE_BOUNDED_WORKLOAD"
+    },
+    {
+      "component": "Disk failure",
+      "evidence": "test_journal_failure_cannot_advance_durable_cursor",
+      "required_outcome": "Raw journal failure cannot advance durable cursor",
+      "status": "PASS_OFFLINE"
+    },
+    {
+      "component": "Contract economics",
+      "evidence": "monatise-phase11-contract-economics.json",
+      "required_outcome": "Authentic GC/ES/NQ definitions reproduce exact tick/point values",
+      "status": "PASS_EXISTING_AUTHENTIC_DEFINITIONS"
+    },
+    {
+      "component": "Historical A/B replay",
+      "evidence": "baseline-summary.json + final-corrected-summary.json + final-repeat-summary.json",
+      "required_outcome": "207424 preserved records; every changed decision logged; repeat deterministic",
+      "status": "PASS_DIAGNOSTIC_ONLY"
+    },
+    {
+      "component": "Live delivery silence",
+      "evidence": "monatise-native-futures-stall-incident.json",
+      "required_outcome": "Root cause confirmed before operational adoption",
+      "status": "UNRESOLVED_NO_NEW_LIVE_TRIAL"
+    },
+    {
+      "component": "Fresh full session/holdout",
+      "evidence": "No new collection or candidate created",
+      "required_outcome": "Separate authorization and untouched prospective evidence required",
+      "status": "NOT_RUN"
+    },
+    {
+      "component": "Calibration schedule",
+      "evidence": "phase-9-soak-and-calibration",
+      "required_outcome": "Old finite campaign cancelled, automation paused, owned guardian released",
+      "status": "CANCELLED_BY_USER"
+    }
+  ],
+  "crypto_engines_used": false,
+  "deployed": false,
+  "frozen_H1_selector_used": false,
+  "new_databento_requests": 0,
+  "new_live_connections": 0,
+  "new_purchases": 0,
+  "normalization_semantics": "native-futures-normalization-v2",
+  "overall": "PARTIALLY; OFFLINE_IMPLEMENTATION_READY_FOR_REVIEW, LIVE_OPERATION_UNVERIFIED",
+  "trading_enabled": false,
+  "version": "phase11-acceptance-matrix-v1"
+}

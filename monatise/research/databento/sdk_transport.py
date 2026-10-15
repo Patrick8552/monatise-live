@@ -21,6 +21,8 @@ class OwnedSDKClient:
         self._pulse_ns = 0
         self._closed = False
         self._transport = None
+        self._reading_requested = True
+        self._wire_bytes=0;self._wire_updates=0;self._wire_last_ns=0;self._wire_max_processing_ns=0
         self._thread = threading.Thread(target=self._serve, name='monatise-databento-network', daemon=True)
         self._thread.start()
         self._client = None
@@ -88,11 +90,45 @@ class OwnedSDKClient:
         result = self._client.subscribe(*args, **kwargs)
         # SDK wait_for_close can clear its transport reference on timeout before
         # the capture watcher runs. Retain ownership so shutdown still aborts it.
-        self._transport = self._call(lambda: self._client._session._transport)
+        def capture_transport():
+            session=self._client._session
+            protocol=session._protocol
+            if protocol is not None and hasattr(protocol,'buffer_updated'):
+                # Bound one SDK decode/dispatch turn as well as the handoff.
+                # A socket pause cannot interrupt an already decoded batch.
+                # DBN supports partial records; only the exposed receive view
+                # is shortened, never the original bytes or decoder semantics.
+                get_buffer=protocol.get_buffer
+                protocol.get_buffer=lambda sizehint:memoryview(get_buffer(sizehint))[:2048]
+                original=protocol.buffer_updated
+                def observed(nbytes):
+                    begin=time.monotonic_ns()
+                    self._wire_bytes+=nbytes;self._wire_updates+=1;self._wire_last_ns=begin
+                    try:return original(nbytes)
+                    finally:self._wire_max_processing_ns=max(self._wire_max_processing_ns,time.monotonic_ns()-begin)
+                protocol.buffer_updated=observed
+            return session._transport
+        self._transport = self._call(capture_transport)
         return result
 
     def start(self):
         return self._call(self._client.start)
+
+    def set_reading(self,enabled):
+        """Nonblocking watermarks on the owning loop; never resume a failed run.
+
+        pause_reading cannot interrupt the SDK's current decoded batch. A batch
+        exceeding the bounded reserve still fails explicitly at the handoff.
+        """
+        if type(enabled) is not bool:raise ValueError('boolean_reading_state_required')
+        if self._closed:return
+        self._reading_requested=enabled
+        def apply():
+            transport=self._transport
+            if transport is not None and not transport.is_closing():
+                (transport.resume_reading if enabled else transport.pause_reading)()
+        if threading.current_thread() is self._thread:apply()
+        else:self._loop.call_soon_threadsafe(apply)
 
     def terminate(self):
         if not self._closed and self._client is not None:
@@ -121,13 +157,25 @@ class OwnedSDKClient:
             session = self._client._session
             protocol = session._protocol
             transport = self._transport or session._transport
+            socket_error=None
+            if transport is not None and hasattr(transport,'get_extra_info'):
+                import socket
+                sock=transport.get_extra_info('socket')
+                if sock is not None:
+                    try:socket_error=sock.getsockopt(socket.SOL_SOCKET,socket.SO_ERROR)
+                    except OSError:socket_error=None
             return {'network_loop_responsive': True,
+                'socket_pending_error':socket_error,
+                'wire_bytes':self._wire_bytes,'wire_updates':self._wire_updates,
+                'wire_last_receive_age_seconds':max(0,(time.monotonic_ns()-self._wire_last_ns)/1e9) if self._wire_last_ns else None,
+                'wire_max_decode_dispatch_ns':self._wire_max_processing_ns,
                 'transport_reading': transport.is_reading() if transport else None,
                 'transport_closing': transport.is_closing() if transport else None,
+                'reading_requested':self._reading_requested,
                 'iteration_queue_enabled': session._dbn_queue.is_enabled(),
                 'iteration_queue_depth': session._dbn_queue.qsize(),
-                'sdk_last_message_age_seconds': max(0, self._loop.time()-protocol._last_msg_loop_time)
-                    if protocol and protocol._last_msg_loop_time != float('inf') else None}
+                'sdk_last_message_age_seconds': max(0, self._loop.time()-getattr(protocol,'_last_msg_loop_time',float('inf')))
+                    if protocol and getattr(protocol,'_last_msg_loop_time',float('inf')) != float('inf') else None}
         try:
             result = self._call(snapshot, timeout=.2)
         except (TimeoutError, ValueError, AttributeError):
