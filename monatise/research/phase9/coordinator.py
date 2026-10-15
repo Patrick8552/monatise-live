@@ -67,7 +67,7 @@ def price_components(contract, bars, *, now_ns, calendar, policy=None):
         except Exception as exc:
             unexpected=not isinstance(exc,(ValueError,TypeError,ArithmeticError))
             if unexpected:LOGGER.error('Native analytical engine defect',extra={'engine':name,'error_type':type(exc).__name__},exc_info=False)
-            engine_health[name]=dict(available=False,error_type=type(exc).__name__,unexpected_error=unexpected)
+            engine_health[name]=dict(available=False,error_type=type(exc).__name__,unexpected_error=unexpected,reason='analytical_engine_defect' if unexpected else str(exc)[:160])
     prices = [c.close for c in cs]
     returns = [log(b/a) for a,b in zip(prices,prices[1:])]
     mean = sum(returns)/len(returns) if returns else None

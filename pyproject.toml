@@ -25,6 +25,7 @@ gold-data = ["databento==0.87.0"]
 [project.scripts]
 monatise = "monatise.cli:main"
 monatise-live = "monatise.live.server:main"
+monatise-analyse = "monatise.research.phase10.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["monatise*"]

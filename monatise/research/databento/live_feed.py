@@ -47,7 +47,14 @@ class CMELiveCapture:
         journals={};clients=[];watchers=[];closing=False;overflow=threading.Event()
         queue=asyncio.Queue(maxsize=self.queue_capacity);loop=asyncio.get_running_loop()
         pending=threading.BoundedSemaphore(self.queue_capacity)
-        manifests={}
+        manifests={};transport_events=[];transport_lock=threading.Lock()
+
+        def transport_event(schema,stage,exc=None):
+            with transport_lock:
+                if len(transport_events)<32:
+                    transport_events.append(dict(schema=schema,stage=stage,observed_at_ns=self.clock_ns(),
+                        error_type=type(exc).__name__ if exc is not None else None,
+                        errno=getattr(exc,"errno",None) if type(getattr(exc,"errno",None)) is int else None))
 
         def callback(schema):
             def receive(record):
@@ -61,14 +68,19 @@ class CMELiveCapture:
                 loop.call_soon_threadsafe(deliver)
             return receive
 
-        def callback_failed(exc):overflow.set()
+        def callback_failed(schema,exc):
+            transport_event(schema,'callback',exc);overflow.set()
 
         async def watch(schema,client):
             try:
                 await client.wait_for_close()
-                if not closing:state.quarantine('provider_disconnected_'+schema)
-            except Exception:
-                if not closing:state.quarantine('provider_disconnect_or_error_'+schema)
+                if not closing:
+                    transport_event(schema,'unexpected_close')
+                    state.quarantine('provider_disconnected_'+schema)
+            except Exception as exc:
+                if not closing:
+                    transport_event(schema,'wait_for_close',exc)
+                    state.quarantine('provider_disconnect_or_error_'+schema)
 
         def deliver(schema,record,captured,ordinal):
             self.active_clock_review=state.review_at(captured)
@@ -93,7 +105,7 @@ class CMELiveCapture:
                     journals[schema]=self.journal_factory(output/schema,schema=schema,scope=self.scope,
                         evidence_kind=evidence_kind,checkpoint=state.checkpoint)
                 client=self.factory(api_key,self.scope.heartbeat_seconds);clients.append(client)
-                client.add_callback(callback(schema),exception_callback=callback_failed)
+                client.add_callback(callback(schema),exception_callback=lambda exc,schema=schema:callback_failed(schema,exc))
                 await asyncio.to_thread(client.subscribe,dataset='GLBX.MDP3',schema=schema,
                     symbols=[c.metadata.instrument_id for c in self.scope.contracts],stype_in='instrument_id',
                     start=state.replay_start(schema))
@@ -153,7 +165,7 @@ class CMELiveCapture:
             health=state.health(self.clock_ns())
             report=dict(version='CME-live-capture-v1',scope=encode(self.scope),scope_sha256=self.scope.sha256,
                 permit_sha256=digest(permit),quality=health,checkpoint=state.checkpoint(),journals=manifests,
-                normalization_tail=state.normalized,failure_type=failure,
+                normalization_tail=state.normalized,failure_type=failure,transport_events=transport_events,
                 runtime=dict(databento=version('databento'),databento_dbn=version('databento-dbn')),
                 clock_reviews=clock_reviews,automatic_retries=0,connection_count=len(clients),evidence_kind=evidence_kind,**SAFETY)
             p=output/'report.json';p.write_text(json.dumps(encode(report),sort_keys=True,indent=2));p.chmod(0o600)
