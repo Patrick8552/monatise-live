@@ -13,6 +13,8 @@ def text_report(report):
         if health:
             lines.append('Capture: '+health.get('status','UNKNOWN')+'; quarantined='+str(bool(health.get('quarantined')))+'; stale checkpoint='+str(bool(health.get('stale_checkpoint'))))
             if health.get('reasons'):lines.append('Source issues: '+', '.join(health['reasons']))
+        if value.get('validation',{}).get('source_quarantine_scope','NONE')!='NONE':
+            lines.append('Quarantined instrument: calculated components below are retained context, unavailable for current live use.')
         components=value.get('components',{})
         history=value.get('history_warmup',health.get('history_warmup',{}))
         if history:
@@ -54,6 +56,8 @@ def text_report(report):
                 else:
                     state=part.get('engine_health',{}).get(engine,{})
                     lines.append('  '+engine+': unavailable — '+state.get('reason','missing upstream evidence'))
+        scope=value.get('validation',{}).get('source_quarantine_scope')
+        if scope:lines.append('Source quarantine applying to this instrument: '+scope)
         if value.get('multi_timeframe'):lines.append('Multi-timeframe structure: '+value['multi_timeframe']['state'])
         for schema,detail in value.get('validation',{}).get('first_fault_details',{}).items():
             lines.append('Validation '+schema+': '+detail.get('classification',detail['reason'])+'; no automatic admission')

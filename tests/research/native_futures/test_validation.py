@@ -33,3 +33,22 @@ def test_reviewed_recovery_archives_prior_fault_details():
     g.review_recovery('trades',anchor='2500',anchor_ns=NOW_NS-NS,anchor_sha256=digest('reviewed genuine anchor'),review_reference='EXPLICIT_ENGINEERING_REVIEW',expected_fault_sha256=digest(g.faults['trades']))
     assert 'trades' not in g.fault_details and g.reviews[-1]['prior_fault_detail']==prior
     assert len(g.quarantine)==1
+
+
+def test_instrument_source_quarantine_does_not_erase_other_native_instrument():
+    from monatise.research.phase9.pipeline import ResearchPipeline
+    from tests.research.phase10.test_workflow import bar
+    pg,gc=pipeline('GC');pe,es=pipeline('ES')
+    p=ResearchPipeline({**pg.gates,**pe.gates},{**pg.calendars,**pe.calendars},enabled_schemas=pg.enabled_schemas)
+    for i,c in enumerate((gc,es)):
+        assert add(p,bar(c,NOW_NS//(60*NS)*60*NS-120*NS),'ohlcv-1m',i)['accepted']
+        assert add(p,trade(c),ordinal=i+10)['accepted']
+    h=dict(quarantined=True,reasons=[],component_rejections={'trades:'+str(gc.metadata.instrument_id):['native_record_or_recovery_validation_failed']})
+    r=FuturesMarketInfo(p,source_health=lambda now:h).analyse(AnalysisRequest((gc.metadata.raw_symbol,es.metadata.raw_symbol),NOW_NS))
+    a=r['instruments'][gc.metadata.raw_symbol];b=r['instruments'][es.metadata.raw_symbol]
+    assert a['availability']=='UNAVAILABLE' and a['validation']['source_quarantine_scope']=='INSTRUMENT_SOURCE_QUARANTINE'
+    assert b['availability']=='PARTIAL_MARKET_INFORMATION' and b['components']['trade_features']['available']
+    assert b['capture_health']['quarantined']  # Original overall source evidence remains visible.
+    h['reasons']=['capture_cancelled']
+    global_failure=FuturesMarketInfo(p,source_health=lambda now:h).analyse(AnalysisRequest((es.metadata.raw_symbol,),NOW_NS))
+    assert global_failure['instruments'][es.metadata.raw_symbol]['availability']=='UNAVAILABLE'

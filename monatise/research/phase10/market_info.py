@@ -18,6 +18,18 @@ from .diagnostics import second_intervals
 SAFETY = dict(execution_eligible=False, orders_placed=0, production_registered=False)
 
 
+def quarantine_scope(health, iid):
+    """Keep global integrity failures global and typed component faults local."""
+    if health.get('stale_checkpoint') or health.get('reasons') or health.get('stalled_connections'):
+        return 'GLOBAL_SOURCE_QUARANTINE'
+    scoped=health.get('component_rejections',{})
+    if health.get('quarantined') and not scoped:return 'GLOBAL_SOURCE_QUARANTINE'
+    for key in scoped:
+        schema,instrument=key.rsplit(':',1)
+        if int(instrument)==iid:return 'INSTRUMENT_SOURCE_QUARANTINE'
+    return 'NONE'
+
+
 class FuturesMarketInfo:
     def __init__(self, pipeline, *, source_health):
         self.pipeline, self.source_health = pipeline, source_health
@@ -102,11 +114,11 @@ class FuturesMarketInfo:
         parts.update({k:dict(available=False,reason='not_captured_or_not_validated') for k in ('mbp-1','mbp-10','oi_change')})
         available = [k for k,v in parts.items() if v['available']]
         state = 'PARTIAL_MARKET_INFORMATION' if available else 'UNAVAILABLE'
-        if health.get('quarantined') or health.get('stale_checkpoint'):
-            state = 'UNAVAILABLE'
+        source_scope=quarantine_scope(health,iid)
+        if source_scope!='NONE':state='UNAVAILABLE'
         result = dict(instrument=c.metadata.raw_symbol, availability=state,components=parts,
             capture_health=health,analysis_access='READ_ONLY',live_analysis_certified=False,
-            validation=dict(faults=dict(gate.faults),first_fault_details=dict(getattr(gate,'fault_details',{})),
+            validation=dict(source_quarantine_scope=source_scope,faults=dict(gate.faults),first_fault_details=dict(getattr(gate,'fault_details',{})),
                 thresholds_relaxed=False,rejected_records_readmitted=False),
             multi_timeframe=alignment({tf:parts['price:'+tf].get('native_analysis',{}) for tf in request.timeframes}),
             information_scope='RETAINED_VALIDATED_CAPTURE_WINDOW',
@@ -117,7 +129,7 @@ class FuturesMarketInfo:
             result['history_warmup'] = history
         result['seconds_bar_diagnostics'] = second_intervals(p.gates[iid],cutoff_ns=request.cutoff_ns,
             watermark_ns=health.get('interval_watermarks',{}).get('ohlcv-1s'),
-            source_unreliable=bool(health.get('quarantined') or health.get('stale_checkpoint')))
+            source_unreliable=source_scope!='NONE')
         result['reproducibility_sha256'] = digest(result)
         return result
 

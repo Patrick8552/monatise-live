@@ -88,3 +88,17 @@ new market observations remain unchanged. Default/general recovery remains
 byte-exact. This does not waive or reset any price guard. Timestamp field
 semantics: https://databento.com/docs/standards-and-conventions/common-fields-enums-types
 Architecture context: https://databento.com/docs/architecture
+
+Instrument quarantine scope
+---------------------------
+The second reviewed native run completed all replay handshakes and initially
+restored trade features for all three contracts. Later, six GC trades carried
+F_BAD_TS_RECV and inconsistent receive/event clocks; they remain rejected.
+The old read-only report treated this typed GC component quarantine as global
+and hid ES/NQ as well. Native request availability now withholds the affected
+instrument while preserving independently validated instruments. Original
+overall quarantine and component evidence stay visible. Transport, storage,
+clock, cursor, cancellation or unknown/global quarantine still withhold every
+instrument. ES/NQ second-bar price-policy faults remain separately withheld.
+No native timestamp, source flag, rejection, price bound or active collector
+code is changed by this reader correction.
