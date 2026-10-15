@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import struct
+import time
 
 from monatise.adapters.databento_identity import timestamp_ns
 from monatise.research.institutional.models import encode
@@ -36,9 +37,12 @@ class NativeJournal:
                 or self.bytes+FRAME.size+len(native)>self.scope.maximum_bytes):
             raise ValueError('live_journal_limit_or_clock_failure')
         ordinal=self.count
+        begun=time.perf_counter_ns()
         self.file.write(FRAME.pack(capture_ns,len(native)));self.file.write(native)
+        written=time.perf_counter_ns()
         # Cursor advancement occurs only after durable source bytes.
         self.file.flush();os.fsync(self.file.fileno())
+        self.last_append_timings=dict(journal_write=written-begun,journal_synchronization=time.perf_counter_ns()-written)
         self.count+=1;self.bytes+=FRAME.size+len(native);self.last_capture=capture_ns
         return ordinal,hashlib.sha256(native).hexdigest()
 

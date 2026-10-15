@@ -61,9 +61,16 @@ class PriceGuard:
         if any(abs(p-self.last) > bound for p in values): return 'suspicious_price_discontinuity_requires_review'
         return None
 
-    def commit(self, price):
+    def commit(self, price, *, inspected_prices=None):
+        """Learn the same excursion screened by inspect and fitted by calibration.
+
+        For OHLC this is max(|O/H/L/C - previous close|), not the close return.
+        Call only after acceptance; rejected ranges never widen the envelope.
+        """
         price = number(price, positive=True)
-        self.changes.append(abs(price-self.last)); self.last = price
+        values = [number(p, positive=True) for p in inspected_prices] if inspected_prices is not None else [price]
+        if not values or values[-1] != price:raise ValueError('matching_inspected_price_sample_required')
+        self.changes.append(max(abs(p-self.last) for p in values)); self.last = price
 
 
 class QualityGate:
@@ -82,6 +89,7 @@ class QualityGate:
             self.guards[schema]=PriceGuard(contract,self.schema_policies.get(schema,policy),**entry)
         self.rolling=rolling
         self.price_sources={}
+        self.coverage_reviews={}
         self.evicted_positions=0
         self.positions, self.last_events, self.last_received = OrderedDict(), {}, {}
         self.latest, self.faults, self.quarantine = {}, {}, deque(maxlen=256)
@@ -128,9 +136,11 @@ class QualityGate:
             self.positions.popitem(last=False);self.evicted_positions+=1
         self.positions[value.source.position] = signature
         if value.source.admission_ns > now_ns: return self.reject(value, 'not_available_at_cutoff')
-        if (value.event_ns < self.last_events.get(value.schema, 0)
-                or (value.receive_ns or value.event_ns) < self.last_received.get(value.schema, 0)):
-            return self.reject(value, 'out_of_order_event_or_receive_timestamp')
+        # Provider index order is receive time where present. Exchange clocks
+        # can be nonmonotonic; event-time candles sort separately and retract
+        # late finalized buckets. Never rewrite either native timestamp.
+        if value.index_ns < self.last_received.get(value.schema, 0):
+            return self.reject(value, 'out_of_order_provider_index_timestamp')
         prices = []
         if value.schema == 'trades': prices = [value.payload[0]]
         elif value.schema.startswith('ohlcv-'):
@@ -146,18 +156,19 @@ class QualityGate:
             prices = [bid, ask]
         guard = self.guards.setdefault(value.schema, PriceGuard(self.contract,self.schema_policies.get(value.schema,self.policy),
             anchor=self.guard.last,anchor_ns=self.guard.anchor_ns,anchor_sha256=self.guard.anchor_sha256))
-        reason = guard.inspect(prices, value.event_ns)
+        reason = guard.inspect(prices, value.index_ns)
         if reason: return self.reject(value, reason)
         # Schema-dependent guards avoid quote movements contaminating trade volatility.
-        if prices: guard.commit(prices[-1])
+        if prices: guard.commit(prices[-1], inspected_prices=prices)
         self.last_events[value.schema] = value.event_ns
         self.last_received[value.schema] = value.receive_ns or value.event_ns
         self.latest[value.schema] = value; self.accepted.append(value)
         if value.schema.startswith('ohlcv-'):
             self.price_sources.setdefault(value.schema,deque(maxlen=self.capacity)).append(value)
+        active_policy=self.schema_policies.get(value.schema,self.policy)
         return dict(accepted=True, duplicate=False, reason=None,
-            plausibility='WARMUP' if len(guard.changes) < self.policy.warmup else 'ADAPTIVE',
-            policy_sha256=self.policy.sha256, **SAFETY)
+            plausibility='WARMUP' if len(guard.changes) < active_policy.warmup else 'ADAPTIVE',
+            policy_sha256=active_policy.sha256,excursion_measurement='max-inspected-price-distance-from-previous-reference-v2', **SAFETY)
 
     def lineage_observations(self):
         # Low-frequency native bars survive high-rate trade/book ring eviction.
@@ -193,7 +204,7 @@ class QualityGate:
                 result[schema] = dict(available=False, reason=self.faults.get(schema,'no_valid_observations'))
                 continue
             policy = policies[schema]
-            source = value.payload[1] if schema.startswith('ohlcv-') else value.payload[2] if schema=='statistics' else value.event_ns
+            source = value.payload[1] if schema.startswith('ohlcv-') else value.payload[2] if schema=='statistics' else value.index_ns
             review=value.source.clock_review
             if review is not None:
                 try:review.bounds(now_ns)

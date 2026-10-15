@@ -85,6 +85,8 @@ class PersistentResearchService:
         start=previous['next_step'] if previous else 0
         self.spool.replay(self.pipeline)
         reports=[]
+        from monatise.research.databento.latency import Latencies
+        durability_latencies=Latencies()
         for index in range(start,len(self.plan.steps)):
             step=self.plan.steps[index]
             if (set(c.metadata.instrument_id for c in step.scope.contracts)-set(self.pipeline.gates)
@@ -105,9 +107,11 @@ class PersistentResearchService:
             step.permit.validate(step.scope,self.clock_ns())
             def sink(schema,record,captured,ordinal,normalized):
                 admitted=normalized is not None and schema!='definition'
+                begun=time.perf_counter_ns()
                 position,sha,_=self.spool.append(schema,record,capture_ns=captured,
                     delivery_id=f'{self.plan.sha256}:{index}:{schema}:{ordinal}',evidence_kind=evidence_kind,
                     admitted=admitted,clock_review=capture.active_clock_review)
+                durability_latencies.record('durable_spool_transaction',time.perf_counter_ns()-begun)
                 # Native control and verified replay-prefix duplicates do not
                 # become market volume. The source bytes remain in both journals.
                 # Definitions are independently verified against exact native
@@ -135,6 +139,14 @@ class PersistentResearchService:
                 health=state.health(now)
                 ready={(schema,iid) for schema in state.completed for iid in state.verified_definitions
                     if not state.quality_reasons and schema not in health['stalled_connections']}
+                from monatise.research.databento.bar_coverage import review_native_coverage
+                for iid,gate in self.pipeline.gates.items():
+                    for schema in state.interval_receipts:
+                        proof=review_native_coverage(state,gate,schema,now_ns=now,
+                            source_reference=f'{self.plan.sha256}:{index}:native-interval-prefix')
+                        if proof:
+                            if len(gate.coverage_reviews)>=100000:raise ValueError('native_coverage_review_capacity_exceeded')
+                            gate.coverage_reviews[proof.sha256]=proof
                 self.publisher.advance(self.pipeline,now_ns=now+min(0,lower),replay_ready=ready,
                     source_reference=f'{self.plan.sha256}:{index}:verified-native-replay',interval_watermarks=state.interval_watermarks)
             report=await capture.run(api_key=api_key,permit=step.permit,permit_ledger=permit_ledger,
@@ -142,6 +154,7 @@ class PersistentResearchService:
                 recovery_review_reference=step.review_reference if checkpoints else None,
                 bootstrap_prefixes=self.bootstrap_review.prefix_reviews() if index==0 and self.bootstrap_review else None,
                 evidence_kind=evidence_kind,record_sink=sink,rejection_sink=reject,tick_sink=tick,
+                metrics_sink=durability_latencies.summary,
                 checkpoint_sink=lambda value:self.spool.checkpoint('feed_cursor',dict(cursors=value,spool_records=self.spool.count)))
             reports.append(report)
             self.spool.checkpoint('service',dict(plan_sha256=self.plan.sha256,next_step=index+1,

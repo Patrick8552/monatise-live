@@ -71,8 +71,13 @@ class HistoricalBar:
     schema: str
     evidence_kind: str
     clock_review: object | None = None
+    coverage_reviews: tuple = ()
 
     def __post_init__(self):
+        from .bar_coverage import NativeBarCoverage
+        if (not isinstance(self.coverage_reviews,tuple)
+                or any(not isinstance(r,NativeBarCoverage) or r.available_ns>self.retrieval_ns for r in self.coverage_reviews)):
+            raise ValueError('immutable_available_native_coverage_required')
         if not isinstance(self.identity, InstrumentMetadata) or self.identity.kind != "F":
             raise ValueError("exact futures identity required")
         for t in (self.open_ns,self.close_ns,self.retrieval_ns): timestamp_ns(t)

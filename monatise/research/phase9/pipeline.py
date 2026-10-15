@@ -25,12 +25,18 @@ class ResearchPipeline:
     def ingest(self, record, *, schema, archive_sha256, ordinal, capture_ns, admission_ns, evidence_kind, clock_review=None):
         iid = getattr(record,'instrument_id',None)
         gate = self.gates.get(iid)
+        assessment=None
         try:
             if gate is None: raise ValueError('unrequested_contract')
+            from monatise.research.databento.semantics import assess_native_record,transformation_provenance
+            _,upper=clock_review.bounds(capture_ns) if clock_review else (0,0)
+            if schema in {'trades','ohlcv-1s','ohlcv-1m','ohlcv-1h'}:
+                assessment=assess_native_record(record,schema=schema,contract=gate.contract,capture_upper_ns=capture_ns+upper)
             value = observation(record,schema=schema,contract=gate.contract,archive_sha256=archive_sha256,
                 ordinal=ordinal,retrieval_ns=capture_ns,admission_ns=admission_ns,
                 evidence_kind=evidence_kind,enabled_schemas=self.enabled_schemas,clock_review=clock_review)
             result = gate.ingest(value,now_ns=admission_ns)
+            result['mapping_provenance']=transformation_provenance(value)
             if result['accepted']:
                 if schema=='trades':
                     builder=self.trade_candles[iid]
@@ -50,13 +56,20 @@ class ResearchPipeline:
                 # Rejecting an execution taints its bucket, not other instruments.
                 for tf,w in WIDTHS.items():
                     self.trade_candles[iid].tainted.add((tf,value.event_ns//w*w))
+            if assessment is not None:
+                assessment['price_screening_accepted']=result['accepted']
+                if not result['accepted']:assessment['capabilities']={k:False for k in assessment['capabilities']}
+                result['record_quality']=assessment
             return result
         except (ValueError,TypeError,AttributeError,ArithmeticError) as exc:
+            if assessment is not None:
+                assessment['canonical_mapping_accepted']=False
+                assessment['capabilities']={k:False for k in assessment['capabilities']}
             if gate is not None: gate.transport_gap(schema,type(exc).__name__,event_ns=getattr(record,'ts_event',None))
             self.quarantine.append(dict(schema=schema,instrument_id=iid,ordinal=ordinal,capture_ns=capture_ns,
                 archive_sha256=archive_sha256,native_sha256=hashlib.sha256(bytes(record)).hexdigest(),
-                error_type=type(exc).__name__,reason=str(exc)))
-            return dict(accepted=False,duplicate=False,reason=str(exc),**SAFETY)
+                error_type=type(exc).__name__,reason=str(exc),record_quality=assessment))
+            return dict(accepted=False,duplicate=False,reason=str(exc),record_quality=assessment,**SAFETY)
 
     def analyse(self, iid, *, now_ns, mandatory=('price:1h',), requested=(), coverage_review=None):
         frames = {tf:tuple(series[k] for k in sorted(series)

@@ -18,8 +18,11 @@ def capture(tmp_path):
     j.append(anchor,capture_ns=NOW_NS);j.close(quality={'quarantined':False},checkpoint={})
     scope=dict(contracts=[encode(c)],schemas=['trades'],session_end_ns=(NOW_NS//(60*NS))*60*NS+86400*NS,session_review_reference='ENGINEERING CALENDAR')
     key=c.metadata.raw_symbol+':trades';auth=dict(plan=dict(steps=[dict(scope=scope)]),calibration_references={key:dict(policy_sha256=g.policy.sha256,anchor_event_ns=anchor.ts_event,anchor_record_sha256=hashlib.sha256(bytes(anchor)).hexdigest())})
+    from monatise.research.databento.semantics import VERSION
+    auth['normalization_semantics']=VERSION
     (root/'authorization.json').write_text(json.dumps(auth))
-    inputs=dict(version='phase10-analysis-inputs-v1',authorization_sha256=digest(auth),anchor_root=str(anchor_root),session_open_ns=(NOW_NS//(60*NS))*60*NS-86400*NS,policies={key:encode(g.policy)})
+    from monatise.research.databento.semantics import VERSION
+    inputs=dict(version='phase10-analysis-inputs-v1',normalization_semantics=VERSION,authorization_sha256=digest(auth),anchor_root=str(anchor_root),session_open_ns=(NOW_NS//(60*NS))*60*NS-86400*NS,policies={key:encode(g.policy)})
     (root/'analysis-inputs.json').write_text(json.dumps(inputs))
     spool=RotatingSpool(root/'spool',policy=RotationPolicy(records_per_segment=2,bytes_per_segment=4096,maximum_segments=10,maximum_total_bytes=65536))
     for n in range(4):spool.append('trades',trade(c,t=NOW_NS-(4-n)*NS),capture_ns=NOW_NS,delivery_id=digest(auth['plan'])+':0:trades:'+str(n),evidence_kind='ENGINEERING_SYNTHETIC')
@@ -30,6 +33,25 @@ def capture(tmp_path):
 
 
 def hashes(root):return {str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in root.rglob('*') if p.is_file()}
+
+
+def test_v2_reader_uses_native_receive_anchor_without_changing_event_reference(capture):
+    root,c=capture;before=hashes(root)
+    auth=json.loads((root/'authorization.json').read_text())
+    event=auth['calibration_references'][c.metadata.raw_symbol+':trades']['anchor_event_ns']
+    reader=load_capture(root,cutoff_ns=NOW_NS)
+    assert reader.pipeline.gates[c.metadata.instrument_id].guards['trades'].anchor_ns==event+1
+    assert hashes(root)==before
+
+
+def test_reader_rejects_claimed_anchor_index_that_disagrees_with_native_bytes(capture):
+    root,c=capture;auth_path=root/'authorization.json';auth=json.loads(auth_path.read_text())
+    reference=auth['calibration_references'][c.metadata.raw_symbol+':trades']
+    reference['anchor_index_ns']=reference['anchor_event_ns']+99
+    auth_path.write_text(json.dumps(auth))
+    inputs_path=root/'analysis-inputs.json';inputs=json.loads(inputs_path.read_text())
+    inputs['authorization_sha256']=digest(auth);inputs_path.write_text(json.dumps(inputs))
+    with pytest.raises(ValueError,match='anchor_index_mismatch'):load_capture(root,cutoff_ns=NOW_NS)
 
 
 def test_verified_replay_is_read_only_and_preserves_legitimate_multiplicity(capture):
@@ -130,3 +152,8 @@ def test_campaign_excludes_reported_bad_schema_without_admitting_its_clean_prefi
     root,c=capture;p=root/'capture/attempt-00/report.json';value=json.loads(p.read_text());value['quality']['component_rejections']={'trades:'+str(c.metadata.instrument_id):['rejection']};p.write_text(json.dumps(value))
     samples,coverage,hashes=_collect([root],start_ns=NOW_NS-10*NS,end_ns=NOW_NS,training=True)
     assert not samples and coverage[0]['excluded_component_scopes']==[c.metadata.raw_symbol+':trades']
+
+
+def test_old_capture_cannot_be_silently_reinterpreted_with_new_normalization(capture):
+    root,c=capture;path=root/'authorization.json';auth=json.loads(path.read_text());auth.pop('normalization_semantics');path.write_text(json.dumps(auth))
+    with pytest.raises(ValueError,match='original_reader_or_separate_review'):load_capture(root,cutoff_ns=NOW_NS)

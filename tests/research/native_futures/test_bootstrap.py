@@ -17,7 +17,7 @@ def setup(tmp_path):
     p,c=pipeline('ES');g=p.gates[c.metadata.instrument_id];at=NOW_NS-54*NS
     rows=[trade(c,t=at,size=1),trade(c,t=at,size=2)]
     policy=replace(g.policy,floor_ticks=3);g.schema_policies['trades']=policy
-    g.guards['trades']=PriceGuard(c,policy,anchor='2500',anchor_ns=at,anchor_sha256=hashlib.sha256(bytes(rows[-1])).hexdigest())
+    g.guards['trades']=PriceGuard(c,policy,anchor='2500',anchor_ns=rows[-1].ts_recv,anchor_sha256=hashlib.sha256(bytes(rows[-1])).hexdigest())
     s=scope(contracts=(c,),schemas=('definition','trades'),start_ns=NOW_NS-60*NS,duration_seconds=1)
     j=NativeJournal(tmp_path/'trades',schema='trades',scope=s,evidence_kind='ENGINEERING_SYNTHETIC')
     for row in rows:j.append(row,capture_ns=NOW_NS-50*NS)
@@ -147,3 +147,35 @@ def test_initial_clock_equivalence_cannot_cross_native_second_bucket(setup):
     expected=dict(record_sha256=hashlib.sha256(bytes(old)).hexdigest(),identity_sha256=trade_identity(old),ts_recv=old.ts_recv)
     with pytest.raises(ValueError,match='event_identity_or_clock'):
         verified_prefix_hash(translated(old,delta=40),expected=expected,maximum_translation_ns=1000)
+
+
+def test_bootstrap_separates_event_replay_seek_from_receive_time_guard_anchor(setup,tmp_path):
+    p,c,s,rows,_=setup;old=rows[-1];root=tmp_path/'clock-domain-anchors'
+    anchor=dn.TradeMsg(publisher_id=1,instrument_id=c.metadata.instrument_id,
+        ts_event=old.ts_event,ts_recv=old.ts_event-1000,ts_in_delta=0,
+        price=old.price,size=old.size,action=old.action,side=old.side,depth=0,flags=0,sequence=1)
+    j=NativeJournal(root/'trades',schema='trades',scope=s,evidence_kind='ENGINEERING_SYNTHETIC')
+    j.append(anchor,capture_ns=NOW_NS-50*NS);j.close(quality=dict(quarantined=False),checkpoint={})
+    g=p.gates[c.metadata.instrument_id]
+    g.guards['trades']=PriceGuard(c,g.schema_policies['trades'],anchor='2500',
+        anchor_ns=anchor.ts_recv,anchor_sha256=hashlib.sha256(bytes(anchor)).hexdigest())
+    review=review_bootstrap(p,s,root,review_reference='EXPLICIT_INDEPENDENT_NATIVE_CLOCK_DOMAINS')
+    key='trades:'+str(c.metadata.instrument_id)
+    assert review.checkpoints(p,s)[key]['event_ns']==anchor.ts_event
+    st=FeedState(s,checkpoints=review.checkpoints(p,s),recovery_review_reference=review.sha256)
+    assert st.replay_start('trades')==anchor.ts_event
+    assert st.ingest('trades',anchor,capture_ns=NOW_NS,ordinal=0) is None
+    next_row=dn.TradeMsg(publisher_id=1,instrument_id=c.metadata.instrument_id,
+        ts_event=anchor.ts_event+1,ts_recv=anchor.ts_recv+500,ts_in_delta=0,
+        price=old.price,size=old.size,action=old.action,side=old.side,depth=0,flags=0,sequence=2)
+    raw=bytes(next_row)
+    assert st.ingest('trades',next_row,capture_ns=NOW_NS,ordinal=1) is not None
+    assert add(p,next_row,ordinal=1)['accepted']
+    assert bytes(next_row)==raw and g.guards['trades'].anchor_ns==anchor.ts_recv
+
+
+def test_bootstrap_rejects_event_time_substitution_for_trade_receive_anchor(setup):
+    p,c,s,rows,root=setup
+    p.gates[c.metadata.instrument_id].guards['trades'].anchor_ns=rows[-1].ts_event
+    with pytest.raises(ValueError,match='anchor_provider_index'):
+        review_bootstrap(p,s,root,review_reference='WRONG_CLOCK_MUST_NOT_PASS')

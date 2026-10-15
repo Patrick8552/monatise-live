@@ -32,9 +32,16 @@ def verify_bar_lineage(gate, bars, *, reviewed_history=False):
             prices=[int(Decimal(v.payload[0])*10**9) for v in sources]
             expected=(prices[0],max(prices),min(prices),prices[-1]);volume=sum(v.payload[1] for v in sources)
         elif len(schemas)==1 and next(iter(schemas)).startswith('ohlcv-'):
+            schema=next(iter(schemas))
+            proofs=getattr(bar,'coverage_reviews',())
+            sparse=bool(proofs)
+            if sparse and (len(proofs)!=1 or gate.coverage_reviews.get(proofs[0].sha256)!=proofs[0]
+                    or not proofs[0].covers(sources[0].contract.identity,schema,bar.open_ns,bar.close_ns)
+                    or proofs[0].available_ns>bar.retrieval_ns or schema in gate.faults):
+                raise ValueError('unverified_sparse_bar_coverage')
             if (any(not bar.open_ns<=v.payload[0]<v.payload[1]<=bar.close_ns for v in sources)
-                    or any(a.payload[1]!=b.payload[0] for a,b in zip(sources,sources[1:]))
-                    or sources[0].payload[0]!=bar.open_ns or sources[-1].payload[1]!=bar.close_ns):
+                    or any(a.payload[1]>b.payload[0] or not sparse and a.payload[1]!=b.payload[0] for a,b in zip(sources,sources[1:]))
+                    or not sparse and (sources[0].payload[0]!=bar.open_ns or sources[-1].payload[1]!=bar.close_ns)):
                 raise ValueError('native_bar_coverage_lineage_mismatch')
             expected=(sources[0].payload[2],max(v.payload[3] for v in sources),
                 min(v.payload[4] for v in sources),sources[-1].payload[5]);volume=sum(v.payload[6] for v in sources)

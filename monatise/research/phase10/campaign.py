@@ -13,7 +13,7 @@ def _collect(roots,*,start_ns,end_ns,training,maximum_records=10000000,maximum_s
     for root in roots:
         root=Path(root);local=defaultdict(list);excluded=Counter()
         def take(value,outcome):
-            if not start_ns<=value.event_ns<end_ns:return
+            if not start_ns<=value.index_ns<end_ns:return
             if training and not outcome['accepted']:
                 excluded[outcome['reason']]+=1;return
             key=value.contract.metadata.raw_symbol+':'+value.schema
@@ -67,7 +67,7 @@ def train_candidate(roots,path,*,protocol,now_ns=None):
     if not fitted:raise ValueError('no_source_eligible_calibration_scopes')
     coverage=dict(captures=coverage,scope_failures=failures,complete_exchange_continuity_certified=False,
         declared_training_window=[protocol.training_start_ns,protocol.training_end_ns],
-        observed_scope_spans={k:[rows[0].event_ns,rows[-1].event_ns] for k,rows in samples.items() if rows},
+        observed_scope_spans={k:[rows[0].index_ns,rows[-1].index_ns] for k,rows in samples.items() if rows},window_clock='PROVIDER_INDEX',
         sparse_resampling=False,quarantined_attempts_excluded=True)
     return freeze_candidate(path,protocol=protocol,calibrations=fitted,source_hashes=hashes,coverage=coverage)
 

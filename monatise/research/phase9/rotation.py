@@ -74,6 +74,7 @@ class RotatingNativeJournal:
             self.journal=NativeJournal(self.root/f'segment-{len(self.segments):05d}',schema=self.schema,
                 scope=self.scope,evidence_kind=self.kind);self.first_capture=capture_ns
         self.journal.append(record,capture_ns=capture_ns)
+        self.last_append_timings=self.journal.last_append_timings
         ordinal=self.count;self.count+=1;self.last_capture=capture_ns
         return ordinal,hashlib.sha256(raw).hexdigest()
 

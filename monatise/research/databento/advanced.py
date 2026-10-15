@@ -49,10 +49,18 @@ class Observation:
     payload: tuple
     definition_sha256: str
     execution_eligible: bool = False
+    ts_in_delta: int | None = None
+
+    @property
+    def index_ns(self):return None if self.flags&8 else self.receive_ns
+
+    @property
+    def publisher_send_ns(self):
+        return None if self.flags&8 or self.ts_in_delta in (None,-(2**31),2**31-1) else self.receive_ns-self.ts_in_delta
 
 
 class AdvancedAdapters:
-    def __init__(self, *, identity, enabled_schemas=(), mbo_research_reference=None):
+    def __init__(self, *, identity, enabled_schemas=(), mbo_research_reference=None, mbo_snapshot_reference=None):
         if not isinstance(identity, InstrumentMetadata) or identity.dataset != "GLBX.MDP3":
             raise ValueError("reviewed explicit CME instrument metadata required")
         self.enabled = frozenset(enabled_schemas)
@@ -62,6 +70,7 @@ class AdvancedAdapters:
             raise ValueError("explicit MBO research question reference required")
         self.identity = identity
         self.mbo_research_reference = mbo_research_reference
+        self.mbo_snapshot_reference = mbo_snapshot_reference
         terms = dict(identity.native_terms)
         self.tick = fixed(int(terms["min_price_increment"]))
         if self.tick <= 0:
@@ -81,10 +90,15 @@ class AdvancedAdapters:
                     "mbp-10": dbn.MBP10Msg, "mbo": dbn.MBOMsg}[schema]
         if not isinstance(record, expected):
             raise ValueError("native record and schema mismatch")
-        event, receive = timestamp_ns(record.ts_event), timestamp_ns(record.ts_recv)
+        from .semantics import flag_eligibility
+        quality=flag_eligibility(schema,int(record.flags),reviewed_mbo_snapshot=bool(schema=='mbo' and record.flags&32 and self.mbo_snapshot_reference))
+        event=timestamp_ns(record.ts_event)
+        empty_snapshot=bool(quality['snapshot_book_seed_eligible'] and str(record.action)=='R' and record.flags&128 and record.ts_recv==2**64-1)
+        receive=record.ts_recv if empty_snapshot else timestamp_ns(record.ts_recv)
         if ((record.publisher_id,record.instrument_id) != (self.identity.publisher_id,self.identity.instrument_id)
-                or not self.identity.event_ns <= event <= receive < self.identity.expiration_ns
-                or record.flags & 8):
+                or not self.identity.event_ns <= event < self.identity.expiration_ns
+                or not empty_snapshot and not self.identity.event_ns <= receive < self.identity.expiration_ns
+                or not (quality['ordinary_record_eligible'] or quality['snapshot_book_seed_eligible'])):
             raise ValueError("record identity, lifetime or receive quality mismatch")
         action, side = str(record.action), str(record.side)
         if schema == "trades":
@@ -117,7 +131,7 @@ class AdvancedAdapters:
         return Observation(self.identity.dataset, schema, self.identity.namespace,
             record.publisher_id, record.instrument_id, self.identity.raw_symbol, event, receive,
             record.sequence, record.flags, action, hashlib.sha256(bytes(record)).hexdigest(),
-            payload, self.identity.definition_sha256)
+            payload, self.identity.definition_sha256,ts_in_delta=record.ts_in_delta)
 
     def _level(self, level):
         result = []

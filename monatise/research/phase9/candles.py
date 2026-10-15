@@ -93,11 +93,26 @@ class ContinuousCandles:
             provider_ohlcv_equivalence=False, forming_trade_count=sum(v.event_ns >= review.end_ns for v in self.rows))
 
 
-def aggregate_complete(bars, *, target, calendar):
-    """Canonical bars, arbitrary smaller source interval, all children mandatory."""
+def aggregate_complete(bars, *, target, calendar, coverage_reviews=()):
+    """Observed OHLCV plus proven provider-empty children; never flat fills.
+
+    Without explicit source-bound coverage, every child remains mandatory.
+    Event-time trade-derived bars cannot use receive-time provider coverage.
+    """
+    from monatise.research.databento.bar_coverage import NativeBarCoverage
     rows = tuple(bars)
     if not rows or len(rows) > 100000: raise ValueError('bounded_bar_input_required')
     source = rows[0].timeframe
+    identity=(rows[0].identity.dataset,rows[0].identity.publisher_id,rows[0].identity.instrument_id,
+        rows[0].identity.raw_symbol,rows[0].identity.expiration_ns)
+    reviews=tuple(coverage_reviews)
+    if len(reviews)>100000 or any(not isinstance(r,NativeBarCoverage) for r in reviews):raise ValueError('bounded_native_coverage_reviews_required')
+    # Select the latest compatible session proof before visiting parent buckets.
+    latest={}
+    for r in reviews:
+        key=(r.identity,r.schema,r.start_ns)
+        if key not in latest or r.end_ns>latest[key].end_ns:latest[key]=r
+    reviews=tuple(latest.values())
     step,width = WIDTHS[source],WIDTHS[target]
     if width <= step or width % step: raise ValueError('larger_multiple_timeframe_required')
     seen = {}
@@ -111,12 +126,23 @@ def aggregate_complete(bars, *, target, calendar):
     for start in sorted({t//width*width for t in seen}):
         end = start+width
         children = [seen[t] for t in range(start,end,step) if t in seen]
-        if len(children) != width//step or not calendar.contains(start,end):
+        missing=[t for t in range(start,end,step) if t not in seen]
+        inherited={r.sha256:r for b in children for r in getattr(b,'coverage_reviews',())}
+        possible=tuple({r.sha256:r for r in (*reviews,*inherited.values())}.values())
+        proofs=tuple(r for r in possible if r.identity==identity and r.start_ns<=start<end<=r.end_ns
+            and (r.schema=='ohlcv-'+source or r.sha256 in inherited)) if missing or inherited else ()
+        native_only=all(b.schema=='ohlcv-'+source for b in children)
+        in_session=(calendar.valid_from_ns<=start<end<=calendar.valid_to_ns and calendar.contains(start,end))
+        if (not in_session or missing and (not proofs or not native_only)
+                or inherited and not proofs):
             rejected.append(dict(open_ns=start,reason='MISSING_CHILD_OR_SESSION_EDGE'));continue
+        if not children:continue
+        proofs=proofs[:1]
+        retrieved=max([v.retrieval_ns for v in children]+[r.available_ns for r in proofs])
         output.append(HistoricalBar(rows[0].identity,target,start,end,
             (children[0].prices_fixed[0],max(v.prices_fixed[1] for v in children),
              min(v.prices_fixed[2] for v in children),children[-1].prices_fixed[3]),
-            sum(v.volume for v in children),max(v.retrieval_ns for v in children),
+            sum(v.volume for v in children),retrieved,
             tuple(h for v in children for h in v.source_hashes),'derived-ohlcv-v1',rows[0].evidence_kind,
-            max(children,key=lambda v:v.retrieval_ns).clock_review))
+            proofs[0].clock_review if proofs and retrieved==proofs[0].available_ns else max(children,key=lambda v:v.retrieval_ns).clock_review,proofs))
     return tuple(output),tuple(rejected)

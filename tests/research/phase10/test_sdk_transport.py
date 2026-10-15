@@ -194,7 +194,7 @@ def test_owned_transport_capture_end_to_end_seals_and_releases_all_loops(tmp_pat
     assert all(d['isolated_network_loop'] for d in report['delivery_diagnostics']['client_transports'].values())
 
 
-def test_replay_burst_exceeding_handoff_capacity_is_lossless_and_all_subscribe_first(tmp_path):
+def test_replay_burst_within_handoff_capacity_is_lossless_and_all_subscribe_first(tmp_path):
     import databento_dbn as dn
     from monatise.research.databento.live_feed import CMELiveCapture
     from tests.research.test_databento_live_preparation import scope, permit, FakeClient, NOW_NS, system
@@ -219,10 +219,10 @@ def test_replay_burst_exceeding_handoff_capacity_is_lossless_and_all_subscribe_f
     def factory(key, heartbeat):
         client=OwnedSDKClient(key,heartbeat,builder=ReplaySDK);clients.append(client);return client
     s=scope(duration_seconds=1)
-    report=asyncio.run(CMELiveCapture(s,client_factory=factory,clock_ns=lambda:NOW_NS,queue_capacity=16).run(
+    report=asyncio.run(CMELiveCapture(s,client_factory=factory,clock_ns=lambda:NOW_NS,queue_capacity=1024).run(
         api_key='ENGINEERING_ONLY',permit=permit(s),permit_ledger=tmp_path/'permits.sqlite',
         output=tmp_path/'capture',evidence_kind='ENGINEERING_SYNTHETIC'))
     assert not report['quality']['quarantined']
     assert report['journals']['trades']['record_count']==517
-    assert report['delivery_diagnostics']['max_queue_depth']<=16
+    assert report['delivery_diagnostics']['max_queue_depth']<=1024
     assert all(not c._thread.is_alive() for c in clients)

@@ -11,6 +11,8 @@ from monatise.adapters.databento_identity import timestamp_ns
 from monatise.research.databento.datasets import InstrumentMetadata
 from . import VERSION
 
+MAPPING_VERSION='native-futures-normalization-v2'
+
 
 def encode(value):
     if is_dataclass(value):
@@ -114,7 +116,18 @@ class MarketObservation:
     sequence: int | None = None
     provider: str = "Databento"
     quality: str = "CAPTURED_NATIVE_CONTINUITY_UNCERTIFIED"
-    normalization_version: str = VERSION
+    normalization_version: str = MAPPING_VERSION
+    ts_in_delta: int | None = None
+
+    @property
+    def index_ns(self):
+        return self.receive_ns if self.receive_ns is not None else self.event_ns
+
+    @property
+    def publisher_send_ns(self):
+        # Clamped deltas do not represent an exact sending timestamp.
+        if self.receive_ns is None or self.ts_in_delta in (None, -(2**31), 2**31-1):return None
+        return self.receive_ns-self.ts_in_delta
 
     def __post_init__(self):
         timestamp_ns(self.event_ns)
@@ -122,15 +135,19 @@ class MarketObservation:
             timestamp_ns(self.receive_ns)
         m = self.contract.metadata
         clock = self.receive_ns if self.receive_ns is not None else self.event_ns
-        if (self.provider != "Databento" or self.normalization_version != VERSION
+        if (self.provider != "Databento" or self.normalization_version != MAPPING_VERSION
                 or self.quality != "CAPTURED_NATIVE_CONTINUITY_UNCERTIFIED"
                 or self.schema not in {"definition", "trades", "mbp-1", "mbp-10", "ohlcv-1s", "ohlcv-1m", "ohlcv-1h", "statistics", "status"}
-                or not (m.event_ns if self.schema == "definition" else m.receive_ns) <= self.event_ns <= clock < m.expiration_ns
-                or clock > self.source.utc_capture_bounds[1]
+                or not m.event_ns <= self.event_ns < m.expiration_ns
+                or not (m.event_ns if self.schema=='definition' else m.receive_ns) <= clock < m.expiration_ns
+                or max(clock,self.event_ns) > self.source.utc_capture_bounds[1]
                 or not isinstance(self.payload, tuple)
                 or type(self.flags) is not int or not 0 <= self.flags <= 255
                 or self.flags & (4 | 8 | 32)):
             raise ValueError("native_clock_schema_or_quality_invalid")
+        if self.ts_in_delta is not None and (type(self.ts_in_delta) is not int or not -(2**31)<=self.ts_in_delta<2**31):
+            raise ValueError('native_publisher_delta_invalid')
+
         if self.sequence is not None and (type(self.sequence) is not int or not 0 <= self.sequence < 2**32):
             raise ValueError("native_sequence_invalid")
         if self.schema == 'trades':
