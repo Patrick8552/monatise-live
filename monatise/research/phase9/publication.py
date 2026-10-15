@@ -46,27 +46,34 @@ class CandlePublisher:
         pending_highest=dict(self.highest)
         with self.db:
             for iid,g in pipeline.gates.items():
-                frames={};schemas={}
+                # Retain native history for incomplete parent buckets, but only
+                # rebuild targets after their last durable publication. A live
+                # second tick must not re-aggregate the entire session.
+                native={};schemas={};frames={}
                 for tf,rows in pipeline.bars[iid].items():
                     schema='ohlcv-'+tf
                     if (schema,iid) not in replay_ready:continue
                     allowed=[b for b in rows.values() if b.close_ns+10*10**9<=now_ns and b.retrieval_ns<=now_ns
                         and (interval_watermarks is None or b.close_ns<=interval_watermarks.get(schema,0))
                         and (schema not in g.faults or b.close_ns<=g.fault_event_ns.get(schema,0))]
-                    if allowed:frames[tf]=tuple(sorted(allowed,key=lambda b:b.open_ns));schemas[tf]=(schema,)
-                for tf in ('5s','1m','5m','15m','1h','4h'):
-                    if tf in frames:continue
-                    candidates=[s for s in frames if WIDTHS[s]<WIDTHS[tf] and WIDTHS[tf]%WIDTHS[s]==0]
-                    if not candidates:continue
-                    source=max(candidates,key=lambda s:WIDTHS[s])
-                    bars,errors=aggregate_complete(frames[source],target=tf,calendar=pipeline.calendars[iid])
-                    rejected.extend(dict(iid=iid,timeframe=tf,**e) for e in errors[-8:])
-                    if bars:frames[tf]=bars;schemas[tf]=schemas[source]
-                for tf,bars in frames.items():
+                    if allowed:native[tf]=tuple(sorted(allowed,key=lambda b:b.open_ns))
+                for tf in tuple(dict.fromkeys((*native,'5s','1m','5m','15m','1h','4h'))):
                     last=pending_highest.get((iid,tf),0)
+                    if tf in native:
+                        frames[tf]=tuple(b for b in native[tf] if b.close_ns>last);schemas[tf]=('ohlcv-'+tf,)
+                        continue
+                    candidates=[src for src in native if WIDTHS[src]<WIDTHS[tf] and WIDTHS[tf]%WIDTHS[src]==0]
+                    if not candidates:continue
+                    source=max(candidates,key=lambda src:WIDTHS[src])
+                    children=tuple(b for b in native[source] if b.open_ns>=last)
+                    if not children:continue
+                    bars,errors=aggregate_complete(children,target=tf,calendar=pipeline.calendars[iid])
+                    rejected.extend(dict(iid=iid,timeframe=tf,**e) for e in errors[-8:])
+                    if bars:frames[tf]=bars;schemas[tf]=('ohlcv-'+source,)
+                candidates=tuple(bar for bars in frames.values() for bar in bars)
+                if candidates:verify_bar_lineage(g,candidates)
+                for tf,bars in frames.items():
                     for bar in bars:
-                        if bar.close_ns<=last:continue
-                        verify_bar_lineage(g,(bar,))
                         key=digest([g.contract.identity,tf,bar.open_ns])
                         sha=self._emit(key,'CANDLE_FINAL',dict(bar=bar,available_ns=now_ns,source_reference=source_reference,
                             coverage='VALIDATED_NATIVE_BAR_OR_ALL_NATIVE_CHILDREN',price_clock='PROVIDER_OHLCV_RECEIVE_TIME_BUCKET',

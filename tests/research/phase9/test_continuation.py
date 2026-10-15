@@ -162,18 +162,17 @@ def test_clock_review_renewal_preserves_queued_record_capture_provenance():
 def test_publication_rollback_does_not_advance_in_memory_high_watermark(tmp_path,monkeypatch):
     p,c=pipeline();pub=CandlePublisher(tmp_path/'out.sqlite');start=NOW_NS//(60*NS)*60*NS-60*NS
     for i in range(2):assert add(p,bar(c,'1s',start+i*NS),'ohlcv-1s',i)['accepted']
-    import monatise.research.phase9.publication as module
-    verify=module.verify_bar_lineage;calls=0
+    emit=pub._emit;calls=0
     def fail_second(*args):
         nonlocal calls
         calls+=1
         if calls==2:raise ValueError('injected transaction failure')
-        return verify(*args)
-    monkeypatch.setattr(module,'verify_bar_lineage',fail_second)
+        return emit(*args)
+    monkeypatch.setattr(pub,'_emit',fail_second)
     args=dict(now_ns=NOW_NS,replay_ready={('ohlcv-1s',c.metadata.instrument_id)},source_reference='test')
     with pytest.raises(ValueError,match='injected'):pub.advance(p,**args)
     assert not pub.highest and pub.summary()['active_candles']==0
-    monkeypatch.setattr(module,'verify_bar_lineage',verify)
+    monkeypatch.setattr(pub,'_emit',emit)
     assert pub.advance(p,**args)['published']==2;pub.close()
 
 
@@ -257,3 +256,52 @@ def test_latest_unfinalized_bar_does_not_erase_prior_final_minute_context():
     assert result['candle_quality']['1m']['forming_or_not_yet_available']==1
     assert len(p.bars[c.metadata.instrument_id]['1m'])==4
     assert not result['execution_eligible'] and result['qualification_status']=='NOT_EVALUATED'
+
+
+def test_reviewed_session_drain_accepts_closing_bars_without_extending_market_session(tmp_path):
+    from monatise.research.databento.live_state import FeedState
+    end=NOW_NS//(60*NS)*60*NS
+    s=scope(start_ns=end-120*NS,session_end_ns=end,schemas=('definition','ohlcv-1m'),session_drain_seconds=30)
+    state=FeedState(s);state.acknowledged.add('ohlcv-1m')
+    assert state.ingest('ohlcv-1m',bar(s.contracts[0],'1m',end-60*NS),capture_ns=end+NS,ordinal=0)
+    with pytest.raises(ValueError,match='identity_clocks_session'):
+        state.ingest('ohlcv-1m',bar(s.contracts[0],'1m',end),capture_ns=end+61*NS,ordinal=1)
+    with pytest.raises(ValueError,match='identity_clocks_session'):
+        state.ingest('ohlcv-1m',bar(s.contracts[0],'1m',end-60*NS),capture_ns=end+30*NS,ordinal=2)
+    closed=FeedState(replace(s,session_drain_seconds=0))
+    with pytest.raises(ValueError):closed.ingest('ohlcv-1m',bar(s.contracts[0],'1m',end-60*NS),capture_ns=end+NS,ordinal=0)
+    for v in (-1,121,True):
+        with pytest.raises(ValueError):replace(s,session_drain_seconds=v)
+
+
+def test_publication_incremental_tick_does_not_rebuild_published_day(tmp_path,monkeypatch):
+    import monatise.research.phase9.publication as module
+    p,c=pipeline();pub=CandlePublisher(tmp_path/'pub.sqlite');start=NOW_NS//(86400*NS)*86400*NS-86400*NS
+    for i in range(23*60):assert add(p,bar(c,'1m',start+i*60*NS),'ohlcv-1m',i)['accepted']
+    args=dict(now_ns=NOW_NS,replay_ready={('ohlcv-1m',c.metadata.instrument_id)},source_reference='incremental')
+    assert pub.advance(p,**args)['published']>1380
+    counts=[];aggregate=module.aggregate_complete
+    def measured(rows,**kw):counts.append((kw['target'],len(rows)));return aggregate(rows,**kw)
+    monkeypatch.setattr(module,'aggregate_complete',measured)
+    assert pub.advance(p,**args)['published']==0
+    assert all(n<=240 for tf,n in counts),counts
+    pub.close()
+
+
+def test_slow_clock_refresh_does_not_pause_native_record_processing(tmp_path):
+    import asyncio,time
+    from monatise.research.databento.live_models import ClockReview
+    from monatise.research.databento.live_feed import CMELiveCapture
+    from tests.research.test_databento_live_preparation import FakeClient,permit
+    origin=time.monotonic_ns();clock=lambda:NOW_NS+time.monotonic_ns()-origin
+    old=ClockReview(NOW_NS-280*NS,NOW_NS+20*NS,0,1000,digest('old'),'old research bounds')
+    s=scope(duration_seconds=1,clock_review=old);delivered=[];refreshed=[]
+    def refresh():
+        time.sleep(.2);at=clock();refreshed.append(time.monotonic())
+        return ClockReview(at,at+300*NS,0,1000,digest('new'),'new research bounds')
+    def sink(*args):delivered.append(time.monotonic())
+    result=asyncio.run(CMELiveCapture(s,client_factory=lambda *a:FakeClient(),clock_ns=clock,clock_refresh=refresh).run(
+        api_key='ENGINEERING',permit=permit(s),permit_ledger=tmp_path/'permit',output=tmp_path/'run',
+        evidence_kind='ENGINEERING_SYNTHETIC',record_sink=sink))
+    assert delivered and refreshed and delivered[0]<refreshed[0]
+    assert len(result['clock_reviews'])==1 and not result['quality']['quarantined']

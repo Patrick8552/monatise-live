@@ -120,6 +120,7 @@ class PersistentResearchService:
                 journal_factory=lambda *a,**kw:RotatingNativeJournal(*a,policy=self.rotation_policy,**kw)
             capture=CMELiveCapture(step.scope,client_factory=self.factory,clock_ns=self.clock_ns,
                 journal_factory=journal_factory,clock_refresh=self.clock_refresh)
+            self.capture=capture
             def tick(state,now):
                 if self.publisher is None:return
                 lower,_=state.clock_review.bounds(now) if state.clock_review else (0,0)

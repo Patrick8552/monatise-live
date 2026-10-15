@@ -83,7 +83,7 @@ class CMELiveCapture:
             if record_sink is not None:record_sink(schema,record,captured,ordinal,normalized)
             if checkpoint_sink is not None:checkpoint_sink(state.checkpoint())
 
-        failure=None
+        failure=None;clock_refresh_task=None
         try:
             for schema in self.scope.schemas:
                 permit.validate(self.scope,self.clock_ns())
@@ -102,8 +102,11 @@ class CMELiveCapture:
             end=loop.time()+self.scope.duration_seconds
             next_tick=loop.time()
             while loop.time()<end:
-                if self.clock_refresh is not None and state.clock_review is not None and self.clock_ns()>=state.clock_review.expires_ns-60*10**9:
-                    review=await asyncio.to_thread(self.clock_refresh)
+                if (self.clock_refresh is not None and state.clock_review is not None and clock_refresh_task is None
+                        and self.clock_ns()>=state.clock_review.expires_ns-60*10**9):
+                    clock_refresh_task=asyncio.create_task(asyncio.to_thread(self.clock_refresh))
+                if clock_refresh_task is not None and clock_refresh_task.done():
+                    review=clock_refresh_task.result();clock_refresh_task=None
                     review.bounds(self.clock_ns());state.update_clock_review(review)
                     clock_reviews.append(encode(review))
                 if tick_sink is not None and loop.time()>=next_tick:
@@ -123,6 +126,9 @@ class CMELiveCapture:
             state.quarantine('capture_transport_or_storage_failure');failure=type(exc).__name__
         finally:
             closing=True
+            if clock_refresh_task is not None:
+                clock_refresh_task.cancel()
+                await asyncio.gather(clock_refresh_task,return_exceptions=True)
             for client in clients:
                 try:client.terminate()
                 except Exception:state.quarantine('client_shutdown_failed')

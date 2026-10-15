@@ -81,6 +81,7 @@ class LiveScope:
     maximum_records: int=100000
     maximum_bytes: int=32*1024**2
     clock_review: ClockReview|None=None
+    session_drain_seconds: int=0
 
     def __post_init__(self):
         timestamp_ns(self.start_ns);timestamp_ns(self.session_end_ns)
@@ -95,6 +96,7 @@ class LiveScope:
                 or len({row[0] for row in self.publishers})!=len(self.publishers)
                 or any(tuple(row[1:])!=('GLBX.MDP3','GLBX') for row in self.publishers)
                 or any(c.metadata.publisher_id not in {row[0] for row in self.publishers} for c in self.contracts)
+                or type(self.session_drain_seconds) is not int or not 0<=self.session_drain_seconds<=120
                 or type(self.duration_seconds) is not int or not 1<=self.duration_seconds<=86400
                 or type(self.heartbeat_seconds) is not int or not 1<=self.heartbeat_seconds<=30
                 or type(self.maximum_market_age_ns) is not int or not 0<self.maximum_market_age_ns<=30*10**9
@@ -112,7 +114,7 @@ class LiveScope:
         timestamp_ns(now_ns)
         lower,upper=self.clock_bounds(now_ns)
         if (not self.start_ns<=now_ns<self.session_end_ns or now_ns-self.start_ns>24*3600*10**9
-                or now_ns+self.duration_seconds*10**9+max(0,upper)>self.session_end_ns
+                or now_ns+self.duration_seconds*10**9+max(0,upper)>self.session_end_ns+self.session_drain_seconds*10**9
                 or not 0<=now_ns-self.capability.observed_at_ns<=300*10**9):
             raise ValueError('current_reviewed_session_and_bounded_replay_required')
         for schema in self.schemas:self.capability.require(schema,at_ns=now_ns)
