@@ -49,6 +49,12 @@ class AnalysisService:
                     result['components'].setdefault('price:'+tf,dict(available=False,reason='insufficient_validated_history'))
                 result.update(capture_health=health,live_analysis_certified=False,analysis_access='READ_ONLY',
                     decision='NO_TRADE',qualification_status='NOT_EVALUATED',**SAFETY)
+                from .diagnostics import second_intervals
+                result['seconds_bar_diagnostics']=second_intervals(self.pipeline.gates[iid],
+                    cutoff_ns=request.cutoff_ns,watermark_ns=health.get('interval_watermarks',{}).get('ohlcv-1s'),
+                    source_unreliable=bool(health.get('quarantined') or health.get('stale_checkpoint')))
+                result['participant_identity']='UNAVAILABLE_ANONYMOUS_EXCHANGE_DATA'
+                result['order_flow_depth_status']='NOT_CAPTURED_OR_NOT_VALIDATED'
                 result['reproducibility_sha256']=digest({k:v for k,v in result.items() if k!='reproducibility_sha256'})
                 outputs[symbol]=result
             except Exception as exc:

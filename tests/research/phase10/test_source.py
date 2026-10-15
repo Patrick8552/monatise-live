@@ -65,6 +65,39 @@ def test_quarantined_capture_retains_calculations_but_is_unavailable(capture):
     assert r['capture_health']['quarantined']
 
 
+def test_legacy_empty_reason_stall_is_reported_without_rewriting_source(capture):
+    root,c=capture;path=root/'capture/attempt-00/report.json';v=json.loads(path.read_text())
+    v['quality'].update(quarantined=True,reasons=[],stalled_connections=['trades']);path.write_text(json.dumps(v));before=hashes(root)
+    service=load_capture(root,cutoff_ns=NOW_NS)
+    value=service.analyse(AnalysisRequest((c.metadata.raw_symbol,),NOW_NS))['instruments'][c.metadata.raw_symbol]
+    assert value['availability']=='UNAVAILABLE'
+    assert 'connection_stalled_trades' in value['capture_health']['reasons']
+    assert hashes(root)==before
+
+
+def test_read_only_phrase_cli_resolves_current_exact_contract(capture,capsys):
+    from monatise.research.phase10.cli import main
+    root,c=capture;pointer=root.parent/'pointer.txt';pointer.write_text(str(root))
+    assert main(['--capture-pointer',str(pointer),'--request','Analyse GC using Databento'])==0
+    result=json.loads(capsys.readouterr().out)
+    assert list(result['instruments'])==[c.metadata.raw_symbol]
+    assert not result['trade_signal_produced'] and not result['execution_eligible']
+    assert not result['crypto_engines_used'] and not result['frozen_H1_selector_used'] and not result['GIL_rules_used']
+
+
+def test_optional_history_decoder_error_does_not_erase_valid_live_data(capture,monkeypatch):
+    import databento_dbn as dn
+    from monatise.research.phase10 import history
+    root,c=capture
+    def invalid_history(*args,**kwargs):raise dn.DBNError('ENGINEERING_INVALID_DBN')
+    monkeypatch.setattr(history,'load_history',invalid_history)
+    result=load_capture(root,cutoff_ns=NOW_NS,history_manifest=root/'bad-history.json').analyse(
+        AnalysisRequest((c.metadata.raw_symbol,),NOW_NS))['instruments'][c.metadata.raw_symbol]
+    assert result['components']['trade_features']['available']
+    assert result['capture_health']['history_warmup']['status']=='UNAVAILABLE'
+    assert result['capture_health']['history_warmup']['error_type']=='DBNError'
+
+
 def test_record_budget_is_enforced_without_returning_partial_replay_as_complete(capture):
     root,c=capture
     with pytest.raises(ValueError,match='record_budget'):load_capture(root,cutoff_ns=NOW_NS,maximum_records=3)

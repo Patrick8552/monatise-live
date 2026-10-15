@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import threading
 import time
+import queue as thread_queue
 
 from monatise.research.institutional.models import encode,digest
 from .live_models import LiveScope,consume_permit,SAFETY
@@ -19,8 +20,8 @@ from .live_journal import NativeJournal
 def sdk_client(key,heartbeat_seconds):
     if version('databento')!='0.87.0' or version('databento-dbn')!='0.70.0':
         raise ValueError('reviewed_pinned_live_SDK_versions_required')
-    import databento
-    return databento.Live(key=key,heartbeat_interval_s=heartbeat_seconds,reconnect_policy='none')
+    from .sdk_transport import OwnedSDKClient
+    return OwnedSDKClient(key,heartbeat_seconds)
 
 
 class CMELiveCapture:
@@ -45,9 +46,11 @@ class CMELiveCapture:
         consume_permit(permit_ledger,permit,self.scope,self.clock_ns())
         output.mkdir(parents=True,exist_ok=False);output.chmod(0o700)
         journals={};clients=[];watchers=[];closing=False;overflow=threading.Event()
-        queue=asyncio.Queue(maxsize=self.queue_capacity);loop=asyncio.get_running_loop()
-        pending=threading.BoundedSemaphore(self.queue_capacity)
+        queue=thread_queue.Queue(maxsize=self.queue_capacity);loop=asyncio.get_running_loop()
+        wake=asyncio.Event()
         manifests={};transport_events=[];transport_lock=threading.Lock()
+        callback_last={};callback_counts={};max_queue_depth=0;max_delivery_lag_ns=0
+        max_processing_ns=0;max_tick_ns=0;stop_evidence=None;client_diagnostics={}
 
         def transport_event(schema,stage,exc=None):
             with transport_lock:
@@ -59,13 +62,22 @@ class CMELiveCapture:
         def callback(schema):
             def receive(record):
                 if closing:return
-                if not pending.acquire(blocking=False):overflow.set();return
                 captured=self.clock_ns()
-                def deliver():
-                    try:queue.put_nowait((schema,record,captured))
-                    except asyncio.QueueFull:overflow.set()
-                    finally:pending.release()
-                loop.call_soon_threadsafe(deliver)
+                with transport_lock:
+                    callback_last[schema]=captured;callback_counts[schema]=callback_counts.get(schema,0)+1
+                # Each real SDK has its own network thread. A bounded blocking
+                # handoff slows that socket's reader during replay instead of
+                # dropping a burst into an unconsumed startup callback queue.
+                # Synthetic same-thread callbacks must never block this loop.
+                try:
+                    if threading.get_ident()==consumer_thread:
+                        queue.put_nowait((schema,record,captured))
+                    else:
+                        queue.put((schema,record,captured),timeout=2)
+                except thread_queue.Full:
+                    overflow.set()
+                    return
+                loop.call_soon_threadsafe(wake.set)
             return receive
 
         def callback_failed(schema,exc):
@@ -95,7 +107,7 @@ class CMELiveCapture:
             if record_sink is not None:record_sink(schema,record,captured,ordinal,normalized)
             if checkpoint_sink is not None:checkpoint_sink(state.checkpoint())
 
-        failure=None;clock_refresh_task=None
+        failure=None;clock_refresh_task=None;consumer_thread=threading.get_ident()
         try:
             for schema in self.scope.schemas:
                 permit.validate(self.scope,self.clock_ns())
@@ -109,8 +121,10 @@ class CMELiveCapture:
                 await asyncio.to_thread(client.subscribe,dataset='GLBX.MDP3',schema=schema,
                     symbols=[c.metadata.instrument_id for c in self.scope.contracts],stype_in='instrument_id',
                     start=state.replay_start(schema))
-                state.started[schema]=self.clock_ns();client.start()
+                state.started[schema]=self.clock_ns()
                 watchers.append(asyncio.create_task(watch(schema,client)))
+            # Finish all subscriptions before any replay can fill the handoff.
+            for client in clients:client.start()
             end=loop.time()+self.scope.duration_seconds
             next_tick=loop.time()
             while loop.time()<end:
@@ -122,15 +136,36 @@ class CMELiveCapture:
                     review.bounds(self.clock_ns());state.update_clock_review(review)
                     clock_reviews.append(encode(review))
                 if tick_sink is not None and loop.time()>=next_tick:
+                    tick_started=time.perf_counter_ns()
                     tick_sink(state,self.clock_ns());next_tick=loop.time()+1
+                    max_tick_ns=max(max_tick_ns,time.perf_counter_ns()-tick_started)
                 if overflow.is_set():state.quarantine('local_callback_or_queue_backpressure')
                 health=state.health(self.clock_ns())
-                if state.quality_reasons or health['stalled_connections']:break
+                if state.quality_reasons or health['stalled_connections']:
+                    if health['stalled_connections']:
+                        with transport_lock:
+                            stop_evidence=dict(observed_at_ns=self.clock_ns(),
+                                stalled_connections=list(health['stalled_connections']),
+                                last_processed_capture_ns=dict(state.last_message),
+                                last_callback_capture_ns=dict(callback_last),queue_depth=queue.qsize())
+                        # Final draining must never erase an observed liveness failure.
+                        for schema in health['stalled_connections']:state.quarantine('connection_stalled_'+schema)
+                    break
                 try:
-                    schema,record,captured=await asyncio.wait_for(queue.get(),timeout=min(.1,max(.001,end-loop.time())))
-                except TimeoutError:continue
+                    schema,record,captured=queue.get_nowait()
+                except thread_queue.Empty:
+                    wake.clear()
+                    if not queue.empty():continue
+                    try:await asyncio.wait_for(wake.wait(),timeout=min(.1,max(.001,end-loop.time())))
+                    except TimeoutError:pass
+                    continue
+                max_queue_depth=max(max_queue_depth,queue.qsize()+1)
+                max_delivery_lag_ns=max(max_delivery_lag_ns,max(0,self.clock_ns()-captured))
+                processing_started=time.perf_counter_ns()
                 ordinal,_=journals[schema].append(record,capture_ns=captured)
                 deliver(schema,record,captured,ordinal)
+                max_processing_ns=max(max_processing_ns,time.perf_counter_ns()-processing_started)
+                await asyncio.sleep(0)
         except asyncio.CancelledError:
             state.quarantine('capture_cancelled');failure='CancelledError'
             raise
@@ -138,6 +173,13 @@ class CMELiveCapture:
             state.quarantine('capture_transport_or_storage_failure');failure=type(exc).__name__
         finally:
             closing=True
+            # Capture loop/socket state before terminate destroys SDK state.
+            # Diagnostics cannot reopen, resume or reconnect a subscription.
+            for schema,client in zip(self.scope.schemas,clients):
+                diagnostic=getattr(client,'diagnostics',None)
+                if diagnostic is not None:
+                    try:client_diagnostics[schema]=await asyncio.to_thread(diagnostic)
+                    except Exception:client_diagnostics[schema]={'diagnostic_failed':True}
             if clock_refresh_task is not None:
                 clock_refresh_task.cancel()
                 await asyncio.gather(clock_refresh_task,return_exceptions=True)
@@ -147,6 +189,11 @@ class CMELiveCapture:
             if watchers:
                 try:await asyncio.wait_for(asyncio.gather(*watchers,return_exceptions=True),timeout=5)
                 except TimeoutError:state.quarantine('client_shutdown_timeout')
+            for client in clients:
+                close=getattr(client,'close',None)
+                if close is not None:
+                    try:await asyncio.to_thread(close)
+                    except Exception:state.quarantine('owned_SDK_loop_shutdown_failed')
             if overflow.is_set():state.quarantine('local_callback_or_queue_backpressure')
             # Do not silently drop records already queued at the deadline.
             while not queue.empty():
@@ -167,6 +214,10 @@ class CMELiveCapture:
                 permit_sha256=digest(permit),quality=health,checkpoint=state.checkpoint(),journals=manifests,
                 normalization_tail=state.normalized,failure_type=failure,transport_events=transport_events,
                 runtime=dict(databento=version('databento'),databento_dbn=version('databento-dbn')),
+                delivery_diagnostics=dict(callback_counts=dict(callback_counts),last_callback_capture_ns=dict(callback_last),
+                    max_queue_depth=max_queue_depth,max_delivery_lag_ns=max_delivery_lag_ns,
+                    max_record_processing_ns=max_processing_ns,max_publication_tick_ns=max_tick_ns,
+                    stop_evidence=stop_evidence,client_transports=client_diagnostics,thresholds_unchanged=True),
                 clock_reviews=clock_reviews,automatic_retries=0,connection_count=len(clients),evidence_kind=evidence_kind,**SAFETY)
             p=output/'report.json';p.write_text(json.dumps(encode(report),sort_keys=True,indent=2));p.chmod(0o600)
         return report

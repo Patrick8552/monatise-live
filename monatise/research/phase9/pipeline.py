@@ -6,7 +6,6 @@ from monatise.research.institutional.normalize import observation
 from monatise.research.institutional.models import digest
 from monatise.research.databento.candles import normalize_candle, WIDTHS
 from .candles import ContinuousCandles, aggregate_complete
-from .coordinator import NativeFuturesCoordinator
 from . import SAFETY
 
 
@@ -80,6 +79,7 @@ class ResearchPipeline:
                 values,rejected = aggregate_complete(frames[source],target=tf,calendar=self.calendars[iid])
                 diagnostics[tf] = dict(aggregation_rejections=rejected)
                 if values: frames[tf] = values
+        from .coordinator import NativeFuturesCoordinator
         result = NativeFuturesCoordinator().analyse(self.gates[iid],bars_by_timeframe=frames,
             calendar=self.calendars[iid],now_ns=now_ns,mandatory=mandatory,requested=requested)
         result['candle_quality'] = diagnostics
