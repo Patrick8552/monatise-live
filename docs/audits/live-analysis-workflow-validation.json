@@ -1,8 +1,10 @@
 {
   "base_commit": "58ea23471824d760834826a54434c556640d1809",
+  "collector_source_commit": "60e32fe0f7ad54fb1e8cda4b5ec92335f8ca27aa",
+  "collector_unchanged_after_launch": true,
   "deep_order_flow_live_verified": false,
   "deployed": false,
-  "focused_tests": 216,
+  "focused_tests": 217,
   "frozen_H1_changed": false,
   "full_session_completed": false,
   "full_suite": {
@@ -10,10 +12,10 @@
     "errors": 0,
     "exit_code": 0,
     "failures": 0,
-    "seconds": 71.809,
+    "seconds": 66.1,
     "skipped": 0,
-    "tests": 2568,
-    "xml_sha256": "c46fae2576f56afed779277999f8fef87e2ff1c06f9b068d8a7bf825fc70eb5f"
+    "tests": 2569,
+    "xml_sha256": "d9112d40ed6f8311d0de58415262bd0c5895fc0ba1e50a4d07d10ba0b6cba3e1"
   },
   "gamma_GIL_certified": false,
   "historical_warmup": {
@@ -68,6 +70,7 @@
     "reason": "original price-guard failures retained"
   },
   "live_operation": "previous continuation stopped quarantined; instrumented continuation requires separate reviewed receipt",
+  "optional_history_decoder_failures": "Native DBN decoder errors are flagged on optional history while valid live components remain available.",
   "orders": 0,
   "request_interface": "exact loaded GC/ES/NQ phrase resolution; read-only captured evidence",
   "source_health_regression": "stale connection reason latched before final queue drain; no retry or thresholds changed",

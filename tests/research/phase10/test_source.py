@@ -84,6 +84,19 @@ def test_read_only_phrase_cli_resolves_current_exact_contract(capture,capsys):
     assert result['decision']=='NO_TRADE' and not result['execution_eligible']
 
 
+def test_optional_history_decoder_error_does_not_erase_valid_live_data(capture,monkeypatch):
+    import databento_dbn as dn
+    from monatise.research.phase10 import history
+    root,c=capture
+    def invalid_history(*args,**kwargs):raise dn.DBNError('ENGINEERING_INVALID_DBN')
+    monkeypatch.setattr(history,'load_history',invalid_history)
+    result=load_capture(root,cutoff_ns=NOW_NS,history_manifest=root/'bad-history.json').analyse(
+        AnalysisRequest((c.metadata.raw_symbol,),NOW_NS))['instruments'][c.metadata.raw_symbol]
+    assert result['components']['trade_features']['available']
+    assert result['capture_health']['history_warmup']['status']=='UNAVAILABLE'
+    assert result['capture_health']['history_warmup']['error_type']=='DBNError'
+
+
 def test_record_budget_is_enforced_without_returning_partial_replay_as_complete(capture):
     root,c=capture
     with pytest.raises(ValueError,match='record_budget'):load_capture(root,cutoff_ns=NOW_NS,maximum_records=3)

@@ -180,7 +180,7 @@ def load_capture(root,*,cutoff_ns,maximum_records=2000000,observation_sink=None,
             faults={g.contract.metadata.raw_symbol:dict(g.faults) for g in history['gates'].values() if g.faults}
             health['history_warmup']=dict(status='SOURCE_VERIFIED_WITH_PRICE_GUARD_REJECTIONS' if faults else 'SOURCE_VERIFIED_SEPARATE_HISTORY',
                 manifest_sha256=history['manifest_sha256'],retained_price_guard_faults=faults,live_soak_gap_repaired=False)
-        except (OSError,ValueError,TypeError,KeyError,ArithmeticError) as exc:
+        except (OSError,ValueError,TypeError,KeyError,ArithmeticError,dn.DBNError) as exc:
             # Optional bad history cannot contaminate or erase valid live data.
             health['history_warmup']=dict(status='UNAVAILABLE',reason=str(exc) if isinstance(exc,ValueError) else 'history_source_invalid',error_type=type(exc).__name__,live_soak_gap_repaired=False)
     return AnalysisService(pipeline,source_health=lambda now:dict(health))
