@@ -30,6 +30,14 @@ def text_report(report):
                 lines.append('  Observed OHLC: '+', '.join(str(stats[k]) for k in ('open','high','low','close'))+
                     '; volume contracts='+str(stats['volume_contracts'])+'; age seconds='+str(part['age_ns']/10**9)+
                     '; gaps between observed buckets='+str(part['gaps_between_observed_buckets']))
+                native=part.get('native_analysis',{})
+                if native.get('available'):
+                    structure=native['structure'];fib=native['fibonacci']
+                    lines.append('  Native futures structure: '+structure['state']+
+                        '; confirmed highs='+str(structure['confirmed_high_count'])+'; confirmed lows='+str(structure['confirmed_low_count']))
+                    lines.append('  Confirmed-swing Fibonacci: '+(fib['direction']+'; retracements='+json.dumps(fib['retracements'],sort_keys=True) if fib.get('available') else fib.get('reason','unavailable')))
+                    lines.append('  Repeated-extrema liquidity proxies: '+str(len(native['liquidity_proxies']['zones']))+'; resting orders unverified')
+                elif native:lines.append('  Native futures analysis unavailable: '+native.get('reason','insufficient evidence'))
                 continue
             for engine in ('regime','structure','liquidity','fibonacci'):
                 if engine in part:
@@ -46,6 +54,9 @@ def text_report(report):
                 else:
                     state=part.get('engine_health',{}).get(engine,{})
                     lines.append('  '+engine+': unavailable — '+state.get('reason','missing upstream evidence'))
+        if value.get('multi_timeframe'):lines.append('Multi-timeframe structure: '+value['multi_timeframe']['state'])
+        for schema,detail in value.get('validation',{}).get('first_fault_details',{}).items():
+            lines.append('Validation '+schema+': '+detail.get('classification',detail['reason'])+'; no automatic admission')
         features=components.get('trade_features',{})
         if features.get('available'):
             metrics=features['result'];lines.append('Captured-window VWAP: '+str(metrics['vwap'])+'; volume-profile POC: '+str(metrics['point_of_control']))

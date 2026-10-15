@@ -12,6 +12,7 @@ from monatise.research.phase9.availability import inherited_policy
 from monatise.research.phase9.candles import aggregate_complete
 from monatise.research.phase9.lineage import verify_bar_lineage
 from .access import AnalysisRequest
+from monatise.research.native_futures.analysis import analyse_frame, alignment
 from .diagnostics import second_intervals
 
 SAFETY = dict(execution_eligible=False, orders_placed=0, production_registered=False)
@@ -85,7 +86,8 @@ class FuturesMarketInfo:
                     start_ns=rows[0].open_ns,end_ns=rows[-1].close_ns,
                     age_ns=request.cutoff_ns-rows[-1].close_ns,
                     gaps_between_observed_buckets=gaps, coverage='OBSERVED_VALIDATED_BUCKETS; NO_GAP_FILLING',
-                    source_sha256=digest(rows), selector_applied=False, fixed_selector_expiry_applied=False)
+                    source_sha256=digest(rows), selector_applied=False, fixed_selector_expiry_applied=False,
+                    native_analysis=analyse_frame(rows,tick_size=c.tick_size,cutoff_ns=request.cutoff_ns))
             except (ValueError,TypeError,ArithmeticError) as exc:
                 parts['price:'+tf] = dict(available=False,reason=str(exc))
         policy = inherited_policy(c,'trades')
@@ -104,6 +106,9 @@ class FuturesMarketInfo:
             state = 'UNAVAILABLE'
         result = dict(instrument=c.metadata.raw_symbol, availability=state,components=parts,
             capture_health=health,analysis_access='READ_ONLY',live_analysis_certified=False,
+            validation=dict(faults=dict(gate.faults),first_fault_details=dict(getattr(gate,'fault_details',{})),
+                thresholds_relaxed=False,rejected_records_readmitted=False),
+            multi_timeframe=alignment({tf:parts['price:'+tf].get('native_analysis',{}) for tf in request.timeframes}),
             information_scope='RETAINED_VALIDATED_CAPTURE_WINDOW',
             participant_identity='UNAVAILABLE_ANONYMOUS_EXCHANGE_DATA',
             crypto_engines_used=False, frozen_H1_selector_used=False, GIL_rules_used=False,

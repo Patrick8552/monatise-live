@@ -66,10 +66,11 @@ def _retryable(report):
 
 
 class PersistentResearchService:
-    def __init__(self, plan, spool, pipeline, *, client_factory=None, clock_ns=time.time_ns, rotation_policy=None, publisher=None, clock_refresh=None):
+    def __init__(self, plan, spool, pipeline, *, client_factory=None, clock_ns=time.time_ns, rotation_policy=None, publisher=None, clock_refresh=None, bootstrap_review=None):
         self.plan,self.spool,self.pipeline = plan,spool,pipeline
         self.factory,self.clock_ns = client_factory,clock_ns
         self.rotation_policy,self.publisher,self.clock_refresh=rotation_policy,publisher,clock_refresh
+        self.bootstrap_review=bootstrap_review
 
     async def run(self, *, api_key, output, permit_ledger, evidence_kind='AUTHENTIC_LIVE_CAPTURE'):
         output=Path(output)
@@ -94,6 +95,13 @@ class PersistentResearchService:
             self.spool.checkpoint('service',dict(plan_sha256=self.plan.sha256,next_step=index+1,in_flight=True))
             checkpoints=(self.spool.load('feed_cursor') or {}).get('cursors') if step.mode=='RECOVER' else None
             if step.mode=='RECOVER' and checkpoints is None:raise ValueError('durable_recovery_cursor_required')
+            if index==0 and self.bootstrap_review is not None:
+                from monatise.research.native_futures.bootstrap import BootstrapReview
+                if previous is not None or self.spool.count or not isinstance(self.bootstrap_review,BootstrapReview):
+                    raise ValueError('bootstrap_requires_fresh_initial_attempt')
+                checkpoints=self.bootstrap_review.checkpoints(self.pipeline,step.scope)
+                self.spool.checkpoint('bootstrap',dict(review_sha256=self.bootstrap_review.sha256,
+                    scope_sha256=step.scope.sha256,cursors=checkpoints,source_root=self.bootstrap_review.source_root))
             step.permit.validate(step.scope,self.clock_ns())
             def sink(schema,record,captured,ordinal,normalized):
                 admitted=normalized is not None and schema!='definition'
