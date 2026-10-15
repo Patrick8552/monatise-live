@@ -28,16 +28,28 @@ def instant(ns):
     return datetime.fromtimestamp(seconds,UTC).replace(microsecond=nanos//1000)
 
 
-def price_components(contract, bars, *, now_ns, calendar, policy=None):
+def price_components(contract, bars, *, now_ns, calendar, policy=None, reviewed_history=False):
     rows = tuple(bars)
     if not rows: raise ValueError('no_validated_candles')
     tf = rows[0].timeframe; width = WIDTHS[tf]
     policy = policy or inherited_policy(contract,'candles',timeframe_ns=width)
+    categories={b.evidence_kind for b in rows}
+    authentic={'AUTHENTIC_HISTORICAL_DOWNLOAD','AUTHENTIC_LIVE_CAPTURE','MIXED_AUTHENTIC_HISTORY_AND_LIVE'}
+    if len(categories)>1 and not (reviewed_history and categories<=authentic):
+        raise ValueError('mixed_evidence_categories')
+    omitted=[]
     for i,b in enumerate(rows):
         if (b.identity != contract.metadata or b.timeframe != tf or
-                b.evidence_kind != rows[0].evidence_kind or b.retrieval_ns > now_ns or b.close_ns+10*10**9 > now_ns
-                or i and rows[i-1].close_ns != b.open_ns):
+                b.retrieval_ns > now_ns or b.close_ns+10*10**9 > now_ns):
             raise ValueError('mixed_revised_future_forming_or_noncontiguous_bars')
+        if i and rows[i-1].close_ns!=b.open_ns:
+            previous=rows[i-1].close_ns
+            if not reviewed_history or previous>b.open_ns or (b.open_ns-previous)//width>10000:
+                raise ValueError('mixed_revised_future_forming_or_noncontiguous_bars')
+            for start in range(previous,b.open_ns,width):
+                if calendar.contains(start,start+width):
+                    raise ValueError('missing_bar_in_reviewed_trading_interval')
+                omitted.append(dict(open_ns=start,reason='REVIEWED_CLOSED_OR_PARTIAL_SESSION_BUCKET'))
         if not calendar.contains(b.open_ns,b.close_ns): raise ValueError('bar_outside_reviewed_session')
     timing = policy.assess(source_ns=rows[-1].close_ns,available_ns=max(b.retrieval_ns for b in rows),
         now_ns=now_ns,expires_ns=contract.metadata.expiration_ns)
@@ -74,18 +86,21 @@ def price_components(contract, bars, *, now_ns, calendar, policy=None):
     volatility = sqrt(sum((x-mean)**2 for x in returns)/(len(returns)-1)) if len(returns)>1 else None
     return dict(available=True, freshness=timing, historical_only=not timing['contextual_eligible'],
         schema=rows[-1].schema,timeframe=tf,event_ns=rows[-1].open_ns,close_ns=rows[-1].close_ns,
-        capture_ns=max(b.retrieval_ns for b in rows), coverage='CONTIGUOUS_CAPTURED_BARS_ONLY',
+        capture_ns=max(b.retrieval_ns for b in rows),
+        coverage='REVIEWED_COMPLETE_SESSION_BUCKETS_ONLY' if reviewed_history else 'CONTIGUOUS_CAPTURED_BARS_ONLY',
+        validated_candle_count=len(rows),evidence_categories=sorted(categories),omitted_session_buckets=omitted,
         source_sha256=digest(rows),source_hashes=[h for b in rows for h in b.source_hashes],
         **{k:encode(v) for k,v in outputs.items()},engine_health=engine_health,
         analysis_partial=any(not v['available'] for v in engine_health.values()),
         session_statistics=dict(open=cs[0].open,high=max(c.high for c in cs),low=min(c.low for c in cs),
-            close=cs[-1].close,volume_contracts=sum(c.volume for c in cs),scope='CAPTURED_CONTIGUOUS_BARS'),
+            close=cs[-1].close,volume_contracts=sum(c.volume for c in cs),
+            scope='VALIDATED_HISTORY_AND_LIVE_SESSION_BUCKETS' if reviewed_history else 'CAPTURED_CONTIGUOUS_BARS'),
         volatility=dict(value=volatility,method='sample-stdev-log-close-returns',annualized=False),
         reference_price=market.price, executable_quote=False, original_expiry_ns=rows[-1].close_ns+2*width,
         frozen_H1_parent_qualified=False, **SAFETY)
 
 
-def verify_bar_lineage(gate, bars):
+def verify_bar_lineage(gate, bars, *, reviewed_history=False):
     """Reconcile OHLCV/volume against admitted canonical sources, including ties."""
     by_hash=defaultdict(list)
     for value in gate.lineage_observations():by_hash[value.source.record_sha256].append(value)
@@ -98,10 +113,14 @@ def verify_bar_lineage(gate, bars):
             value=candidates[index];used[sha]+=1;sources.append(value)
         if (not sources or any(v.contract.metadata!=bar.identity for v in sources)
                 or any(v.source.retrieval_ns>bar.retrieval_ns for v in sources)
-                or len({v.source.evidence_kind for v in sources})!=1):
+                or len({v.source.evidence_kind for v in sources})!=1 and not
+                (reviewed_history and {v.source.evidence_kind for v in sources}<=
+                 {'AUTHENTIC_ARCHIVED_RECORD','AUTHENTIC_LIVE_CAPTURE'})):
             raise ValueError('bar_lineage_identity_availability_or_category_mismatch')
-        category=sources[0].source.evidence_kind
-        if bar.evidence_kind!=('AUTHENTIC_HISTORICAL_DOWNLOAD' if category=='AUTHENTIC_ARCHIVED_RECORD' else category):
+        categories={v.source.evidence_kind for v in sources}
+        category=('MIXED_AUTHENTIC_HISTORY_AND_LIVE' if len(categories)>1 else
+                  'AUTHENTIC_HISTORICAL_DOWNLOAD' if categories=={'AUTHENTIC_ARCHIVED_RECORD'} else next(iter(categories)))
+        if bar.evidence_kind!=category:
             raise ValueError('bar_evidence_category_mismatch')
         schemas={v.schema for v in sources}
         sources.sort(key=lambda v:(v.event_ns,v.receive_ns or v.event_ns,v.source.ordinal))
@@ -121,7 +140,7 @@ def verify_bar_lineage(gate, bars):
 
 
 class NativeFuturesCoordinator:
-    def analyse(self, gate, *, bars_by_timeframe, calendar, now_ns, mandatory=('price:1h',), requested=()):
+    def analyse(self, gate, *, bars_by_timeframe, calendar, now_ns, mandatory=('price:1h',), requested=(), reviewed_history=False):
         c = gate.contract
         if c.asset_class != 'futures' or c.metadata.product not in {'GC','ES','NQ'}:
             raise ValueError('reviewed_native_futures_contract_required')
@@ -130,7 +149,7 @@ class NativeFuturesCoordinator:
             try:
                 # Bars must originate in the caller's validated gate. Historical
                 # imports use ResearchPipeline.import_bars, which screens prices.
-                verify_bar_lineage(gate,bars)
+                verify_bar_lineage(gate,bars,reviewed_history=reviewed_history)
                 known = {v.source.record_sha256 for v in gate.lineage_observations()}
                 if any(h not in known for b in bars for h in b.source_hashes):
                     raise ValueError('bar_sources_not_admitted_by_quality_gate')
@@ -138,7 +157,7 @@ class NativeFuturesCoordinator:
                 schema_faults = {v.schema for v in gate.lineage_observations() if v.source.record_sha256 in bar_hashes}
                 if any(s in gate.faults and any(b.close_ns>gate.fault_event_ns.get(s,0) for b in bars) for s in schema_faults):
                     raise ValueError('source_schema_requires_quality_review')
-                components['price:'+tf] = price_components(c,bars,now_ns=now_ns,calendar=calendar)
+                components['price:'+tf] = price_components(c,bars,now_ns=now_ns,calendar=calendar,reviewed_history=reviewed_history)
             except (ValueError,TypeError,ArithmeticError) as exc:
                 components['price:'+tf] = dict(available=False,reason=str(exc),error_type=type(exc).__name__)
         policies = {s:inherited_policy(c,'book' if s.startswith('mbp-') else 'open_interest' if s=='statistics' else 'trades')

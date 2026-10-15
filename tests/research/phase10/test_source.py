@@ -65,6 +65,25 @@ def test_quarantined_capture_retains_calculations_but_is_unavailable(capture):
     assert r['capture_health']['quarantined']
 
 
+def test_legacy_empty_reason_stall_is_reported_without_rewriting_source(capture):
+    root,c=capture;path=root/'capture/attempt-00/report.json';v=json.loads(path.read_text())
+    v['quality'].update(quarantined=True,reasons=[],stalled_connections=['trades']);path.write_text(json.dumps(v));before=hashes(root)
+    service=load_capture(root,cutoff_ns=NOW_NS)
+    value=service.analyse(AnalysisRequest((c.metadata.raw_symbol,),NOW_NS))['instruments'][c.metadata.raw_symbol]
+    assert value['availability']=='UNAVAILABLE'
+    assert 'connection_stalled_trades' in value['capture_health']['reasons']
+    assert hashes(root)==before
+
+
+def test_read_only_phrase_cli_resolves_current_exact_contract(capture,capsys):
+    from monatise.research.phase10.cli import main
+    root,c=capture;pointer=root.parent/'pointer.txt';pointer.write_text(str(root))
+    assert main(['--capture-pointer',str(pointer),'--request','Analyse GC using Databento'])==0
+    result=json.loads(capsys.readouterr().out)
+    assert list(result['instruments'])==[c.metadata.raw_symbol]
+    assert result['decision']=='NO_TRADE' and not result['execution_eligible']
+
+
 def test_record_budget_is_enforced_without_returning_partial_replay_as_complete(capture):
     root,c=capture
     with pytest.raises(ValueError,match='record_budget'):load_capture(root,cutoff_ns=NOW_NS,maximum_records=3)

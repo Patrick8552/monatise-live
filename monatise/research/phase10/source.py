@@ -51,7 +51,7 @@ def decode_contract(entry):
     return Contract(metadata=InstrumentMetadata(**metadata),**entry)
 
 
-def load_capture(root,*,cutoff_ns,maximum_records=2000000,observation_sink=None):
+def load_capture(root,*,cutoff_ns,maximum_records=2000000,observation_sink=None,history_manifest=None):
     """Snapshot state and every segment read-only; never repair/close source DBs.
 
     The cursor bounds the prefix committed by the collector across its databases.
@@ -159,15 +159,30 @@ def load_capture(root,*,cutoff_ns,maximum_records=2000000,observation_sink=None)
         progress=read_json(root/'progress.json');health=dict(status=progress['status'],
             quarantined=progress['health']['quarantined'],reasons=progress['health']['reasons'],component_rejections=progress['health'].get('component_rejections',{}),
             observed_at_ns=progress['observed_at_ns'],stale_checkpoint=not 0<=time.time_ns()-progress['observed_at_ns']<=180*10**9,
-            live_verified=False)
+            live_verified=False,interval_watermarks=progress['health'].get('interval_watermarks',{}))
     for component,reasons in health['component_rejections'].items():
         schema,instrument=component.rsplit(':',1);iid=int(instrument)
         if iid not in gates or schema not in schemas:raise ValueError('source_component_health_scope_mismatch')
         gates[iid].transport_gap(schema,'captured_component_rejection_requires_review')
+    quality=report['quality'] if final.exists() else progress['health']
+    health['stalled_connections']=list(quality.get('stalled_connections',()))
+    health['reasons']=sorted(set(health['reasons'])|{'connection_stalled_'+s for s in health['stalled_connections']})
     health.update(native_records_verified=count,market_records_accepted=accepted,market_records_rejected=rejected,
         cursor_prefix_sha256=digest(cursor),source_evidence_kind=next(iter(kinds),None),complete_exchange_continuity_certified=False,
         retained_market_records_per_instrument=50000,network_requests=0,source_mutations=0,
         verification_scope='spool byte/metadata hashes and committed cursor prefix; independent framed-journal reconciliation remains separate')
+    if history_manifest is not None:
+        from .history import load_history,WarmedPipeline
+        try:
+            history=load_history(history_manifest,pipeline=pipeline,authorization_sha256=digest(auth),
+                policy_hashes={k:v['policy_sha256'] for k,v in refs.items()},cutoff_ns=cutoff_ns)
+            pipeline=WarmedPipeline(pipeline,history)
+            faults={g.contract.metadata.raw_symbol:dict(g.faults) for g in history['gates'].values() if g.faults}
+            health['history_warmup']=dict(status='SOURCE_VERIFIED_WITH_PRICE_GUARD_REJECTIONS' if faults else 'SOURCE_VERIFIED_SEPARATE_HISTORY',
+                manifest_sha256=history['manifest_sha256'],retained_price_guard_faults=faults,live_soak_gap_repaired=False)
+        except (OSError,ValueError,TypeError,KeyError,ArithmeticError) as exc:
+            # Optional bad history cannot contaminate or erase valid live data.
+            health['history_warmup']=dict(status='UNAVAILABLE',reason=str(exc) if isinstance(exc,ValueError) else 'history_source_invalid',error_type=type(exc).__name__,live_soak_gap_repaired=False)
     return AnalysisService(pipeline,source_health=lambda now:dict(health))
 
 

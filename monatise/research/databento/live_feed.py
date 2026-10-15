@@ -48,6 +48,8 @@ class CMELiveCapture:
         queue=asyncio.Queue(maxsize=self.queue_capacity);loop=asyncio.get_running_loop()
         pending=threading.BoundedSemaphore(self.queue_capacity)
         manifests={};transport_events=[];transport_lock=threading.Lock()
+        callback_last={};callback_counts={};max_queue_depth=0;max_delivery_lag_ns=0
+        max_processing_ns=0;max_tick_ns=0;stop_evidence=None
 
         def transport_event(schema,stage,exc=None):
             with transport_lock:
@@ -61,6 +63,8 @@ class CMELiveCapture:
                 if closing:return
                 if not pending.acquire(blocking=False):overflow.set();return
                 captured=self.clock_ns()
+                with transport_lock:
+                    callback_last[schema]=captured;callback_counts[schema]=callback_counts.get(schema,0)+1
                 def deliver():
                     try:queue.put_nowait((schema,record,captured))
                     except asyncio.QueueFull:overflow.set()
@@ -122,15 +126,30 @@ class CMELiveCapture:
                     review.bounds(self.clock_ns());state.update_clock_review(review)
                     clock_reviews.append(encode(review))
                 if tick_sink is not None and loop.time()>=next_tick:
+                    tick_started=time.perf_counter_ns()
                     tick_sink(state,self.clock_ns());next_tick=loop.time()+1
+                    max_tick_ns=max(max_tick_ns,time.perf_counter_ns()-tick_started)
                 if overflow.is_set():state.quarantine('local_callback_or_queue_backpressure')
                 health=state.health(self.clock_ns())
-                if state.quality_reasons or health['stalled_connections']:break
+                if state.quality_reasons or health['stalled_connections']:
+                    if health['stalled_connections']:
+                        with transport_lock:
+                            stop_evidence=dict(observed_at_ns=self.clock_ns(),
+                                stalled_connections=list(health['stalled_connections']),
+                                last_processed_capture_ns=dict(state.last_message),
+                                last_callback_capture_ns=dict(callback_last),queue_depth=queue.qsize())
+                        # Final draining must never erase an observed liveness failure.
+                        for schema in health['stalled_connections']:state.quarantine('connection_stalled_'+schema)
+                    break
                 try:
                     schema,record,captured=await asyncio.wait_for(queue.get(),timeout=min(.1,max(.001,end-loop.time())))
                 except TimeoutError:continue
+                max_queue_depth=max(max_queue_depth,queue.qsize()+1)
+                max_delivery_lag_ns=max(max_delivery_lag_ns,max(0,self.clock_ns()-captured))
+                processing_started=time.perf_counter_ns()
                 ordinal,_=journals[schema].append(record,capture_ns=captured)
                 deliver(schema,record,captured,ordinal)
+                max_processing_ns=max(max_processing_ns,time.perf_counter_ns()-processing_started)
         except asyncio.CancelledError:
             state.quarantine('capture_cancelled');failure='CancelledError'
             raise
@@ -167,6 +186,10 @@ class CMELiveCapture:
                 permit_sha256=digest(permit),quality=health,checkpoint=state.checkpoint(),journals=manifests,
                 normalization_tail=state.normalized,failure_type=failure,transport_events=transport_events,
                 runtime=dict(databento=version('databento'),databento_dbn=version('databento-dbn')),
+                delivery_diagnostics=dict(callback_counts=dict(callback_counts),last_callback_capture_ns=dict(callback_last),
+                    max_queue_depth=max_queue_depth,max_delivery_lag_ns=max_delivery_lag_ns,
+                    max_record_processing_ns=max_processing_ns,max_publication_tick_ns=max_tick_ns,
+                    stop_evidence=stop_evidence,thresholds_unchanged=True),
                 clock_reviews=clock_reviews,automatic_retries=0,connection_count=len(clients),evidence_kind=evidence_kind,**SAFETY)
             p=output/'report.json';p.write_text(json.dumps(encode(report),sort_keys=True,indent=2));p.chmod(0o600)
         return report

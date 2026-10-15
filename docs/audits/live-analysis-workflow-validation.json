@@ -1,0 +1,76 @@
+{
+  "base_commit": "58ea23471824d760834826a54434c556640d1809",
+  "deep_order_flow_live_verified": false,
+  "deployed": false,
+  "focused_tests": 216,
+  "frozen_H1_changed": false,
+  "full_session_completed": false,
+  "full_suite": {
+    "disposable_postgres_redis": true,
+    "errors": 0,
+    "exit_code": 0,
+    "failures": 0,
+    "seconds": 71.809,
+    "skipped": 0,
+    "tests": 2568,
+    "xml_sha256": "c46fae2576f56afed779277999f8fef87e2ff1c06f9b068d8a7bf825fc70eb5f"
+  },
+  "gamma_GIL_certified": false,
+  "historical_warmup": {
+    "admitted": false,
+    "calibration_training_input": false,
+    "estimated_incremental_usd": "0",
+    "failures_summary": {
+      "ESZ6": {
+        "accepted_history_minutes": 3628,
+        "first_fault_utc": "2026-10-11T22:00:00+00:00",
+        "floor_ticks": 42,
+        "largest_extreme_distance_from_previous_close_ticks": 43,
+        "previous_bar_delta_seconds": 0.0,
+        "range_in_ticks": 47,
+        "reason": "suspicious_price_discontinuity_requires_review",
+        "source_hashes": [
+          "172c82f0a74987e7c4a0fb5d2a022064399cbcf612f4081da44090dc7c031c5b",
+          "172c82f0a74987e7c4a0fb5d2a022064399cbcf612f4081da44090dc7c031c5b"
+        ]
+      },
+      "GCZ6": {
+        "accepted_history_minutes": 3870,
+        "first_fault_utc": "2026-10-14T12:30:00+00:00",
+        "floor_ticks": 132,
+        "largest_extreme_distance_from_previous_close_ticks": 372,
+        "previous_bar_delta_seconds": 60.0,
+        "range_in_ticks": 415,
+        "reason": "suspicious_price_discontinuity_requires_review",
+        "source_hashes": [
+          "19d25a6891d18780d6f17fb25c60b36f69c7e601a9ddf4de60a9678576a30650",
+          "56cb59bbc5bbbb6785910b9ddc25a1e817419ef5335d49b15b61118735f00f48"
+        ]
+      },
+      "NQZ6": {
+        "accepted_history_minutes": 3630,
+        "first_fault_utc": "2026-10-14T12:30:00+00:00",
+        "floor_ticks": 261,
+        "largest_extreme_distance_from_previous_close_ticks": 789,
+        "previous_bar_delta_seconds": 60.0,
+        "range_in_ticks": 841,
+        "reason": "suspicious_price_discontinuity_requires_review",
+        "source_hashes": [
+          "8ff9cf4c3685374fff06c13c6fe14cb6c84afca6cd13869941d5582286737240",
+          "ca769734dc049e1e10894d73c0c1e628a8b54e8c0479c69204268f228a0b6193"
+        ]
+      }
+    },
+    "live_soak_gap_repaired": false,
+    "native_anchor_seconds": 155,
+    "native_minutes": 13596,
+    "new_live_connections": 0,
+    "reason": "original price-guard failures retained"
+  },
+  "live_operation": "previous continuation stopped quarantined; instrumented continuation requires separate reviewed receipt",
+  "orders": 0,
+  "request_interface": "exact loaded GC/ES/NQ phrase resolution; read-only captured evidence",
+  "source_health_regression": "stale connection reason latched before final queue drain; no retry or thresholds changed",
+  "trade_GIL_rules_changed": false,
+  "version": "live-analysis-workflow-validation-v1"
+}
