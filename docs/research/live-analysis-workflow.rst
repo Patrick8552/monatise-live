@@ -1,3 +1,30 @@
+Current futures path (user steering, 15 October 2026)
+===================================================
+The public local request CLI now returns native-futures-market-information-v1.
+It normalizes original Databento records and applies source/price/lineage checks,
+then returns observed OHLCV, complete derived buckets, explicit gaps/age, captured
+execution VWAP, exact-price volume profile and known aggressor pressure.
+It does not call ResearchPipeline.analyse or NativeFuturesCoordinator.analyse,
+the crypto regime/liquidity/structure/Fibonacci graph, a frozen H1 selector, GIL,
+gamma, trade qualification or execution. H1 is ordinary candle data without the
+retired selector's fixed lifetime. Data-quality controls remain independent.
+The earlier engine integration below is archived research context, not the
+active futures request route. No production registration/deployment is made.
+
+Transport correction
+--------------------
+The pinned SDK previously received startup calls on a foreign asyncio thread.
+The actual pinned LiveSession.start reproduces RuntimeError under debug asyncio.
+OwnedSDKClient constructs each SDK client on an isolated network loop, marshals
+callback registration/start/termination there, and keeps blocking subscribe off
+that loop. It retains the owned socket through SDK timeout cleanup, explicitly
+aborts it and joins the owned thread. There are no automatic retries/resumes.
+Bounded diagnostics record network-loop pulse, responsiveness, socket state,
+iteration queue state and exception class without credentials or market values.
+Real prior outages remain quarantined. These fixes do not prove the cause of
+all prior network/callback silences, and offline tests cannot certify a full
+live session. Fresh source-bound live checks must report their actual duration.
+
 Native live-analysis request workflow
 =====================================
 

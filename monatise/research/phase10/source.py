@@ -183,7 +183,8 @@ def load_capture(root,*,cutoff_ns,maximum_records=2000000,observation_sink=None,
         except (OSError,ValueError,TypeError,KeyError,ArithmeticError,dn.DBNError) as exc:
             # Optional bad history cannot contaminate or erase valid live data.
             health['history_warmup']=dict(status='UNAVAILABLE',reason=str(exc) if isinstance(exc,ValueError) else 'history_source_invalid',error_type=type(exc).__name__,live_soak_gap_repaired=False)
-    return AnalysisService(pipeline,source_health=lambda now:dict(health))
+    from .market_info import FuturesMarketInfo
+    return FuturesMarketInfo(pipeline,source_health=lambda now:dict(health))
 
 
 def prepare_inputs(root,*,policies,anchor_root,session_open_ns):

@@ -1,0 +1,45 @@
+{
+  "active_futures_request": {
+    "GIL_qualification_retired": true,
+    "crypto_engines_used": false,
+    "frozen_H1_selector_retired": true,
+    "ordinary_H1_candles_supported": true,
+    "trade_execution_activated": false,
+    "version": "native-futures-market-information-v1"
+  },
+  "automatic_retries": 0,
+  "calibration_candidate_created": false,
+  "deployed": false,
+  "focused_tests_passed": 232,
+  "genuine_live_validation": "PENDING_FRESH_INCLUDED_SUBSCRIPTION_CHECK",
+  "legacy_SDK_start_thread_violation_reproduced": true,
+  "liveness_thresholds_changed": false,
+  "offline_full_suite": {
+    "disposable_postgres_redis": true,
+    "errors": 0,
+    "exit_code": 0,
+    "failures": 0,
+    "seconds": 68.646,
+    "skipped": 0,
+    "tests": 2584,
+    "xml_sha256": "4e35798a3dc9f5d99638fc625cfd9dea566b1878f19df03d08dafb51b9591d6c"
+  },
+  "old_quarantines_cleared": false,
+  "original_live_stall_root_cause_proven": false,
+  "price_quality_controls_unchanged": {
+    "monatise/application/gold_options.py": true,
+    "monatise/research/phase9/quality.py": true
+  },
+  "prior_cutoff_failure_preserved": true,
+  "scope": "UNDEPLOYED_RESEARCH_ONLY",
+  "trading_activated": false,
+  "transport_changes": [
+    "per-client owned network loops",
+    "SDK startup and cleanup on owner loop",
+    "blocking subscription remains off network loop",
+    "retained socket abort after SDK timeout cleanup",
+    "owned thread cleanup",
+    "price-free bounded socket/loop diagnostics"
+  ],
+  "version": "databento-transport-native-futures-review-v1"
+}

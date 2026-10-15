@@ -81,7 +81,8 @@ def test_read_only_phrase_cli_resolves_current_exact_contract(capture,capsys):
     assert main(['--capture-pointer',str(pointer),'--request','Analyse GC using Databento'])==0
     result=json.loads(capsys.readouterr().out)
     assert list(result['instruments'])==[c.metadata.raw_symbol]
-    assert result['decision']=='NO_TRADE' and not result['execution_eligible']
+    assert not result['trade_signal_produced'] and not result['execution_eligible']
+    assert not result['crypto_engines_used'] and not result['frozen_H1_selector_used'] and not result['GIL_rules_used']
 
 
 def test_optional_history_decoder_error_does_not_erase_valid_live_data(capture,monkeypatch):

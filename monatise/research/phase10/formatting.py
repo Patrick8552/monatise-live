@@ -25,6 +25,12 @@ def text_report(report):
                 lines.append(tf+': unavailable — '+part.get('reason','insufficient validated history'));continue
             lines.append(tf+': '+('historical context' if part.get('historical_only') else 'available')+
                 '; validated candles='+str(part.get('validated_candle_count','unknown'))+'; '+part.get('coverage',''))
+            if report.get('version')=='native-futures-market-information-v1':
+                stats=part['session_statistics']
+                lines.append('  Observed OHLC: '+', '.join(str(stats[k]) for k in ('open','high','low','close'))+
+                    '; volume contracts='+str(stats['volume_contracts'])+'; age seconds='+str(part['age_ns']/10**9)+
+                    '; gaps between observed buckets='+str(part['gaps_between_observed_buckets']))
+                continue
             for engine in ('regime','structure','liquidity','fibonacci'):
                 if engine in part:
                     result=part[engine]
@@ -63,6 +69,11 @@ def text_report(report):
                 ' without a bar or captured trade; '+str(seconds['seconds_without_bar_but_with_captured_trade'])+
                 ' missing bars with captured trades; volume differences='+str(seconds['bar_trade_volume_difference_seconds']))
         lines.append('Participant identities unavailable. Depth/absorption/iceberg detection is not live-validated.')
-    lines+=['','Qualification: NOT_EVALUATED. Decision: NO_TRADE.','Native futures prices; broker basis mapping is separate.',
-        'Gamma/GIL certification and complete exchange continuity are unavailable. No orders or provider requests are created.']
+    if report.get('version')=='native-futures-market-information-v1':
+        lines+=['','Native futures market information only; no trading signal or participant identity is inferred.',
+            'Crypto engines, frozen H1 selection and GIL qualification are retired from this request path.',
+            'No orders or provider requests are created. Exchange completeness remains unverified.']
+    else:
+        lines+=['','Qualification: NOT_EVALUATED. Decision: NO_TRADE.','Native futures prices; broker basis mapping is separate.',
+            'Gamma/GIL certification and complete exchange continuity are unavailable. No orders or provider requests are created.']
     return '\n'.join(lines)

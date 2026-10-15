@@ -9,7 +9,6 @@ from monatise.research.databento.candles import ExchangeCalendar, HistoricalBar,
 from monatise.research.institutional.models import digest
 from monatise.research.institutional.normalize import observation
 from monatise.research.phase9.quality import PlausibilityPolicy, QualityGate
-from monatise.research.phase9.coordinator import NativeFuturesCoordinator
 from .source import read_json
 
 
@@ -129,6 +128,7 @@ class WarmedPipeline:
         diagnostics={}
         for tf in ('5m','15m','1h','4h'):
             frames[tf],diagnostics[tf]=complete_parents(frames['1m'],tf,calendar)
+        from monatise.research.phase9.coordinator import NativeFuturesCoordinator
         result=NativeFuturesCoordinator().analyse(_CombinedGate(live,history),
             bars_by_timeframe={k:v for k,v in frames.items() if v},calendar=calendar,now_ns=now_ns,
             mandatory=mandatory,requested=requested,reviewed_history=True)
