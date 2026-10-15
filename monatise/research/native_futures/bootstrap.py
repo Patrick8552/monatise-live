@@ -21,17 +21,28 @@ class BootstrapReview:
     cursors: tuple
     policy_hashes: tuple
     review_reference: str
+    capture_clock_tolerance_ns: int = 0
+    clock_equivalence_review_reference: str = ""
+    trade_prefixes: tuple = ()
 
     @property
     def sha256(self):return digest(self)
 
     def checkpoints(self, pipeline, scope):
-        fresh=review_bootstrap(pipeline,scope,self.source_root,review_reference=self.review_reference)
+        fresh=review_bootstrap(pipeline,scope,self.source_root,review_reference=self.review_reference,
+            capture_clock_tolerance_ns=self.capture_clock_tolerance_ns,
+            clock_equivalence_review_reference=self.clock_equivalence_review_reference)
         if fresh!=self:raise ValueError('bootstrap_source_or_policy_changed')
         return {key:dict(event_ns=event,hashes_at_event=list(hashes)) for key,event,hashes in self.cursors}
 
 
-def review_bootstrap(pipeline, scope, root, *, review_reference):
+    def prefix_reviews(self):
+        return {key:dict(expected=[dict(record_sha256=h,identity_sha256=i,ts_recv=t) for h,i,t in rows],
+            maximum_translation_ns=self.capture_clock_tolerance_ns,review_reference=self.clock_equivalence_review_reference)
+            for key,rows in self.trade_prefixes} if self.capture_clock_tolerance_ns else None
+
+
+def review_bootstrap(pipeline, scope, root, *, review_reference, capture_clock_tolerance_ns=0, clock_equivalence_review_reference=''):
     """Match sealed native anchor bytes, tied-event prefix and unchanged policies.
 
     Scope starts at/before the earliest anchor, not at a later aligned minute.
@@ -40,6 +51,9 @@ def review_bootstrap(pipeline, scope, root, *, review_reference):
     Missing/mismatched replay prefixes still quarantine the capture.
     """
     import databento_dbn as dn
+    if (type(capture_clock_tolerance_ns) is not int or not 0<=capture_clock_tolerance_ns<=1000
+            or capture_clock_tolerance_ns and not clock_equivalence_review_reference):
+        raise ValueError('explicit_initial_clock_equivalence_review_required')
     root=Path(root).absolute()
     if not review_reference or root.is_symlink() or not root.is_dir():
         raise ValueError('reviewed_sealed_bootstrap_required')
@@ -49,7 +63,7 @@ def review_bootstrap(pipeline, scope, root, *, review_reference):
         g=pipeline.gates[c.metadata.instrument_id]
         if g.contract!=c or g.positions or g.accepted or g.faults:
             raise ValueError('bootstrap_requires_pristine_matching_gates')
-    cursors=[];hashes=[];policies=[]
+    cursors=[];hashes=[];policies=[];prefixes=[]
     for schema in scope.schemas:
         if schema=='definition':continue
         if schema not in {'trades','ohlcv-1s','ohlcv-1m'}:raise ValueError('bootstrap_schema_not_reviewed')
@@ -61,7 +75,7 @@ def review_bootstrap(pipeline, scope, root, *, review_reference):
         if header['schema']!=schema or header['record_count']>250000 or header['bytes']>128*1024**2:
             raise ValueError('bootstrap_journal_budget_or_schema_mismatch')
         manifest,frames=verify(folder);hashes.append((schema,manifest['raw_sha256']))
-        latest={};ties={};seen=0
+        latest={};ties={};identities={};seen=0
         for _,raw in frames:
             seen+=1
             if seen>250000:raise ValueError('bootstrap_record_budget_exceeded')
@@ -79,8 +93,11 @@ def review_bootstrap(pipeline, scope, root, *, review_reference):
                 raise ValueError('bootstrap_native_schema_mismatch')
             if int(getattr(row,'flags',0))&(4|8|32):raise ValueError('bootstrap_native_quality_flag')
             if row.ts_event<latest.get(iid,0):raise ValueError('bootstrap_event_order_regressed')
-            if row.ts_event!=latest.get(iid):ties[iid]=[]
+            if row.ts_event!=latest.get(iid):ties[iid]=[];identities[iid]=[]
             latest[iid]=row.ts_event;ties[iid].append(hashlib.sha256(raw).hexdigest())
+            if schema=='trades' and capture_clock_tolerance_ns:
+                from .replay_identity import trade_identity
+                identities[iid].append((ties[iid][-1],trade_identity(row),row.ts_recv))
             if len(ties[iid])>10000:raise ValueError('bootstrap_tie_budget_exceeded')
         for iid,g in pipeline.gates.items():
             guard=g.guards.get(schema)
@@ -99,4 +116,5 @@ def review_bootstrap(pipeline, scope, root, *, review_reference):
             if matched!=guard.last:raise ValueError('bootstrap_anchor_price_mismatch')
             cursors.append((f'{schema}:{iid}',guard.anchor_ns,tuple(ties[iid])))
             policies.append((f'{schema}:{iid}',guard.policy.sha256))
-    return BootstrapReview(scope.sha256,str(root),tuple(hashes),tuple(cursors),tuple(policies),review_reference)
+            if schema=='trades' and capture_clock_tolerance_ns:prefixes.append((f'{schema}:{iid}',tuple(identities[iid])))
+    return BootstrapReview(scope.sha256,str(root),tuple(hashes),tuple(cursors),tuple(policies),review_reference,capture_clock_tolerance_ns,clock_equivalence_review_reference,tuple(prefixes))

@@ -33,11 +33,11 @@ class CMELiveCapture:
         self.journal_factory,self.clock_refresh=journal_factory,clock_refresh
 
     async def run(self, *, api_key,permit,permit_ledger,output,checkpoints=None,recovery_review_reference=None,
-                  evidence_kind='AUTHENTIC_LIVE_CAPTURE',record_sink=None,checkpoint_sink=None,rejection_sink=None,tick_sink=None):
+                  bootstrap_prefixes=None,evidence_kind='AUTHENTIC_LIVE_CAPTURE',record_sink=None,checkpoint_sink=None,rejection_sink=None,tick_sink=None):
         if not isinstance(api_key,str) or not api_key.strip():raise ValueError('private_live_key_required')
         if evidence_kind=='ENGINEERING_SYNTHETIC' and self.factory is sdk_client:
             raise ValueError('fixtures_cannot_open_real_live_client')
-        state=FeedState(self.scope,checkpoints=checkpoints,recovery_review_reference=recovery_review_reference)
+        state=FeedState(self.scope,checkpoints=checkpoints,recovery_review_reference=recovery_review_reference,bootstrap_prefixes=bootstrap_prefixes)
         self.state=state
         self.active_clock_review=state.clock_review
         clock_reviews=[]
@@ -213,6 +213,7 @@ class CMELiveCapture:
             report=dict(version='CME-live-capture-v1',scope=encode(self.scope),scope_sha256=self.scope.sha256,
                 permit_sha256=digest(permit),quality=health,checkpoint=state.checkpoint(),journals=manifests,
                 normalization_tail=state.normalized,failure_type=failure,transport_events=transport_events,
+                bootstrap_clock_translations=state.bootstrap_clock_translations,
                 runtime=dict(databento=version('databento'),databento_dbn=version('databento-dbn')),
                 delivery_diagnostics=dict(callback_counts=dict(callback_counts),last_callback_capture_ns=dict(callback_last),
                     max_queue_depth=max_queue_depth,max_delivery_lag_ns=max_delivery_lag_ns,

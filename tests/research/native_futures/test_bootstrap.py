@@ -70,10 +70,11 @@ def test_changed_source_or_policy_cannot_reuse_bootstrap_review(setup):
     with pytest.raises(ValueError,match='changed'):r.checkpoints(p,s)
 
 
-def test_persistent_capture_wires_bootstrap_cursor_to_initial_sdk_attempt(setup,tmp_path):
+@pytest.mark.parametrize('clock_delta',[0,40])
+def test_persistent_capture_wires_bootstrap_cursor_to_initial_sdk_attempt(setup,tmp_path,clock_delta):
     from monatise.research.phase9.service import CapturePlan,CaptureStep,PersistentResearchService
     from monatise.research.phase9.rotation import RotatingSpool,RotationPolicy
-    p,c,s,rows,root=setup;r=review_bootstrap(p,s,root,review_reference='review');clients=[]
+    p,c,s,rows,root=setup;r=review_bootstrap(p,s,root,review_reference='review',capture_clock_tolerance_ns=1000 if clock_delta else 0,clock_equivalence_review_reference='EXPLICIT_INITIAL_CLOCK_REVIEW');clients=[]
     class Client:
         def __init__(self,*args):self.done=asyncio.Event();clients.append(self)
         def add_callback(self,callback,exception_callback):self.callback=callback
@@ -83,7 +84,7 @@ def test_persistent_capture_wires_bootstrap_cursor_to_initial_sdk_attempt(setup,
             if schema=='definition':self.callback(native('ES'))
             else:
                 assert self.kw['start']==rows[0].ts_event
-                for row in rows:self.callback(row)
+                for row in rows:self.callback(translated(row,delta=clock_delta) if clock_delta else row)
                 self.callback(trade(c,t=NOW_NS-NS,price='2500.25'))
             self.callback(system(dn.SystemCode.REPLAY_COMPLETED))
         def terminate(self):self.done.set()
@@ -95,3 +96,54 @@ def test_persistent_capture_wires_bootstrap_cursor_to_initial_sdk_attempt(setup,
     assert not report['reports'][0]['quality']['quarantined']
     assert len(p.gates[c.metadata.instrument_id].accepted)==1
     assert spool.load('bootstrap')['review_sha256']==r.sha256
+
+
+def translated(row,*,delta=40,price_change=0,sequence_change=0):
+    return dn.TradeMsg(publisher_id=row.publisher_id,instrument_id=row.instrument_id,ts_event=row.ts_event,
+        ts_recv=row.ts_recv+delta,ts_in_delta=row.ts_in_delta+delta,price=row.price+price_change,
+        size=row.size,action=row.action,side=row.side,depth=row.depth,flags=int(row.flags),sequence=row.sequence+sequence_change)
+
+
+def test_explicit_initial_clock_identity_review_preserves_multiplicity_and_raw_bytes(setup):
+    p,c,s,rows,root=setup;r=review_bootstrap(p,s,root,review_reference='review',capture_clock_tolerance_ns=1000,clock_equivalence_review_reference='SOURCE_BOUND_30_TO_41_NS_CAPTURE_PAIR_REVIEW')
+    st=FeedState(s,checkpoints=r.checkpoints(p,s),recovery_review_reference=r.sha256,bootstrap_prefixes=r.prefix_reviews())
+    for i,row in enumerate(rows):
+        new=translated(row);raw=bytes(new)
+        assert st.ingest('trades',new,capture_ns=NOW_NS,ordinal=i) is None
+        assert bytes(new)==raw
+    assert st.counts['replay_duplicates_skipped']==2 and len(st.bootstrap_clock_translations)==2
+    assert all(x['receive_time_difference_ns']==40 for x in st.bootstrap_clock_translations)
+    assert st.ingest('trades',trade(c,t=NOW_NS-NS),capture_ns=NOW_NS,ordinal=3) is not None
+
+
+@pytest.mark.parametrize('changes',[dict(price_change=250000000),dict(sequence_change=1),dict(delta=1001)])
+def test_changed_exchange_identity_or_excess_clock_variation_remains_rejected(setup,changes):
+    p,c,s,rows,root=setup;r=review_bootstrap(p,s,root,review_reference='review',capture_clock_tolerance_ns=1000,clock_equivalence_review_reference='review')
+    st=FeedState(s,checkpoints=r.checkpoints(p,s),recovery_review_reference=r.sha256,bootstrap_prefixes=r.prefix_reviews())
+    with pytest.raises(ValueError,match='event_identity_or_clock'):
+        st.ingest('trades',translated(rows[0],**changes),capture_ns=NOW_NS,ordinal=1)
+
+
+def test_same_receive_time_difference_cannot_hide_changed_publisher_send_time(setup):
+    from monatise.research.native_futures.replay_identity import verified_prefix_hash,trade_identity
+    p,c,s,rows,root=setup;x=rows[0]
+    bad=dn.TradeMsg(publisher_id=1,instrument_id=c.metadata.instrument_id,ts_event=x.ts_event,ts_recv=x.ts_recv+40,
+        ts_in_delta=x.ts_in_delta,price=x.price,size=x.size,action=x.action,side=x.side,depth=x.depth,flags=int(x.flags),sequence=x.sequence)
+    expected=dict(record_sha256=hashlib.sha256(bytes(x)).hexdigest(),identity_sha256=trade_identity(x),ts_recv=x.ts_recv)
+    with pytest.raises(ValueError,match='event_identity_or_clock'):
+        verified_prefix_hash(bad,expected=expected,maximum_translation_ns=1000)
+
+
+def test_generic_recovery_keeps_byte_exact_prefix_matching(setup):
+    p,c,s,rows,root=setup;r=review_bootstrap(p,s,root,review_reference='review')
+    st=FeedState(s,checkpoints=r.checkpoints(p,s),recovery_review_reference=r.sha256)
+    with pytest.raises(ValueError,match='prefix_mismatch'):st.ingest('trades',translated(rows[0]),capture_ns=NOW_NS,ordinal=1)
+
+
+def test_initial_clock_equivalence_cannot_cross_native_second_bucket(setup):
+    from monatise.research.native_futures.replay_identity import verified_prefix_hash,trade_identity
+    p,c,s,rows,root=setup;x=rows[0];at=x.ts_event//NS*NS
+    old=dn.TradeMsg(publisher_id=1,instrument_id=c.metadata.instrument_id,ts_event=at,ts_recv=at+NS-10,ts_in_delta=NS-10,price=x.price,size=x.size,action=x.action,side=x.side,depth=x.depth,flags=int(x.flags),sequence=x.sequence)
+    expected=dict(record_sha256=hashlib.sha256(bytes(old)).hexdigest(),identity_sha256=trade_identity(old),ts_recv=old.ts_recv)
+    with pytest.raises(ValueError,match='event_identity_or_clock'):
+        verified_prefix_hash(translated(old,delta=40),expected=expected,maximum_translation_ns=1000)

@@ -140,6 +140,7 @@ class PersistentResearchService:
             report=await capture.run(api_key=api_key,permit=step.permit,permit_ledger=permit_ledger,
                 output=output/f'attempt-{index:02d}',checkpoints=checkpoints,
                 recovery_review_reference=step.review_reference if checkpoints else None,
+                bootstrap_prefixes=self.bootstrap_review.prefix_reviews() if index==0 and self.bootstrap_review else None,
                 evidence_kind=evidence_kind,record_sink=sink,rejection_sink=reject,tick_sink=tick,
                 checkpoint_sink=lambda value:self.spool.checkpoint('feed_cursor',dict(cursors=value,spool_records=self.spool.count)))
             reports.append(report)
