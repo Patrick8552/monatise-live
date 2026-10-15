@@ -101,6 +101,12 @@ def load_capture(root,*,cutoff_ns,maximum_records=2000000,observation_sink=None,
         opened=inputs['session_open_ns'];closed=scope['session_end_ns']
         calendars[iid]=ExchangeCalendar('GLBX.MDP3',c.metadata.exchange,ref,digest(ref),'explicit-read-only-capture-session',opened,closed,((opened,closed),))
     pipeline=ResearchPipeline(gates,calendars,enabled_schemas=schemas,rolling=True,capacity=50000)
+    from monatise.research.native_futures.quality_review import NativeQualityReview
+    native_review=NativeQualityReview()
+    # Read source health before the cursor snapshot. A later progress write can
+    # contain failures outside the prefix being replayed by this request.
+    progress_snapshot=read_json(root/'progress.json') if (root/'progress.json').exists() else None
+    final_snapshot=read_json(root/'capture/attempt-00/report.json',32*1024**2) if (root/'capture/attempt-00/report.json').exists() else None
     state=readonly(root/'spool/state.sqlite')
     try:
         segments=checkpoint(state,'segments');cursor=checkpoint(state,'feed_cursor');limit=cursor['spool_records']
@@ -134,11 +140,19 @@ def load_capture(root,*,cutoff_ns,maximum_records=2000000,observation_sink=None,
                     record=records[0]
                     if at>cutoff_ns:continue
                     if rejection:
-                        if record.instrument_id in gates:gates[record.instrument_id].transport_gap(schema,rejection,event_ns=record.ts_event)
+                        if record.instrument_id in gates:
+                            gates[record.instrument_id].transport_gap(schema,rejection,event_ns=record.ts_event)
+                            clock=json.loads(review);clock=ClockReview(**clock) if clock else None
+                            _,upper=clock.bounds(at) if clock else (0,0)
+                            contextual=(scope.get('start_ns',contracts[record.instrument_id].metadata.event_ns)<=record.ts_event<scope['session_end_ns']
+                                and getattr(record,'ts_recv',record.ts_event)<=at+upper
+                                and at+max(0,upper)<scope['session_end_ns']+scope.get('session_drain_seconds',30)*10**9)
+                            native_review.rejection(schema,record,contracts[record.instrument_id],original_reason=rejection,context_valid=contextual)
                     if not admitted or isinstance(record,(dn.SystemMsg,dn.SymbolMappingMsg,dn.ErrorMsg)):continue
                     evidence=json.loads(review);evidence=ClockReview(**evidence) if evidence else None
                     outcome=pipeline.ingest(record,schema=schema,archive_sha256=sha,ordinal=ordinal+base,
                         capture_ns=at,admission_ns=at,evidence_kind=kind,clock_review=evidence)
+                    native_review.observe(schema,record,contracts[record.instrument_id],admitted=bool(admitted),gate=gates[record.instrument_id])
                     accepted+=int(outcome['accepted']);rejected+=int(not outcome['accepted'] and not outcome['duplicate'])
                     if observation_sink is not None and not outcome['duplicate']:
                         from monatise.research.institutional.normalize import observation
@@ -150,13 +164,13 @@ def load_capture(root,*,cutoff_ns,maximum_records=2000000,observation_sink=None,
         if count!=limit or len(kinds)>1:raise ValueError('incomplete_or_mixed_native_prefix')
     finally:state.close()
     final=root/'capture/attempt-00/report.json'
-    if final.exists():
-        report=read_json(final,32*1024**2)
+    if final_snapshot is not None:
+        report=final_snapshot
         if report['scope_sha256']!=digest(scope):raise ValueError('source_final_scope_mismatch')
         health=dict(status='SEALED_HISTORICAL_CAPTURE',quarantined=report['quality']['quarantined'],
             reasons=report['quality']['reasons'],component_rejections=report['quality'].get('component_rejections',{}),stale_checkpoint=False,live_verified=False)
     else:
-        progress=read_json(root/'progress.json');health=dict(status=progress['status'],
+        progress=progress_snapshot;health=dict(status=progress['status'],
             quarantined=progress['health']['quarantined'],reasons=progress['health']['reasons'],component_rejections=progress['health'].get('component_rejections',{}),
             observed_at_ns=progress['observed_at_ns'],stale_checkpoint=not 0<=time.time_ns()-progress['observed_at_ns']<=180*10**9,
             live_verified=False,interval_watermarks=progress['health'].get('interval_watermarks',{}))
@@ -164,9 +178,15 @@ def load_capture(root,*,cutoff_ns,maximum_records=2000000,observation_sink=None,
         schema,instrument=component.rsplit(':',1);iid=int(instrument)
         if iid not in gates or schema not in schemas:raise ValueError('source_component_health_scope_mismatch')
         gates[iid].transport_gap(schema,'captured_component_rejection_requires_review')
-    quality=report['quality'] if final.exists() else progress['health']
+    quality=report['quality'] if final_snapshot is not None else progress['health']
     health['stalled_connections']=list(quality.get('stalled_connections',()))
     health['reasons']=sorted(set(health['reasons'])|{'connection_stalled_'+s for s in health['stalled_connections']})
+    # Progress can be newer than the cursor snapshot. Never explain away an
+    # unobserved rejection using older typed evidence for the same component.
+    published=progress_snapshot
+    accounted=bool(published and published.get('spool_records',limit+1)<=limit)
+    health['native_rejection_reviews']=native_review.typed_rejections(complete_for_reported_prefix=accounted)
+    health['reader_price_fault_reviews']={g.contract.metadata.raw_symbol:native_review.price_faults(g) for g in gates.values()}
     health.update(native_records_verified=count,market_records_accepted=accepted,market_records_rejected=rejected,
         cursor_prefix_sha256=digest(cursor),source_evidence_kind=next(iter(kinds),None),complete_exchange_continuity_certified=False,
         retained_market_records_per_instrument=50000,network_requests=0,source_mutations=0,

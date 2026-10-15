@@ -102,3 +102,48 @@ clock, cursor, cancellation or unknown/global quarantine still withhold every
 instrument. ES/NQ second-bar price-policy faults remain separately withheld.
 No native timestamp, source flag, rejection, price bound or active collector
 code is changed by this reader correction.
+
+
+Native rejection attribution and dependency correction
+-----------------------------------------------------
+The subsequent read-only quality review found six original GC trade records
+with F_BAD_TS_RECV and receive-minus-event times from -14.407229 to -7.854282ms.
+The vendor flag denotes receive-clock issues or packet reordering; the local
+reader cannot establish which upstream mechanism occurred. UTC conversion is
+not the observed cause. Native bytes, flags, timestamps and rejected admission
+bits stay unchanged. The old generic transport_gap:ValueError is retained as
+original evidence, with a separate precise source-record explanation.
+
+NativeQualityReview classifies a trade-only timestamp dependency only after
+verifying every rejected record in the committed prefix, its identity, economic
+fields, other flags, session/capture bounds and original rejection type. A newer
+unaccounted health prefix, an unknown or additional defect, missing evidence or
+a global clock/storage/transport failure cannot receive this narrower scope.
+The reader snapshots source health before its cursor to avoid mixing a newer
+failure summary with older replay evidence. Original overall/component capture
+quarantine remains visible. Validated native OHLCV can supply descriptive candle
+context independently; all trade flow, VWAP and volume-profile outputs remain
+withheld. No candles are reconstructed from the rejected GC executions.
+
+The same reader aggregates bounded structurally valid raw prints for diagnostic
+cross-stream comparison only, including structurally valid prints rejected by
+the price guard. It uses ts_recv for native provider OHLCV buckets. These
+aggregates NEVER enter analytical candles, indicators, policy fitting or source
+admission. Exact native second-bar OHLC AND volume agreement is recorded with
+source hash chains and counts; duplicate bars, out-of-order receive times,
+missing evidence, mismatches and budget exhaustion cannot claim corroboration.
+All four first ES/NQ price rejections in the reviewed run matched their captured
+native second bars. This supports a plausibility/regime limitation, not proof
+of exchange correctness, independent completeness or permission to bypass a
+price fault. The original ES trade 12-tick/3-tick and NQ trade 60-tick/39-tick
+rejections remain; original one-second 14/12.8608 and 86/81.1648 rejections also
+remain. No source or policy reanchoring/refitting occurred. The original broader
+calibration failed without an eligible training scope or frozen candidate.
+
+Nine new regression cases cover actual receive-flag semantics, additional
+malformed/flagged inputs, incomplete evidence, dependency isolation, preserved
+global failures, exact/mismatched cross-stream comparison and read-only hash
+preservation. 2,622 full-suite tests and 187 focused native/Phase9/Phase10 tests
+passed. This is a reader correction on an existing capture, not a new live
+collector deployment or a completed full-session reliability certificate.
+Reference: https://databento.com/docs/standards-and-conventions/common-fields-enums-types
