@@ -53,7 +53,7 @@ class FeedState:
         self.scope=scope;self.contracts={c.metadata.instrument_id:c for c in scope.contracts}
         self.started={};self.completed=set();self.acknowledged=set();self.last_message={}
         self.latest={};self.quotes={};self.verified_definitions=set();self.quality_reasons=set();self.counts=defaultdict(int)
-        self.cursors={};self.normalized=[]
+        self.cursors={};self.normalized=[];self.component_reasons=defaultdict(set)
         if checkpoints and not recovery_review_reference:raise ValueError('explicit_recovery_review_required')
         for schema in scope.schemas:
             for iid in self.contracts:
@@ -61,6 +61,11 @@ class FeedState:
                 self.cursors[key]=Cursor.recover(checkpoints[key]) if checkpoints and key in checkpoints else Cursor()
 
     def quarantine(self,reason):self.quality_reasons.add(reason)
+
+    def reject_component(self,schema,record,reason):
+        iid=getattr(record,'instrument_id',None)
+        if iid in self.contracts:self.component_reasons[(schema,iid)].add(reason)
+        else:self.quarantine(reason)
 
     def checkpoint(self):return {k:c.snapshot() for k,c in sorted(self.cursors.items())}
 
@@ -123,12 +128,21 @@ class FeedState:
             signature=lambda c:(c.identity,c.tick_size,c.multiplier,c.price_unit,c.metadata.native_terms)
             if signature(value)!=signature(contract):raise ValueError('contract_roll_or_definition_economics_changed')
             result=dict(contract=encode(value),record_sha256=native_hash)
-        else:
+        elif schema in {'trades','mbp-1','mbp-10'}:
             result=encode(AdvancedAdapters(identity=contract.metadata,enabled_schemas=(schema,)).normalize(schema,record))
+        else:
+            from monatise.research.institutional.normalize import observation
+            if schema=='statistics' and isinstance(record,dbn.StatMsg) and record.stat_type!=dbn.StatType.OPEN_INTEREST:
+                self.counts['unsupported_statistics_preserved_raw']+=1
+                return None
+            result=encode(observation(record,schema=schema,contract=contract,archive_sha256=native_hash,
+                ordinal=ordinal,retrieval_ns=capture_ns,admission_ns=capture_ns,
+                evidence_kind='AUTHENTIC_LIVE_CAPTURE',enabled_schemas=self.scope.schemas,clock_review=self.scope.clock_review))
         accepted=cursor.accept(event,native_hash)
         if schema=='definition':self.verified_definitions.add(iid)
         else:
-            self.latest[(schema,iid)]=received
+            from .candles import WIDTHS
+            self.latest[(schema,iid)]=event+WIDTHS[schema[6:]] if schema.startswith('ohlcv-') else received
             if schema=='mbp-1':self.quotes[iid]=result['payload'][0]
         self.cursors[key]=cursor
         if not accepted:
@@ -149,19 +163,42 @@ class FeedState:
             self.quarantine('independent_clock_review_expired_or_invalid');lower=upper=0
         stalled=[s for s in self.scope.schemas if now_ns-self.last_message.get(s,self.started.get(s,now_ns))>
                  (self.scope.heartbeat_seconds+10)*10**9]
+        from .candles import WIDTHS
+        def age_limit(schema):
+            return max(self.scope.maximum_market_age_ns,2*WIDTHS[schema[6:]]) if schema.startswith('ohlcv-') else self.scope.maximum_market_age_ns
         stale=[f'{s}:{i}' for s in self.scope.schemas if s!='definition' for i in self.contracts
-               if not 0<=now_ns+upper-self.latest.get((s,i),0)<=self.scope.maximum_market_age_ns]
+               if not 0<=now_ns+upper-self.latest.get((s,i),0)<=age_limit(s)]
         unusable_quotes=[i for i in self.contracts if 'mbp-1' in self.scope.schemas and (i not in self.quotes
             or self.quotes[i][0] is None or self.quotes[i][3] is None
             or self.quotes[i][0]==self.quotes[i][3] or min(self.quotes[i][1],self.quotes[i][4])<=0)]
-        ready=(not self.quality_reasons and not stalled and not stale and not unusable_quotes
+        ready=(not self.component_reasons and not self.quality_reasons and not stalled and not stale and not unusable_quotes
                and self.completed==set(self.scope.schemas) and self.verified_definitions==set(self.contracts)
                and now_ns+max(0,upper)<self.scope.session_end_ns)
+        components={}
+        for iid,contract in self.contracts.items():
+            streams={}
+            for schema in self.scope.schemas:
+                reasons=sorted(self.component_reasons.get((schema,iid),()))
+                if schema in stalled:reasons.append('connection_stalled')
+                if schema not in self.completed:reasons.append('replay_not_completed')
+                if iid not in self.verified_definitions:reasons.append('definition_unverified')
+                if f'{schema}:{iid}' in stale:reasons.append('stream_stale_or_missing')
+                if schema=='mbp-1' and iid in unusable_quotes:reasons.append('quote_unusable')
+                if now_ns+max(0,upper)>=self.scope.session_end_ns:reasons.append('session_ended')
+                # An uncertain transport fault remains fail-closed. Simple
+                # staleness/absence is independently attributed above.
+                reasons.extend(sorted(self.quality_reasons))
+                streams[schema]=dict(status='UNAVAILABLE' if reasons else 'CAPTURED_CONTEXT_FRESH',
+                    reasons=reasons,event_ns=self.cursors[f'{schema}:{iid}'].event_ns,
+                    provider_receive_ns=self.latest.get((schema,iid)),
+                    complete_exchange_continuity_certified=False,**SAFETY)
+            components[contract.metadata.raw_symbol]=streams
         return dict(status='CAPTURED_CONTEXT_FRESH' if ready else 'UNAVAILABLE',
-            quarantined=bool(self.quality_reasons or stalled or self.completed!=set(self.scope.schemas)
+            quarantined=bool(self.component_reasons or self.quality_reasons or stalled or self.completed!=set(self.scope.schemas)
                              or self.verified_definitions!=set(self.contracts)),reasons=sorted(self.quality_reasons),
+            component_rejections={f'{s}:{i}':sorted(v) for (s,i),v in self.component_reasons.items()},
             stalled_connections=stalled,stale_market_inputs=stale,replay_completed=sorted(self.completed),
-            unusable_quote_instruments=unusable_quotes,
+            unusable_quote_instruments=unusable_quotes,component_health=components,
             definitions_verified=sorted(self.verified_definitions),counts=dict(self.counts),
             local_clock_offset_bounds_ns=(lower,upper),
             clock_review_sha256=digest(self.scope.clock_review) if self.scope.clock_review else None,

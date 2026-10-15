@@ -75,6 +75,7 @@ class Source:
     retrieval_ns: int
     admission_ns: int
     evidence_kind: str
+    clock_review: object | None = None
 
     def __post_init__(self):
         hash_required(self.archive_sha256)
@@ -83,8 +84,18 @@ class Source:
             timestamp_ns(t)
         if (type(self.ordinal) is not int or self.ordinal < 0
                 or self.retrieval_ns > self.admission_ns
-                or self.evidence_kind not in {"AUTHENTIC_ARCHIVED_RECORD", "ENGINEERING_SYNTHETIC"}):
+                or self.evidence_kind not in {"AUTHENTIC_ARCHIVED_RECORD", "AUTHENTIC_LIVE_CAPTURE", "ENGINEERING_SYNTHETIC"}):
             raise ValueError("native_position_and_availability_required")
+
+        if self.clock_review is not None:
+            from monatise.research.databento.live_models import ClockReview
+            if not isinstance(self.clock_review,ClockReview):raise ValueError('reviewed_capture_clock_required')
+            self.clock_review.bounds(self.retrieval_ns)
+
+    @property
+    def utc_capture_bounds(self):
+        lower,upper=self.clock_review.bounds(self.retrieval_ns) if self.clock_review else (0,0)
+        return self.retrieval_ns+lower,self.retrieval_ns+upper
 
     @property
     def position(self):
@@ -113,9 +124,9 @@ class MarketObservation:
         clock = self.receive_ns if self.receive_ns is not None else self.event_ns
         if (self.provider != "Databento" or self.normalization_version != VERSION
                 or self.quality != "CAPTURED_NATIVE_CONTINUITY_UNCERTIFIED"
-                or self.schema not in {"definition", "trades", "mbp-1", "mbp-10", "ohlcv-1m", "ohlcv-1h", "statistics", "status"}
+                or self.schema not in {"definition", "trades", "mbp-1", "mbp-10", "ohlcv-1s", "ohlcv-1m", "ohlcv-1h", "statistics", "status"}
                 or not (m.event_ns if self.schema == "definition" else m.receive_ns) <= self.event_ns <= clock < m.expiration_ns
-                or clock > self.source.retrieval_ns
+                or clock > self.source.utc_capture_bounds[1]
                 or not isinstance(self.payload, tuple)
                 or type(self.flags) is not int or not 0 <= self.flags <= 255
                 or self.flags & (4 | 8 | 32)):

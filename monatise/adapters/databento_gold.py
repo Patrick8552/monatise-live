@@ -62,6 +62,14 @@ def definition(record, *, publishers, now, identity_policy=None, cutoff_ns=None)
         if not isinstance(identity_policy, DatabentoPublisherPolicy):
             raise ValueError("explicit Databento identity policy required")
         identity_policy.validate(record, publishers=publishers, now=now, cutoff_ns=cutoff_ns)
+        if str(record.unit_of_measure) == "TRYOZ":
+            # Explicit research policy only: delegate real feed units to the
+            # already-reviewed native normalizer; never rescale DBN prices.
+            from monatise.adapters.databento_identity import native_gc_economics
+            tick,multiplier = native_gc_economics(record)
+            return GCDefinition(record.instrument_id, str(record.raw_symbol), record.publisher_id,
+                "XCEC", tick, multiplier, "USD", ns_time(record.ts_event),
+                ns_time(record.ts_recv), ns_time(record.expiration))
     elif cutoff_ns is not None:
         raise ValueError("nanosecond cutoff requires explicit identity policy")
     elif publisher != ("GLBX.MDP3", "XCEC"):

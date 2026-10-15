@@ -15,7 +15,7 @@ from monatise.adapters.databento_identity import timestamp_ns
 from monatise.research.databento.acquisition import canonical_hash, json_document
 from monatise.research.databento.datasets import InstrumentMetadata
 
-WIDTHS = {"1m":60*10**9,"5m":300*10**9,"15m":900*10**9,
+WIDTHS = {"1s":10**9,"5s":5*10**9,"1m":60*10**9,"5m":300*10**9,"15m":900*10**9,
           "1h":3600*10**9,"4h":14400*10**9}
 
 
@@ -92,8 +92,8 @@ class HistoricalBar:
             raise ValueError("invalid OHLCV geometry or volume")
         if (not isinstance(self.source_hashes,tuple) or not self.source_hashes
                 or any(not re.fullmatch(r"[a-f0-9]{64}", h) for h in self.source_hashes)
-                or self.schema not in {"ohlcv-1m","ohlcv-1h","derived-ohlcv-v1"}
-                or self.evidence_kind not in {"AUTHENTIC_HISTORICAL_DOWNLOAD","ENGINEERING_SYNTHETIC"}):
+                or self.schema not in {"ohlcv-1s","ohlcv-1m","ohlcv-1h","derived-ohlcv-v1"}
+                or self.evidence_kind not in {"AUTHENTIC_HISTORICAL_DOWNLOAD","AUTHENTIC_LIVE_CAPTURE","ENGINEERING_SYNTHETIC"}):
             raise ValueError("explicit source provenance required")
 
     @property
@@ -103,7 +103,7 @@ class HistoricalBar:
 
 def normalize_candle(record, *, schema, identity, retrieval_ns, evidence_kind):
     import databento_dbn as dbn
-    expected = {"ohlcv-1m":("1m",dbn.RType.OHLCV_1M),"ohlcv-1h":("1h",dbn.RType.OHLCV_1H)}
+    expected = {"ohlcv-1s":("1s",dbn.RType.OHLCV_1S),"ohlcv-1m":("1m",dbn.RType.OHLCV_1M),"ohlcv-1h":("1h",dbn.RType.OHLCV_1H)}
     if schema not in expected:
         raise ValueError("historical candle schema unsupported")
     tf,rtype = expected[schema]

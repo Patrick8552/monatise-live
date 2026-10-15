@@ -40,13 +40,13 @@ def definition(record, *, capability, publishers, as_of_ns, convention):
 
 
 def observation(record, *, schema, contract, archive_sha256, ordinal,
-                retrieval_ns, admission_ns, evidence_kind, enabled_schemas=()):
+                retrieval_ns, admission_ns, evidence_kind, enabled_schemas=(), clock_review=None):
     """No client, environment lookup, implicit live feed or acquisition."""
     import databento_dbn as dbn
     if schema not in enabled_schemas:
         raise ValueError("institutional_schema_disabled")
     source = Source(archive_sha256, hashlib.sha256(bytes(record)).hexdigest(), ordinal,
-                    retrieval_ns, admission_ns, evidence_kind)
+                    retrieval_ns, admission_ns, evidence_kind, clock_review)
     if (record.publisher_id, record.instrument_id) != contract.identity[1:3]:
         raise ValueError("native_contract_identity_mismatch")
     flags = int(getattr(record, "flags", 0))
@@ -59,7 +59,7 @@ def observation(record, *, schema, contract, archive_sha256, ordinal,
     elif schema in {"trades", "mbp-1", "mbp-10"}:
         value = AdvancedAdapters(identity=contract.metadata, enabled_schemas=(schema,)).normalize(schema, record)
         payload = value.payload
-    elif schema in {"ohlcv-1m", "ohlcv-1h"}:
+    elif schema in {"ohlcv-1s", "ohlcv-1m", "ohlcv-1h"}:
         value = normalize_candle(record, schema=schema, identity=contract.metadata,
             retrieval_ns=retrieval_ns, evidence_kind="AUTHENTIC_HISTORICAL_DOWNLOAD"
             if evidence_kind == "AUTHENTIC_ARCHIVED_RECORD" else evidence_kind)

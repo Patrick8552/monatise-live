@@ -272,7 +272,9 @@ def test_native_crypto_pipeline_preserves_derivatives_and_decision_policy():
 def test_unavailable_results_are_explicit_and_not_fake_broker_prices():
     for asset,symbol in [('GC','XAU/USD'),('ES','US500.cash'),('NQ','US100.cash')]:
         result=asyncio.run(broker_preview(asset=asset,instrument=symbol,now_ns=NOW_NS))
-        assert result.decision=='MAPPING_UNAVAILABLE' and result.proposed_entry is None
+        assert result.decision=='INSUFFICIENT_MARKET_DATA' and result.proposed_entry is None
+        assert result.mapping_status=='NOT_EVALUATED'
+        assert 'verified_broker_candles_unavailable' in result.rejection_reasons
     assert crypto_preview(asset='BTC',now_ns=NOW_NS)['preview']['decision']=='INSUFFICIENT_MARKET_DATA'
 
 

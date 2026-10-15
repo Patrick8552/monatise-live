@@ -12,6 +12,7 @@ from monatise.research.institutional.native_index import validate as index_defin
 from monatise.research.databento.datasets import DatasetCapability
 
 SCHEMAS=('definition','trades','mbp-1')
+SUPPORTED_SCHEMAS=SCHEMAS+('mbp-10','ohlcv-1s','ohlcv-1m','ohlcv-1h','statistics','status')
 SAFETY=dict(execution_eligible=False,publication_eligible=False,approval_eligible=False,
             production_registered=False,gil_enabled=False)
 
@@ -59,16 +60,8 @@ def native_definition(record, *, capability,publishers,as_of_ns):
     if product in {'ES','NQ'}:
         return index_definition(record,capability=capability,publishers=publishers,as_of_ns=as_of_ns)
     if product!='GC':raise ValueError('only_reviewed_GC_ES_NQ_native_futures_supported')
-    if (str(record.unit_of_measure)!='TRYOZ' or record.main_fraction!=255
-            or str(record.instrument_class)!='F' or str(record.security_type)!='FUT'
-            or record.leg_count!=0 or str(record.user_defined_instrument)!='N'):
-        raise ValueError('native_GC_outright_terms_required')
-    tick=number(record.min_price_increment)/10**9
-    size=number(record.unit_of_measure_qty)/10**9
-    display=number(record.display_factor,positive=True)/10**9
-    amount=number(record.min_price_increment_amount,positive=True)/10**9
-    if tick!=Decimal('.1') or size!=100 or amount/display!=tick*size:
-        raise ValueError('native_GC_economics_contradictory')
+    from monatise.adapters.databento_identity import native_gc_economics
+    tick,size=native_gc_economics(record)
     return definition(record,capability=capability,publishers=publishers,as_of_ns=as_of_ns,
         convention=EconomicConvention('GC',tick,size,'USD_PER_TRYOZ','native-CME-live-GC-v1'))
 
@@ -95,7 +88,7 @@ class LiveScope:
                 or len({c.identity for c in self.contracts})!=len(self.contracts)
                 or any(c.asset_class!='futures' or c.metadata.product not in {'GC','ES','NQ'} for c in self.contracts)
                 or not isinstance(self.schemas,tuple) or not self.schemas or len(set(self.schemas))!=len(self.schemas)
-                or not set(self.schemas)<=set(SCHEMAS) or 'definition' not in self.schemas
+                or not set(self.schemas)<=set(SUPPORTED_SCHEMAS) or 'definition' not in self.schemas
                 or not self.session_review_reference
                 or not isinstance(self.capability,DatasetCapability)
                 or not isinstance(self.publishers,tuple) or not self.publishers

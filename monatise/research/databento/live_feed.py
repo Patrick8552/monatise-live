@@ -31,7 +31,7 @@ class CMELiveCapture:
         self.queue_capacity=queue_capacity
 
     async def run(self, *, api_key,permit,permit_ledger,output,checkpoints=None,recovery_review_reference=None,
-                  evidence_kind='AUTHENTIC_LIVE_CAPTURE'):
+                  evidence_kind='AUTHENTIC_LIVE_CAPTURE',record_sink=None,checkpoint_sink=None,rejection_sink=None):
         if not isinstance(api_key,str) or not api_key.strip():raise ValueError('private_live_key_required')
         if evidence_kind=='ENGINEERING_SYNTHETIC' and self.factory is sdk_client:
             raise ValueError('fixtures_cannot_open_real_live_client')
@@ -66,6 +66,18 @@ class CMELiveCapture:
             except Exception:
                 if not closing:state.quarantine('provider_disconnect_or_error_'+schema)
 
+        def deliver(schema,record,captured,ordinal):
+            try:
+                normalized=state.ingest(schema,record,capture_ns=captured,ordinal=ordinal)
+            except (ValueError,TypeError,AttributeError,ArithmeticError) as exc:
+                state.reject_component(schema,record,'native_record_or_recovery_validation_failed')
+                if rejection_sink is not None:rejection_sink(schema,record,captured,ordinal,type(exc).__name__)
+                return
+            # Storage/sink failures are operational faults, not malformed feed
+            # records, and must escape to the capture shutdown boundary.
+            if record_sink is not None:record_sink(schema,record,captured,ordinal,normalized)
+            if checkpoint_sink is not None:checkpoint_sink(state.checkpoint())
+
         failure=None
         try:
             for schema in self.scope.schemas:
@@ -87,9 +99,7 @@ class CMELiveCapture:
                     schema,record,captured=await asyncio.wait_for(queue.get(),timeout=min(.1,max(.001,end-loop.time())))
                 except TimeoutError:continue
                 ordinal,_=journals[schema].append(record,capture_ns=captured)
-                try:state.ingest(schema,record,capture_ns=captured,ordinal=ordinal)
-                except (ValueError,TypeError,AttributeError,ArithmeticError):
-                    state.quarantine('native_record_or_recovery_validation_failed')
+                deliver(schema,record,captured,ordinal)
         except asyncio.CancelledError:
             state.quarantine('capture_cancelled');failure='CancelledError'
             raise
@@ -109,7 +119,7 @@ class CMELiveCapture:
                 schema,record,captured=queue.get_nowait()
                 try:
                     ordinal,_=journals[schema].append(record,capture_ns=captured)
-                    state.ingest(schema,record,capture_ns=captured,ordinal=ordinal)
+                    deliver(schema,record,captured,ordinal)
                 except Exception:state.quarantine('drain_record_or_storage_failure')
             health=state.health(self.clock_ns())
             for schema,journal in journals.items():
