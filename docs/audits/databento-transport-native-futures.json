@@ -10,8 +10,8 @@
   "automatic_retries": 0,
   "calibration_candidate_created": false,
   "deployed": false,
-  "focused_tests_passed": 232,
-  "genuine_live_validation": "PENDING_FRESH_INCLUDED_SUBSCRIPTION_CHECK",
+  "focused_tests_passed": 233,
+  "genuine_live_validation": "FIRST_ATTEMPT_QUARANTINED_STARTUP_REPLAY_BACKPRESSURE; CORRECTION_AWAITING_SEPARATE_LIVE_REVIEW",
   "legacy_SDK_start_thread_violation_reproduced": true,
   "liveness_thresholds_changed": false,
   "offline_full_suite": {
@@ -19,10 +19,10 @@
     "errors": 0,
     "exit_code": 0,
     "failures": 0,
-    "seconds": 68.646,
+    "seconds": 64.995,
     "skipped": 0,
-    "tests": 2584,
-    "xml_sha256": "4e35798a3dc9f5d99638fc625cfd9dea566b1878f19df03d08dafb51b9591d6c"
+    "tests": 2585,
+    "xml_sha256": "26617bc77c0416fe6485a220d609b070f4b48e6a322536af62e0455236cd13cd"
   },
   "old_quarantines_cleared": false,
   "original_live_stall_root_cause_proven": false,
@@ -31,7 +31,9 @@
     "monatise/research/phase9/quality.py": true
   },
   "prior_cutoff_failure_preserved": true,
+  "replay_burst_above_queue_capacity_losslessly_tested": true,
   "scope": "UNDEPLOYED_RESEARCH_ONLY",
+  "startup_overflow_reproduced_and_preserved": true,
   "trading_activated": false,
   "transport_changes": [
     "per-client owned network loops",
@@ -39,7 +41,10 @@
     "blocking subscription remains off network loop",
     "retained socket abort after SDK timeout cleanup",
     "owned thread cleanup",
-    "price-free bounded socket/loop diagnostics"
+    "price-free bounded socket/loop diagnostics",
+    "subscribe all schemas before starting replay",
+    "bounded thread-safe handoff with producer backpressure; unchanged capacity and rejection",
+    "yield consumer to retain clock and health scheduling"
   ],
   "version": "databento-transport-native-futures-review-v1"
 }

@@ -160,3 +160,13 @@ Primary sources
 * https://databento.com/pricing/
 * https://www.cmegroup.com/articles/faqs/market-by-order-mbo.html
 * https://www.cmegroup.com/trading-hours.html
+
+Replay handoff correction
+-------------------------
+The first reviewed transport trial was quarantined after a startup replay burst
+filled the local queue before all clients had started. Its evidence remains
+excluded. Prepare every subscription before streaming and use a bounded
+thread-safe handoff that applies producer backpressure. Queue capacity, price
+policies, stall thresholds and zero retries are unchanged. An independent-loop
+regression delivers a replay burst larger than queue capacity without loss.
+This correction still requires separate genuine-live verification.
