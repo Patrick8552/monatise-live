@@ -35,6 +35,25 @@ def capture(tmp_path):
 def hashes(root):return {str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in root.rglob('*') if p.is_file()}
 
 
+def test_v2_reader_uses_native_receive_anchor_without_changing_event_reference(capture):
+    root,c=capture;before=hashes(root)
+    auth=json.loads((root/'authorization.json').read_text())
+    event=auth['calibration_references'][c.metadata.raw_symbol+':trades']['anchor_event_ns']
+    reader=load_capture(root,cutoff_ns=NOW_NS)
+    assert reader.pipeline.gates[c.metadata.instrument_id].guards['trades'].anchor_ns==event+1
+    assert hashes(root)==before
+
+
+def test_reader_rejects_claimed_anchor_index_that_disagrees_with_native_bytes(capture):
+    root,c=capture;auth_path=root/'authorization.json';auth=json.loads(auth_path.read_text())
+    reference=auth['calibration_references'][c.metadata.raw_symbol+':trades']
+    reference['anchor_index_ns']=reference['anchor_event_ns']+99
+    auth_path.write_text(json.dumps(auth))
+    inputs_path=root/'analysis-inputs.json';inputs=json.loads(inputs_path.read_text())
+    inputs['authorization_sha256']=digest(auth);inputs_path.write_text(json.dumps(inputs))
+    with pytest.raises(ValueError,match='anchor_index_mismatch'):load_capture(root,cutoff_ns=NOW_NS)
+
+
 def test_verified_replay_is_read_only_and_preserves_legitimate_multiplicity(capture):
     root,c=capture;before=hashes(root)
     result=load_capture(root,cutoff_ns=NOW_NS).analyse(AnalysisRequest((c.metadata.raw_symbol,),NOW_NS))

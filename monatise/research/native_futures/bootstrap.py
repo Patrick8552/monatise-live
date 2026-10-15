@@ -102,19 +102,25 @@ def review_bootstrap(pipeline, scope, root, *, review_reference, capture_clock_t
         for iid,g in pipeline.gates.items():
             guard=g.guards.get(schema)
             if guard is None or iid not in latest:raise ValueError('bootstrap_missing_scope_anchor')
-            if (latest[iid]!=guard.anchor_ns or ties[iid][-1]!=guard.anchor_sha256
-                    or scope.start_ns>guard.anchor_ns):
+            if (ties[iid][-1]!=guard.anchor_sha256
+                    or scope.start_ns>latest[iid]):
                 raise ValueError('bootstrap_anchor_or_replay_start_mismatch')
             # Latest record's exact native price must also equal the guard anchor.
             # Locate it again without trusting a caller-supplied anchor price.
             _,again=verify(folder)
-            matched=None
+            matched=None;matched_index=None
             for _,raw in again:
                 if hashlib.sha256(raw).hexdigest()==guard.anchor_sha256:
                     row=dn.DBNDecoder(has_metadata=False,input_version=3).write_and_decode(raw)[0]
                     matched=Decimal(row.price if schema=='trades' else row.close)/10**9
+                    from monatise.adapters.databento_identity import timestamp_ns
+                    matched_index=timestamp_ns(row.ts_recv if schema=='trades' else row.ts_event)
             if matched!=guard.last:raise ValueError('bootstrap_anchor_price_mismatch')
-            cursors.append((f'{schema}:{iid}',guard.anchor_ns,tuple(ties[iid])))
+            # Price screening advances in provider-index order. Live replay
+            # still seeks by exchange event time. They are independent native
+            # clocks; preserve both even when event time exceeds receive time.
+            if matched_index!=guard.anchor_ns:raise ValueError('bootstrap_anchor_provider_index_mismatch')
+            cursors.append((f'{schema}:{iid}',latest[iid],tuple(ties[iid])))
             policies.append((f'{schema}:{iid}',guard.policy.sha256))
             if schema=='trades' and capture_clock_tolerance_ns:prefixes.append((f'{schema}:{iid}',tuple(identities[iid])))
     return BootstrapReview(scope.sha256,str(root),tuple(hashes),tuple(cursors),tuple(policies),review_reference,capture_clock_tolerance_ns,clock_equivalence_review_reference,tuple(prefixes))

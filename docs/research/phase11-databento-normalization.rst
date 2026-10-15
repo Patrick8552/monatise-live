@@ -138,6 +138,17 @@ instrumentation is designed to narrow it during a separately authorized trial.
 
 Versions and historical evidence
 --------------------------------
+Startup anchors and live replay seek clocks are separate. A trade price guard
+binds to the sealed native anchor's ts_recv (provider index), while the INITIAL
+replay cursor and source reference retain its original ts_event. Native OHLCV
+uses ts_event as its index. The bootstrap re-reads the anchor bytes to verify
+both domains and the exact price/hash; a caller-supplied event timestamp cannot
+substitute for a receive-time anchor. The v2 reader derives the same index from
+raw bytes and rejects any conflicting anchor_index_ns receipt. Neither timestamp
+is rewritten and no threshold, initial identity tolerance or recovery rule is
+widened. Regression tests include unflagged event>receive clocks followed by
+valid receive-ordered trades that still precede the old event-time anchor.
+
 New source readers require normalization-v2 in BOTH immutable authorization and
 analysis-input receipts. Old captures require their original immutable reader;
 editing a policy or switching a pointer does not migrate them. Frozen candidate

@@ -98,7 +98,9 @@ def load_capture(root,*,cutoff_ns,maximum_records=2000000,observation_sink=None,
             sha=refs[key]['anchor_record_sha256'];row,at=anchors[(iid,schema,sha)]
             if row.ts_event!=refs[key]['anchor_event_ns']:raise ValueError('source_anchor_event_mismatch')
             price=Decimal(row.price if schema=='trades' else row.close)/10**9
-            policies[schema]=policy;points[schema]=dict(anchor=price,anchor_ns=row.ts_event,anchor_sha256=sha)
+            index=timestamp_ns(row.ts_recv if schema=='trades' else row.ts_event)
+            if refs[key].get('anchor_index_ns',index)!=index:raise ValueError('source_anchor_index_mismatch')
+            policies[schema]=policy;points[schema]=dict(anchor=price,anchor_ns=index,anchor_sha256=sha)
         gates[iid]=QualityGate(c,policies['trades'],**points['trades'],schema_policies=policies,schema_anchors=points,rolling=True,capacity=50000)
         ref=scope['session_review_reference']
         opened=inputs['session_open_ns'];closed=scope['session_end_ns']

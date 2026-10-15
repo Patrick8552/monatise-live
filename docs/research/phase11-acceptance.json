@@ -145,6 +145,18 @@
       "evidence": "phase-9-soak-and-calibration",
       "required_outcome": "Old finite campaign cancelled, automation paused, owned guardian released",
       "status": "CANCELLED_BY_USER"
+    },
+    {
+      "component": "Startup clock-domain handoff",
+      "evidence": "test_bootstrap_separates_event_replay_seek_from_receive_time_guard_anchor + test_bootstrap_rejects_event_time_substitution_for_trade_receive_anchor",
+      "required_outcome": "Provider-index guard anchor and event-time replay seek independently match sealed native bytes",
+      "status": "PASS_OFFLINE_REGRESSION"
+    },
+    {
+      "component": "Reader startup clock reference",
+      "evidence": "test_v2_reader_uses_native_receive_anchor_without_changing_event_reference + test_reader_rejects_claimed_anchor_index_that_disagrees_with_native_bytes",
+      "required_outcome": "Native receive anchor used without rewriting event reference; conflicting receipt rejected",
+      "status": "PASS_OFFLINE_REGRESSION"
     }
   ],
   "crypto_engines_used": false,
