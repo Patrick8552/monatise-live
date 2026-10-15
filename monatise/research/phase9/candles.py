@@ -117,5 +117,6 @@ def aggregate_complete(bars, *, target, calendar):
             (children[0].prices_fixed[0],max(v.prices_fixed[1] for v in children),
              min(v.prices_fixed[2] for v in children),children[-1].prices_fixed[3]),
             sum(v.volume for v in children),max(v.retrieval_ns for v in children),
-            tuple(h for v in children for h in v.source_hashes),'derived-ohlcv-v1',rows[0].evidence_kind))
+            tuple(h for v in children for h in v.source_hashes),'derived-ohlcv-v1',rows[0].evidence_kind,
+            max(children,key=lambda v:v.retrieval_ns).clock_review))
     return tuple(output),tuple(rejected)

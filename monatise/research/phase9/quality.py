@@ -1,5 +1,5 @@
 """Bounded per-contract/schema screening on canonical observations, never price repair."""
-from collections import deque
+from collections import deque, OrderedDict
 from dataclasses import dataclass
 from decimal import Decimal
 from statistics import median
@@ -72,12 +72,18 @@ class QualityGate:
     Never infer gaps from filtered CME packet sequences. Transport gap notices
     invalidate only dependent schema/instrument outputs until reviewed recovery.
     """
-    def __init__(self, contract, policy, *, anchor, anchor_ns, anchor_sha256, capacity=50000):
+    def __init__(self, contract, policy, *, anchor, anchor_ns, anchor_sha256, capacity=50000, schema_policies=None, schema_anchors=None, rolling=False):
         if type(capacity) is not int or not 1 <= capacity <= 100000: raise ValueError('bounded_quality_capacity_required')
         self.contract, self.policy, self.capacity = contract, policy, capacity
         self.guard = PriceGuard(contract, policy, anchor=anchor, anchor_ns=anchor_ns, anchor_sha256=anchor_sha256)
+        self.schema_policies=dict(schema_policies or {})
         self.guards = {}
-        self.positions, self.last_events, self.last_received = {}, {}, {}
+        for schema,entry in (schema_anchors or {}).items():
+            self.guards[schema]=PriceGuard(contract,self.schema_policies.get(schema,policy),**entry)
+        self.rolling=rolling
+        self.price_sources={}
+        self.evicted_positions=0
+        self.positions, self.last_events, self.last_received = OrderedDict(), {}, {}
         self.latest, self.faults, self.quarantine = {}, {}, deque(maxlen=256)
         self.reviews = deque(maxlen=64)
         self.fault_event_ns = {}
@@ -98,7 +104,9 @@ class QualityGate:
         if prior is not None:
             if prior != signature: return self.reject(value, 'source_position_revision')
             return dict(accepted=False, duplicate=True, reason='same_source_position', **SAFETY)
-        if len(self.positions) >= self.capacity: return self.reject(value, 'quality_capacity_exceeded')
+        if len(self.positions) >= self.capacity:
+            if not self.rolling:return self.reject(value, 'quality_capacity_exceeded')
+            self.positions.popitem(last=False);self.evicted_positions+=1
         self.positions[value.source.position] = signature
         if value.source.admission_ns > now_ns: return self.reject(value, 'not_available_at_cutoff')
         if (value.event_ns < self.last_events.get(value.schema, 0)
@@ -114,10 +122,10 @@ class QualityGate:
                 return self.reject(value, 'one_sided_or_empty_book')
             bid, ask = number(top[0], positive=True), number(top[3], positive=True)
             if bid >= ask: return self.reject(value, 'crossed_or_locked_book')
-            if (ask-bid)/self.contract.tick_size > self.policy.maximum_spread_ticks:
+            if (ask-bid)/self.contract.tick_size > self.schema_policies.get(value.schema,self.policy).maximum_spread_ticks:
                 return self.reject(value, 'suspicious_spread')
             prices = [bid, ask]
-        guard = self.guards.setdefault(value.schema, PriceGuard(self.contract,self.policy,
+        guard = self.guards.setdefault(value.schema, PriceGuard(self.contract,self.schema_policies.get(value.schema,self.policy),
             anchor=self.guard.last,anchor_ns=self.guard.anchor_ns,anchor_sha256=self.guard.anchor_sha256))
         reason = guard.inspect(prices, value.event_ns)
         if reason: return self.reject(value, reason)
@@ -126,15 +134,25 @@ class QualityGate:
         self.last_events[value.schema] = value.event_ns
         self.last_received[value.schema] = value.receive_ns or value.event_ns
         self.latest[value.schema] = value; self.accepted.append(value)
+        if value.schema.startswith('ohlcv-'):
+            self.price_sources.setdefault(value.schema,deque(maxlen=self.capacity)).append(value)
         return dict(accepted=True, duplicate=False, reason=None,
             plausibility='WARMUP' if len(guard.changes) < self.policy.warmup else 'ADAPTIVE',
             policy_sha256=self.policy.sha256, **SAFETY)
+
+    def lineage_observations(self):
+        # Low-frequency native bars survive high-rate trade/book ring eviction.
+        seen=set()
+        for rows in (*self.price_sources.values(),self.accepted):
+            for value in rows:
+                if value.source.position not in seen:
+                    seen.add(value.source.position);yield value
 
     def review_recovery(self, schema, *, anchor, anchor_ns, anchor_sha256, review_reference, expected_fault_sha256):
         """Explicit reviewed discontinuity/transport recovery; old rejects stay rejected."""
         if not review_reference or schema not in self.faults or digest(self.faults[schema])!=expected_fault_sha256:
             raise ValueError('current_fault_bound_recovery_review_required')
-        new_guard=PriceGuard(self.contract,self.policy,anchor=anchor,anchor_ns=anchor_ns,anchor_sha256=anchor_sha256)
+        new_guard=PriceGuard(self.contract,self.schema_policies.get(schema,self.policy),anchor=anchor,anchor_ns=anchor_ns,anchor_sha256=anchor_sha256)
         if anchor_ns<self.last_events.get(schema,0):raise ValueError('recovery_anchor_precedes_accepted_state')
         self.guards[schema]=new_guard
         self.latest.pop(schema,None)

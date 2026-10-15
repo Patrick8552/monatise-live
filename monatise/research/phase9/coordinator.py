@@ -88,7 +88,7 @@ def price_components(contract, bars, *, now_ns, calendar, policy=None):
 def verify_bar_lineage(gate, bars):
     """Reconcile OHLCV/volume against admitted canonical sources, including ties."""
     by_hash=defaultdict(list)
-    for value in gate.accepted:by_hash[value.source.record_sha256].append(value)
+    for value in gate.lineage_observations():by_hash[value.source.record_sha256].append(value)
     for bar in bars:
         used=defaultdict(int);sources=[]
         for sha in bar.source_hashes:
@@ -131,11 +131,11 @@ class NativeFuturesCoordinator:
                 # Bars must originate in the caller's validated gate. Historical
                 # imports use ResearchPipeline.import_bars, which screens prices.
                 verify_bar_lineage(gate,bars)
-                known = {v.source.record_sha256 for v in gate.accepted}
+                known = {v.source.record_sha256 for v in gate.lineage_observations()}
                 if any(h not in known for b in bars for h in b.source_hashes):
                     raise ValueError('bar_sources_not_admitted_by_quality_gate')
                 bar_hashes = {h for b in bars for h in b.source_hashes}
-                schema_faults = {v.schema for v in gate.accepted if v.source.record_sha256 in bar_hashes}
+                schema_faults = {v.schema for v in gate.lineage_observations() if v.source.record_sha256 in bar_hashes}
                 if any(s in gate.faults and any(b.close_ns>gate.fault_event_ns.get(s,0) for b in bars) for s in schema_faults):
                     raise ValueError('source_schema_requires_quality_review')
                 components['price:'+tf] = price_components(c,bars,now_ns=now_ns,calendar=calendar)

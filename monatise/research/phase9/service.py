@@ -66,9 +66,10 @@ def _retryable(report):
 
 
 class PersistentResearchService:
-    def __init__(self, plan, spool, pipeline, *, client_factory=None, clock_ns=time.time_ns):
+    def __init__(self, plan, spool, pipeline, *, client_factory=None, clock_ns=time.time_ns, rotation_policy=None, publisher=None, clock_refresh=None):
         self.plan,self.spool,self.pipeline = plan,spool,pipeline
         self.factory,self.clock_ns = client_factory,clock_ns
+        self.rotation_policy,self.publisher,self.clock_refresh=rotation_policy,publisher,clock_refresh
 
     async def run(self, *, api_key, output, permit_ledger, evidence_kind='AUTHENTIC_LIVE_CAPTURE'):
         output=Path(output)
@@ -95,25 +96,42 @@ class PersistentResearchService:
             if step.mode=='RECOVER' and checkpoints is None:raise ValueError('durable_recovery_cursor_required')
             step.permit.validate(step.scope,self.clock_ns())
             def sink(schema,record,captured,ordinal,normalized):
+                admitted=normalized is not None and schema!='definition'
                 position,sha,_=self.spool.append(schema,record,capture_ns=captured,
                     delivery_id=f'{self.plan.sha256}:{index}:{schema}:{ordinal}',evidence_kind=evidence_kind,
-                    admitted=normalized is not None,clock_review=step.scope.clock_review)
+                    admitted=admitted,clock_review=capture.active_clock_review)
                 # Native control and verified replay-prefix duplicates do not
                 # become market volume. The source bytes remain in both journals.
-                if normalized is not None:
+                # Definitions are independently verified against exact native
+                # identity/economics by FeedState and retained raw. Equivalent
+                # subscription snapshots need not share the pinned raw hash.
+                if admitted:
                     self.pipeline.ingest(record,schema=schema,archive_sha256=sha,ordinal=position,
-                        capture_ns=captured,admission_ns=captured,evidence_kind=evidence_kind,clock_review=step.scope.clock_review)
+                        capture_ns=captured,admission_ns=captured,evidence_kind=evidence_kind,clock_review=capture.active_clock_review)
             def reject(schema,record,captured,ordinal,error_type):
                 self.spool.append(schema,record,capture_ns=captured,
                     delivery_id=f'{self.plan.sha256}:{index}:{schema}:{ordinal}',evidence_kind=evidence_kind,
-                    admitted=False,rejection_reason=error_type,clock_review=step.scope.clock_review)
+                    admitted=False,rejection_reason=error_type,clock_review=capture.active_clock_review)
                 iid=getattr(record,'instrument_id',None)
                 if iid in self.pipeline.gates:self.pipeline.gates[iid].transport_gap(schema,error_type,event_ns=getattr(record,'ts_event',None))
-            capture=CMELiveCapture(step.scope,client_factory=self.factory,clock_ns=self.clock_ns)
+            journal_factory=None
+            if self.rotation_policy is not None:
+                from .rotation import RotatingNativeJournal
+                journal_factory=lambda *a,**kw:RotatingNativeJournal(*a,policy=self.rotation_policy,**kw)
+            capture=CMELiveCapture(step.scope,client_factory=self.factory,clock_ns=self.clock_ns,
+                journal_factory=journal_factory,clock_refresh=self.clock_refresh)
+            def tick(state,now):
+                if self.publisher is None:return
+                lower,_=state.clock_review.bounds(now) if state.clock_review else (0,0)
+                health=state.health(now)
+                ready={(schema,iid) for schema in state.completed for iid in state.verified_definitions
+                    if not state.quality_reasons and schema not in health['stalled_connections']}
+                self.publisher.advance(self.pipeline,now_ns=now+min(0,lower),replay_ready=ready,
+                    source_reference=f'{self.plan.sha256}:{index}:verified-native-replay',interval_watermarks=state.interval_watermarks)
             report=await capture.run(api_key=api_key,permit=step.permit,permit_ledger=permit_ledger,
                 output=output/f'attempt-{index:02d}',checkpoints=checkpoints,
                 recovery_review_reference=step.review_reference if checkpoints else None,
-                evidence_kind=evidence_kind,record_sink=sink,rejection_sink=reject,
+                evidence_kind=evidence_kind,record_sink=sink,rejection_sink=reject,tick_sink=tick,
                 checkpoint_sink=lambda value:self.spool.checkpoint('feed_cursor',dict(cursors=value,spool_records=self.spool.count)))
             reports.append(report)
             self.spool.checkpoint('service',dict(plan_sha256=self.plan.sha256,next_step=index+1,
@@ -132,4 +150,5 @@ class PersistentResearchService:
                 break
         return dict(version='phase9-persistent-research-v1',plan_sha256=self.plan.sha256,
             attempts=len(reports),reports=reports,spool_records=self.spool.count,
+            analytical_publication=self.publisher.summary() if self.publisher else None,
             complete_exchange_continuity=False,fresh_live_operation_verified=False,**SAFETY)

@@ -1,8 +1,10 @@
 Phase 9: native analytical research pipeline
 ============================================
 
-Status: implemented research interfaces, with offline regression and archival
-native-record validation. This is not a deployment or sustained-live certificate.
+Status: implemented research interfaces, chronological native-data calibration,
+automatic local candle publication and bounded full-session storage rotation.
+Genuine bounded live validation is documented below. This is not a deployment
+or sustained-live certificate.
 The final operational verdict remains PARTIALLY.
 
 Baseline and isolation
@@ -56,7 +58,8 @@ captured trade window. A heartbeat/last trade alone does not prove completeness.
 Missing/no-trade periods stay unknown; no flat fill is generated. Smaller-bar
 aggregation requires every child. Late observations retract affected buckets on
 subsequent views. Re-query after ingestion; existing snapshots are historical.
-No exchange-continuity certificate is issued.
+No exchange-continuity certificate is issued. Native interval markers attest to
+provider publication, not complete exchange-event capture.
 
 ``coordinator`` invokes the existing regime, liquidity, sweep, supply/demand,
 reclaim, market-structure and Fibonacci engines, preserving independent engine
@@ -78,7 +81,9 @@ unchanged. Existing Phase 8 family/catalog/surface tooling remains separate.
 
 ``storage.DurableSpool`` stores original native BLOBs, source/capture clocks,
 reviewed clock evidence, hashes and delivery identities in private SQLite
-FULL/WAL storage. Native framed journals are still written/fsynced first. Replay
+FULL/WAL storage. Native framed journals are still written/fsynced first. Definition snapshots are
+validated independently by FeedState against native identity and economics, kept
+raw, and do not enter market-volume/candle observations. Replay
 verifies bytes and metadata and reconstructs analytical state. Gateway prefix
 replays are retained as raw evidence but not counted as executions. Rejections
 remain scoped faults after restart. Limits cover native bytes/record count;
@@ -94,16 +99,51 @@ backpressure fault triggers a blind retry. A disconnected connection can use the
 next authorized attempt. A mismatched raw/cursor boundary after interruption
 requires review; the service does not guess continuity. Restart does not reuse
 an already reserved attempt. Permits intentionally expire after five minutes;
-there is no automatic entitlement renewal. At expiry/resource/session boundaries,
-the service stops safely. Preload explicitly reviewed new contracts for a roll;
+there is no automatic entitlement renewal. At clock-review/resource/session boundaries,
+the service stops safely; a permit authorizes opening its bounded attempt, while
+optional independent clock renewal maintains research UTC bounds during it. Preload explicitly reviewed new contracts for a roll;
 there is no automatic continuous-symbol roll or back-adjustment.
 
 Live defaults remain definition/trades/MBP-1. Additional MBP-10, native OHLCV-1s,
 OHLCV-1m, OHLCV-1h, statistics (published OI) and status schemas are opt-in and
 still require matching entitlements. Non-OI statistics stay raw without being
 misrepresented as OI. MBO reconstruction is not implemented in Phase 9.
-Continuous final candle publication from a transport watermark and unattended
-full-session spool rotation remain unfinished; the analytical API is explicit.
+Automatic local candle publication and full-session storage rotation are opt-in.
+``publication.CandlePublisher`` writes a durable SQLite analytical outbox after
+native schema replay completion, monotonic END_OF_INTERVAL watermarks,
+definition verification, the existing ten-second
+finalization grace, calendar checks and native price/volume lineage verification.
+It derives 5s/1m/5m/15m/1h/4h only when every smaller child is represented, prefers
+native minute children for longer histories, and never fills missing seconds.
+OHLCV buckets retain provider receive-time semantics. A later dated quality fault
+retracts affected outputs. Publication checkpoints survive restart and failed
+transactions do not advance the in-memory high watermark. This outbox does not
+send Telegram, register production output, qualify frozen H1 or invoke trades.
+
+``rotation.RotatingNativeJournal`` seals hash-linked framed DBN segments on byte,
+record or elapsed-time limits without reconnecting SDK clients or resetting global
+source ordinals. ``RotatingSpool`` applies the same limits to private SQLite raw
+segments and retains a global delivery index across rotations. Sealed native/spool
+segments are hash verified on replay. Resource/segment ceilings stop acquisition;
+archives are retained. An accelerated 23-hour session exercises bounded rolling
+memory and 1m/1h/4h candle publication across rotations. This is an engineering
+test, not evidence of a 23-hour genuine feed session.
+
+``calibration.fit`` fits one contract/schema using chronological training only;
+``Calibration.validate`` uses later untouched records without refitting. Native
+bar policies learn OHLC excursions, separately from tick-to-tick trade changes.
+All nine GCZ6/ESZ6/NQZ6 x trades/OHLCV-1s/OHLCV-1m scopes passed the initial
+20-minute native live-replay split with zero holdout rejections. This short Asian
+session does not establish open/news/roll regime coverage. Independent held-out
+sessions remain necessary before production policy approval. Fresh genuine raw
+anchors are source-bound; no manual price entry or suspicious-price auto-reanchor
+is used by the bounded live check.
+
+Optional ``clock_refresh`` obtains overlapping bounded ClockReview evidence before
+expiry without changing the OS clock. Queued records retain the contemporaneous
+review; future reviews cannot qualify earlier captures. Every original local and
+provider timestamp is retained. These are two-source unauthenticated SNTP research
+bounds, not authenticated production time certification.
 
 Existing-engine fixes
 ---------------------
@@ -136,20 +176,40 @@ native captures locally; no raw market archive belongs in Git.
 
 Four archived GC/ES/NQ captures supply genuine definitions, trades, MBP-1 and NQ
 minute bars. Reviewed local UTC bounds remove strict-clock false rejections
-without changing original clocks. Four NQ minute bars are quarantined under an
-initial descriptive price policy: independent held-out/timeframe calibration is
-still required. One genuine OG pricing pair solves IV but rejects American gamma
+without changing original clocks. Four NQ minute bars were quarantined under an
+initial descriptive price policy; the continuation adds a separate native
+timeframe calibration and untouched chronological holdout, with broader
+cross-session validation still required. One genuine OG pricing pair solves IV but rejects American gamma
 for fine_bump_lattice_gamma_instability; neither missing OI nor gamma exposure is
 fabricated. These are archival replay results, not a new live run.
 
-No current account-specific schema entitlement plus exact no-incremental-charge
-proof was established for a fresh capture. Old metadata offerings and zero live
-estimates are not that proof. GC BBO is considered currently unavailable. No
-new live connection, paid request, historical download or upgrade was initiated.
+Continuation verification (2026-10-15)
+--------------------------------------
 
-Next phase: independently calibrate/hold-out price and freshness policies on
-licensed windows, establish authoritative session/roll evidence, complete
-watermark-driven candle publication and safe full-session rotation, validate
-extended schemas and sustained recovery under freshly verified existing-plan
-entitlements, and resolve American gamma numerical failures. Preserve all
-frozen-selector, risk, GIL and approval requirements throughout.
+The authenticated Databento account portal showed the existing Standard CME
+Futures/Options subscription active at USD 199/month, with the Standard CME live
+license active and renewal shown as 2026-11-01. Fresh read-only metadata estimates
+for the exact three raw symbols and definition/trades/OHLCV-1s/OHLCV-1m scopes
+were zero. The fixed Standard plan includes live access; no plan, license, budget
+or billing setting was changed. Estimates are not a settled invoice. Only live
+sessions and included intraday replay were used; no historical timeseries
+acquisition or additional market-data purchase was made.
+
+A definition bootstrap and bounded 20-minute native live replay succeeded and
+were sealed privately. The replay contained 12 definition, 5,867 trade, 3,229
+second-bar and 87 minute-bar/control records. Calibration excludes structurally
+unusable/forming observations and uses disjoint chronological event-time train
+and holdout sets; both halves were acquired in that single replay, not separate
+independent trading sessions. Counterfactual spikes are explicitly synthetic and
+never fitted. The prior four NQ bar rejections were descriptive initial-policy
+results and are not evidence that the newly calibrated policy fails.
+
+The bounded persistent-service live run and final regression counts are recorded
+in the linked PR and private evidence summary. All connection attempts are bounded
+and explicitly authorized; no service is left running after verification. No
+production startup, frozen H1, trade/GIL qualification, provider hierarchy or
+execution setting is changed. Remaining production work includes independent
+cross-session calibration, a genuine full-session soak/recovery exercise,
+authenticated time discipline, exchange continuity proof where required and
+numerically stable American option gamma validation. Current derivative/GIL
+limitations remain as described above.

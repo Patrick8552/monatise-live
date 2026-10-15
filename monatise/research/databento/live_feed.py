@@ -24,18 +24,22 @@ def sdk_client(key,heartbeat_seconds):
 
 
 class CMELiveCapture:
-    def __init__(self,scope, *, client_factory=None,clock_ns=time.time_ns,queue_capacity=2048):
+    def __init__(self,scope, *, client_factory=None,clock_ns=time.time_ns,queue_capacity=2048,journal_factory=None,clock_refresh=None):
         if not isinstance(scope,LiveScope) or type(queue_capacity) is not int or not 1<=queue_capacity<=2048:
             raise ValueError('prepared_bounded_live_capture_required')
         self.scope,self.factory,self.clock_ns=scope,client_factory or sdk_client,clock_ns
         self.queue_capacity=queue_capacity
+        self.journal_factory,self.clock_refresh=journal_factory,clock_refresh
 
     async def run(self, *, api_key,permit,permit_ledger,output,checkpoints=None,recovery_review_reference=None,
-                  evidence_kind='AUTHENTIC_LIVE_CAPTURE',record_sink=None,checkpoint_sink=None,rejection_sink=None):
+                  evidence_kind='AUTHENTIC_LIVE_CAPTURE',record_sink=None,checkpoint_sink=None,rejection_sink=None,tick_sink=None):
         if not isinstance(api_key,str) or not api_key.strip():raise ValueError('private_live_key_required')
         if evidence_kind=='ENGINEERING_SYNTHETIC' and self.factory is sdk_client:
             raise ValueError('fixtures_cannot_open_real_live_client')
         state=FeedState(self.scope,checkpoints=checkpoints,recovery_review_reference=recovery_review_reference)
+        self.state=state
+        self.active_clock_review=state.clock_review
+        clock_reviews=[]
         output=Path(output)
         if output.exists():raise ValueError('fresh_private_live_output_required')
         consume_permit(permit_ledger,permit,self.scope,self.clock_ns())
@@ -67,6 +71,7 @@ class CMELiveCapture:
                 if not closing:state.quarantine('provider_disconnect_or_error_'+schema)
 
         def deliver(schema,record,captured,ordinal):
+            self.active_clock_review=state.review_at(captured)
             try:
                 normalized=state.ingest(schema,record,capture_ns=captured,ordinal=ordinal)
             except (ValueError,TypeError,AttributeError,ArithmeticError) as exc:
@@ -82,7 +87,11 @@ class CMELiveCapture:
         try:
             for schema in self.scope.schemas:
                 permit.validate(self.scope,self.clock_ns())
-                journals[schema]=NativeJournal(output/schema,schema=schema,scope=self.scope,evidence_kind=evidence_kind)
+                if self.journal_factory is None:
+                    journals[schema]=NativeJournal(output/schema,schema=schema,scope=self.scope,evidence_kind=evidence_kind)
+                else:
+                    journals[schema]=self.journal_factory(output/schema,schema=schema,scope=self.scope,
+                        evidence_kind=evidence_kind,checkpoint=state.checkpoint)
                 client=self.factory(api_key,self.scope.heartbeat_seconds);clients.append(client)
                 client.add_callback(callback(schema),exception_callback=callback_failed)
                 await asyncio.to_thread(client.subscribe,dataset='GLBX.MDP3',schema=schema,
@@ -91,7 +100,14 @@ class CMELiveCapture:
                 state.started[schema]=self.clock_ns();client.start()
                 watchers.append(asyncio.create_task(watch(schema,client)))
             end=loop.time()+self.scope.duration_seconds
+            next_tick=loop.time()
             while loop.time()<end:
+                if self.clock_refresh is not None and state.clock_review is not None and self.clock_ns()>=state.clock_review.expires_ns-60*10**9:
+                    review=await asyncio.to_thread(self.clock_refresh)
+                    review.bounds(self.clock_ns());state.update_clock_review(review)
+                    clock_reviews.append(encode(review))
+                if tick_sink is not None and loop.time()>=next_tick:
+                    tick_sink(state,self.clock_ns());next_tick=loop.time()+1
                 if overflow.is_set():state.quarantine('local_callback_or_queue_backpressure')
                 health=state.health(self.clock_ns())
                 if state.quality_reasons or health['stalled_connections']:break
@@ -122,6 +138,9 @@ class CMELiveCapture:
                     deliver(schema,record,captured,ordinal)
                 except Exception:state.quarantine('drain_record_or_storage_failure')
             health=state.health(self.clock_ns())
+            if tick_sink is not None:
+                try:tick_sink(state,self.clock_ns())
+                except Exception:state.quarantine('analytical_publication_failure')
             for schema,journal in journals.items():
                 try:manifests[schema]=journal.close(quality=health,checkpoint=state.checkpoint())
                 except Exception:state.quarantine('journal_seal_failed')
@@ -130,6 +149,6 @@ class CMELiveCapture:
                 permit_sha256=digest(permit),quality=health,checkpoint=state.checkpoint(),journals=manifests,
                 normalization_tail=state.normalized,failure_type=failure,
                 runtime=dict(databento=version('databento'),databento_dbn=version('databento-dbn')),
-                automatic_retries=0,connection_count=len(clients),evidence_kind=evidence_kind,**SAFETY)
+                clock_reviews=clock_reviews,automatic_retries=0,connection_count=len(clients),evidence_kind=evidence_kind,**SAFETY)
             p=output/'report.json';p.write_text(json.dumps(encode(report),sort_keys=True,indent=2));p.chmod(0o600)
         return report

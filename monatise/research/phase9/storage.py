@@ -69,7 +69,7 @@ class DurableSpool:
         if digest(value)!=row[1]: raise ValueError('checkpoint_integrity_failure')
         return value
 
-    def replay(self, pipeline):
+    def replay(self, pipeline, *, ordinal_offset=0):
         import databento_dbn as dbn
         outcomes=[]
         for ordinal,delivery,schema,stamp,raw,sha,kind,admitted,metadata_hash,rejection,review_text in self.db.execute('SELECT id,delivery,schema,captured,native,hash,kind,admitted,metadata_hash,rejection,clock_review FROM raw ORDER BY id'):
@@ -86,7 +86,7 @@ class DurableSpool:
             from monatise.research.databento.live_models import ClockReview
             review=json.loads(review_text)
             review=ClockReview(**review) if review else None
-            outcomes.append(pipeline.ingest(record,schema=schema,archive_sha256=sha,ordinal=ordinal,
+            outcomes.append(pipeline.ingest(record,schema=schema,archive_sha256=sha,ordinal=ordinal+ordinal_offset,
                 capture_ns=stamp,admission_ns=stamp,evidence_kind=kind,clock_review=review))
         return outcomes
 
