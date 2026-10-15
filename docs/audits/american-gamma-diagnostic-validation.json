@@ -1,0 +1,240 @@
+{
+  "base_commit": "58ea23471824d760834826a54434c556640d1809",
+  "broader_synthetic_study": {
+    "case_results": [
+      {
+        "absolute_difference_to_tree": 7.9836133315761e-07,
+        "case": "ATM",
+        "errors": {},
+        "kind": "C",
+        "relative_difference_to_tree": 4.0384998725876134e-05,
+        "review_flag": false
+      },
+      {
+        "absolute_difference_to_tree": 8.083677965099734e-07,
+        "case": "ATM",
+        "errors": {},
+        "kind": "P",
+        "relative_difference_to_tree": 4.08911743044647e-05,
+        "review_flag": false
+      },
+      {
+        "absolute_difference_to_tree": 1.3484182462889654e-05,
+        "case": "ITM_OTM_low",
+        "errors": {},
+        "kind": "C",
+        "relative_difference_to_tree": 0.0005065191679606234,
+        "review_flag": false
+      },
+      {
+        "absolute_difference_to_tree": 1.2466175580150285e-05,
+        "case": "ITM_OTM_low",
+        "errors": {},
+        "kind": "P",
+        "relative_difference_to_tree": 0.0004585484700622742,
+        "review_flag": false
+      },
+      {
+        "absolute_difference_to_tree": 8.906336519065583e-06,
+        "case": "ITM_OTM_high",
+        "errors": {},
+        "kind": "C",
+        "relative_difference_to_tree": 0.00040172238555091853,
+        "review_flag": false
+      },
+      {
+        "absolute_difference_to_tree": 9.627008445704105e-06,
+        "case": "ITM_OTM_high",
+        "errors": {},
+        "kind": "P",
+        "relative_difference_to_tree": 0.00044168319994720024,
+        "review_flag": false
+      },
+      {
+        "absolute_difference_to_tree": 6.109989257091497e-05,
+        "case": "one_day_ATM",
+        "errors": {},
+        "kind": "C",
+        "relative_difference_to_tree": 0.00016026601133411702,
+        "review_flag": false
+      },
+      {
+        "absolute_difference_to_tree": 6.110000029729834e-05,
+        "case": "one_day_ATM",
+        "errors": {},
+        "kind": "P",
+        "relative_difference_to_tree": 0.00016026629390117025,
+        "review_flag": false
+      },
+      {
+        "absolute_difference_to_tree": 1.4098781063280608e-06,
+        "case": "negative_rate",
+        "errors": {},
+        "kind": "C",
+        "relative_difference_to_tree": 6.95983266039146e-05,
+        "review_flag": false
+      },
+      {
+        "absolute_difference_to_tree": 1.4218334988894132e-06,
+        "case": "negative_rate",
+        "errors": {},
+        "kind": "P",
+        "relative_difference_to_tree": 7.018850196194814e-05,
+        "review_flag": false
+      },
+      {
+        "absolute_difference_to_tree": 3.858183557482313e-06,
+        "case": "near_exercise_low",
+        "errors": {},
+        "kind": "C",
+        "relative_difference_to_tree": 0.022497992210166868,
+        "review_flag": true
+      },
+      {
+        "absolute_difference_to_tree": 1.4645920310004646e-09,
+        "case": "near_exercise_low",
+        "errors": {},
+        "kind": "P",
+        "relative_difference_to_tree": 0.0014645920310004646,
+        "review_flag": false
+      },
+      {
+        "absolute_difference_to_tree": 9.771457323150112e-10,
+        "case": "near_exercise_high",
+        "errors": {},
+        "kind": "C",
+        "relative_difference_to_tree": 0.0009771457323150114,
+        "review_flag": false
+      },
+      {
+        "absolute_difference_to_tree": 5.649159409744559e-06,
+        "case": "near_exercise_high",
+        "errors": {},
+        "kind": "P",
+        "relative_difference_to_tree": 0.0076102653247539925,
+        "review_flag": false
+      },
+      {
+        "absolute_difference_to_tree": 6.898269987939964e-07,
+        "case": "nonaligned",
+        "errors": {},
+        "kind": "C",
+        "relative_difference_to_tree": 1.6057306197801034e-05,
+        "review_flag": false
+      },
+      {
+        "absolute_difference_to_tree": 4.5255711209057914e-07,
+        "case": "nonaligned",
+        "errors": {},
+        "kind": "P",
+        "relative_difference_to_tree": 1.0554441563491625e-05,
+        "review_flag": false
+      }
+    ],
+    "cases": 16,
+    "comparison_review_condition": "relative gamma difference above 1% AND absolute difference above 1e-6; investigative flag, not an admission rule",
+    "grid_change": "Fixed domain chosen from diffusion scale, strike distance and bounded minimum; market-data policies unchanged",
+    "initial_wide_grid_flags_preserved": 4,
+    "review_flags": 1,
+    "tail_case_followup": "Further space/time refinement leaves a PDE/tree tail discrepancy; review remains open."
+  },
+  "genuine_source": {
+    "OI_status": "NOT_CAPTURED",
+    "evidence_kind": "AUTHENTIC_ARCHIVED_RECORD",
+    "market_cutoff_utc": "2026-10-14T01:12:34.332173+00:00",
+    "native_archive_hashes": [
+      "020c7a743a1f8ed971760248f03ef18b3cfbb9e15d427a6f2b5ee6cde1e75735",
+      "a9eccbf199e47277caeade18a391296616949afc10c8e4bc6870c4669798661c",
+      "e4b6a660e1e242a4165cf8045c401b7f6e9e84c6e8e4b1304fbb45d84d9691f1",
+      "1228288ca5c3aa865726fc81b97565571f1ca76becfcdf66ed4e8b1a4f08c1b8",
+      "1c2ff6cd1665e890f9285b8e60bdded5627bf2859ee55a16f9b8d5faefec56de",
+      "e2adbbfc4e7fcf5f7662d67d31fa2a7b3519ae8b6b52f2c6cf3a3753a4145e43",
+      "a639ce7cf12a4d39455c0ba3b98cc8e0ae65174046bd592a5d302f266e15bbeb",
+      "060f7f50111ca0fe4597659b5d4ad2fdedab939dfdcf78aca9cbb5de497b525f"
+    ],
+    "not_current_live_options_validation": true,
+    "quote_hashes": [
+      "91aab30bfaa692b0dcfe5de74d86162edc273a44f7746b49f8618aea288ec016",
+      "4eeda3bd0e0ffafd03313e38409878bb583a49f7fe74a5868e7f8de87d6ea2c6"
+    ],
+    "quote_pair_eligible": true
+  },
+  "governance": {
+    "calibration_holdouts_used": false,
+    "collector_pin_changed": false,
+    "deployed": false,
+    "existing_validator_changed": false,
+    "frozen_H1_changed": false,
+    "new_purchases": 0,
+    "orders": 0,
+    "paid_downloads": 0,
+    "production_GIL_compatible": false,
+    "provider_requests": 0,
+    "trade_GIL_rules_changed": false
+  },
+  "limitations": [
+    "One historical genuine pair is not live options service validation or a complete chain.",
+    "IV still uses the original CRR model; joint IV/Greek repricing and vega/theta remain separate work.",
+    "Near exercise boundaries, very short maturities and low-gamma tails need broader independent numerical references.",
+    "Dated rate extrapolation and option conventions remain model assumptions.",
+    "Published OI and chain coverage do not reveal dealer inventory signs."
+  ],
+  "methods": [
+    "CRR layer slopes",
+    "log-grid implicit Euler with policy iteration and complementarity residual checks"
+  ],
+  "observations": {
+    "genuine": {
+      "model_input_sha256": "f2f62ef93033092d2f9837a683dde6e3442140cc48e7d9ea4834d5097b4ecf12",
+      "original_fine_bump_relative_range": 1.714139048025757,
+      "original_gamma_available": false,
+      "original_rejection_reasons": [
+        "fine_bump_lattice_gamma_instability"
+      ],
+      "original_status": "REJECTED",
+      "pde_same_resolution_domain_extension_relative_change": 0.0,
+      "pde_space_time_refinement_relative_change": 0.0009159973596742263,
+      "pde_time_only_relative_change": 0.0004372874165605633,
+      "pde_tree_gamma_relative_difference": 0.0006345057989982304,
+      "tree_refinement_relative_change": 0.0003939914052941882
+    },
+    "synthetic": {
+      "model_input_sha256": "c12aecdc7be3852942397340a4b7dbc0a2695b64f073e44f4dccc3cb7dae88a5",
+      "original_fine_bump_relative_range": 1.7847310597695651,
+      "original_gamma_available": false,
+      "original_rejection_reasons": [
+        "fine_bump_lattice_gamma_instability"
+      ],
+      "original_status": "REJECTED",
+      "pde_same_resolution_domain_extension_relative_change": 0.0,
+      "pde_space_time_refinement_relative_change": 0.0005945406825400408,
+      "pde_time_only_relative_change": 0.00023342670541159956,
+      "pde_tree_gamma_relative_difference": 4.038499955462582e-05,
+      "tree_refinement_relative_change": 0.0004697876658120154
+    }
+  },
+  "observed_at_ns": 1792042123120906000,
+  "source_code_sha256": {
+    "monatise/application/gold_options.py": "a62574f31946e9c40dfca4fa38fb8c06ba198fc08fb56625c4cdd05220821a00",
+    "monatise/research/gamma_diagnostics.py": "040404f0ff33c905dcbc8a3c04cda7def5e2d280fe25adc884a33146da95ee2c",
+    "monatise/research/institutional/phase7/gil.py": "a410d76c8519ac49f42c1790059e2501d3b5737bc467022240cfd9f84145604a",
+    "monatise/research/institutional/phase7/greeks.py": "d9a3772a579416154b3a134f4294671415143c9d3fbc7666626b7f7469c19775",
+    "monatise/research/phase9/options.py": "ff3b99a175fcd4cc91c13f26861bc787b326d1c18359c6ddcedd6b059e13a763"
+  },
+  "tests": {
+    "candidate_full_suite": "NOT_RERUN; separate opt-in module and focused unchanged model/options regressions tested",
+    "errors": 0,
+    "failures": 0,
+    "focused_tests": 123,
+    "new_diagnostic_tests": 29,
+    "xml_sha256": "17852402a71e7aab337162f40424bfde22c748b4c5fb82605e09de75c0b4f81e"
+  },
+  "unchanged_baseline_files": {
+    "monatise/application/gold_options.py": true,
+    "monatise/research/institutional/phase7/gil.py": true,
+    "monatise/research/institutional/phase7/greeks.py": true,
+    "monatise/research/phase9/options.py": true
+  },
+  "verdict": "REPRODUCED; PROMISING_EXPERIMENTAL_ESTIMATORS; NO_VALIDATOR_REPLACEMENT_OR_GIL_CERTIFICATION",
+  "version": "american-gamma-investigation-v1"
+}
