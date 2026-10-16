@@ -110,3 +110,19 @@ def test_native_candle_needs_no_extra_ten_second_local_delay(tmp_path):
 def test_native_cache_has_no_application_socket_resume_path():
     from monatise.research.databento.sdk_transport import OwnedSDKClient
     assert not hasattr(OwnedSDKClient,'set_reading')
+
+
+def test_quote_snapshot_published_during_read_is_measured_at_delivery(tmp_path,monkeypatch):
+    from monatise.research.native_futures import cache as module
+    pipeline,c,path=fixture(tmp_path);src=tmp_path/'source.json'
+    envelope=source_snapshot(pipeline,capture_id='/engineering/capture',health={},observed_at_ns=NOW_NS+2*NS,status='CAPTURING')
+    q=envelope['body']['instruments'][c.metadata.raw_symbol]['quotes']['mbp-1']['quote']
+    q['available_ns']=NOW_NS+NS
+    envelope['sha256']=digest(envelope['body']);atomic_json(src,envelope)
+    samples=iter((NOW_NS,NOW_NS+2*NS))
+    monkeypatch.setattr(module.time,'time_ns',lambda:next(samples))
+    result=read_cached(path,source_path=src)
+    assert result['delivery']['response_ns']==NOW_NS+2*NS
+    assert result['delivery']['analysis_age_ns']==2*NS
+    # A deliberately supplied cutoff remains strict; real future data is withheld.
+    with pytest.raises(ValueError,match='future_snapshot'):read_cached(path,source_path=src,response_ns=NOW_NS)

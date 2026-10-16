@@ -82,6 +82,12 @@ def read_cached(cache, *, response_ns=None, source_path=None):
         source_status_at_response='NOT_CONTEMPORANEOUSLY_VERIFIED',quote_overlay_used=False)
     if source_path is not None:
         source=checked(source_path)
+        if response_ns is None:
+            # The collector can publish a new quote while the cache is being
+            # read. Sample delivery time after that read, without changing the
+            # quote's original timestamps or any explicit historical cutoff.
+            now=time.time_ns()
+            result.update(response_ns=now,analysis_age_ns=now-report['request']['cutoff_ns'])
         if source['capture_id']!=body['capture_id']:raise ValueError('cross_capture_snapshot_forbidden')
         result.update(source_status_at_observation=source['status'],source_observed_at_ns=source['observed_at_ns'],
             source_observation_age_ns=now-source['observed_at_ns'],source_health=source['health'])
