@@ -42,6 +42,10 @@ def text_report(report):
                         '; confirmed highs='+str(structure['confirmed_high_count'])+'; confirmed lows='+str(structure['confirmed_low_count']))
                     lines.append('  Confirmed-swing Fibonacci: '+(fib['direction']+'; retracements='+json.dumps(fib['retracements'],sort_keys=True) if fib.get('available') else fib.get('reason','unavailable')))
                     lines.append('  Repeated-extrema liquidity proxies: '+str(len(native['liquidity_proxies']['zones']))+'; resting orders unverified')
+                    for name,item in native.get('close_indicators',{}).items():
+                        if isinstance(item,dict) and 'available' in item:
+                            lines.append('  '+name+': '+(str(item.get('value',item.get('observed'))) if item['available'] else 'unavailable — '+item.get('reason','insufficient closes')))
+                    if native.get('close_indicators'):lines.append('  Indicator seeds use this retained native frame; proprietary chart scripts are not reproduced.')
                 elif native:lines.append('  Native futures analysis unavailable: '+native.get('reason','insufficient evidence'))
                 continue
             for engine in ('regime','structure','liquidity','fibonacci'):
@@ -84,6 +88,16 @@ def text_report(report):
             lines.append('Top captured price/volume levels (at most 10): '+json.dumps(profile,separators=(',',':')))
             lines.extend('  '+text for text in metrics['limitations'])
         else:lines.append('Trade features unavailable: '+features.get('reason','missing validated executions'))
+        for schema in ('mbp-1','mbp-10'):
+            part=components.get(schema,{})
+            if part.get('available') and part.get('quote'):
+                q=part['quote'];lines.append(schema+' displayed bid/ask: '+str(q['bid'])+' / '+str(q['ask'])+
+                    '; sizes='+str(q['bid_contracts'])+' / '+str(q['ask_contracts'])+'; spread='+str(q['spread'])+
+                    '; receive UTC='+datetime.fromtimestamp(q['receive_ns']/10**9,UTC).isoformat()+'; broker executable quote=False')
+        oi=components.get('open_interest',{})
+        if oi.get('available'):
+            lines.append('Published open interest: '+str(oi['contracts'])+' contracts; reference UTC='+
+                datetime.fromtimestamp(oi['reference_ns']/10**9,UTC).isoformat()+'; signed dealer position unknown')
         missing=[name for name,part in components.items() if not part.get('available')]
         lines.append('Missing components: '+', '.join(missing))
         seconds=value.get('seconds_bar_diagnostics',{})

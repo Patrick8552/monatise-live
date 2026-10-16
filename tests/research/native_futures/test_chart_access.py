@@ -103,3 +103,28 @@ def test_ema20_uses_sma_seed_then_two_over_twenty_one():
     from monatise.research.native_futures.technicals import close_indicators
     result=close_indicators(tuple((2500+i)*10**9 for i in range(21)))
     assert Decimal(result['ema20']['value'])==Decimal('2510.5')
+
+
+def test_native_text_reports_validated_quote_and_indicator_limits():
+    from monatise.research.phase10.formatting import text_report
+    p,c=pipeline();add(p,trade(c),ordinal=1);add(p,quote(c,2500),'mbp-1',2)
+    report=FuturesMarketInfo(p,source_health=lambda at:{}).analyse(AnalysisRequest((c.metadata.raw_symbol,),NOW_NS))
+    text=text_report(report)
+    assert 'mbp-1 displayed bid/ask:' in text and 'broker executable quote=False' in text
+    assert 'Missing components:' in text and 'Crypto engines, frozen H1 selection and GIL' in text
+
+
+@pytest.mark.parametrize('delta',[-8,1,2,1001])
+def test_book_clock_diagnostic_never_grants_replay_or_data_admission(delta):
+    from monatise.research.native_futures.replay_identity import book_pair_review
+    p,c=pipeline();a=quote(c,2500)
+    def changed(**kw):
+        args=dict(publisher_id=a.publisher_id,instrument_id=a.instrument_id,ts_event=a.ts_event,
+            ts_recv=a.ts_recv+delta,ts_in_delta=a.ts_in_delta+delta,price=a.price,size=a.size,
+            action=a.action,side=a.side,depth=a.depth,flags=int(a.flags),sequence=a.sequence,levels=a.levels[0])
+        args.update(kw);return dn.MBP1Msg(**args)
+    b=changed();before=bytes(b);r=book_pair_review(a,b)
+    assert r['classification']=='REVIEW_REQUIRED_CAPTURE_CLOCK_DIFFERENCE_ONLY'
+    assert not r['admission_authorized'] and not r['book_prefix_tolerance_granted'] and bytes(b)==before
+    assert book_pair_review(a,changed(sequence=a.sequence+1))['classification']=='DIFFERENT_EVENT_OR_BOOK_STATE'
+    assert book_pair_review(a,changed(ts_in_delta=a.ts_in_delta))['classification']=='DIFFERENT_EVENT_OR_BOOK_STATE'
