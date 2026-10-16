@@ -18,6 +18,14 @@ def test_projection_keeps_every_displayed_candle_indicator_and_native_frame_hash
     original=digest(body);view=display_projection(body)
     assert digest(body)==original and view['full_snapshot_sha256']==original
     assert view['analysis_sha256']==body['analysis_sha256']
+    for symbol,info in body['analysis']['instruments'].items():
+        for name,part in info['components'].items():
+            original=part.get('result',{}).get('inputs',{})
+            if 'source_archives' in original:
+                projected=view['analysis']['instruments'][symbol]['components'][name]['result']['inputs']
+                assert projected['source_archive_count']==len(original['source_archives'])
+                assert projected['source_archives_sha256']==digest(original['source_archives'])
+                assert projected['input_sha256']==original['input_sha256']
     for symbol,frames in body['charts'].items():
         for tf,frame in frames.items():
             projected=view['charts'][symbol][tf]

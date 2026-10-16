@@ -12,7 +12,7 @@ import time
 
 from monatise.research.phase10.market_info import FuturesMarketInfo
 from monatise.research.phase9.rotation import atomic_json
-from monatise.research.institutional.models import digest
+from monatise.research.institutional.models import digest, immutable_digest_scope
 from .information_gate import NativeInformationGate
 from .chart import chart_snapshot
 
@@ -43,8 +43,9 @@ def freeze_service(pipeline,health):
     return FuturesMarketInfo(view,source_health=lambda now:deepcopy(state))
 
 
+@immutable_digest_scope()
 def publish_view(service,*,cutoff_ns,capture_id,reader_commit,chart_path,cache_path):
-    """Run in a worker thread with the detached view, never the mutable pipeline."""
+    """Run outside ingestion with the detached view, never the mutable pipeline."""
     began=time.time_ns()
     def save_report(report):
         body=dict(version='native-analysis-cache-v1',capture_id=str(capture_id),

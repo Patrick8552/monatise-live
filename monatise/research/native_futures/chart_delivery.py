@@ -48,6 +48,11 @@ def display_projection(body):
             if 'sparse_coverage_proofs' in part:
                 proofs = part.pop('sparse_coverage_proofs')
                 part['sparse_coverage_proof_references'] = list(proofs)
+            inputs = part.get('result', {}).get('inputs', {})
+            if 'source_archives' in inputs:
+                archives = inputs.pop('source_archives')
+                inputs['source_archive_count'] = len(archives)
+                inputs['source_archives_sha256'] = digest(archives)
         info['full_snapshot_instrument_sha256'] = info.pop('reproducibility_sha256', None)
         info['reproducibility_sha256'] = digest(info)
     report = view['analysis']

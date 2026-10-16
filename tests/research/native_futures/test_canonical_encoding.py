@@ -5,7 +5,7 @@ from decimal import Decimal
 import hashlib
 import json
 
-from monatise.research.institutional.models import encode, digest
+from monatise.research.institutional.models import encode, digest, immutable_digest_scope
 
 
 def reference(value):
@@ -44,3 +44,24 @@ def test_native_bar_and_observation_hashes_match_original_encoder():
         assert encode(value) == encoded
         expected = json.dumps(encoded, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()
         assert digest(value) == hashlib.sha256(expected).hexdigest()
+        with immutable_digest_scope():
+            assert digest(value) == hashlib.sha256(expected).hexdigest()
+            # Public encodings must never expose private digest-cache nodes.
+            encoded_contract = encode(contract)
+            encoded_contract['metadata']['raw_symbol'] = 'ALTERED_DISPLAY_COPY'
+            assert digest(value) == hashlib.sha256(expected).hexdigest()
+
+
+def test_mutable_containers_are_not_cached_and_exception_restores_scope():
+    value={'items':[1]}
+    before=digest(value)
+    try:
+        with immutable_digest_scope():
+            assert digest(value)==before
+            value['items'].append(2)
+            assert digest(value)!=before
+            raise RuntimeError('fixture')
+    except RuntimeError:
+        pass
+    from monatise.research.institutional.models import _DIGEST_SCOPE
+    assert _DIGEST_SCOPE.get() is None
