@@ -96,6 +96,30 @@ def text_report(report):
             lines.append('Top captured price/volume levels (at most 10): '+json.dumps(profile,separators=(',',':')))
             lines.extend('  '+text for text in metrics['limitations'])
         else:lines.append('Trade features unavailable: '+features.get('reason','missing validated executions'))
+        recent=components.get('recent_trade_flow',{})
+        if recent.get('available'):
+            lines.append('Recent flow clock: '+recent['clock_basis']+'; latest admitted trade UTC='+
+                datetime.fromtimestamp(recent['latest_trade_receive_ns']/10**9,UTC).isoformat()+
+                '; complete exchange history unverified.')
+            for label,w in recent['windows'].items():
+                share=w['buyer_share_of_known_volume'];ref=w['size_reference'];response=w['price_response']
+                lines.append('  '+label+' observed flow: events='+str(w['observed_trade_events'])+
+                    '; buy/sell/unknown='+str(w['buy_contracts'])+'/'+str(w['sell_contracts'])+'/'+str(w['unknown_side_contracts'])+
+                    '; known delta='+str(w['known_side_delta'])+'; known-side buyer share='+str(share)+
+                    '; net price ticks='+str(w['net_price_change_ticks']))
+                lines.append('    Earlier retained sample: events='+str(ref['reference_observed_events'])+
+                    '; P95 contracts='+str(ref['p95_contracts'])+'; strictly above P95 events='+str(ref['above_reference_p95_events'])+
+                    '; reference may be truncated='+str(ref['earliest_retained_trade_after_reference_start']))
+                lines.append('    Price/flow: '+response['price_flow_contrast']+'; '+response['interpretation']+
+                    '; absorption confirmed=False; institutional accumulation confirmed=False')
+            c=recent['comparison_1m_vs_preceding_5m'];p=recent['persistence_5m']
+            lines.append('  Latest minute versus preceding five: known-side buyer-share change percentage points='+
+                str(c['buyer_share_change_percentage_points'])+'; delta-rate change contracts/second='+str(c['known_delta_rate_change']))
+            lines.append('  Five one-minute buckets: buy-dominant='+str(p['buy_dominant_buckets'])+
+                '; sell-dominant='+str(p['sell_dominant_buckets'])+'; balanced='+str(p['balanced_known_side_buckets'])+
+                '; no known-side observations='+str(p['no_known_side_observations_buckets']))
+        elif recent:
+            lines.append('Recent flow unavailable: '+recent.get('reason','missing admitted trades'))
         for schema in ('mbp-1','mbp-10'):
             part=components.get(schema,{})
             if part.get('available') and part.get('quote'):

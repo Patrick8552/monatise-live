@@ -146,6 +146,8 @@ class FuturesMarketInfo:
         for schema in ('mbp-1','mbp-10'):
             h=health_by_schema[schema]
             values=[v for v in gate.accepted if v.schema==schema and v.source.admission_ns<=request.cutoff_ns]
+            if schema not in p.enabled_schemas:
+                parts[schema]=dict(available=False,reason='not_subscribed_in_current_capture');continue
             if 'replay_completed' in health and schema not in health['replay_completed']:
                 parts[schema]=dict(available=False,reason='native_replay_not_complete');continue
             if not h['available'] or not values:
@@ -190,6 +192,16 @@ class FuturesMarketInfo:
             # rejected trades to supply its candles, flow, VWAP or profile.
             parts['trade_features']=dict(available=False,reason='provider_receive_timestamp_quality_requires_review')
             state='PARTIAL_MARKET_INFORMATION' if any(v['available'] for v in parts.values()) else 'UNAVAILABLE'
+        if source_scope!='NONE' or state=='UNAVAILABLE' or not parts['trade_features'].get('available'):
+            parts['recent_trade_flow']=dict(available=False,reason='validated_trade_flow_source_unavailable')
+        else:
+            from monatise.research.native_futures.order_flow import recent_trade_flow
+            try:
+                parts['recent_trade_flow']=recent_trade_flow(
+                    (v for v in getattr(gate,'trade_sources',gate.accepted) if v.schema=='trades'),cutoff_ns=request.cutoff_ns,
+                    clock_offset_bounds_ns=health.get('local_clock_offset_bounds_ns'))
+            except (ValueError,TypeError,ArithmeticError) as exc:
+                parts['recent_trade_flow']=dict(available=False,reason=str(exc))
         result = dict(instrument=c.metadata.raw_symbol, contract_identity=list(c.identity),availability=state,components=parts,
             capture_health=health,analysis_access='READ_ONLY',live_analysis_certified=False,
             validation=dict(source_quarantine_scope=source_scope,faults=dict(gate.faults),first_fault_details=dict(getattr(gate,'fault_details',{})),
