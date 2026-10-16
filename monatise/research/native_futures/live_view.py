@@ -65,3 +65,78 @@ def publish_view(service,*,cutoff_ns,capture_id,reader_commit,chart_path,cache_p
         status=dict(status='REFRESH_FAILED',observed_at_ns=time.time_ns(),error=type(exc).__name__)
         for path in (chart_path,cache_path):atomic_json(str(path)+'.status',status)
         raise
+
+
+def write_view_input(service,*,path,cutoff_ns,capture_id,reader_commit):
+    """Private, bounded process handoff; never accept provider/user pickle data."""
+    import hashlib,os,pickle
+    from pathlib import Path
+    path=Path(path)
+    payload=pickle.dumps(service.pipeline,protocol=5)
+    if len(payload)>512*1024**2:raise ValueError('bounded_private_view_required')
+    pending=path.with_suffix('.pending')
+    with pending.open('wb') as handle:
+        handle.write(payload);handle.flush();os.fsync(handle.fileno())
+    pending.chmod(0o600);os.replace(pending,path)
+    manifest=dict(version='owned-native-live-view-handoff-v1',path=path.name,bytes=len(payload),
+        sha256=hashlib.sha256(payload).hexdigest(),cutoff_ns=cutoff_ns,capture_id=str(capture_id),
+        reader_commit=reader_commit,health=service.source_health(cutoff_ns),
+        scope='PRIVATE_TYPED_ADMITTED_STATE; NO_SDK_OR_CREDENTIALS')
+    manifest_path=Path(str(path)+'.manifest.json');atomic_json(manifest_path,manifest)
+    return manifest_path
+
+
+def read_view_input(manifest_path,*,capture_id,reader_commit):
+    """Whitelist classes and bind owner/bytes/hash/source/capture before decoding."""
+    import hashlib,io,os,pickle,stat
+    from pathlib import Path
+    from decimal import Decimal
+    from types import SimpleNamespace
+    from collections import OrderedDict
+    from monatise.research.institutional.models import Contract,Source,MarketObservation
+    from monatise.research.databento.datasets import InstrumentMetadata
+    from monatise.research.databento.candles import HistoricalBar,ExchangeCalendar
+    from monatise.research.databento.bar_coverage import NativeBarCoverage,HistoricalBarCoverage
+    from monatise.research.databento.live_models import ClockReview
+    from monatise.research.phase10.source import read_json
+    manifest_path=Path(manifest_path);manifest=read_json(manifest_path)
+    if (manifest['version']!='owned-native-live-view-handoff-v1' or manifest['capture_id']!=str(capture_id)
+            or manifest['reader_commit']!=reader_commit):raise ValueError('view_handoff_identity_mismatch')
+    path=manifest_path.parent/manifest['path'];info=path.lstat()
+    if (path.parent!=manifest_path.parent or path.is_symlink() or not stat.S_ISREG(info.st_mode)
+            or info.st_uid!=os.getuid() or info.st_mode&0o077 or not 1<=info.st_size<=512*1024**2):
+        raise ValueError('owned_private_view_file_required')
+    payload=path.read_bytes()
+    if len(payload)!=manifest['bytes'] or hashlib.sha256(payload).hexdigest()!=manifest['sha256']:
+        raise ValueError('view_handoff_hash_mismatch')
+    classes=(SimpleNamespace,OrderedDict,Decimal,NativeInformationGate,Contract,Source,MarketObservation,
+        InstrumentMetadata,HistoricalBar,ExchangeCalendar,NativeBarCoverage,HistoricalBarCoverage,ClockReview)
+    allowed={(c.__module__,c.__name__):c for c in classes}
+    class Decoder(pickle.Unpickler):
+        def find_class(self,module,name):
+            try:return allowed[(module,name)]
+            except KeyError:raise ValueError('unapproved_view_handoff_class') from None
+    pipeline=Decoder(io.BytesIO(payload)).load()
+    if type(pipeline) is not SimpleNamespace:raise ValueError('typed_native_view_required')
+    return freeze_service(pipeline,manifest['health']),manifest
+
+
+def main(argv=None):
+    import argparse,json
+    from pathlib import Path
+    p=argparse.ArgumentParser(description='Separate native chart calculation process; no provider client')
+    p.add_argument('--input-manifest',required=True);p.add_argument('--capture-id',required=True)
+    p.add_argument('--reader-commit',required=True);p.add_argument('--chart',required=True)
+    p.add_argument('--cache',required=True);p.add_argument('--result',required=True)
+    args=p.parse_args(argv)
+    pin=Path(__file__).resolve().parents[3]/'.source-commit'
+    if not pin.is_file() or pin.read_text().strip()!=args.reader_commit:raise ValueError('pinned_view_process_source_required')
+    service,manifest=read_view_input(args.input_manifest,capture_id=args.capture_id,reader_commit=args.reader_commit)
+    result=publish_view(service,cutoff_ns=manifest['cutoff_ns'],capture_id=args.capture_id,
+        reader_commit=args.reader_commit,chart_path=args.chart,cache_path=args.cache)
+    result['process_isolation']='SEPARATE_OS_PROCESS; NO_PROVIDER_CONNECTION'
+    result['input_sha256']=manifest['sha256'];atomic_json(args.result,result)
+    return 0
+
+
+if __name__=='__main__':raise SystemExit(main())

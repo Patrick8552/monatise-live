@@ -239,7 +239,7 @@ that changes no record-admission, timestamp, lineage or replay-prefix checks.
 
 For a running collector, `native_futures.live_view.freeze_service` detaches its
 native gates and candle collections on the owning event loop; `publish_view`
-computes the existing native frame/features in a worker thread. Both chart and
+computes the existing native frame/features in a separate OS process. Both chart and
 text cache share that exact analysis result. No journal-wide reconstruction runs
 inside the collector or chart refresh. Immutable observation/bar/contract objects
 retain their source hashes, flags, timestamps, causal cutoff and coverage reviews;
@@ -255,3 +255,15 @@ proof referenced by retained bars, all historical response proofs and distinct
 source/attempt references. Raw interval controls, sealed journals and published
 outbox evidence remain untouched. This bounds the live lookup cost without
 inventing empty intervals, erasing faults or changing proof eligibility.
+
+The first thread-based live-view attempt stalled delivery during a 34-second
+calculation; its original attempts and stall evidence remain retained. Local
+processing pressure is suspected, with physical-network causality unverified.
+The revised handoff serializes only the detached native state to an owner-only,
+size-bounded temporary file. The consumer binds the exact capture/source and
+byte hash, whitelists decoded classes, and contains no SDK client or credentials.
+The collector waits asynchronously for that process; chart computation shares
+no Python interpreter lock with live ingestion. The latest temporary handoff is
+replaced only after consumption; authoritative raw journals and publication
+evidence are preserved separately. Failed calculations are flagged without
+automatic retry. Full raw-journal forensic checks remain separate.

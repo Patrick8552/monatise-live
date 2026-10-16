@@ -83,3 +83,51 @@ def test_live_coverage_compaction_retains_referenced_and_distinct_proofs():
     assert set(gate.coverage_reviews)=={a.sha256,tied.sha256,different.sha256}
     assert frozen.pipeline.gates[c.metadata.instrument_id].coverage_reviews==before
     assert not gate.faults
+
+
+def test_owned_process_handoff_preserves_exact_features_and_binds_source(tmp_path):
+    from monatise.research.native_futures.live_view import write_view_input,read_view_input
+    p,c=native();f=freeze_service(p,dict(status='CAPTURING'));path=tmp_path/'view.pkl'
+    manifest=write_view_input(f,path=path,cutoff_ns=NOW_NS,capture_id='test',reader_commit='a'*40)
+    restored,meta=read_view_input(manifest,capture_id='test',reader_commit='a'*40)
+    req=AnalysisRequest((c.metadata.raw_symbol,),NOW_NS)
+    assert restored.analyse(req)==f.analyse(req)
+    with pytest.raises(ValueError,match='identity_mismatch'):read_view_input(manifest,capture_id='other',reader_commit='a'*40)
+    path.write_bytes(path.read_bytes()+b'changed')
+    with pytest.raises(ValueError,match='hash_mismatch'):read_view_input(manifest,capture_id='test',reader_commit='a'*40)
+
+
+def test_handoff_cannot_execute_arbitrary_classes_even_with_valid_file_hash(tmp_path):
+    import hashlib,os,pickle
+    from monatise.research.native_futures.live_view import write_view_input,read_view_input
+    from monatise.research.phase9.rotation import atomic_json
+    p,c=native();manifest=write_view_input(freeze_service(p,{}),path=tmp_path/'view.pkl',cutoff_ns=NOW_NS,capture_id='test',reader_commit='a'*40)
+    marker=tmp_path/'must-not-exist'
+    class Unapproved:
+        def __reduce__(self):return os.system,('touch '+str(marker),)
+    payload=pickle.dumps(Unapproved());(tmp_path/'view.pkl').write_bytes(payload)
+    meta=json.loads(manifest.read_text());meta.update(bytes=len(payload),sha256=hashlib.sha256(payload).hexdigest());atomic_json(manifest,meta)
+    with pytest.raises(ValueError,match='unapproved_view_handoff_class'):
+        read_view_input(manifest,capture_id='test',reader_commit='a'*40)
+    assert not marker.exists()
+
+
+def test_chart_calculation_runs_in_a_different_os_process_without_source_mutation(tmp_path):
+    import os,subprocess,sys
+    from pathlib import Path
+    from monatise.research.native_futures.live_view import write_view_input
+    p,c=native();before=digest(tuple(p.gates[c.metadata.instrument_id].accepted))
+    manifest=write_view_input(freeze_service(p,dict(status='CAPTURING')),path=tmp_path/'view.pkl',cutoff_ns=NOW_NS,capture_id='test',reader_commit='a'*40)
+    code="""
+import json,os,sys
+from monatise.research.native_futures.live_view import read_view_input,publish_view
+service,meta=read_view_input(sys.argv[1],capture_id='test',reader_commit='a'*40)
+r=publish_view(service,cutoff_ns=meta['cutoff_ns'],capture_id='test',reader_commit='a'*40,chart_path=sys.argv[2],cache_path=sys.argv[3])
+assert not any(name.startswith(('monatise.engines','monatise.application','monatise.routing')) for name in sys.modules)
+print(json.dumps(dict(pid=os.getpid(),status=r['status'])))
+"""
+    env=dict(os.environ,PYTHONPATH=str(Path(__file__).resolve().parents[3]))
+    result=subprocess.run([sys.executable,'-c',code,str(manifest),str(tmp_path/'chart.json'),str(tmp_path/'cache.json')],capture_output=True,text=True,env=env,timeout=20)
+    assert result.returncode==0,result.stderr
+    receipt=json.loads(result.stdout);assert receipt['pid']!=os.getpid() and receipt['status']=='READY'
+    assert before==digest(tuple(p.gates[c.metadata.instrument_id].accepted))
