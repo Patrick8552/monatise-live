@@ -69,4 +69,13 @@ def test_native_mode_source_replay_never_needs_a_calibration_or_price_anchor(tmp
     (end/'report.json').write_text(json.dumps(dict(scope_sha256=digest(sc),quality=dict(quarantined=False,reasons=[]))))
     service=load_capture(root,cutoff_ns=NOW_NS);result=service.analyse(AnalysisRequest((c.metadata.raw_symbol,),NOW_NS))['instruments'][c.metadata.raw_symbol]
     assert result['components']['trade_features']['available']
+    assert result['availability']=='UNAVAILABLE'  # No native replay controls in this fixture.
     assert result['validation']['quality_mode']==MODE and not result['validation']['custom_price_anomaly_applied']
+
+
+def test_partial_native_replay_is_not_live_ready_even_with_valid_prices():
+    from monatise.research.phase10.market_info import FuturesMarketInfo
+    from monatise.research.phase10.access import AnalysisRequest
+    p,c=native_pipeline();add(p,trade(c),ordinal=1)
+    r=FuturesMarketInfo(p,source_health=lambda at:{'replay_completed':['definition']}).analyse(AnalysisRequest((c.metadata.raw_symbol,),NOW_NS))
+    assert r['instruments'][c.metadata.raw_symbol]['availability']=='UNAVAILABLE'

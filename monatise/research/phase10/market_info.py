@@ -132,6 +132,8 @@ class FuturesMarketInfo:
         for schema in ('mbp-1','mbp-10'):
             h=health_by_schema[schema]
             values=[v for v in gate.accepted if v.schema==schema and v.source.admission_ns<=request.cutoff_ns]
+            if 'replay_completed' in health and schema not in health['replay_completed']:
+                parts[schema]=dict(available=False,reason='native_replay_not_complete');continue
             if not h['available'] or not values:
                 parts[schema]=dict(available=False,reason=h.get('reason') or 'not_captured_or_not_validated',health=h)
             else:
@@ -166,6 +168,7 @@ class FuturesMarketInfo:
                 v['result']['window_scope']='RETAINED_VALIDATED_EXECUTIONS_NOT_FULL_SESSION'
         available = [k for k,v in parts.items() if v['available']]
         state = 'PARTIAL_MARKET_INFORMATION' if available else 'UNAVAILABLE'
+        if 'replay_completed' in health and not {'definition','trades','ohlcv-1s','ohlcv-1m'}<=set(health['replay_completed']):state='UNAVAILABLE'
         source_scope=quarantine_scope(health,iid)
         if source_scope in {'GLOBAL_SOURCE_QUARANTINE','INSTRUMENT_SOURCE_QUARANTINE'}:state='UNAVAILABLE'
         elif source_scope=='COMPONENT_SOURCE_QUARANTINE':

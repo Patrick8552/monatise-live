@@ -213,6 +213,7 @@ def load_capture(root,*,cutoff_ns,maximum_records=2000000,observation_sink=None,
         gates[iid].transport_gap(schema,'captured_component_rejection_requires_review')
     quality=report['quality'] if final_snapshot is not None else progress['health']
     health['stalled_connections']=list(quality.get('stalled_connections',()))
+    if native_only:health['replay_completed']=sorted(replays)
     health['reasons']=sorted(set(health['reasons'])|{'connection_stalled_'+s for s in health['stalled_connections']})
     # Progress can be newer than the cursor snapshot. Never explain away an
     # unobserved rejection using older typed evidence for the same component.
