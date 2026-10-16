@@ -100,7 +100,10 @@ def text_report(report):
                 q=part['quote'];lines.append(schema+' displayed bid/ask: '+str(q['bid'])+' / '+str(q['ask'])+
                     '; sizes='+str(q['bid_contracts'])+' / '+str(q['ask_contracts'])+'; spread='+str(q.get('spread','not calculated'))+
                     '; receive UTC='+datetime.fromtimestamp(q['receive_ns']/10**9,UTC).isoformat()+'; broker executable quote=False')
-                if 'age_at_response_ns' in q:lines.append('  Quote age at response: '+str(round(q['age_at_response_ns']/10**9,3))+' seconds.')
+                if 'age_at_response_ns' in q:
+                    lines.append('  Quote local-clock difference at response: '+str(round(q['age_at_response_ns']/10**9,3))+' seconds; not synchronized-age certification.')
+                if 'age_at_source_observation_utc_bounds_ns' in q:
+                    lines.append('  Quote age bounds at source observation: '+str([round(n/10**9,3) for n in q['age_at_source_observation_utc_bounds_ns']])+' seconds; raw timestamps unchanged.')
         oi=components.get('open_interest',{})
         if oi.get('available'):
             lines.append('Published open interest: '+str(oi['contracts'])+' contracts; reference UTC='+

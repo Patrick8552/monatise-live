@@ -41,7 +41,8 @@ class NativeInformationGate:
                 result[schema]=dict(available=False,reason=fault or 'no_native_observations')
                 continue
             source=value.payload[1] if schema.startswith('ohlcv-') else value.payload[2] if schema=='statistics' else value.index_ns
-            result[schema]=dict(available=not fault,reason=fault,
+            reason=fault or ('not_available_at_cutoff' if value.source.admission_ns>now_ns else None)
+            result[schema]=dict(available=reason is None,reason=reason,
                 freshness=dict(status='OBSERVED_TIMESTAMP_ONLY',age_ns=now_ns-source,
                     source_ns=source,available_ns=value.source.admission_ns,evaluated_ns=now_ns,
                     local_freshness_cutoff_applied=False,current_or_executable_certified=False),

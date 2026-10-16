@@ -34,10 +34,17 @@ def test_valid_dated_data_is_not_hidden_by_a_local_freshness_cutoff():
     assert not result['instruments'][c.metadata.raw_symbol]['components']['mbp-1']['available']
 
 
+def test_dated_information_still_respects_an_explicit_as_of_cutoff():
+    p,c=native_pipeline();add(p,quote(c,2500),'mbp-1',1)
+    g=p.gates[c.metadata.instrument_id]
+    h=g.health(now_ns=NOW_NS-NS,schemas=('mbp-1',))['mbp-1']
+    assert not h['available'] and h['reason']=='not_available_at_cutoff'
+
+
 def test_response_recalculates_ages_and_preserves_original_analysis(tmp_path):
     pipeline,c,cache=fixture(tmp_path);before=cache.read_bytes()
     src=tmp_path/'source.json'
-    atomic_json(src,source_snapshot(pipeline,capture_id='/engineering/capture',health={},
+    atomic_json(src,source_snapshot(pipeline,capture_id='/engineering/capture',health={'local_clock_offset_bounds_ns':[100,200]},
         observed_at_ns=NOW_NS+NS,status='COMPLETED_FINITE_NATIVE_INFORMATION_TRIAL'))
     r=read_cached(cache,response_ns=NOW_NS+100*NS,source_path=src)
     assert r['delivery']['analysis_age_ns']==100*NS
@@ -48,6 +55,8 @@ def test_response_recalculates_ages_and_preserves_original_analysis(tmp_path):
     assert 'UNAVAILABLE' in item['current_live_use']
     assert item['components']['mbp-1']['quote']['age_at_response_ns']>=100*NS
     assert not item['components']['mbp-1']['quote']['executable_quote']
+    q=item['components']['mbp-1']['quote']
+    assert q['age_at_source_observation_utc_bounds_ns']==[NOW_NS+NS-q['receive_ns']+100,NOW_NS+NS-q['receive_ns']+200]
     assert cache.read_bytes()==before
     assert r['reproducibility_sha256']==digest({k:v for k,v in r.items() if k!='reproducibility_sha256'})
 

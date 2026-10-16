@@ -96,7 +96,14 @@ def read_cached(cache, *, response_ns=None, source_path=None):
                 if q['available_ns']>now:raise ValueError('future_snapshot_forbidden')
                 target['components'][schema]=copy.deepcopy(part)
                 target['components'][schema]['as_of_source_snapshot_ns']=source['observed_at_ns']
+                bounds=source['health'].get('local_clock_offset_bounds_ns')
+                if bounds is not None and len(bounds)==2:
+                    # These bounds were measured for the source observation,
+                    # not for the later delivery. Never rewrite native ts_recv.
+                    target['components'][schema]['quote']['age_at_source_observation_utc_bounds_ns']=[
+                        source['observed_at_ns']-q['receive_ns']+b for b in bounds]
                 result['quote_overlay_used']=True
+                result['quote_update_scope']='INDEPENDENT_QUOTE_SNAPSHOT; HISTORICAL_FEATURES_NOT_RECOMPUTED'
             target['analysis_source_health']=target.get('capture_health',{})
             target['capture_health']=copy.deepcopy(source['health'])
             target['capture_health']['status']=('SEALED_HISTORICAL_CAPTURE'
@@ -112,6 +119,7 @@ def read_cached(cache, *, response_ns=None, source_path=None):
             part=item.get('components',{}).get(schema,{})
             if part.get('quote'):
                 part['quote']['age_at_response_ns']=now-part['quote']['receive_ns']
+                part['quote']['age_at_response_clock_basis']='SIGNED_LOCAL_WALL_MINUS_PROVIDER_RECEIVE; NOT_SYNCHRONIZED_AGE_CERTIFICATION'
                 part['quote']['executable_quote']=False
         # Child digests describe the original analysis, not this delivery overlay.
         item['analysis_snapshot_sha256']=item.pop('reproducibility_sha256',None)
