@@ -131,3 +131,18 @@ def test_reader_rejects_forged_overlap_admission(tmp_path):
     with db:db.execute("UPDATE states SET value=?,hash=? WHERE name='segments'",(json.dumps(value),digest(value)))
     db.close()
     with pytest.raises(ValueError,match='admission_mismatch'):load_capture(root,cutoff_ns=NOW_NS)
+
+
+def test_reader_uses_each_hash_bound_clock_renewal_not_expired_initial_receipt():
+    from monatise.research.native_futures.recovery import ReplayAudit
+    from monatise.research.databento.live_models import ClockReview
+    old=ClockReview(NOW_NS-2000000000,NOW_NS+1000000000,-1000000,1000000,digest('old'),'ENGINEERING',0)
+    new=replace(old,observed_at_ns=NOW_NS+500000000,expires_ns=NOW_NS+5000000000,source_sha256=digest('new'))
+    s=scope(duration_seconds=5,clock_review=old)
+    step=CaptureStep(s,permit(s),'INITIAL','ENGINEERING')
+    audit=ReplayAudit(s,[dict(index=0,step=encode(step),checkpoints=None,spool_records_before=0,prepared_at_ns=NOW_NS)])
+    for n,clock in enumerate((old,new)):
+        at=NOW_NS+n*2000000000
+        audit.ingest(0,'trades',trade(t=NOW_NS-1000000000+n),at=at,ordinal=n,arrival=at,
+            clock=clock,admitted=True,rejection=None,position=n+1)
+    assert audit.state.clock_history==[new]

@@ -85,7 +85,11 @@ class ReplayAudit:
                 recovery_review_reference='verified-source-bound-recovery' if index else None,
                 native_information=True,count_recovery=bool(index))
             self.index=index
+        # Every spool row binds its contemporaneous review. The read-only audit
+        # must use that receipt, including after the collector renews it; retaining
+        # only the attempt's initial clock would falsely reject a long capture.
         self.state.clock_review=clock
+        self.state.clock_history=[clock] if clock is not None else []
         try:
             normalized=self.state.ingest(schema,record,capture_ns=at,ordinal=ordinal,arrival_ns=arrival)
         except (ValueError,TypeError,AttributeError,ArithmeticError):
