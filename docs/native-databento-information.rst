@@ -59,3 +59,22 @@ REPLAY_COMPLETED is per schema; END_OF_INTERVAL establishes interval publication
 No new subscription, deployment, order placement, crypto graph, frozen H1, GIL
 or XAUUSD router is part of this path. MBP-10 previously denied by the gateway
 remains excluded. This module is not production or full-session certification.
+
+Sparse historical OHLCV
+----------------------
+
+HistoricalBarCoverage is deliberately distinct from native live interval markers.
+The history loader may issue it only after verifying the entire declared DBN
+archive, record count below the exact request limit, matching dataset/schema/
+range/symbols, no partial or unresolved symbols and admission of every bar.
+It classifies omitted provider OHLCV buckets using Databento's no-trade/no-print
+semantics. It does not certify independent exchange truth or repair a live gap.
+
+Parent bars use only actual minute children, retaining source hashes and the
+complete-response review. No flat/zero-volume child is synthesized. A proven
+empty minute can be omitted from observed-bar structure and technical periods;
+the omission is reported. Minute response completeness cannot prove subminute
+coverage. Unknown gaps still withhold dependent features. A separate genuine
+GC request found no trades in the historical receive-time bucket at 2026-10-15
+22:07 UTC and the native hour matched aggregation of all 59 actual minute bars;
+that diagnostic evidence remains private and source-bound, not in this code.

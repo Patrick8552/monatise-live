@@ -43,6 +43,8 @@ def text_report(report):
                     '; gaps between observed buckets='+str(part['gaps_between_observed_buckets']))
                 native=part.get('native_analysis',{})
                 if native.get('available'):
+                    if native.get('provider_no_print_intervals'):
+                        lines.append('  Provider no-print intervals: '+str(len(native['provider_no_print_intervals']))+'; complete source-response evidence; no synthetic bars.')
                     structure=native['structure'];fib=native['fibonacci']
                     lines.append('  Native futures structure: '+structure['state']+
                         '; confirmed highs='+str(structure['confirmed_high_count'])+'; confirmed lows='+str(structure['confirmed_low_count']))

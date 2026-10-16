@@ -137,7 +137,7 @@ def main(argv=None):
     p.add_argument('--format',choices=('json','text'),default='json')
     args=p.parse_args(argv)
     if args.refresh:
-        if not args.capture or not 0<=args.duration<=3600 or not 1<=args.interval<=300:
+        if not args.capture or not 0<=args.duration<=86400 or not 1<=args.interval<=300:
             p.error('explicit existing capture and finite duration/interval required')
         lock=Path(str(args.cache)+'.lock');lock.parent.mkdir(parents=True,exist_ok=True)
         with lock.open('a') as handle:

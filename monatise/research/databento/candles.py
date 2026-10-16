@@ -74,9 +74,9 @@ class HistoricalBar:
     coverage_reviews: tuple = ()
 
     def __post_init__(self):
-        from .bar_coverage import NativeBarCoverage
+        from .bar_coverage import NativeBarCoverage,HistoricalBarCoverage
         if (not isinstance(self.coverage_reviews,tuple)
-                or any(not isinstance(r,NativeBarCoverage) or r.available_ns>self.retrieval_ns for r in self.coverage_reviews)):
+                or any(not isinstance(r,(NativeBarCoverage,HistoricalBarCoverage)) or r.available_ns>self.retrieval_ns for r in self.coverage_reviews)):
             raise ValueError('immutable_available_native_coverage_required')
         if not isinstance(self.identity, InstrumentMetadata) or self.identity.kind != "F":
             raise ValueError("exact futures identity required")

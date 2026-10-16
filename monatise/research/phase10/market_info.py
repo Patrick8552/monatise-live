@@ -74,7 +74,7 @@ class FuturesMarketInfo:
             # complete parents retain their real children across that boundary.
             from .history import complete_parents
             for tf in ('5m','15m','1h','4h'):
-                frames[tf],_=complete_parents(frames['1m'],tf,calendar)
+                frames[tf],_=complete_parents(frames['1m'],tf,calendar,coverage_reviews=tuple(gate.coverage_reviews.values()))
             if any(b.evidence_kind=='AUTHENTIC_HISTORICAL_DOWNLOAD' for b in frames['1m']):
                 history_status=dict(status='SOURCE_VERIFIED_NATIVE_ARCHIVE_AND_LIVE_CHILDREN',
                     custom_price_anomaly_applied=False,old_capture_repaired=False,
@@ -125,7 +125,8 @@ class FuturesMarketInfo:
                     sparse_coverage_proofs={r.sha256:encode(r) for b in rows for r in getattr(b,'coverage_reviews',())},
                     synthetic_bar_count=0,
                     source_sha256=digest(rows), selector_applied=False, fixed_selector_expiry_applied=False,
-                    native_analysis=analyse_frame(rows,tick_size=c.tick_size,cutoff_ns=request.cutoff_ns,calendar=calendar))
+                    native_analysis=analyse_frame(rows,tick_size=c.tick_size,cutoff_ns=request.cutoff_ns,calendar=calendar,
+                        coverage_reviews=tuple(gate.coverage_reviews.values()) if hasattr(gate,'quality_mode') else ()))
             except (ValueError,TypeError,ArithmeticError) as exc:
                 parts['price:'+tf] = dict(available=False,reason=str(exc))
         policy = None if hasattr(gate,'quality_mode') else inherited_policy(c,'trades')

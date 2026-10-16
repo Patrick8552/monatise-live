@@ -28,16 +28,25 @@ class JoinedBar:
     children: tuple
     timeframe: str
     calendar: ExchangeCalendar
+    coverage_reviews: tuple = ()
 
     def __post_init__(self):
         if not self.children or self.timeframe not in WIDTHS:
             raise ValueError('complete_native_children_required')
-        rows=self.children; width=WIDTHS[self.timeframe]
-        if (len(rows)!=width//WIDTHS['1m'] or rows[0].open_ns%width
+        rows=self.children; width=WIDTHS[self.timeframe];start=rows[0].open_ns//width*width
+        from monatise.research.databento.bar_coverage import NativeBarCoverage,HistoricalBarCoverage
+        if not isinstance(self.coverage_reviews,tuple) or any(not isinstance(r,(NativeBarCoverage,HistoricalBarCoverage)) for r in self.coverage_reviews):
+            raise ValueError('typed_native_or_historical_coverage_required')
+        proofs=tuple(r for r in self.coverage_reviews if r.covers(
+            (rows[0].identity.dataset,rows[0].identity.publisher_id,rows[0].identity.instrument_id,rows[0].identity.raw_symbol,rows[0].identity.expiration_ns),
+            'ohlcv-1m',start,start+width))
+        if len(proofs)!=len(self.coverage_reviews):raise ValueError('coverage_does_not_cover_exact_parent')
+        if ((not proofs and (len(rows)!=width//WIDTHS['1m'] or rows[0].open_ns%width))
                 or any(not isinstance(b,HistoricalBar) or b.timeframe!='1m'
                        or b.identity!=rows[0].identity for b in rows)
-                or any(a.close_ns!=b.open_ns for a,b in zip(rows,rows[1:]))
-                or not self.calendar.contains(rows[0].open_ns,rows[-1].close_ns)):
+                or any(a.close_ns>b.open_ns or not proofs and a.close_ns!=b.open_ns for a,b in zip(rows,rows[1:]))
+                or any(not start<=b.open_ns<b.close_ns<=start+width for b in rows)
+                or not self.calendar.contains(start,start+width)):
             raise ValueError('missing_mixed_or_out_of_session_history_children')
         kinds={b.evidence_kind for b in rows}
         if len(kinds)>1 and not kinds<={'AUTHENTIC_HISTORICAL_DOWNLOAD','AUTHENTIC_LIVE_CAPTURE'}:
@@ -46,9 +55,9 @@ class JoinedBar:
     @property
     def identity(self):return self.children[0].identity
     @property
-    def open_ns(self):return self.children[0].open_ns
+    def open_ns(self):return self.children[0].open_ns//WIDTHS[self.timeframe]*WIDTHS[self.timeframe]
     @property
-    def close_ns(self):return self.children[-1].close_ns
+    def close_ns(self):return self.open_ns+WIDTHS[self.timeframe]
     @property
     def prices_fixed(self):
         return (self.children[0].prices_fixed[0],max(b.prices_fixed[1] for b in self.children),
@@ -56,7 +65,7 @@ class JoinedBar:
     @property
     def volume(self):return sum(b.volume for b in self.children)
     @property
-    def retrieval_ns(self):return max(b.retrieval_ns for b in self.children)
+    def retrieval_ns(self):return max([b.retrieval_ns for b in self.children]+[r.available_ns for r in self.coverage_reviews])
     @property
     def source_hashes(self):return tuple(h for b in self.children for h in b.source_hashes)
     @property
@@ -81,11 +90,14 @@ def join_minutes(historical, live):
     return tuple(rows[k] for k in sorted(rows))
 
 
-def complete_parents(minutes, target, calendar):
+def complete_parents(minutes, target, calendar, *, coverage_reviews=()):
     width=WIDTHS[target];groups=defaultdict(list);rejected=[];result=[]
     for bar in minutes:groups[bar.open_ns//width*width].append(bar)
     for start,children in sorted(groups.items()):
-        try:result.append(JoinedBar(tuple(children),target,calendar))
+        proofs=tuple(r for r in coverage_reviews if r.start_ns<=start<start+width<=r.end_ns and r.schema=='ohlcv-1m'
+            and r.identity[2]==children[0].identity.instrument_id)
+        missing=len(children)!=width//WIDTHS['1m']
+        try:result.append(JoinedBar(tuple(children),target,calendar,proofs[:1] if missing else ()))
         except ValueError:
             rejected.append(dict(open_ns=start,reason='MISSING_CHILD_OR_REVIEWED_PARTIAL_SESSION_BUCKET'))
     return tuple(result),rejected

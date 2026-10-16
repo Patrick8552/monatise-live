@@ -11,6 +11,43 @@ from monatise.research.institutional.models import digest, hash_required
 
 
 @dataclass(frozen=True)
+class HistoricalBarCoverage:
+    """Complete historical response, distinct from a live END_OF_INTERVAL.
+
+    Created only after archive bytes/count/metadata and every native bar validate.
+    It describes the provider response, never independent exchange completeness
+    or continuity of a different live capture.
+    """
+    identity: tuple
+    schema: str
+    start_ns: int
+    end_ns: int
+    available_ns: int
+    archive_sha256: str
+    metadata_sha256: str
+    record_count: int
+    request_limit: int
+    review_reference: str
+    clock_review: object | None = None
+
+    def __post_init__(self):
+        for t in (self.start_ns,self.end_ns,self.available_ns):timestamp_ns(t)
+        for h in (self.archive_sha256,self.metadata_sha256):hash_required(h)
+        if (not isinstance(self.identity,tuple) or len(self.identity)!=5 or self.identity[0]!='GLBX.MDP3'
+                or self.schema!='ohlcv-1m' or self.clock_review is not None or not self.review_reference
+                or not 0<self.record_count<self.request_limit<=100000
+                or not self.start_ns<self.end_ns<=min(self.available_ns,self.identity[-1])
+                or self.start_ns%(60*10**9) or self.end_ns%(60*10**9)):
+            raise ValueError('complete_source_bound_historical_response_required')
+
+    @property
+    def sha256(self):return digest(self)
+
+    def covers(self,identity,schema,start,end):
+        return self.identity==identity and self.schema==schema and self.start_ns<=start<end<=self.end_ns
+
+
+@dataclass(frozen=True)
 class NativeBarCoverage:
     identity: tuple
     schema: str
