@@ -19,12 +19,13 @@ from .cache import checked
 TIMEFRAMES=('1m','5m','15m','1h','4h')
 
 
-def chart_snapshot(service, *, cutoff_ns, capture_id, reader_commit):
+def chart_snapshot(service, *, cutoff_ns, capture_id, reader_commit,report_sink=None):
     """Never reconstruct bars in JavaScript or make an unverified frame usable."""
     from monatise.research.phase10.market_info import FuturesMarketInfo
     if not isinstance(service,FuturesMarketInfo):raise ValueError('dedicated_native_service_required')
     symbols=tuple(g.contract.metadata.raw_symbol for g in service.pipeline.gates.values())
     report=service.analyse(AnalysisRequest(symbols,cutoff_ns,timeframes=TIMEFRAMES))
+    if report_sink is not None:report_sink(report)
     charts={}
     for iid,g in service.pipeline.gates.items():
         symbol=g.contract.metadata.raw_symbol;info=report['instruments'][symbol]
@@ -131,7 +132,7 @@ def main(argv=None):
     p.add_argument('--port',type=int,default=8766);p.add_argument('--duration',type=float,default=3600)
     p.add_argument('--interval',type=float,default=30)
     args=p.parse_args(argv)
-    if not 1<=args.duration<=28800 or not 1<=args.port<=65535 or not 5<=args.interval<=300:p.error('bounded local service required')
+    if not 1<=args.duration<=86400 or not 1<=args.port<=65535 or not 5<=args.interval<=300:p.error('bounded local service required')
     if args.action in {'export','refresh'}:
         if not args.capture or not args.reader_commit or len(args.reader_commit)!=40:p.error('explicit capture and reader commit required')
         deadline=time.monotonic()+(args.duration if args.action=='refresh' else 0)

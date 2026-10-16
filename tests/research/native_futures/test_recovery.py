@@ -148,9 +148,21 @@ def test_reader_uses_each_hash_bound_clock_renewal_not_expired_initial_receipt()
     assert audit.state.clock_history==[new]
 
 
-def test_explicit_one_hour_session_budget_is_bounded_without_changing_replay_rules():
-    policy=RecoveryPolicy(total_seconds=3600)
-    assert policy.maximum_attempts==3 and policy.version==VERSION
-    for seconds in (0,3601,True,3600.0):
+def test_user_selected_session_duration_is_bounded_without_changing_replay_rules():
+    for seconds in (3600,86400):
+        policy=RecoveryPolicy(total_seconds=seconds)
+        assert policy.maximum_attempts==3 and policy.version==VERSION
+    for seconds in (0,86401,True,3600.0):
         with pytest.raises(ValueError,match='finite_native_recovery_policy_required'):
             RecoveryPolicy(total_seconds=seconds)
+
+
+def test_market_close_caps_capture_even_when_subscription_setup_takes_time():
+    from monatise.research.databento.live_feed import remaining_session_seconds
+    original=scope(duration_seconds=5)
+    closing=replace(original,session_end_ns=NOW_NS+2*10**9,session_drain_seconds=30)
+    assert remaining_session_seconds(closing,NOW_NS)==2
+    assert remaining_session_seconds(closing,NOW_NS+10**9)==1
+    assert remaining_session_seconds(closing,NOW_NS+2*10**9)==0
+    assert remaining_session_seconds(closing,NOW_NS+3*10**9)==0
+    assert remaining_session_seconds(original,NOW_NS)==5

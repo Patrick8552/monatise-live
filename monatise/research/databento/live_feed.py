@@ -25,6 +25,11 @@ def sdk_client(key,heartbeat_seconds):
     return OwnedSDKClient(key,heartbeat_seconds)
 
 
+def remaining_session_seconds(scope,now_ns):
+    """User-reviewed session end caps runtime; final queue drain stays separate."""
+    return min(scope.duration_seconds,max(0,(scope.session_end_ns-now_ns)/10**9))
+
+
 class CMELiveCapture:
     def __init__(self,scope, *, client_factory=None,clock_ns=time.time_ns,queue_capacity=2048,journal_factory=None,clock_refresh=None,liveness_clock_ns=time.perf_counter_ns,native_information=False):
         if not isinstance(scope,LiveScope) or type(queue_capacity) is not int or not 1<=queue_capacity<=2048:
@@ -163,7 +168,7 @@ class CMELiveCapture:
                 watchers.append(asyncio.create_task(watch(schema,client)))
             # Finish all subscriptions before any replay can fill the handoff.
             for client in clients:client.start()
-            end=loop.time()+self.scope.duration_seconds
+            end=loop.time()+remaining_session_seconds(self.scope,self.clock_ns())
             next_tick=loop.time()
             while loop.time()<end:
                 if probe_task is not None and probe_task.done():

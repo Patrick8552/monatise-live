@@ -227,3 +227,31 @@ states. A source heartbeat or polling response is not a fresh-exchange-delivery
 certificate. Current live operation requires an actually running authorized
 collector and refresh worker. A completed trial supplies historical context
 only. No new live connections are opened as part of building the chart.
+
+The one-hour value in example commands is an operator default, not a Databento
+limit or an original user request. The user subsequently explicitly selected
+today's GC/ES/NQ futures market close. Collector/server/reader durations must
+follow that dated endpoint (plus bounded finalization), without silently
+changing a running immutable scope. A reviewed handover may perform fresh
+same-scope intraday replay; old errors and the source transition remain visible.
+Operational duration can be set up to the existing LiveScope one-day maximum;
+that changes no record-admission, timestamp, lineage or replay-prefix checks.
+
+For a running collector, `native_futures.live_view.freeze_service` detaches its
+native gates and candle collections on the owning event loop; `publish_view`
+computes the existing native frame/features in a worker thread. Both chart and
+text cache share that exact analysis result. No journal-wide reconstruction runs
+inside the collector or chart refresh. Immutable observation/bar/contract objects
+retain their source hashes, flags, timestamps, causal cutoff and coverage reviews;
+all mutable containers are copied. A failed view stops further view publication
+and exposes REFRESH_FAILED, without silently retrying or changing source faults.
+This live view explicitly identifies its verification scope as collector-admitted
+data. It does **not** claim an independent raw-journal forensic replay occurred
+for every refresh; that remains a separate retained-evidence check.
+
+For a longer session the live coverage index compacts equivalent native proofs
+only after 4,096 entries: it retains the newest scope-compatible proof, every
+proof referenced by retained bars, all historical response proofs and distinct
+source/attempt references. Raw interval controls, sealed journals and published
+outbox evidence remain untouched. This bounds the live lookup cost without
+inventing empty intervals, erasing faults or changing proof eligibility.

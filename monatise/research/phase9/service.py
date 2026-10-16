@@ -15,6 +15,22 @@ from monatise.research.institutional.models import digest, hash_required
 from . import SAFETY
 
 
+def compact_live_coverage(gate,frames):
+    """Compact equivalent live proof indexes; raw controls/outbox stay retained."""
+    from monatise.research.databento.bar_coverage import NativeBarCoverage
+    referenced={r.sha256 for rows in frames.values() for bar in rows.values() for r in getattr(bar,'coverage_reviews',())}
+    keep={};latest={}
+    for sha,proof in gate.coverage_reviews.items():
+        if not isinstance(proof,NativeBarCoverage) or sha in referenced:
+            keep[sha]=proof
+        if isinstance(proof,NativeBarCoverage):
+            key=(proof.identity,proof.schema,proof.start_ns,proof.review_reference)
+            old=latest.get(key)
+            if old is None or (proof.end_ns,proof.available_ns)>(old.end_ns,old.available_ns):latest[key]=proof
+    keep.update({p.sha256:p for p in latest.values()})
+    gate.coverage_reviews=keep
+
+
 @dataclass(frozen=True)
 class CaptureStep:
     scope: object
@@ -165,6 +181,8 @@ class PersistentResearchService:
                         proof=review_native_coverage(state,gate,schema,now_ns=now,
                             source_reference=f'{self.plan.sha256}:{index}:native-interval-prefix')
                         if proof:
+                            if len(gate.coverage_reviews)>=4096 and hasattr(gate,'quality_mode'):
+                                compact_live_coverage(gate,self.pipeline.bars[iid])
                             if len(gate.coverage_reviews)>=100000:raise ValueError('native_coverage_review_capacity_exceeded')
                             gate.coverage_reviews[proof.sha256]=proof
                 self.publisher.advance(self.pipeline,now_ns=now+min(0,lower),replay_ready=ready,
