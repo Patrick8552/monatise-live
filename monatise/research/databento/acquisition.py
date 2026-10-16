@@ -16,7 +16,6 @@ from dataclasses import asdict, dataclass
 from decimal import Decimal
 
 from monatise.adapters.databento_identity import timestamp_ns
-from monatise.application.persistence import PostgresDocumentStore
 from monatise.research.databento.archive import NativeDBNArchive, dbn_records
 
 SCHEMAS = {"trades", "mbp-1", "definition", "statistics", "status",
@@ -186,6 +185,7 @@ class ApprovedDownload:
 class HistoricalMetadata:
     """Reuse PostgreSQL's existing document table for metadata, never raw ticks."""
     def __init__(self, store):
+        from monatise.application.persistence import PostgresDocumentStore
         if not isinstance(store, PostgresDocumentStore):
             raise ValueError("PostgresDocumentStore required for durable manifests")
         self.store = store

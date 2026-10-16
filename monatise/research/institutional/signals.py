@@ -1,11 +1,7 @@
 """Offline transport adapters to the existing asset-specific analytical paths."""
 from dataclasses import dataclass
-from datetime import timedelta
 from types import SimpleNamespace
 
-from monatise.application.ftmo_registry import FTMO_REGISTRY
-from monatise.application.gold_analysis import GoldHierarchyAnalysis, GoldAnalysisCoordinator
-from monatise.application.hierarchy.assets import AssetHierarchyAnalysis
 from monatise.application.hierarchy.policy import INTERVAL_SECONDS
 from monatise.application.production_analysis import build_production_analysis_run
 from monatise.application.registry import canonical_registrations
@@ -62,35 +58,6 @@ class CandleEvidence:
         return rows
 
 
-class OfflineIndex(AssetHierarchyAnalysis):
-    def __init__(self, evidence):
-        super().__init__(environment={})
-        self.evidence = evidence
-
-    async def _batch(self, instrument, now):
-        from monatise.adapters.databento_identity import datetime_ns
-        rows = self.evidence.rows(expected=instrument.ftmo_symbol, now_ns=datetime_ns(now))
-        return rows, dt(self.evidence.session_end_ns), self._provenance(), None
-
-    def _provenance(self):
-        return dict(provider=self.evidence.provider, evidence_kind=self.evidence.evidence_kind,
-            source_sha256=self.evidence.source_sha256, volume_kind="tick_volume",
-            timestamp_policy="reviewed_UTC_export", point=self.evidence.point,
-            tick_size=self.evidence.tick_size, spread_price=self.evidence.spread_price)
-
-
-class OfflineGold(GoldHierarchyAnalysis):
-    def __init__(self, evidence):
-        super().__init__(environment={})
-        self.evidence = evidence
-
-    async def _batch(self, instrument, now):
-        from monatise.adapters.databento_identity import datetime_ns
-        rows = self.evidence.rows(expected=instrument.ftmo_symbol, now_ns=datetime_ns(now))
-        self._engines[instrument.ftmo_symbol][2].broker_units = dict(point=self.evidence.point,
-            tick_size=self.evidence.tick_size, spread_price=self.evidence.spread_price)
-        return rows, dt(self.evidence.session_end_ns), OfflineIndex._provenance(self), None
-
 
 def preview(*, asset, broker_instrument, institutional_instrument, now_ns, canonical=None,
             evidence_kind="UNAVAILABLE", provenance=(), mapping_status="MAPPING_UNAVAILABLE",
@@ -131,54 +98,13 @@ def dt_parse(value):
 
 async def broker_preview(*, asset, instrument, now_ns, evidence=None, positioning=None,
                          institutional_instrument=None, mapping_status="MAPPING_UNAVAILABLE", include_canonical=False):
-    if asset not in {'GC','ES','NQ'} or instrument != {'GC':'XAU/USD','ES':'US500.cash','NQ':'US100.cash'}[asset]:
-        raise ValueError("canonical_asset_route_mismatch")
-    registered = FTMO_REGISTRY.resolve(instrument)
-    def output(value, canonical=None):
-        return dict(preview=encode(value),canonical=encode(canonical)) if include_canonical else value
-    if evidence is None:
-        return output(preview(asset=asset,broker_instrument=instrument,institutional_instrument=institutional_instrument,
-            now_ns=now_ns,mapping_status="NOT_EVALUATED",canonical={"decision":"INSUFFICIENT_MARKET_DATA"},
-            reasons=('verified_broker_candles_unavailable',)))
-    try:
-        if evidence.confirmation_ns is not None and evidence.confirmation_ns > now_ns:
-            raise ValueError("confirmation_not_available_at_decision")
-        evidence.rows(expected=instrument,now_ns=now_ns)
-        if asset == 'GC':
-            technical = OfflineGold(evidence)
-            coordinator = GoldAnalysisCoordinator(technical=technical, environment={})
-            result = await coordinator.analyse(registered,now=dt(evidence.captured_ns))
-            if evidence.confirmation_sha256 is not None:
-                result = await coordinator.analyse(registered,now=dt(now_ns))
-            path = 'GoldAnalysisCoordinator/GoldHierarchyAnalysis/GoldLayerEvaluator'
-        else:
-            if not positioning:
-                raise ValueError('required_primary_index_positioning_unavailable')
-            hash_required(positioning.get('_source_sha256'))
-            if (positioning.get('_evidence_kind') != evidence.evidence_kind
-                    or not isinstance(positioning.get('_available_ns'),int)
-                    or positioning['_available_ns'] > evidence.captured_ns):
-                raise ValueError('index_positioning_provenance_or_availability_invalid')
-            from monatise.application.market_intelligence import validate_flashalpha_context
-            validate_flashalpha_context(positioning, provider_symbol=asset+'=F', now=dt(now_ns),
-                                        maximum_age=timedelta(minutes=60))
-            validate_flashalpha_context(positioning, provider_symbol=asset+'=F', now=dt(evidence.captured_ns),
-                                        maximum_age=timedelta(minutes=60))
-            # No GIL resolution/provider calls. Supplied context must pass the existing boundary.
-            analysis = OfflineIndex(evidence)
-            result = await analysis.analyse(registered,context=positioning,now=dt(evidence.captured_ns))
-            if evidence.confirmation_sha256 is not None:
-                result = await analysis.analyse(registered,context=positioning,now=dt(now_ns))
-            path = 'validate_flashalpha_context/AssetHierarchyAnalysis/HierarchyLayerEvaluator'
-        return output(preview(asset=asset,broker_instrument=instrument,institutional_instrument=institutional_instrument,
-            now_ns=now_ns,canonical=result,evidence_kind=evidence.evidence_kind,
-            provenance=(evidence.source_sha256,digest(positioning or {}))+((evidence.confirmation_sha256,) if evidence.confirmation_sha256 else ()),mapping_status=mapping_status,path=path,
-            limitations=('Institutional observations are separate context; no new scoring or price substitution.',)),result)
-    except (ValueError, TypeError, KeyError, ArithmeticError) as exc:
-        return output(preview(asset=asset,broker_instrument=instrument,institutional_instrument=institutional_instrument,
-            now_ns=now_ns,canonical={'decision':'INSUFFICIENT_MARKET_DATA'},evidence_kind=evidence.evidence_kind,
-            provenance=(evidence.source_sha256,),mapping_status=mapping_status,reasons=(str(exc),),
-            path='canonical_input_boundary'))
+    if asset not in {'GC','ES','NQ'}:
+        raise ValueError('native_futures_asset_required')
+    value=preview(asset=asset,broker_instrument=instrument,institutional_instrument=institutional_instrument,
+        now_ns=now_ns,canonical={'decision':'INSUFFICIENT_MARKET_DATA'},mapping_status='NOT_EVALUATED',
+        reasons=('canonical_futures_route_removed_use_native_market_information',),
+        path='RETIRED_FUTURES_ROUTE')
+    return dict(preview=encode(value),canonical=None) if include_canonical else value
 
 
 def _crypto_preview(*, asset, now_ns, evidence=None, derivatives=None):

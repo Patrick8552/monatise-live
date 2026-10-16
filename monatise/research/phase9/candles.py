@@ -99,14 +99,14 @@ def aggregate_complete(bars, *, target, calendar, coverage_reviews=()):
     Without explicit source-bound coverage, every child remains mandatory.
     Event-time trade-derived bars cannot use receive-time provider coverage.
     """
-    from monatise.research.databento.bar_coverage import NativeBarCoverage
+    from monatise.research.databento.bar_coverage import NativeBarCoverage,HistoricalBarCoverage
     rows = tuple(bars)
     if not rows or len(rows) > 100000: raise ValueError('bounded_bar_input_required')
     source = rows[0].timeframe
     identity=(rows[0].identity.dataset,rows[0].identity.publisher_id,rows[0].identity.instrument_id,
         rows[0].identity.raw_symbol,rows[0].identity.expiration_ns)
     reviews=tuple(coverage_reviews)
-    if len(reviews)>100000 or any(not isinstance(r,NativeBarCoverage) for r in reviews):raise ValueError('bounded_native_coverage_reviews_required')
+    if len(reviews)>100000 or any(not isinstance(r,(NativeBarCoverage,HistoricalBarCoverage)) for r in reviews):raise ValueError('bounded_native_coverage_reviews_required')
     # Select the latest compatible session proof before visiting parent buckets.
     latest={}
     for r in reviews:

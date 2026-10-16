@@ -43,9 +43,10 @@ class RotationPolicy:
 
 
 class RotatingNativeJournal:
-    def __init__(self,root, *, schema,scope,evidence_kind='AUTHENTIC_LIVE_CAPTURE',policy=None,checkpoint=None):
+    def __init__(self,root, *, schema,scope,evidence_kind='AUTHENTIC_LIVE_CAPTURE',policy=None,checkpoint=None,arrival_order=False):
         self.root=Path(root);self.root.mkdir(parents=True,exist_ok=False);self.root.chmod(0o700)
         self.schema,self.scope,self.kind=schema,scope,evidence_kind
+        self.arrival_order=arrival_order;self.last_arrival=0;self.first_arrival=0;self.wall_regressions=0
         self.policy=policy or RotationPolicy();self.checkpoint=checkpoint or (lambda:{})
         self.segments=[];self.journal=None;self.count=0;self.bytes=0;self.first_capture=0;self.last_capture=0;self.closed=False
 
@@ -59,36 +60,41 @@ class RotatingNativeJournal:
         atomic_json(self.root/'rotation.json',dict(version='phase9-native-rotation-v1',schema=self.schema,
             scope_sha256=self.scope.sha256,segments=self.segments,record_count=self.count,closed=False))
 
-    def append(self,record, *, capture_ns):
+    def append(self,record, *, capture_ns,arrival_ns=None):
         raw=bytes(record);p=self.policy
         if self.closed:raise ValueError('closed_rotating_journal')
-        if capture_ns<self.last_capture:raise ValueError('cross_segment_capture_clock_regression')
+        if self.arrival_order:
+            if type(arrival_ns) is not int or arrival_ns<=0 or arrival_ns<self.last_arrival:raise ValueError('native_monotonic_arrival_order_required')
+        elif capture_ns<self.last_capture:raise ValueError('cross_segment_capture_clock_regression')
+        frame_size=20 if self.arrival_order else 12
         if self.journal is not None and (self.journal.count>=min(p.records_per_segment,self.scope.maximum_records) or
-                self.journal.bytes+12+len(raw)>min(p.bytes_per_segment,self.scope.maximum_bytes) or
-                capture_ns-self.first_capture>=p.seconds_per_segment*10**9):
+                self.journal.bytes+frame_size+len(raw)>min(p.bytes_per_segment,self.scope.maximum_bytes) or
+                (arrival_ns-self.first_arrival if self.arrival_order else capture_ns-self.first_capture)>=p.seconds_per_segment*10**9):
             self._seal(dict(quarantined=False,storage_integrity_only=True,analytical_freshness_certified=False))
-        if self.bytes+(self.journal.bytes if self.journal else 0)+len(raw)+12>p.maximum_total_bytes:
+        if self.bytes+(self.journal.bytes if self.journal else 0)+len(raw)+frame_size>p.maximum_total_bytes:
             raise ValueError('full_session_native_storage_limit')
         if self.journal is None:
             if len(self.segments)>=p.maximum_segments:raise ValueError('full_session_segment_limit')
             self.journal=NativeJournal(self.root/f'segment-{len(self.segments):05d}',schema=self.schema,
-                scope=self.scope,evidence_kind=self.kind);self.first_capture=capture_ns
-        self.journal.append(record,capture_ns=capture_ns)
+                scope=self.scope,evidence_kind=self.kind,arrival_order=self.arrival_order);self.first_capture=capture_ns;self.first_arrival=arrival_ns
+        self.journal.append(record,capture_ns=capture_ns,arrival_ns=arrival_ns)
         self.last_append_timings=self.journal.last_append_timings
+        self.wall_regressions+=int(bool(self.count) and capture_ns<self.last_capture)
         ordinal=self.count;self.count+=1;self.last_capture=capture_ns
+        if self.arrival_order:self.last_arrival=arrival_ns
         return ordinal,hashlib.sha256(raw).hexdigest()
 
     def close(self, *, quality,checkpoint):
         if self.closed:raise ValueError('rotation_already_closed')
         self._seal(quality);self.closed=True
         value=dict(version='phase9-native-rotation-v1',schema=self.schema,scope_sha256=self.scope.sha256,
-            segments=self.segments,record_count=self.count,bytes=self.bytes,quality=quality,checkpoint=checkpoint,
+            segments=self.segments,record_count=self.count,bytes=self.bytes,local_capture_wall_regressions=self.wall_regressions,quality=quality,checkpoint=checkpoint,
             closed=True,source_format='rotated-framed-original-DBN-record-bytes')
         atomic_json(self.root/'rotation.json',value);return value
 
 
 def verify_rotated_native(root):
-    root=Path(root);index=json.loads((root/'rotation.json').read_text());end=0;previous=None
+    root=Path(root);index=json.loads((root/'rotation.json').read_text());end=0;previous=None;last_arrival=0
     if not index['closed']:raise ValueError('unclosed_native_rotation')
     if index.get('quality',{}).get('quarantined'):raise ValueError('quarantined_native_rotation')
     for item in index['segments']:
@@ -97,6 +103,9 @@ def verify_rotated_native(root):
                 or item['previous_sha256']!=previous or file_hash(path/'manifest.json')!=item['manifest_sha256']):
             raise ValueError('native_segment_chain_invalid')
         manifest,frames=verify(path)
+        if manifest['version']=='native-live-journal-v2' and frames:
+            if manifest['first_arrival_ns']<last_arrival:raise ValueError('native_segment_arrival_regression')
+            last_arrival=manifest['last_arrival_ns']
         if len(frames)!=item['end_ordinal']-end:raise ValueError('native_segment_count_mismatch')
         end=item['end_ordinal'];previous=digest(item)
         for offset,(capture,raw) in enumerate(frames):yield item['first_ordinal']+offset,capture,raw
@@ -110,7 +119,7 @@ class RotatingSpool:
         self.state=DurableSpool(self.root/'state.sqlite')
         self.state.db.execute('CREATE TABLE IF NOT EXISTS deliveries (delivery TEXT PRIMARY KEY, ordinal INTEGER, hash TEXT, signature TEXT)');self.state.db.commit()
         self.segments=self.state.load('segments') or []
-        self.count=0;self.bytes=0;self.current=None;self.first_capture=None
+        self.count=0;self.bytes=0;self.current=None;self.first_capture=None;self.first_arrival=None
         for item in self.segments:
             path=self.root/item['path']
             if path.parent!=self.root or path.is_symlink():raise ValueError('private_spool_segment_required')
@@ -122,7 +131,7 @@ class RotatingSpool:
         if self.segments and not self.segments[-1].get('sha256'):
             self.current=DurableSpool(self.root/self.segments[-1]['path'],maximum_records=self.policy.records_per_segment,
                 maximum_bytes=self.policy.bytes_per_segment)
-            self.first_capture=self.current.db.execute('SELECT MIN(captured) FROM raw').fetchone()[0]
+            self.first_capture,self.first_arrival=self.current.db.execute('SELECT captured,arrival_ns FROM raw ORDER BY id LIMIT 1').fetchone()
         self.sealed_bytes=self.bytes-(self.current.bytes if self.current else 0)
 
     def _save(self):self.state.checkpoint('segments',self.segments)
@@ -130,7 +139,7 @@ class RotatingSpool:
     def _seal(self):
         if self.current is None:return
         self.current.close();self.segments[-1]['sha256']=file_hash(self.current.path)
-        self.sealed_bytes+=self.current.bytes;self.current.path.chmod(0o400);self.current=None;self.first_capture=None;self._save()
+        self.sealed_bytes+=self.current.bytes;self.current.path.chmod(0o400);self.current=None;self.first_capture=None;self.first_arrival=None;self._save()
 
     def append(self,schema,record, **kwargs):
         p=self.policy;size=len(bytes(record))
@@ -141,14 +150,14 @@ class RotatingSpool:
             return prior[0],prior[1],False
         if self.bytes+size>p.maximum_total_bytes:raise ValueError('full_session_spool_limit')
         if self.current and (self.current.count>=p.records_per_segment or self.current.bytes+size>p.bytes_per_segment or
-                self.first_capture is not None and kwargs['capture_ns']-self.first_capture>=p.seconds_per_segment*10**9):self._seal()
+                self.first_capture is not None and ((kwargs['arrival_ns']-self.first_arrival) if self.first_arrival is not None and kwargs.get('arrival_ns') is not None else kwargs['capture_ns']-self.first_capture)>=p.seconds_per_segment*10**9):self._seal()
         if self.current is None:
             if len(self.segments)>=p.maximum_segments:raise ValueError('full_session_spool_segment_limit')
             name=f'raw-{len(self.segments):05d}.sqlite'
             self.current=DurableSpool(self.root/name,maximum_records=p.records_per_segment,maximum_bytes=p.bytes_per_segment)
             self.segments.append(dict(path=name,base=self.count,sha256=None));self._save()
         local,sha,added=self.current.append(schema,record,**kwargs)
-        if self.first_capture is None:self.first_capture=kwargs['capture_ns']
+        if self.first_capture is None:self.first_capture=kwargs['capture_ns'];self.first_arrival=kwargs.get('arrival_ns')
         if added:self.count+=1;self.bytes+=size
         global_ordinal=self.segments[-1]['base']+local
         with self.state.db:self.state.db.execute('INSERT INTO deliveries VALUES (?,?,?,?)',(kwargs['delivery_id'],global_ordinal,sha,signature))

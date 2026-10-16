@@ -223,38 +223,10 @@ def test_unsigned_european_gamma_is_a_model_benchmark_with_declared_units():
     with pytest.raises(ValueError):OptionConvention('OG','European',digest('x'),'wrong_style')
 
 
-@pytest.mark.parametrize('short,decision',[(False,'LONG'),(True,'SHORT')])
-def test_actual_gold_fixture_path_remains_non_executable(short,decision):
-    e=candle_evidence(short=short)
-    result=asyncio.run(broker_preview(asset='GC',instrument='XAU/USD',now_ns=NOW_NS,evidence=e))
-    assert result.decision==decision and 'GoldLayerEvaluator' in result.canonical_path
-    assert result.reward_risk and result.structural_stop and result.expiration_ns>NOW_NS
-    assert result.evidence_kind=='ENGINEERING_SYNTHETIC'
-    assert not any((result.execution_eligible,result.publication_eligible,result.approval_eligible,result.gil_enabled))
 
 
-@pytest.mark.parametrize('asset,instrument',[('ES','US500.cash'),('NQ','US100.cash')])
-def test_index_fixture_uses_index_hierarchy_and_required_positioning(asset,instrument):
-    e=candle_evidence(asset)
-    result=asyncio.run(broker_preview(asset=asset,instrument=instrument,now_ns=NOW_NS,evidence=e,positioning=positioning(asset)))
-    assert 'AssetHierarchyAnalysis/HierarchyLayerEvaluator' in result.canonical_path
-    assert 'GoldLayerEvaluator' not in result.canonical_path and not result.execution_eligible
-    missing=asyncio.run(broker_preview(asset=asset,instrument=instrument,now_ns=NOW_NS,evidence=e))
-    assert missing.decision=='INSUFFICIENT_MARKET_DATA'
 
 
-@pytest.mark.parametrize('fault',['missing','stale','wrong_identity','future_confirmation'])
-def test_gold_input_rejections(fault):
-    e=candle_evidence()
-    if fault=='missing':e=replace(e,timeframes_json='{}')
-    if fault=='stale':
-        frames=json.loads(e.timeframes_json)
-        frames['4h']=frames['4h'][:-2]  # Beyond canonical five-hour context lifetime.
-        e=replace(e,timeframes_json=json.dumps(frames))
-    if fault=='wrong_identity':e=replace(e,instrument='GCZ6')
-    if fault=='future_confirmation':e=replace(e,confirmation_ns=NOW_NS+1)
-    result=asyncio.run(broker_preview(asset='GC',instrument='XAU/USD',now_ns=NOW_NS,evidence=e))
-    assert result.decision not in {'LONG','SHORT'} and result.rejection_reasons
 
 
 def test_native_crypto_pipeline_preserves_derivatives_and_decision_policy():
@@ -269,21 +241,8 @@ def test_native_crypto_pipeline_preserves_derivatives_and_decision_policy():
     assert wrong['preview']['decision']=='INSUFFICIENT_MARKET_DATA'
 
 
-def test_unavailable_results_are_explicit_and_not_fake_broker_prices():
-    for asset,symbol in [('GC','XAU/USD'),('ES','US500.cash'),('NQ','US100.cash')]:
-        result=asyncio.run(broker_preview(asset=asset,instrument=symbol,now_ns=NOW_NS))
-        assert result.decision=='INSUFFICIENT_MARKET_DATA' and result.proposed_entry is None
-        assert result.mapping_status=='NOT_EVALUATED'
-        assert 'verified_broker_candles_unavailable' in result.rejection_reasons
-    assert crypto_preview(asset='BTC',now_ns=NOW_NS)['preview']['decision']=='INSUFFICIENT_MARKET_DATA'
 
 
-def test_preview_cannot_claim_execution_or_expired_qualification():
-    e=candle_evidence()
-    result=asyncio.run(broker_preview(asset='GC',instrument='XAU/USD',now_ns=NOW_NS,evidence=e))
-    with pytest.raises(ValueError):replace(result,execution_eligible=True)
-    with pytest.raises(ValueError):replace(result,publication_eligible=True)
-    with pytest.raises(ValueError):replace(result,expiration_ns=NOW_NS)
 
 
 def test_numeric_credit_ceiling_receipts_and_exact_identity_remain_required():
@@ -317,7 +276,7 @@ def test_isolated_repeat_and_environment_stripping(tmp_path,monkeypatch):
     monkeypatch.setenv('TELEGRAM_BOT_TOKEN','fixture-publisher-secret')
     summary=run(output=tmp_path/'repeat')
     assert summary['repeat_equal'] and summary['actual_downloads']==0
-    assert summary['engineering_preview_status']['GC']=='LONG'
+    assert summary['engineering_preview_status']['GC']=='INSUFFICIENT_MARKET_DATA'
     text=(tmp_path/'repeat/preview-01.json').read_text()
     assert 'fixture-secret' not in text and 'fixture-publisher-secret' not in text
     assert not summary['execution_eligible'] and not summary['production_registration']

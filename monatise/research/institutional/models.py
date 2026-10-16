@@ -1,5 +1,7 @@
 """Immutable identities, native positions, calculations and preview contracts."""
-from dataclasses import asdict, dataclass, is_dataclass
+from dataclasses import dataclass, fields, is_dataclass
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
@@ -12,22 +14,73 @@ from monatise.research.databento.datasets import InstrumentMetadata
 from . import VERSION
 
 MAPPING_VERSION='native-futures-normalization-v2'
+_JSON_ATOMS = frozenset((str, int, float, bool, type(None)))
+_DIGEST_SCOPE = ContextVar('immutable_native_digest_scope', default=None)
+
+
+@contextmanager
+def immutable_digest_scope():
+    """Reuse immutable contract/clock encodings during one detached calculation.
+
+    Only digest uses these private nodes; encode never exposes cached dictionaries.
+    No observation, bar, mutable container or prior calculation is cached. Strong
+    references prevent object-ID reuse. Context-local state cannot affect capture
+    threads, and is discarded even when calculation fails.
+    """
+    from monatise.research.databento.live_models import ClockReview
+    token = _DIGEST_SCOPE.set(({Contract, InstrumentMetadata, ClockReview}, {}))
+    try:
+        yield
+    finally:
+        _DIGEST_SCOPE.reset(token)
+
+
+def _digest_encode(value, scope):
+    if type(value) in _JSON_ATOMS:
+        return value
+    allowed, cache = scope
+    cacheable = type(value) in allowed
+    if cacheable:
+        prior = cache.get(id(value))
+        if prior is not None and prior[0] is value:
+            return prior[1]
+    if isinstance(value, dict):
+        result = {str(k): _digest_encode(v, scope) for k, v in value.items()}
+    elif isinstance(value, (tuple, list)):
+        result = [_digest_encode(v, scope) for v in value]
+    elif is_dataclass(value):
+        result = {field.name: _digest_encode(getattr(value, field.name), scope) for field in fields(value)}
+    elif isinstance(value, (Decimal, datetime)):
+        result = str(value) if isinstance(value, Decimal) else value.isoformat()
+    else:
+        result = value
+    if cacheable:
+        cache[id(value)] = (value, result)
+    return result
 
 
 def encode(value):
-    if is_dataclass(value):
-        return encode(asdict(value))
+    if type(value) in _JSON_ATOMS:
+        return value
     if isinstance(value, dict):
         return {str(k): encode(v) for k, v in value.items()}
     if isinstance(value, (tuple, list)):
         return [encode(v) for v in value]
+    if is_dataclass(value):
+        # Walk fields once. asdict recursively deep-copies the complete nested
+        # evidence tree before encode walks it again; large immutable native
+        # candle/source trees paid that cost on every digest. The canonical
+        # field names, recursion and JSON representation remain identical.
+        return {field.name: encode(getattr(value, field.name)) for field in fields(value)}
     if isinstance(value, (Decimal, datetime)):
         return str(value) if isinstance(value, Decimal) else value.isoformat()
     return value
 
 
 def digest(value):
-    return hashlib.sha256(json.dumps(encode(value), sort_keys=True,
+    scope = _DIGEST_SCOPE.get()
+    encoded = encode(value) if scope is None else _digest_encode(value, scope)
+    return hashlib.sha256(json.dumps(encoded, sort_keys=True,
         separators=(",", ":"), allow_nan=False).encode()).hexdigest()
 
 

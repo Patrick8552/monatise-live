@@ -14,6 +14,11 @@ from monatise.adapters.databento_identity import timestamp_ns
 from monatise.research.institutional.models import digest, encode
 
 
+def record_metadata_hash(delivery,schema,stamp,sha,kind,admitted,rejection,review,arrival=None):
+    fields=[delivery,schema,stamp,sha,kind,admitted,rejection,review]
+    return digest(fields if arrival is None else [*fields,dict(monotonic_arrival_ns=arrival)])
+
+
 class DurableSpool:
     def __init__(self, path, *, maximum_records=1000000, maximum_bytes=1024**3):
         if (type(maximum_records) is not int or not 1<=maximum_records<=1000000
@@ -27,14 +32,16 @@ class DurableSpool:
         self.db = sqlite3.connect(self.path)
         self.db.execute('PRAGMA journal_mode=WAL'); self.db.execute('PRAGMA synchronous=FULL')
         self.db.execute('CREATE TABLE IF NOT EXISTS raw (id INTEGER PRIMARY KEY, delivery TEXT UNIQUE, schema TEXT, captured INTEGER, native BLOB, hash TEXT, kind TEXT, admitted INTEGER, metadata_hash TEXT, rejection TEXT, clock_review TEXT)')
+        if 'arrival_ns' not in {r[1] for r in self.db.execute('PRAGMA table_info(raw)')}:self.db.execute('ALTER TABLE raw ADD COLUMN arrival_ns INTEGER')
         self.db.execute('CREATE TABLE IF NOT EXISTS states (name TEXT PRIMARY KEY, value TEXT, hash TEXT)')
         self.db.commit()
         self.maximum_records,self.maximum_bytes = maximum_records,maximum_bytes
         self.count,self.bytes = self.db.execute('SELECT COUNT(*), COALESCE(SUM(length(native)),0) FROM raw').fetchone()
         if self.count>maximum_records or self.bytes>maximum_bytes: raise ValueError('existing_spool_exceeds_bounds')
 
-    def append(self, schema, record, *, capture_ns, delivery_id, evidence_kind, admitted=True, rejection_reason=None, clock_review=None):
+    def append(self, schema, record, *, capture_ns, delivery_id, evidence_kind, admitted=True, rejection_reason=None, clock_review=None, arrival_ns=None):
         timestamp_ns(capture_ns)
+        if arrival_ns is not None and (type(arrival_ns) is not int or arrival_ns<=0):raise ValueError("positive_monotonic_arrival_required")
         if (not isinstance(delivery_id,str) or not 0<len(delivery_id)<=256 or type(admitted) is not bool or
                 evidence_kind not in {'AUTHENTIC_LIVE_CAPTURE','AUTHENTIC_ARCHIVED_RECORD','ENGINEERING_SYNTHETIC'}):
             raise ValueError('bounded_delivery_identity_and_evidence_required')
@@ -42,17 +49,17 @@ class DurableSpool:
         if clock_review is not None:clock_review.bounds(capture_ns)
         review_text=json.dumps(encode(clock_review),sort_keys=True)
         raw=bytes(record);sha=hashlib.sha256(raw).hexdigest()
-        metadata_hash=digest([delivery_id,schema,capture_ns,sha,evidence_kind,admitted,rejection_reason,review_text])
-        old=self.db.execute('SELECT id,schema,captured,hash,kind,admitted,metadata_hash,rejection,clock_review FROM raw WHERE delivery=?',(delivery_id,)).fetchone()
+        metadata_hash=record_metadata_hash(delivery_id,schema,capture_ns,sha,evidence_kind,admitted,rejection_reason,review_text,arrival_ns)
+        old=self.db.execute('SELECT id,schema,captured,hash,kind,admitted,metadata_hash,rejection,clock_review,arrival_ns FROM raw WHERE delivery=?',(delivery_id,)).fetchone()
         if old:
-            if old[1:]!=(schema,capture_ns,sha,evidence_kind,admitted,metadata_hash,rejection_reason,review_text): raise ValueError('durable_delivery_revision')
+            if old[1:]!=(schema,capture_ns,sha,evidence_kind,admitted,metadata_hash,rejection_reason,review_text,arrival_ns): raise ValueError('durable_delivery_revision')
             return old[0],sha,False
         if not 1<=len(raw)<=65536 or self.count>=self.maximum_records or self.bytes+len(raw)>self.maximum_bytes:
             raise ValueError('durable_spool_capacity_exceeded')
         # A row stores the original native record, addressed by its own SHA256.
         with self.db:
-            cursor=self.db.execute('INSERT INTO raw(delivery,schema,captured,native,hash,kind,admitted,metadata_hash,rejection,clock_review) VALUES (?,?,?,?,?,?,?,?,?,?)',
-                (delivery_id,schema,capture_ns,raw,sha,evidence_kind,admitted,metadata_hash,rejection_reason,review_text))
+            cursor=self.db.execute('INSERT INTO raw(delivery,schema,captured,native,hash,kind,admitted,metadata_hash,rejection,clock_review,arrival_ns) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+                (delivery_id,schema,capture_ns,raw,sha,evidence_kind,admitted,metadata_hash,rejection_reason,review_text,arrival_ns))
         self.count+=1;self.bytes+=len(raw)
         return cursor.lastrowid,sha,True
 
@@ -72,8 +79,9 @@ class DurableSpool:
     def replay(self, pipeline, *, ordinal_offset=0):
         import databento_dbn as dbn
         outcomes=[]
-        for ordinal,delivery,schema,stamp,raw,sha,kind,admitted,metadata_hash,rejection,review_text in self.db.execute('SELECT id,delivery,schema,captured,native,hash,kind,admitted,metadata_hash,rejection,clock_review FROM raw ORDER BY id'):
-            if digest([delivery,schema,stamp,sha,kind,bool(admitted),rejection,review_text])!=metadata_hash:raise ValueError('durable_metadata_hash_mismatch')
+        arrival_column='arrival_ns' if 'arrival_ns' in {r[1] for r in self.db.execute('PRAGMA table_info(raw)')} else 'NULL'
+        for ordinal,delivery,schema,stamp,raw,sha,kind,admitted,metadata_hash,rejection,review_text,arrival in self.db.execute('SELECT id,delivery,schema,captured,native,hash,kind,admitted,metadata_hash,rejection,clock_review,'+arrival_column+' FROM raw ORDER BY id'):
+            if record_metadata_hash(delivery,schema,stamp,sha,kind,bool(admitted),rejection,review_text,arrival)!=metadata_hash:raise ValueError('durable_metadata_hash_mismatch')
             if hashlib.sha256(raw).hexdigest()!=sha:raise ValueError('durable_native_hash_mismatch')
             rows=dbn.DBNDecoder(has_metadata=False,input_version=3).write_and_decode(raw)
             if len(rows)!=1 or bytes(rows[0])!=raw:raise ValueError('native_decoder_roundtrip_failure')

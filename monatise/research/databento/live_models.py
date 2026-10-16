@@ -82,6 +82,7 @@ class LiveScope:
     maximum_bytes: int=32*1024**2
     clock_review: ClockReview|None=None
     session_drain_seconds: int=0
+    initial_schema_starts: tuple=()
 
     def __post_init__(self):
         timestamp_ns(self.start_ns);timestamp_ns(self.session_end_ns)
@@ -106,6 +107,13 @@ class LiveScope:
                 or not self.start_ns<self.session_end_ns
                 or any(not c.metadata.receive_ns<=self.start_ns<self.session_end_ns<=c.metadata.expiration_ns for c in self.contracts)):
             raise ValueError('reviewed_bounded_exact_live_scope_required')
+        if (not isinstance(self.initial_schema_starts,tuple) or any(not isinstance(x,tuple) or len(x)!=2 for x in self.initial_schema_starts)
+                or len(dict(self.initial_schema_starts))!=len(self.initial_schema_starts)
+                or any(k not in self.schemas or k=='definition' or type(v) is not int or not self.start_ns<=v<self.session_end_ns for k,v in self.initial_schema_starts)):
+            raise ValueError('explicit_bounded_per_schema_initial_start_required')
+
+    def initial_start(self,schema):
+        return dict(self.initial_schema_starts).get(schema,self.start_ns)
 
     @property
     def sha256(self):return digest(self)
@@ -113,7 +121,7 @@ class LiveScope:
     def validate_at(self,now_ns):
         timestamp_ns(now_ns)
         lower,upper=self.clock_bounds(now_ns)
-        if (not self.start_ns<=now_ns<self.session_end_ns or now_ns-self.start_ns>24*3600*10**9
+        if (not self.start_ns<=now_ns<self.session_end_ns or now_ns-self.start_ns>24*3600*10**9 or any(v>now_ns for _,v in self.initial_schema_starts)
                 or now_ns+self.duration_seconds*10**9+max(0,upper)>self.session_end_ns+self.session_drain_seconds*10**9
                 or not 0<=now_ns-self.capability.observed_at_ns<=300*10**9):
             raise ValueError('current_reviewed_session_and_bounded_replay_required')

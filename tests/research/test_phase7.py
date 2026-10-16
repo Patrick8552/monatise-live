@@ -21,7 +21,6 @@ from monatise.research.institutional.options import OptionConvention
 from monatise.research.institutional.phase7.basis import Timestamp,Quote,BasisPolicy,certify,map_level
 from monatise.research.institutional.phase7.chain import ChainLeg,CoveragePolicy,assess,expanded_requests,review_expanded
 from monatise.research.institutional.phase7.greeks import GreekInput,validated,american_fd,validated_curve
-from monatise.research.institutional.phase7.gil import integrate,REQUIRED_GATES
 from monatise.research.institutional.phase7.scenarios import exposures
 from monatise.research.institutional.phase7.replay import native_records
 from monatise.research.institutional.phase7.runner import run
@@ -310,24 +309,10 @@ def test_sensitivity_for_wrong_contract_cannot_supply_scenario():
     assert 'mismatch' in r['scenarios'][0]['rejection_reasons'][0]
 
 
-@pytest.mark.parametrize('missing_gate',REQUIRED_GATES)
-def test_options_alone_cannot_qualify_trade(missing_gate):
-    gates={k:'PASS' for k in REQUIRED_GATES};gates[missing_gate]='MISSING'
-    r=integrate(technical_preview=None,gates=gates,basis=basis(pairs(AUTH)),chain=chain(),
-        greeks=[validated(greek_input())],provider_statuses={k:'AVAILABLE' for k in ('Databento','FlashAlpha','ThetaData','UnusualWhales')})
-    assert r['decision']=='NO_TRADE';assert r['grid_setup'] is None;assert not r['gil_enabled']
-    assert any(missing_gate in s for s in r['rejection_reasons'])
 
 
-def test_provider_outage_explicit_and_production_hierarchy_preserved():
-    r=integrate(technical_preview=None,gates={},basis=basis(),chain=chain(),greeks=[],provider_statuses={})
-    assert all(v=='UNAVAILABLE' for v in r['provider_statuses'].values())
-    assert not r['production_provider_hierarchy_changed'];assert not r['approval_created']
 
 
-def test_unreviewed_options_veto_rejected():
-    with pytest.raises(ValueError,match='reviewed'):
-        integrate(technical_preview=None,gates={},basis=basis(),chain=chain(),greeks=[],provider_statuses={},independently_validated_veto={'status':'ASSUMED'})
 
 
 def test_native_frame_hash_and_truncation_fail_closed(tmp_path):

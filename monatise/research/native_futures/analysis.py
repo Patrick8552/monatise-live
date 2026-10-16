@@ -2,9 +2,10 @@
 from decimal import Decimal
 from monatise.research.databento.candles import WIDTHS, HistoricalBar
 from monatise.research.institutional.models import digest
+from .technicals import close_indicators
 
 
-def analyse_frame(bars, *, tick_size, cutoff_ns, swing_radius=2, maximum_bars=512):
+def analyse_frame(bars, *, tick_size, cutoff_ns, swing_radius=2, maximum_bars=512, calendar=None,coverage_reviews=()):
     rows=tuple(bars);tick=Decimal(tick_size)
     if type(swing_radius) is not int or not 1<=swing_radius<=5 or tick<=0:
         raise ValueError('bounded_native_swing_policy_required')
@@ -16,11 +17,35 @@ def analyse_frame(bars, *, tick_size, cutoff_ns, swing_radius=2, maximum_bars=51
             or tick!=Decimal(dict(rows[0].identity.native_terms)['min_price_increment'])/10**9
             or type(cutoff_ns) is not int or cutoff_ns<=0):
         raise ValueError('reviewed_exact_native_futures_terms_required')
-    omitted=max(0,len(rows)-maximum_bars);rows=rows[-maximum_bars:]
+    omitted_count=max(0,len(rows)-maximum_bars);rows=rows[-maximum_bars:]
     if any(b.identity!=rows[0].identity or b.timeframe!=rows[0].timeframe or b.close_ns>cutoff_ns or b.retrieval_ns>cutoff_ns for b in rows):
         raise ValueError('exact_available_native_frame_required')
-    if any(a.close_ns!=b.open_ns for a,b in zip(rows,rows[1:])):
-        return dict(available=False,reason='noncontiguous_validated_frame',gap_fill_count=0)
+    omitted=[];provider_empty=[]
+    from monatise.research.databento.bar_coverage import HistoricalBarCoverage,NativeBarCoverage
+    if any(not isinstance(r,(HistoricalBarCoverage,NativeBarCoverage)) for r in coverage_reviews):
+        raise ValueError('typed_provider_coverage_required')
+    if calendar is not None:
+        from monatise.research.databento.candles import ExchangeCalendar
+        if (not isinstance(calendar,ExchangeCalendar)
+                or (calendar.dataset,calendar.exchange)!=(rows[0].identity.dataset,rows[0].identity.exchange)
+                or any(not calendar.contains(b.open_ns,b.close_ns) for b in rows)):
+            raise ValueError('reviewed_native_frame_calendar_required')
+    width=WIDTHS[rows[0].timeframe]
+    for a,b in zip(rows,rows[1:]):
+        if a.close_ns==b.open_ns:continue
+        if (calendar is None or a.close_ns>b.open_ns or
+                (b.open_ns-a.close_ns)%width or (b.open_ns-a.close_ns)//width>10000):
+            return dict(available=False,reason='noncontiguous_validated_frame',gap_fill_count=0)
+        for start in range(a.close_ns,b.open_ns,width):
+            if calendar.contains(start,start+width):
+                identity=(a.identity.dataset,a.identity.publisher_id,a.identity.instrument_id,a.identity.raw_symbol,a.identity.expiration_ns)
+                proof=next((r for r in coverage_reviews if r.available_ns<=cutoff_ns and width>=WIDTHS['1m'] and r.schema=='ohlcv-1m'
+                    and r.covers(identity,'ohlcv-1m',start,start+width)),None)
+                if proof:
+                    provider_empty.append(dict(open_ns=start,close_ns=start+width,coverage_sha256=proof.sha256,
+                        reason='PROVIDER_NO_PRINT_IN_VERIFIED_RESPONSE',synthetic_bar_created=False));continue
+                return dict(available=False,reason='missing_bar_in_reviewed_trading_interval',gap_fill_count=0)
+            omitted.append(dict(open_ns=start,reason='REVIEWED_CLOSED_OR_PARTIAL_SESSION_BUCKET'))
     # Strict extrema avoid inventing a pivot direction on flat/equal plateaus.
     swings=[]
     for i in range(swing_radius,len(rows)-swing_radius):
@@ -66,12 +91,14 @@ def analyse_frame(bars, *, tick_size, cutoff_ns, swing_radius=2, maximum_bars=51
             else:groups.append([s])
         for group in groups:
             if len(group)>=2:zones.append(dict(kind=kind,lower=str(Decimal(group[0]['price_fixed'])/scale),upper=str(Decimal(group[-1]['price_fixed'])/scale),touches=len(group),confirmed_at_ns=max(s['confirmed_at_ns'] for s in group)))
-    result=dict(available=True,version='native-futures-frame-v1',timeframe=rows[0].timeframe,bar_count=len(rows),omitted_older_bars=omitted,
+    result=dict(available=True,version='native-futures-frame-v1',timeframe=rows[0].timeframe,bar_count=len(rows),omitted_older_bars=omitted_count,
         start_ns=rows[0].open_ns,end_ns=rows[-1].close_ns,age_ns=cutoff_ns-rows[-1].close_ns,
         swing_policy=dict(left_bars=swing_radius,right_bars=swing_radius,strict_extrema=True,confirmation_uses_closed_bars_only=True),
         structure=structure,fibonacci=fib,liquidity_proxies=dict(available=bool(zones),zones=zones,
             basis='REPEATED_CONFIRMED_PRICE_EXTREMA',resting_orders_observed=False,participant_identity_known=False),
-        source_sha256=digest(rows),gap_fill_count=0,crypto_engines_used=False,frozen_H1_selector_used=False,GIL_rules_used=False,execution_eligible=False)
+        source_sha256=digest(rows),calendar_sha256=calendar.sha256 if calendar else None,
+        close_indicators=close_indicators(tuple(b.prices_fixed[3] for b in rows)),
+        omitted_session_buckets=omitted,provider_no_print_intervals=provider_empty,gap_fill_count=0,crypto_engines_used=False,frozen_H1_selector_used=False,GIL_rules_used=False,execution_eligible=False)
     result['reproducibility_sha256']=digest(result);return result
 
 

@@ -106,23 +106,36 @@ dealer positioning and execution qualification are not certified by this change.
 
 Delivery and durability
 -----------------------
-Callbacks use put_nowait. Owned SDK sockets pause/resume at bounded queue
-watermarks. The pinned SDK's receive view is capped at 2KiB to bound a single
-noninterruptible decode/dispatch turn; partial DBN decoding and original bytes
-are preserved. A reserve is maintained for in-flight reads across connections.
-This depends on the pinned SDK internals and is covered by an actual SDK buffer
-probe. A future SDK upgrade needs explicit revalidation.
+The collector uses Databento's documented ``Live.__aiter__`` method. Iteration
+starts streaming; it is never preceded by ``Live.start``. Subscription calls run
+off the owned networking loop. SDK buffering and backpressure are managed by the
+SDK, with reconnect disabled and slow-reader behavior ``warn`` (never skip).
+No SDK private session/protocol/queue/socket attributes or buffer methods are
+inspected or changed. Public ``terminate`` closes the finite attempt.
 
-An oversized burst can still exhaust a bounded queue. Such an attempt is
-quarantined with an exact unretained-record count and hash chain; it is never
-reported lossless, silently resumed or retried. Liveness thresholds are unchanged.
+An application consumer runs outside the networking loop and hands each yielded
+record to a bounded queue. Waiting for queue space happens on that worker, with
+at most one in-flight application record per connection. The SDK networking loop
+can still process incoming data. Shutdown drains in-flight application records
+before sealing. Nonblocking callback-only engineering adapters retain explicit
+overload count/hash-chain quarantine. No reconnect or retry is introduced.
 
-Fixed-memory latency histograms measure callback work, queue insertion/residence,
-consumer processing, journal writes, fsync, spool transactions, checkpoints and
-monotonic handoff-to-commit duration. Percentiles are histogram upper bounds.
-Wire byte/read counters, decode/dispatch duration, socket pending errors and a
-bounded rolling SDK diagnostic history separate socket silence from callback or
-consumer delays. Diagnostics contain no credentials, addresses or market prices.
+V2 framed journals preserve the original local UTC application-receive timestamp
+plus a separate monotonic arrival timestamp. Native DBN timestamps/bytes remain
+unchanged. Journal/spool rotation and delivery-stall elapsed time use monotonic
+time; wall-clock regression is a recorded diagnostic rather than fabricated or
+clamped UTC. The spool hash binds both clocks. Readers require a source-bound V2
+clock declaration, verify monotonic arrival across segments, and preserve legacy
+V1 wall-order verification. Independent UTC uncertainty/expiry and provider field,
+flag, contract, sequence and as-of validation are unchanged. A genuinely invalid
+clock review still withholds dependent information.
+
+Fixed-memory latency histograms measure handoff, queue residence, consumer work,
+journal writes, fsync, spool transactions and checkpoints. Public-iterator delivery
+counts, loop responsiveness and bounded error-stack locations replace private SDK
+wire/socket probes. Wire-level silence is not diagnosed by these application
+counters. Error reports retain bounded local validation codes and stack locations,
+while omitting arbitrary exception text that may contain secrets or licensed data.
 
 Per-record journal fsync and SQLite FULL/WAL commits remain. The local controlled
 burst demonstrated adequate bounded handling; unsafe asynchronous buffering or
@@ -190,3 +203,25 @@ References
 * https://www.cmegroup.com/markets/metals/precious/gold.contractSpecs.html
 * https://www.cmegroup.com/markets/equities/sp/e-mini-sandp500.contractSpecs.html
 * https://www.cmegroup.com/markets/equities/nasdaq/e-mini-nasdaq-100.contractSpecs.html
+
+Provider semantics in the active native-information path
+------------------------------------------------------
+Databento's live API guide documents hung-connection detection as one configured
+heartbeat interval plus ten seconds without any messages (five plus ten is15s).
+It also notes that unstable internet may need a larger margin. A Wi-Fi event is
+not an input to record validation. Delivery interruption is distinguished from
+component record rejection, and retained native evidence remains preserved;
+interrupted continuity is never presented as an uninterrupted completed test.
+The current finite research attempt policy does not perform an automatic restart.
+
+The native-information path reports actual observation ages without the inherited
+local ten-second/relative-bar-age qualification cutoffs. It does not declare old
+observations fresh or executable. Locked/missing quote diagnostics are retained
+without importing an execution qualification rule into ordinary market context.
+Databento SLOW_READER_WARNING under warn behavior is nonfatal and retained with
+its source hash; the SDK does not skip records in that mode. Lag, native provider
+errors, replay state, exact source identity and data-quality flags remain visible.
+These native-path changes do not invoke or alter the excluded legacy engine graph.
+
+Reference: https://databento.com/docs/api-reference-live (System messages,
+Hung connection and Slow reader behavior).

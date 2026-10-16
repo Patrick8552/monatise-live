@@ -20,7 +20,6 @@ from .udi import reviewed_definition,UDIReview,OG_SPEC
 from .basis import Timestamp,Quote
 from .chain import ChainLeg,CoveragePolicy,assess
 from .greeks import GreekInput,validated
-from .gil import integrate,REQUIRED_GATES
 from . import SAFETY
 
 
@@ -118,8 +117,6 @@ def run(*,capture,catalog_manifest,rate_evidence,maximum_greek_diagnostics=8):
     basis=dict(status='REJECTED',basis=None,uncertainty=None,qualified_spot_mapping=False,
         rejection_reasons=['TradingView_bid_ask_event_and_provider_receive_timestamps_unavailable',
                            'authoritative_local_clock_and_drift_not_verified'],**SAFETY)
-    decision=integrate(technical_preview=None,gates={k:'NOT_CERTIFIED' for k in REQUIRED_GATES},basis=basis,
-        chain=coverage,greeks=diagnostics,provider_statuses={'Databento':'ARCHIVED_CAPTURE_ONLY'})
     code_hash=digest(repository_source_hashes(Path(__file__).resolve().parents[4]))
     return dict(schema='monatise-phase7-certification-followup-v1',as_of_ns=cutoff,source_hashes_sha256=code_hash,
         evidence_kind='AUTHENTIC_ARCHIVED_RECORD',input_sha256=digest(dict(source_hashes=source_hashes,
@@ -134,5 +131,5 @@ def run(*,capture,catalog_manifest,rate_evidence,maximum_greek_diagnostics=8):
         gamma=dict(status='BLOCKED_CERTIFICATION',dealer_gex=None,gamma_flip=None,wall=None,
             rejection_reasons=['incomplete_exchange_scope','unknown_dealer_inventory','unvalidated_sensitivities_for_full_scope']),
         mappings=dict(status='UNAVAILABLE',qualified_spot_entries=None,actual_broker_price=None),
-        decision=decision,incremental_data_cost_estimated_usd='0',paid_acquisitions=0,
+        trade_qualification_performed=False,incremental_data_cost_estimated_usd='0',paid_acquisitions=0,
         actual_usage_reconciliation='NOT_INDEPENDENTLY_RECONCILED',**SAFETY)

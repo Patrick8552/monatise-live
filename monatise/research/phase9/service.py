@@ -15,6 +15,22 @@ from monatise.research.institutional.models import digest, hash_required
 from . import SAFETY
 
 
+def compact_live_coverage(gate,frames):
+    """Compact equivalent live proof indexes; raw controls/outbox stay retained."""
+    from monatise.research.databento.bar_coverage import NativeBarCoverage
+    referenced={r.sha256 for rows in frames.values() for bar in rows.values() for r in getattr(bar,'coverage_reviews',())}
+    keep={};latest={}
+    for sha,proof in gate.coverage_reviews.items():
+        if not isinstance(proof,NativeBarCoverage) or sha in referenced:
+            keep[sha]=proof
+        if isinstance(proof,NativeBarCoverage):
+            key=(proof.identity,proof.schema,proof.start_ns,proof.review_reference)
+            old=latest.get(key)
+            if old is None or (proof.end_ns,proof.available_ns)>(old.end_ns,old.available_ns):latest[key]=proof
+    keep.update({p.sha256:p for p in latest.values()})
+    gate.coverage_reviews=keep
+
+
 @dataclass(frozen=True)
 class CaptureStep:
     scope: object
@@ -66,11 +82,18 @@ def _retryable(report):
 
 
 class PersistentResearchService:
-    def __init__(self, plan, spool, pipeline, *, client_factory=None, clock_ns=time.time_ns, rotation_policy=None, publisher=None, clock_refresh=None, bootstrap_review=None):
+    def __init__(self, plan, spool, pipeline, *, client_factory=None, clock_ns=time.time_ns, rotation_policy=None, publisher=None, clock_refresh=None, bootstrap_review=None,recovery_policy=None,recovery_prepare=None):
         self.plan,self.spool,self.pipeline = plan,spool,pipeline
         self.factory,self.clock_ns = client_factory,clock_ns
         self.rotation_policy,self.publisher,self.clock_refresh=rotation_policy,publisher,clock_refresh
         self.bootstrap_review=bootstrap_review
+        self.recovery_policy,self.recovery_prepare=recovery_policy,recovery_prepare
+        if recovery_policy is not None:
+            from monatise.research.native_futures.recovery import RecoveryPolicy
+            if (not isinstance(recovery_policy,RecoveryPolicy) or len(plan.steps)!=1 or bootstrap_review or
+                    recovery_prepare is None or recovery_policy.total_seconds!=plan.steps[0].scope.duration_seconds or
+                    any(getattr(g,'quality_mode',None)!='DATABENTO_NATIVE_INFORMATION_V1' for g in pipeline.gates.values())):
+                raise ValueError('explicit_finite_native_recovery_authorization_required')
 
     async def run(self, *, api_key, output, permit_ledger, evidence_kind='AUTHENTIC_LIVE_CAPTURE'):
         output=Path(output)
@@ -87,8 +110,11 @@ class PersistentResearchService:
         reports=[]
         from monatise.research.databento.latency import Latencies
         durability_latencies=Latencies()
-        for index in range(start,len(self.plan.steps)):
-            step=self.plan.steps[index]
+        steps=list(self.plan.steps);index=start;began=asyncio.get_running_loop().time();receipts=[]
+        self.recovering=False;self.active_attempt=0
+        if self.recovery_policy is not None and previous:raise ValueError('interrupted_recovery_service_requires_review')
+        while index<len(steps):
+            step=steps[index];self.active_attempt=index
             if (set(c.metadata.instrument_id for c in step.scope.contracts)-set(self.pipeline.gates)
                     or any(self.pipeline.gates[c.metadata.instrument_id].contract!=c for c in step.scope.contracts)):
                 raise ValueError('preloaded_reviewed_pipeline_contract_required')
@@ -105,12 +131,19 @@ class PersistentResearchService:
                 self.spool.checkpoint('bootstrap',dict(review_sha256=self.bootstrap_review.sha256,
                     scope_sha256=step.scope.sha256,cursors=checkpoints,source_root=self.bootstrap_review.source_root))
             step.permit.validate(step.scope,self.clock_ns())
+            if self.recovery_policy is not None:
+                from monatise.research.institutional.models import encode
+                receipt=dict(index=index,step=encode(step),checkpoints=checkpoints,
+                    spool_records_before=self.spool.count,prepared_at_ns=self.clock_ns())
+                receipts.append(receipt)
+                self.spool.checkpoint('recovery_attempts',dict(version=self.recovery_policy.version,
+                    plan_sha256=self.plan.sha256,attempts=receipts))
             def sink(schema,record,captured,ordinal,normalized):
                 admitted=normalized is not None and schema!='definition'
                 begun=time.perf_counter_ns()
                 position,sha,_=self.spool.append(schema,record,capture_ns=captured,
                     delivery_id=f'{self.plan.sha256}:{index}:{schema}:{ordinal}',evidence_kind=evidence_kind,
-                    admitted=admitted,clock_review=capture.active_clock_review)
+                    admitted=admitted,clock_review=capture.active_clock_review,arrival_ns=capture.active_arrival_ns)
                 durability_latencies.record('durable_spool_transaction',time.perf_counter_ns()-begun)
                 # Native control and verified replay-prefix duplicates do not
                 # become market volume. The source bytes remain in both journals.
@@ -123,7 +156,7 @@ class PersistentResearchService:
             def reject(schema,record,captured,ordinal,error_type):
                 self.spool.append(schema,record,capture_ns=captured,
                     delivery_id=f'{self.plan.sha256}:{index}:{schema}:{ordinal}',evidence_kind=evidence_kind,
-                    admitted=False,rejection_reason=error_type,clock_review=capture.active_clock_review)
+                    admitted=False,rejection_reason=error_type,clock_review=capture.active_clock_review,arrival_ns=capture.active_arrival_ns)
                 iid=getattr(record,'instrument_id',None)
                 if iid in self.pipeline.gates:self.pipeline.gates[iid].transport_gap(schema,error_type,event_ns=getattr(record,'ts_event',None))
             journal_factory=None
@@ -131,10 +164,13 @@ class PersistentResearchService:
                 from .rotation import RotatingNativeJournal
                 journal_factory=lambda *a,**kw:RotatingNativeJournal(*a,policy=self.rotation_policy,**kw)
             capture=CMELiveCapture(step.scope,client_factory=self.factory,clock_ns=self.clock_ns,
-                journal_factory=journal_factory,clock_refresh=self.clock_refresh)
+                journal_factory=journal_factory,clock_refresh=self.clock_refresh,
+                native_information=all(getattr(g,'quality_mode',None)=='DATABENTO_NATIVE_INFORMATION_V1' for g in self.pipeline.gates.values()))
             self.capture=capture
             def tick(state,now):
+                self.recovering=state.completed!=set(step.scope.schemas)
                 if self.publisher is None:return
+                if self.recovery_policy is not None and self.recovering:return
                 lower,_=state.clock_review.bounds(now) if state.clock_review else (0,0)
                 health=state.health(now)
                 ready={(schema,iid) for schema in state.completed for iid in state.verified_definitions
@@ -145,6 +181,8 @@ class PersistentResearchService:
                         proof=review_native_coverage(state,gate,schema,now_ns=now,
                             source_reference=f'{self.plan.sha256}:{index}:native-interval-prefix')
                         if proof:
+                            if len(gate.coverage_reviews)>=4096 and hasattr(gate,'quality_mode'):
+                                compact_live_coverage(gate,self.pipeline.bars[iid])
                             if len(gate.coverage_reviews)>=100000:raise ValueError('native_coverage_review_capacity_exceeded')
                             gate.coverage_reviews[proof.sha256]=proof
                 self.publisher.advance(self.pipeline,now_ns=now+min(0,lower),replay_ready=ready,
@@ -153,12 +191,28 @@ class PersistentResearchService:
                 output=output/f'attempt-{index:02d}',checkpoints=checkpoints,
                 recovery_review_reference=step.review_reference if checkpoints else None,
                 bootstrap_prefixes=self.bootstrap_review.prefix_reviews() if index==0 and self.bootstrap_review else None,
+                count_recovery=bool(self.recovery_policy is not None and index),
                 evidence_kind=evidence_kind,record_sink=sink,rejection_sink=reject,tick_sink=tick,
                 metrics_sink=durability_latencies.summary,
                 checkpoint_sink=lambda value:self.spool.checkpoint('feed_cursor',dict(cursors=value,spool_records=self.spool.count)))
             reports.append(report)
             self.spool.checkpoint('service',dict(plan_sha256=self.plan.sha256,next_step=index+1,
                 in_flight=False,last_report_sha256=digest(report)))
+            if self.recovery_policy is not None:
+                from monatise.research.native_futures.recovery import recoverable,validate_recovery_scope
+                if (not recoverable(report) or index+1>=self.recovery_policy.maximum_attempts):break
+                self.recovering=True
+                await asyncio.sleep(self.recovery_policy.delay_seconds)
+                remaining=int(self.recovery_policy.total_seconds-(asyncio.get_running_loop().time()-began))
+                if remaining<1:break
+                # The operator callback performs real metadata/clock checks;
+                # never manufacture refreshed entitlement timestamps here.
+                prepared=await asyncio.wait_for(asyncio.to_thread(self.recovery_prepare,index+1,remaining),timeout=min(remaining,60))
+                remaining=int(self.recovery_policy.total_seconds-(asyncio.get_running_loop().time()-began))
+                validate_recovery_scope(self.plan.steps[0].scope,prepared.scope,remaining)
+                if prepared.mode!='RECOVER':raise ValueError('explicit_recovery_step_required')
+                if prepared.permit.permit_id in {s.permit.permit_id for s in steps}:raise ValueError('one_use_recovery_permit_required')
+                steps.append(prepared);index+=1;continue
             if index+1>=len(self.plan.steps):break
             mode=self.plan.steps[index+1].mode
             if mode=='RECOVER':
@@ -171,7 +225,9 @@ class PersistentResearchService:
                 self.spool.checkpoint('service',dict(plan_sha256=self.plan.sha256,next_step=index+1,
                     terminated=True,reason='quarantined_capture_outcome'))
                 break
+            index+=1
         return dict(version='phase9-persistent-research-v1',plan_sha256=self.plan.sha256,
             attempts=len(reports),reports=reports,spool_records=self.spool.count,
             analytical_publication=self.publisher.summary() if self.publisher else None,
+            recovery_policy=encode(self.recovery_policy) if self.recovery_policy is not None else None,
             complete_exchange_continuity=False,fresh_live_operation_verified=False,**SAFETY)

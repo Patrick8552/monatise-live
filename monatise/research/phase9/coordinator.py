@@ -1,19 +1,8 @@
-"""Native GC/ES/NQ context using existing pure analytical engines; no CFD transport."""
-from collections import defaultdict
+"""Native GC/ES/NQ context; canonical engines and frozen selector deleted."""
 from datetime import UTC, datetime
 from decimal import Decimal
 import logging
-from math import log, sqrt
 
-from monatise.core.models import Candle
-from monatise.engines.market_data import MarketSnapshot, DataQuality, DataStatus
-from monatise.engines.regime import RegimeEngine, RegimeRequest
-from monatise.engines.liquidity import LiquidityEngine, LiquidityRequest
-from monatise.engines.liquidity_sweep import LiquiditySweepEngine, SweepRequest
-from monatise.engines.supply_demand import SupplyDemandEngine, ZoneRequest
-from monatise.engines.reclaim import ReclaimEngine, ReclaimRequest
-from monatise.engines.market_structure import MarketStructureEngine, MarketStructureRequest
-from monatise.engines.fibonacci_liquidity import FibonacciLiquidityEngine, FibonacciRequest
 from monatise.research.databento.candles import WIDTHS
 from monatise.research.institutional.indicators import trade_indicators, book_indicator, open_interest_change
 from monatise.research.institutional.models import digest, encode
@@ -32,7 +21,6 @@ def price_components(contract, bars, *, now_ns, calendar, policy=None, reviewed_
     rows = tuple(bars)
     if not rows: raise ValueError('no_validated_candles')
     tf = rows[0].timeframe; width = WIDTHS[tf]
-    policy = policy or inherited_policy(contract,'candles',timeframe_ns=width)
     categories={b.evidence_kind for b in rows}
     authentic={'AUTHENTIC_HISTORICAL_DOWNLOAD','AUTHENTIC_LIVE_CAPTURE','MIXED_AUTHENTIC_HISTORY_AND_LIVE'}
     if len(categories)>1 and not (reviewed_history and categories<=authentic):
@@ -40,7 +28,7 @@ def price_components(contract, bars, *, now_ns, calendar, policy=None, reviewed_
     omitted=[]
     for i,b in enumerate(rows):
         if (b.identity != contract.metadata or b.timeframe != tf or
-                b.retrieval_ns > now_ns or b.close_ns+10*10**9 > now_ns):
+                b.retrieval_ns > now_ns or b.close_ns > now_ns):
             raise ValueError('mixed_revised_future_forming_or_noncontiguous_bars')
         if i and rows[i-1].close_ns!=b.open_ns:
             previous=rows[i-1].close_ns
@@ -51,53 +39,23 @@ def price_components(contract, bars, *, now_ns, calendar, policy=None, reviewed_
                     raise ValueError('missing_bar_in_reviewed_trading_interval')
                 omitted.append(dict(open_ns=start,reason='REVIEWED_CLOSED_OR_PARTIAL_SESSION_BUCKET'))
         if not calendar.contains(b.open_ns,b.close_ns): raise ValueError('bar_outside_reviewed_session')
-    timing = policy.assess(source_ns=rows[-1].close_ns,available_ns=max(b.retrieval_ns for b in rows),
-        now_ns=now_ns,expires_ns=contract.metadata.expiration_ns)
-    cs = tuple(Candle(instant(b.open_ns).isoformat(),*(p/10**9 for p in b.prices_fixed),b.volume) for b in rows)
-    market = MarketSnapshot(contract.metadata.raw_symbol,tf,cs[-1].close,cs,
-        DataQuality(DataStatus.READY,'Databento_native_research',instant(now_ns),instant(rows[-1].close_ns),
-                    (now_ns-rows[-1].close_ns)/10**9),metadata=dict(price_type='reference',executable_quote=False))
-    # Execute the existing graph in dependency order. An unavailable downstream
-    # component cannot erase already calculated upstream context.
-    outputs,engine_health={},{}
-    stages=(('regime',(),lambda:RegimeEngine().assess(RegimeRequest(market))),
-        ('liquidity',('regime',),lambda:LiquidityEngine().assess(LiquidityRequest(market,outputs['regime']))),
-        ('sweep',('liquidity','regime'),lambda:LiquiditySweepEngine().assess(SweepRequest(market,outputs['liquidity'],outputs['regime']))),
-        ('zones',('regime','liquidity'),lambda:SupplyDemandEngine().assess(ZoneRequest(market,outputs['regime'],outputs['liquidity']))),
-        ('reclaim',('sweep','regime','zones'),lambda:ReclaimEngine().assess(ReclaimRequest(market,outputs['sweep'],outputs['regime'],outputs['zones']))),
-        ('structure',('regime','liquidity','sweep','reclaim','zones'),lambda:MarketStructureEngine().assess(MarketStructureRequest(
-            market,outputs['regime'],outputs['liquidity'],outputs['sweep'],outputs['reclaim'],outputs['zones']))),
-        ('fibonacci',('structure','liquidity','zones','reclaim'),lambda:FibonacciLiquidityEngine().assess(FibonacciRequest(
-            market,outputs['structure'],outputs['liquidity'],outputs['zones'],outputs['reclaim']))))
-    for name,dependencies,calculate in stages:
-        missing=[d for d in dependencies if d not in outputs]
-        if missing:
-            engine_health[name]=dict(available=False,reason='upstream_component_unavailable',dependencies=missing)
-            continue
-        try:
-            outputs[name]=calculate();engine_health[name]=dict(available=True)
-        except Exception as exc:
-            unexpected=not isinstance(exc,(ValueError,TypeError,ArithmeticError))
-            if unexpected:LOGGER.error('Native analytical engine defect',extra={'engine':name,'error_type':type(exc).__name__},exc_info=False)
-            engine_health[name]=dict(available=False,error_type=type(exc).__name__,unexpected_error=unexpected,reason='analytical_engine_defect' if unexpected else str(exc)[:160])
-    prices = [c.close for c in cs]
-    returns = [log(b/a) for a,b in zip(prices,prices[1:])]
-    mean = sum(returns)/len(returns) if returns else None
-    volatility = sqrt(sum((x-mean)**2 for x in returns)/(len(returns)-1)) if len(returns)>1 else None
-    return dict(available=True, freshness=timing, historical_only=not timing['contextual_eligible'],
+    timing=dict(source_ns=rows[-1].close_ns,available_ns=max(b.retrieval_ns for b in rows),
+        age_ns=now_ns-rows[-1].close_ns,contextual_eligible=True,
+        local_freshness_cutoff_applied=False,original_expiry_ns=None)
+    from monatise.research.native_futures.analysis import analyse_frame
+    native=analyse_frame(rows,tick_size=contract.tick_size,cutoff_ns=now_ns,calendar=calendar)
+    scale=Decimal(10**9)
+    return dict(available=True,freshness=timing,historical_only=not timing['contextual_eligible'],
         schema=rows[-1].schema,timeframe=tf,event_ns=rows[-1].open_ns,close_ns=rows[-1].close_ns,
-        capture_ns=max(b.retrieval_ns for b in rows),
-        coverage='REVIEWED_COMPLETE_SESSION_BUCKETS_ONLY' if reviewed_history else 'CONTIGUOUS_CAPTURED_BARS_ONLY',
-        validated_candle_count=len(rows),evidence_categories=sorted(categories),omitted_session_buckets=omitted,
+        capture_ns=max(b.retrieval_ns for b in rows),validated_candle_count=len(rows),
+        evidence_categories=sorted(categories),omitted_session_buckets=omitted,
         source_sha256=digest(rows),source_hashes=[h for b in rows for h in b.source_hashes],
-        **{k:encode(v) for k,v in outputs.items()},engine_health=engine_health,
-        analysis_partial=any(not v['available'] for v in engine_health.values()),
-        session_statistics=dict(open=cs[0].open,high=max(c.high for c in cs),low=min(c.low for c in cs),
-            close=cs[-1].close,volume_contracts=sum(c.volume for c in cs),
-            scope='VALIDATED_HISTORY_AND_LIVE_SESSION_BUCKETS' if reviewed_history else 'CAPTURED_CONTIGUOUS_BARS'),
-        volatility=dict(value=volatility,method='sample-stdev-log-close-returns',annualized=False),
-        reference_price=market.price, executable_quote=False, original_expiry_ns=rows[-1].close_ns+2*width,
-        frozen_H1_parent_qualified=False, **SAFETY)
+        native_analysis=native,crypto_engines_used=False,selector_applied=False,
+        session_statistics=dict(open=rows[0].prices_fixed[0]/scale,
+            high=max(b.prices_fixed[1] for b in rows)/scale,low=min(b.prices_fixed[2] for b in rows)/scale,
+            close=rows[-1].prices_fixed[3]/scale,volume_contracts=sum(b.volume for b in rows)),
+        reference_price=rows[-1].prices_fixed[3]/scale,executable_quote=False,
+        analysis_partial=not native['available'],**SAFETY)
 
 
 from .lineage import verify_bar_lineage
@@ -147,8 +105,8 @@ class NativeFuturesCoordinator:
         result = envelope(c,components,mandatory=mandatory,requested=requested,now_ns=now_ns,context_only=contextual_scope)
         result.update(basis_status='NOT_APPLICABLE',analysis_instrument=c.metadata.raw_symbol,
             price_namespace=c.metadata.namespace,positioning_qualification='NOT_EVALUATED',
-            GIL_qualification='UNAVAILABLE_SEPARATE_PROVIDER_HIERARCHY', quote_is_optional_for_price_context=True,
-            source_health=health, frozen_selector_modified=False)
+            quote_is_optional_for_price_context=True,source_health=health,
+            crypto_engines_used=False,frozen_H1_selector_used=False,GIL_rules_used=False)
         result['reproducibility_sha256'] = digest({k:v for k,v in result.items() if k!='reproducibility_sha256'})
         return result
 

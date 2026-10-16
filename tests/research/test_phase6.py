@@ -327,12 +327,13 @@ def test_options_mapping_rejects_incompatible_or_unavailable_levels(fault):
 
 
 @pytest.mark.parametrize('short,positive,expected',[(False,True,'LONG'),(True,True,'SHORT'),(False,False,'NO_TRADE')])
-def test_canonical_gold_positive_and_negative_engineering_paths(short,positive,expected):
+def test_former_canonical_futures_patterns_cannot_reactivate_retired_route(short,positive,expected):
     r=asyncio.run(evaluate_broker(asset='GC',instrument='XAU/USD',cutoff_ns=NOW_NS,
         evidence=candle_evidence(short=short,positive=positive),allow_engineering=True))
-    assert r['status']==expected and r['canonical_evaluation_attempted']
-    assert r['result_kind']=='ENGINEERING_CANONICAL_CODE_PATH' and not r['execution_eligible']
-    if expected!='NO_TRADE':assert r['entry'] and r['stop'] and r['targets']
+    assert r['status']=='REJECTED_QUALITY' and not r['canonical_evaluation_attempted']
+    assert not r['execution_eligible'] and r['canonical'] is None
+    assert r['entry'] is None and r['stop'] is None and r['targets'] is None
+    assert 'canonical_futures_route_removed' in r['rejection_reasons'][0]
 
 
 @pytest.mark.parametrize('fault',['missing','fixture','future','incomplete'])
@@ -361,7 +362,7 @@ def test_phase6_isolated_replay_deterministic_and_credentials_removed(tmp_path,m
     a=(tmp_path/'phase6/replay-01.json').read_bytes();b=(tmp_path/'phase6/replay-02.json').read_bytes()
     assert a==b and result['repeat_equal'] and result['new_acquisitions']==0
     assert 'DO_NOT_INHERIT' not in a.decode() and result['authentic_canonical']['GC']=='BLOCKED_AUTHENTIC_INPUTS'
-    assert result['engineering_canonical']['GC']=='LONG' and result['engineering_canonical']['GC_SHORT']=='SHORT'
+    assert result['engineering_canonical']['GC']=='REJECTED_QUALITY' and result['engineering_canonical']['GC_SHORT']=='REJECTED_QUALITY'
     assert not result['research_admission_eligible']
     with pytest.raises(FileExistsError):run(output=tmp_path/'phase6')
 

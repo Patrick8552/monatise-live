@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from monatise.engines.asset_scope import require_canonical_non_futures
+
 from collections import defaultdict
 from dataclasses import replace
 from statistics import mean
@@ -26,6 +28,7 @@ class LiquidityEngine:
     def assess(self, request: LiquidityRequest) -> LiquidityAssessment:
         request.validate()
         market = request.market
+        require_canonical_non_futures(market.symbol)
         reasons: list[str] = []
 
         if market.quality.status is DataStatus.NO_DATA:

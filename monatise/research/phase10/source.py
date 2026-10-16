@@ -70,11 +70,15 @@ def load_capture(root,*,cutoff_ns,maximum_records=2000000,observation_sink=None,
         raise ValueError('analysis_inputs_authorization_mismatch')
     steps=auth['plan']['steps']
     if len(steps)!=1:raise ValueError('analysis_access_requires_single_reviewed_attempt')
-    scope=steps[0]['scope'];schemas=tuple(scope['schemas']);refs=auth['calibration_references']
-    if not set(schemas)<={'definition','trades','ohlcv-1s','ohlcv-1m'} or 'trades' not in schemas:
+    scope=steps[0]['scope'];schemas=tuple(scope['schemas']);refs=auth.get('calibration_references',{})
+    from monatise.research.native_futures.information_gate import NativeInformationGate,MODE
+    native_only=auth.get('quality_mode')==MODE
+    if auth.get('quality_mode') not in (None,MODE):raise ValueError('unknown_source_quality_mode')
+    allowed={'definition','trades','mbp-1','ohlcv-1s','ohlcv-1m'} | ({'mbp-10','statistics','status'} if native_only else set())
+    if not set(schemas)<=allowed or 'trades' not in schemas:
         raise ValueError('access_v1_requires_reviewed_trade_and_native_candle_capture')
     contracts={};gates={};calendars={};anchors={}
-    for schema in schemas:
+    for schema in (() if native_only else schemas):
         if schema=='definition':continue
         wanted={v['anchor_record_sha256'] for k,v in refs.items() if k.endswith(':'+schema)}
         anchor_folder=Path(inputs['anchor_root'])/schema
@@ -90,33 +94,61 @@ def load_capture(root,*,cutoff_ns,maximum_records=2000000,observation_sink=None,
             row=rows[0];anchors[(row.instrument_id,schema,sha)]=(row,at)
     for encoded in scope['contracts']:
         c=decode_contract(encoded);iid=c.metadata.instrument_id;contracts[iid]=c;policies={};points={}
-        for schema in schemas:
-            if schema=='definition':continue
-            key=c.metadata.raw_symbol+':'+schema
-            pd=dict(inputs['policies'][key]);pd['scale']=Decimal(pd['scale']);policy=PlausibilityPolicy(**pd)
-            if policy.sha256!=refs[key]['policy_sha256']:raise ValueError('source_policy_hash_mismatch')
-            sha=refs[key]['anchor_record_sha256'];row,at=anchors[(iid,schema,sha)]
-            if row.ts_event!=refs[key]['anchor_event_ns']:raise ValueError('source_anchor_event_mismatch')
-            price=Decimal(row.price if schema=='trades' else row.close)/10**9
-            index=timestamp_ns(row.ts_recv if schema=='trades' else row.ts_event)
-            if refs[key].get('anchor_index_ns',index)!=index:raise ValueError('source_anchor_index_mismatch')
-            policies[schema]=policy;points[schema]=dict(anchor=price,anchor_ns=index,anchor_sha256=sha)
-        gates[iid]=QualityGate(c,policies['trades'],**points['trades'],schema_policies=policies,schema_anchors=points,rolling=True,capacity=50000)
-        ref=scope['session_review_reference']
-        opened=inputs['session_open_ns'];closed=scope['session_end_ns']
-        calendars[iid]=ExchangeCalendar('GLBX.MDP3',c.metadata.exchange,ref,digest(ref),'explicit-read-only-capture-session',opened,closed,((opened,closed),))
-    pipeline=ResearchPipeline(gates,calendars,enabled_schemas=schemas,rolling=True,capacity=50000)
+        if native_only:
+            gates[iid]=NativeInformationGate(c,capacity=50000,rolling=True)
+            cal=dict(inputs['calendars'][str(iid)]);cal['intervals']=tuple(tuple(x) for x in cal['intervals'])
+            calendars[iid]=ExchangeCalendar(**cal)
+        else:
+            for schema in schemas:
+                if schema=='definition':continue
+                key=c.metadata.raw_symbol+':'+schema
+                pd=dict(inputs['policies'][key]);pd['scale']=Decimal(pd['scale']);policy=PlausibilityPolicy(**pd)
+                if policy.sha256!=refs[key]['policy_sha256']:raise ValueError('source_policy_hash_mismatch')
+                sha=refs[key]['anchor_record_sha256'];row,at=anchors[(iid,schema,sha)]
+                if row.ts_event!=refs[key]['anchor_event_ns']:raise ValueError('source_anchor_event_mismatch')
+                price=Decimal(row.price if schema=='trades' else row.levels[0].ask_px if schema=='mbp-1' else row.close)/10**9
+                index=timestamp_ns(row.ts_recv if schema in {'trades','mbp-1'} else row.ts_event)
+                if refs[key].get('anchor_index_ns',index)!=index:raise ValueError('source_anchor_index_mismatch')
+                policies[schema]=policy;points[schema]=dict(anchor=price,anchor_ns=index,anchor_sha256=sha)
+            gates[iid]=QualityGate(c,policies['trades'],**points['trades'],schema_policies=policies,schema_anchors=points,rolling=True,capacity=50000)
+            ref=scope['session_review_reference']
+            opened=inputs['session_open_ns'];closed=scope['session_end_ns']
+            calendars[iid]=ExchangeCalendar('GLBX.MDP3',c.metadata.exchange,ref,digest(ref),'explicit-read-only-capture-session',opened,closed,((opened,closed),))
+    history_schemas=tuple(x['schema'] for x in inputs.get('native_history',())) if native_only else ()
+    pipeline=ResearchPipeline(gates,calendars,enabled_schemas=tuple(dict.fromkeys((*schemas,*history_schemas))),rolling=True,capacity=50000)
+    if native_only and inputs.get('native_history'):
+        from monatise.research.native_futures.history import seed_native_history
+        seed_native_history(pipeline,inputs['native_history'],cutoff_ns=cutoff_ns)
     from monatise.research.native_futures.quality_review import NativeQualityReview
     native_review=NativeQualityReview()
     # Read source health before the cursor snapshot. A later progress write can
     # contain failures outside the prefix being replayed by this request.
     progress_snapshot=read_json(root/'progress.json') if (root/'progress.json').exists() else None
-    final_snapshot=read_json(root/'capture/attempt-00/report.json',32*1024**2) if (root/'capture/attempt-00/report.json').exists() else None
+    recovery=auth.get('recovery_policy')
+    if recovery:
+        from monatise.research.native_futures.recovery import RecoveryPolicy,ReplayAudit,decode_scope
+        policy=RecoveryPolicy(**recovery)
+        if not native_only:raise ValueError('native_recovery_reader_required')
+    final_snapshot=None
+    if not recovery:
+        final_snapshot=read_json(root/'capture/attempt-00/report.json',32*1024**2) if (root/'capture/attempt-00/report.json').exists() else None
     state=readonly(root/'spool/state.sqlite')
     try:
         segments=checkpoint(state,'segments');cursor=checkpoint(state,'feed_cursor');limit=cursor['spool_records']
+        audit=None;attempts=None
+        if recovery:
+            attempts=checkpoint(state,'recovery_attempts')
+            if (attempts['version']!=policy.version or attempts['plan_sha256']!=digest(auth['plan']) or
+                    not 1<=len(attempts['attempts'])<=policy.maximum_attempts):raise ValueError('source_recovery_authority_mismatch')
+            audit=ReplayAudit(decode_scope(scope),attempts['attempts'])
+            active=len(attempts['attempts'])-1
+            final_path=root/f'capture/attempt-{active:02d}/report.json'
+            if final_path.exists() and progress_snapshot and progress_snapshot['status'] not in {'CAPTURING','RECOVERING'}:
+                final_snapshot=read_json(final_path,32*1024**2)
+                if final_snapshot['scope_sha256']!=digest(attempts['attempts'][active]['step']['scope']):
+                    raise ValueError('source_final_recovery_scope_mismatch')
         if type(limit) is not int or not 0<=limit<=maximum_records:raise ValueError('analysis_replay_record_budget_exceeded')
-        count=0;accepted=0;rejected=0;last_global=0;kinds=set();last_captures={};delivery_prefix=digest(auth['plan'])+':0:'
+        count=0;accepted=0;rejected=0;last_global=0;kinds=set();last_captures={};last_arrivals={};delivery_prefix=digest(auth['plan'])+':0:';last_attempt=0
         acks=set();replays=set();markers={};native_prefix=digest([]);clock_cache={};prefix_last_ns=0;prefix_clock=None
         for segment in segments:
             base=segment['base'];path=root/'spool'/segment['path']
@@ -127,15 +159,29 @@ def load_capture(root,*,cutoff_ns,maximum_records=2000000,observation_sink=None,
                     if hashlib.file_digest(stream,'sha256').hexdigest()!=segment['sha256']:raise ValueError('source_sealed_segment_hash_mismatch')
             db=readonly(path,sealed=bool(segment.get('sha256')))
             try:
-                for row in db.execute('SELECT id,delivery,schema,captured,native,hash,kind,admitted,metadata_hash,rejection,clock_review FROM raw WHERE id<=? ORDER BY id',(limit-base,)):
-                    ordinal,delivery,schema,at,raw,sha,kind,admitted,metadata,rejection,review=row
+                arrival_column='arrival_ns' if 'arrival_ns' in {r[1] for r in db.execute('PRAGMA table_info(raw)')} else 'NULL'
+                for row in db.execute('SELECT id,delivery,schema,captured,native,hash,kind,admitted,metadata_hash,rejection,clock_review,'+arrival_column+' FROM raw WHERE id<=? ORDER BY id',(limit-base,)):
+                    ordinal,delivery,schema,at,raw,sha,kind,admitted,metadata,rejection,review,arrival=row
                     timestamp_ns(at)
-                    if at<last_captures.get(schema,0):raise ValueError('source_capture_clock_regression')
+                    arrival_reviewed=auth.get('capture_clock_semantics')=='ORIGINAL_UTC_WALL_AND_MONOTONIC_ARRIVAL_V2'
+                    if (arrival is not None)!=arrival_reviewed:raise ValueError('source_capture_clock_semantics_mismatch')
+                    if arrival is not None:
+                        if type(arrival) is not int or arrival<=0 or arrival<last_arrivals.get(schema,0):raise ValueError('source_monotonic_arrival_regression')
+                        last_arrivals[schema]=arrival
+                    elif at<last_captures.get(schema,0):raise ValueError('source_capture_clock_regression')
                     last_captures[schema]=at
-                    if not delivery.startswith(delivery_prefix+schema+':') or not delivery.rsplit(':',1)[1].isdecimal():raise ValueError('source_delivery_plan_mismatch')
+                    if recovery:
+                        parts=delivery.split(':')
+                        if (len(parts)!=4 or parts[0]!=digest(auth['plan']) or not parts[1].isdecimal() or
+                                parts[2]!=schema or not parts[3].isdecimal()):raise ValueError('source_delivery_plan_mismatch')
+                        attempt=int(parts[1])
+                        if attempt!=last_attempt:
+                            acks=set();replays=set();markers={};last_attempt=attempt
+                    elif not delivery.startswith(delivery_prefix+schema+':') or not delivery.rsplit(':',1)[1].isdecimal():raise ValueError('source_delivery_plan_mismatch')
                     if ordinal+base!=last_global+1:raise ValueError('source_native_position_gap')
                     last_global=ordinal+base;count+=1
-                    if digest([delivery,schema,at,sha,kind,bool(admitted),rejection,review])!=metadata or hashlib.sha256(raw).hexdigest()!=sha:
+                    from monatise.research.phase9.storage import record_metadata_hash
+                    if record_metadata_hash(delivery,schema,at,sha,kind,bool(admitted),rejection,review,arrival)!=metadata or hashlib.sha256(raw).hexdigest()!=sha:
                         raise ValueError('source_native_or_metadata_hash_mismatch')
                     if not 1<=len(raw)<=65536 or admitted not in (0,1):raise ValueError('bounded_native_source_row_required')
                     if schema not in schemas or kind not in {'AUTHENTIC_LIVE_CAPTURE','ENGINEERING_SYNTHETIC'}:raise ValueError('source_schema_or_evidence_mismatch')
@@ -144,10 +190,13 @@ def load_capture(root,*,cutoff_ns,maximum_records=2000000,observation_sink=None,
                     except Exception:raise ValueError('source_native_decode_failure') from None
                     if len(records)!=1 or bytes(records[0])!=raw:raise ValueError('source_native_roundtrip_failed')
                     record=records[0]
-                    if at>cutoff_ns:continue
                     if review not in clock_cache:
                         clock=json.loads(review);clock_cache[review]=ClockReview(**clock) if clock else None
                     record_clock=clock_cache[review]
+                    if audit is not None:
+                        audit.ingest(attempt,schema,record,at=at,ordinal=int(parts[3]),arrival=arrival,
+                            clock=record_clock,admitted=admitted,rejection=rejection,position=ordinal+base)
+                    if at>cutoff_ns:continue
                     _,clock_upper=record_clock.bounds(at) if record_clock else (0,0)
                     if at>=prefix_last_ns:prefix_last_ns=at;prefix_clock=record_clock
                     native_prefix=digest([native_prefix,schema,at,sha,ordinal+base])
@@ -187,7 +236,7 @@ def load_capture(root,*,cutoff_ns,maximum_records=2000000,observation_sink=None,
     final=root/'capture/attempt-00/report.json'
     if final_snapshot is not None:
         report=final_snapshot
-        if report['scope_sha256']!=digest(scope):raise ValueError('source_final_scope_mismatch')
+        if not recovery and report['scope_sha256']!=digest(scope):raise ValueError('source_final_scope_mismatch')
         health=dict(status='SEALED_HISTORICAL_CAPTURE',quarantined=report['quality']['quarantined'],
             reasons=report['quality']['reasons'],component_rejections=report['quality'].get('component_rejections',{}),stale_checkpoint=False,live_verified=False)
     else:
@@ -200,7 +249,14 @@ def load_capture(root,*,cutoff_ns,maximum_records=2000000,observation_sink=None,
         if iid not in gates or schema not in schemas:raise ValueError('source_component_health_scope_mismatch')
         gates[iid].transport_gap(schema,'captured_component_rejection_requires_review')
     quality=report['quality'] if final_snapshot is not None else progress['health']
+    if recovery:
+        health['recovery']=dict(version=policy.version,attempts=len(attempts['attempts']),
+            replay_overlap_records_verified=audit.duplicates,prior_attempts_preserved=True,
+            verified_active_attempt=audit.index,current_attempt=active)
+        if audit.index!=active or set(audit.state.completed)!=set(schemas):
+            health['quarantined']=True;health['reasons']=sorted(set(health['reasons'])|{'recovery_replay_incomplete'})
     health['stalled_connections']=list(quality.get('stalled_connections',()))
+    if native_only:health['replay_completed']=sorted(replays)
     health['reasons']=sorted(set(health['reasons'])|{'connection_stalled_'+s for s in health['stalled_connections']})
     # Progress can be newer than the cursor snapshot. Never explain away an
     # unobserved rejection using older typed evidence for the same component.
@@ -222,8 +278,9 @@ def load_capture(root,*,cutoff_ns,maximum_records=2000000,observation_sink=None,
                 marker=next((r for r in reversed(controls) if r['end_ns']<=prefix_last_ns),None)
                 if marker is None:continue
                 if schema not in replays or schema in gate.faults or f'{schema}:{iid}' in health['component_rejections']:continue
-                step=WIDTHS[schema[6:]];ref=refs[gate.contract.metadata.raw_symbol+':'+schema]
-                begin=max(scope.get('start_ns',0),ref['anchor_event_ns']+step)
+                step=WIDTHS[schema[6:]]
+                begin=dict(scope.get('initial_schema_starts',())).get(schema,scope.get('start_ns',0))
+                if not native_only:begin=max(begin,refs[gate.contract.metadata.raw_symbol+':'+schema]['anchor_event_ns']+step)
                 begin=(begin+step-1)//step*step
                 if begin>=marker['end_ns']:continue
                 proof=NativeBarCoverage(gate.contract.identity,schema,begin,marker['end_ns'],prefix_last_ns,

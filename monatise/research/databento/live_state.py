@@ -17,9 +17,19 @@ class Cursor:
     skipped: int=0
     index_ns: int|None=None
     event_order_regressed: bool=False
+    count_recovery: bool=False
 
     def accept(self,event_ns,native_hash, *, index_ns=None):
         timestamp_ns(event_ns)
+        # Databento's documented replay contract is inclusive event time plus
+        # per-instrument multiplicity, not byte equality of capture timestamps.
+        # Validate the record before reaching this cursor; retain every copy.
+        if self.count_recovery and self.replay_prefix:
+            if event_ns<self.event_ns:return False
+            if event_ns==self.event_ns and self.skipped<len(self.replay_prefix):
+                self.skipped+=1;return False
+            if self.skipped<len(self.replay_prefix):raise ValueError('replay_missing_tied_records')
+            self.replay_prefix=();self.skipped=0
         if index_ns is not None:
             timestamp_ns(index_ns)
             if self.index_ns is not None and index_ns<self.index_ns and not self.replay_prefix:
@@ -64,10 +74,20 @@ class Cursor:
         for h in hashes:hash_required(h)
         return cls(event_ns=event,hashes_at_event=list(hashes),replay_prefix=hashes,index_ns=index)
 
+    @classmethod
+    def recover_count(cls,value):
+        cursor=cls.recover(value)
+        cursor.count_recovery=True
+        return cursor
+
 
 class FeedState:
-    def __init__(self,scope, *, checkpoints=None,recovery_review_reference=None,bootstrap_prefixes=None):
+    def __init__(self,scope, *, checkpoints=None,recovery_review_reference=None,bootstrap_prefixes=None,liveness_clock_ns=None,native_information=False,count_recovery=False):
+        if count_recovery and (not native_information or bootstrap_prefixes or not checkpoints):
+            raise ValueError('native_documented_recovery_requires_committed_cursors')
         if bootstrap_prefixes and (not checkpoints or not recovery_review_reference):raise ValueError("reviewed_initial_prefix_requires_checkpoints")
+        self.native_information=native_information;self.provider_warnings=[]
+        self.liveness_clock_ns=liveness_clock_ns;self.liveness_started={};self.liveness_last={}
         self.bootstrap_prefixes=bootstrap_prefixes or {}
         self.bootstrap_clock_translations=[]
         self.scope=scope;self.clock_review=scope.clock_review;self.clock_history=[scope.clock_review] if scope.clock_review else [];self.contracts={c.metadata.instrument_id:c for c in scope.contracts}
@@ -78,7 +98,8 @@ class FeedState:
         for schema in scope.schemas:
             for iid in self.contracts:
                 key=f'{schema}:{iid}'
-                self.cursors[key]=Cursor.recover(checkpoints[key]) if checkpoints and key in checkpoints else Cursor()
+                recover=Cursor.recover_count if count_recovery else Cursor.recover
+                self.cursors[key]=recover(checkpoints[key]) if checkpoints and key in checkpoints else Cursor()
                 if schema.startswith('ohlcv-'):
                     from .candles import WIDTHS
                     event=self.cursors[key].event_ns
@@ -109,20 +130,27 @@ class FeedState:
     def replay_start(self,schema):
         # A missing instrument cursor means replay from the original approved
         # start; never skip an instrument that had no records before disconnect.
-        clocks=[self.cursors[f'{schema}:{i}'].event_ns or (0 if schema=='definition' else self.scope.start_ns) for i in self.contracts]
+        clocks=[self.cursors[f'{schema}:{i}'].event_ns or (0 if schema=='definition' else self.scope.initial_start(schema)) for i in self.contracts]
         return min(clocks)
 
-    def ingest(self,schema,record, *, capture_ns,ordinal):
+    def ingest(self,schema,record, *, capture_ns,ordinal,arrival_ns=None):
         import databento_dbn as dbn
         timestamp_ns(capture_ns)
         if schema not in self.scope.schemas:raise ValueError('unsubscribed_schema')
         self.last_message[schema]=capture_ns
+        if arrival_ns is not None:self.liveness_last[schema]=arrival_ns
         native_hash=hashlib.sha256(bytes(record)).hexdigest()
         if isinstance(record,dbn.ErrorMsg):
             self.quarantine('provider_error_code_'+str(int(record.code)));return None
         if isinstance(record,dbn.SystemMsg):
             code=int(record.code)
             if code==int(dbn.SystemCode.HEARTBEAT):return None
+            if code==int(dbn.SystemCode.SLOW_READER_WARNING) and self.native_information:
+                # Databento documents warn as nonfatal, with no record skipping.
+                # Retain warning/lag evidence; never relabel delayed data current.
+                self.provider_warnings.append(dict(code=code,schema=schema,capture_ns=capture_ns,record_sha256=native_hash))
+                self.provider_warnings=self.provider_warnings[-128:]
+                return None
             if code==int(dbn.SystemCode.SUBSCRIPTION_ACK):self.acknowledged.add(schema);return None
             if code==int(dbn.SystemCode.END_OF_INTERVAL):
                 from .candles import WIDTHS
@@ -169,7 +197,7 @@ class FeedState:
         lower,upper=review.bounds(capture_ns) if review else (0,0)
         if (record.publisher_id!=contract.metadata.publisher_id or max(event,received)>capture_ns+upper
                 or not contract.metadata.event_ns<=received<contract.metadata.expiration_ns
-                or not (contract.metadata.event_ns if schema=='definition' else self.scope.start_ns)<=event<self.scope.session_end_ns
+                or not (contract.metadata.event_ns if schema=='definition' else self.scope.initial_start(schema))<=event<self.scope.session_end_ns
                 or capture_ns+max(0,upper)>=self.scope.session_end_ns+self.scope.session_drain_seconds*10**9 or int(getattr(record,'flags',0))&(4|8|32)):
             raise ValueError('live_record_identity_clocks_session_or_quality_rejected')
         if schema.startswith('ohlcv-'):
@@ -229,17 +257,18 @@ class FeedState:
         try:lower,upper=self.clock_review.bounds(now_ns) if self.clock_review else (0,0)
         except ValueError:
             self.quarantine('independent_clock_review_expired_or_invalid');lower=upper=0
-        stalled=[s for s in self.scope.schemas if now_ns-self.last_message.get(s,self.started.get(s,now_ns))>
+        stalled=[s for s in self.scope.schemas if (self.liveness_clock_ns()-self.liveness_last.get(s,self.liveness_started.get(s,self.liveness_clock_ns())) if self.liveness_clock_ns is not None else now_ns-self.last_message.get(s,self.started.get(s,now_ns)))>
                  (self.scope.heartbeat_seconds+10)*10**9]
         from .candles import WIDTHS
         def age_limit(schema):
             return max(self.scope.maximum_market_age_ns,2*WIDTHS[schema[6:]]) if schema.startswith('ohlcv-') else self.scope.maximum_market_age_ns
         stale=[f'{s}:{i}' for s in self.scope.schemas if s!='definition' for i in self.contracts
                if not 0<=now_ns+upper-self.latest.get((s,i),0)<=age_limit(s)]
+        if self.native_information:stale=[]
         unusable_quotes=[i for i in self.contracts if 'mbp-1' in self.scope.schemas and (i not in self.quotes
             or self.quotes[i][0] is None or self.quotes[i][3] is None
             or self.quotes[i][0]==self.quotes[i][3] or min(self.quotes[i][1],self.quotes[i][4])<=0)]
-        ready=(not self.component_reasons and not self.quality_reasons and not stalled and not stale and not unusable_quotes
+        ready=(not self.component_reasons and not self.quality_reasons and not stalled and not stale and (self.native_information or not unusable_quotes)
                and self.completed==set(self.scope.schemas) and self.verified_definitions==set(self.contracts)
                and now_ns+max(0,upper)<self.scope.session_end_ns)
         components={}
@@ -251,17 +280,22 @@ class FeedState:
                 if schema not in self.completed:reasons.append('replay_not_completed')
                 if iid not in self.verified_definitions:reasons.append('definition_unverified')
                 if f'{schema}:{iid}' in stale:reasons.append('stream_stale_or_missing')
-                if schema=='mbp-1' and iid in unusable_quotes:reasons.append('quote_unusable')
+                if schema=='mbp-1' and iid in unusable_quotes and not self.native_information:reasons.append('quote_unusable')
                 if now_ns+max(0,upper)>=self.scope.session_end_ns:reasons.append('session_ended')
                 # An uncertain transport fault remains fail-closed. Simple
                 # staleness/absence is independently attributed above.
                 reasons.extend(sorted(self.quality_reasons))
-                streams[schema]=dict(status='UNAVAILABLE' if reasons else 'CAPTURED_CONTEXT_FRESH',
+                streams[schema]=dict(status='UNAVAILABLE' if reasons else 'OBSERVED_NATIVE_INFORMATION' if self.native_information else 'CAPTURED_CONTEXT_FRESH',
                     reasons=reasons,event_ns=self.cursors[f'{schema}:{iid}'].event_ns,
                     provider_receive_ns=self.latest.get((schema,iid)),
                     complete_exchange_continuity_certified=False,**SAFETY)
             components[contract.metadata.raw_symbol]=streams
-        return dict(status='CAPTURED_CONTEXT_FRESH' if ready else 'UNAVAILABLE',
+        return dict(status=('OBSERVED_NATIVE_INFORMATION' if self.native_information else 'CAPTURED_CONTEXT_FRESH') if ready else 'UNAVAILABLE',
+            provider_warnings=list(self.provider_warnings),
+            custom_observation_age_cutoff_applied=not self.native_information,
+            observation_ages_ns={f'{s}:{i}':now_ns-t for (s,i),t in self.latest.items()},
+            transport_interrupted=bool(stalled or any(r.startswith(('connection_stalled_','provider_disconnected_','provider_disconnect_or_error_')) for r in self.quality_reasons)),
+            component_record_rejections_reported=bool(self.component_reasons),
             quarantined=bool(self.component_reasons or self.quality_reasons or stalled or self.completed!=set(self.scope.schemas)
                              or self.verified_definitions!=set(self.contracts)),reasons=sorted(self.quality_reasons),
             component_rejections={f'{s}:{i}':sorted(v) for (s,i),v in self.component_reasons.items()},

@@ -128,102 +128,10 @@ def test_metadata_partition_complete_nonoverlapping_and_bounded():
     assert all(Metadata().get_record_count(**r.api_parameters()) < r.record_limit for r in chunks)
 
 
-def fixture_dataset(*,short=False,forming_b=False):
-    # Import only the frozen test fixture in a sanitized subprocess, never from production.
-    if not PINNED.exists(): pytest.skip("pinned H1 research checkout unavailable")
-    script = '''import sys,json; sys.path.insert(0,sys.argv[1]);
-from tests.research.gold_fib_fixtures import h1_leg
-from dataclasses import asdict
-print(json.dumps([asdict(c) for c in h1_leg(short=sys.argv[2]=='1',forming_b=sys.argv[3]=='1')]))'''
-    import sys
-    raw = json.loads(subprocess.check_output([sys.executable,"-I","-c",script,str(PINNED),
-            str(int(short)),str(int(forming_b))],text=True,env={"PATH":"/usr/bin:/bin"}))
-    from datetime import datetime
-    bars=[]
-    for index,c in enumerate(raw):
-        opened=int(datetime.fromisoformat(c["timestamp"]).timestamp())*10**9
-        bars.append(asdict(GCBar(GCIdentity(),"1h",opened,opened+3600*10**9,
-            opened+3610*10**9,END_NS,END_NS,str(c["open"]),str(c["high"]),str(c["low"]),
-            str(c["close"]),int(c["volume"]),(f"{index+1:064x}",),"ENGINEERING_SYNTHETIC")))
-    return dict(schema="gc-h1-diagnostics-v1",pit_verified=False,evidence_kind="ENGINEERING_SYNTHETIC",
-                bars=bars,cutoffs_ns=[bars[-1]["assumed_available_ns"]])
 
-
-@pytest.mark.parametrize("short",[False,True])
-def test_unchanged_selector_native_long_short_determinism_and_raw_ratios(tmp_path,short):
-    data=fixture_dataset(short=short)
-    input=tmp_path/"input.json"; input.write_text(json.dumps(data))
-    first=run_diagnostics(input,tmp_path/"one.json",h1_checkout=PINNED)
-    second=run_diagnostics(input,tmp_path/"two.json",h1_checkout=PINNED)
-    assert first == second and all(first[k] is False for k in ISOLATION)
-    r=first["records"][0]
-    assert r["symbol"] == "GCZ6" and r["anchor"]["valid_b"]
-    assert r["anchor"]["A"]["price"] == (2550 if short else 2450)
-    assert r["anchor"]["B"]["price"] == (2470 if short else 2530)
-    assert [s["ratio"] for s in r["raw_slots"]] == [1.272,1.414,1.618]
-    assert r["valid_constrained_fib"]
-    for s in r["raw_slots"]:
-        expected=(2550-80*s["ratio"]) if short else (2450+80*s["ratio"])
-        assert s["raw_price"] == pytest.approx(expected) and s["eligible"] is False
-    assert r["final_targets"] == [] and r["entry"] is None and r["rr"] is None
-
-
-def test_unconfirmed_b_no_future_pivots_or_fallback(tmp_path):
-    data=fixture_dataset(forming_b=True)
-    input=tmp_path/"input.json"; input.write_text(json.dumps(data))
-    result=run_diagnostics(input,tmp_path/"result.json",h1_checkout=PINNED)
-    r=result["records"][0]
-    assert r["reason"] == "B_UNCONFIRMED_AT_PARENT_CUTOFF"
-    assert all(s["raw_price"] is None for s in r["raw_slots"])
-
-
-def test_causal_prefix_ignores_future_and_parent_expiry_not_renewed(tmp_path):
-    data=fixture_dataset()
-    last=data["cutoffs_ns"][0]
-    # After H1 expires, rereading the same candles must not renew it.
-    data["cutoffs_ns"].append(last+3*3600*10**9)
-    input=tmp_path/"input.json"; input.write_text(json.dumps(data))
-    report=run_diagnostics(input,tmp_path/"result.json",h1_checkout=PINNED)
-    one,two=report["records"]
-    assert one["anchor_hash"] == two["anchor_hash"]
-    assert two["reason"] == "H1_PARENT_EXPIRED"
-
-
-def test_later_pivot_confirmation_cannot_enter_earlier_parent(tmp_path):
-    data=fixture_dataset()
-    final=data["cutoffs_ns"][0]
-    data["cutoffs_ns"]=[data["bars"][59]["assumed_available_ns"],final]
-    input=tmp_path/"input.json"; input.write_text(json.dumps(data))
-    report=run_diagnostics(input,tmp_path/"result.json",h1_checkout=PINNED)
-    early,later=report["records"]
-    assert early["reason"] == "B_UNCONFIRMED_AT_PARENT_CUTOFF"
-    assert all(s["raw_price"] is None for s in early["raw_slots"])
-    assert later["anchor"]["valid_b"] is True
-    assert early["h1_parent_hash"] != later["h1_parent_hash"]
-
-
-def test_isolated_runner_strips_credentials_and_rejects_output_overwrite(tmp_path,monkeypatch):
-    data=fixture_dataset()
-    input=tmp_path/"input.json"; input.write_text(json.dumps(data))
-    original=subprocess.run
-    def check(args,**kwargs):
-        if "-I" in args:
-            assert set(kwargs["env"]) == {"PATH","LANG"}
-        return original(args,**kwargs)
-    monkeypatch.setattr(subprocess,"run",check)
-    result=tmp_path/"result.json"
-    run_diagnostics(input,result,h1_checkout=PINNED)
-    with pytest.raises(ValueError,match="immutable"):
-        run_diagnostics(input,result,h1_checkout=PINNED)
-
-
-def test_no_production_registration_and_no_worker_io_capabilities():
-    for directory in ("application","engines","adapters","interfaces"):
-        for file in (ROOT/"monatise"/directory).rglob("*.py"):
-            assert "research.gc_fib" not in file.read_text()
-    for name in ("worker.py","runner.py","bootstrap.py","candles.py"):
-        content=(ROOT/"monatise/research/gc_fib"/name).read_text()
-        tree=ast.parse(content)
-        imports=[n.module for n in ast.walk(tree) if isinstance(n,ast.ImportFrom)]
-        assert not any(x and any(b in x for b in ("telegram","execution","approval","mt5")) for x in imports)
-        assert "get_range(" not in content and "ApprovedDownload(" not in content
+def test_selector_runner_is_permanently_retired_without_subprocess(tmp_path,monkeypatch):
+    from monatise.research.native_futures.retired import RetiredFuturesWorkflow
+    monkeypatch.setattr(subprocess,'run',lambda *a,**k:pytest.fail('retired subprocess called'))
+    with pytest.raises(RetiredFuturesWorkflow):
+        run_diagnostics(tmp_path/'missing',tmp_path/'output',h1_checkout=tmp_path)
+    assert not (tmp_path/'output').exists()

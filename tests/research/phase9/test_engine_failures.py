@@ -88,21 +88,3 @@ def test_cancelled_scan_still_propagates():
         _gold_coordinator=lambda: SimpleNamespace(analyse=fail))
     with pytest.raises(asyncio.CancelledError):
         asyncio.run(OrchestrationRuntime._analyze_ftmo_futures(runtime, (FTMO_REGISTRY.resolve('XAU/USD'),), 300, 'test'))
-
-
-def test_missing_quotes_and_lower_frames_preserve_real_frozen_price_diagnostics(tmp_path):
-    import json
-    import os
-    from pathlib import Path
-    from monatise.research.gc_qualification.runner import isolated
-    from tests.research.gc_qualification_fixtures import fixture
-    frozen=Path(os.environ['GC_H1_RESEARCH_CHECKOUT'])
-    value=fixture();value['quotes']={}
-    value['bars']=[b for b in value['bars'] if b['timeframe'] not in {'1m','5m'}]
-    source=tmp_path/'input.json';source.write_text(json.dumps(value))
-    r=isolated('replay',source,tmp_path/'result.json',h1_checkout=frozen)['records'][0]
-    d=r['unadmitted_price_diagnostic']
-    assert d['engines_executed'] and d['analytical_availability']=='CONTEXT_ONLY'
-    assert '1h' in d['price_layers'] and not d['candidate_eligible']
-    assert not d['quote_dependent_risk_available']
-    assert r['candidate_id'] is None and r['decision']=='UNAVAILABLE'

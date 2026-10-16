@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from monatise.engines.asset_scope import require_canonical_non_futures
+
 from statistics import mean
 
 from monatise.core.models import Candle
@@ -42,6 +44,7 @@ class FibonacciLiquidityEngine:
     ) -> FibonacciAssessment:
         request.validate()
         market = request.market
+        require_canonical_non_futures(market.symbol)
         structure = request.structure
         reasons: list[str] = []
 

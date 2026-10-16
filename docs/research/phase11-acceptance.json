@@ -106,7 +106,7 @@
     },
     {
       "component": "Durable market burst",
-      "evidence": "test_controlled_peak_burst_honours_socket_pause_and_durably_preserves_every_record",
+      "evidence": "test_controlled_peak_burst_uses_public_iteration_and_durably_preserves_every_record",
       "required_outcome": "Native counts, spool, checkpoints and analytical admission reconcile",
       "status": "PASS_OFFLINE_BOUNDED_WORKLOAD"
     },

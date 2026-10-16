@@ -11,30 +11,25 @@ from tests.research.phase10.test_sdk_transport import SDK
 from tests.research.test_databento_live_preparation import FakeClient,scope,permit,system,NOW_NS
 
 
-def test_actual_sdk_read_buffer_is_bounded_and_wire_probe_preserves_decoder_bytes():
+def test_public_wrapper_does_not_rewrite_actual_sdk_protocol_buffers():
     from databento.live.protocol import DatabentoLiveProtocol
-    class ProbeSDK(SDK):
-        def subscribe(self,**kwargs):
-            super().subscribe(**kwargs)
-            async def prepare():
-                protocol=DatabentoLiveProtocol(api_key='ENGINEERING_ONLY',dataset='GLBX.MDP3')
-                protocol._authenticated.set_result('ENGINEERING_ONLY')
-                self.received=[]
-                protocol._process_dbn=self.received.append
-                self._session._protocol=protocol
-            asyncio.run_coroutine_threadsafe(prepare(),self.loop).result(timeout=1)
-    client=OwnedSDKClient('ENGINEERING_ONLY',5,builder=ProbeSDK)
+    client=OwnedSDKClient('ENGINEERING_ONLY',5,builder=SDK)
     try:
+        def prepare():
+            protocol=DatabentoLiveProtocol(api_key='ENGINEERING_ONLY',dataset='GLBX.MDP3')
+            protocol._authenticated.set_result('ENGINEERING_ONLY')
+            received=[];protocol._process_dbn=received.append
+            return protocol,received
+        protocol,received=client._call(prepare)
+        original=protocol.get_buffer.__func__
         client.subscribe(schema='trades')
         def feed():
-            protocol=client._client._session._protocol
-            view=protocol.get_buffer(65536);assert len(view)==2048
+            assert protocol.get_buffer.__func__ is original
+            view=protocol.get_buffer(65536);assert len(view)==65536
             view[:3]=b'abc';protocol.buffer_updated(3)
-            assert client._client.received==[b'abc']
+            assert received==[b'abc']
         client._call(feed)
-        diag=client.diagnostics()
-        assert diag['wire_bytes']==3 and diag['wire_updates']==1
-        assert 'ENGINEERING_ONLY' not in json.dumps(diag)
+        assert client.diagnostics()['sdk_private_instrumentation'] is False
     finally:client.close()
 
 
@@ -54,37 +49,20 @@ def test_nonblocking_callback_overload_is_counted_quarantined_and_never_retried(
     assert diag['unretained_overflow_hash_chain']
 
 
-def test_controlled_peak_burst_honours_socket_pause_and_durably_preserves_every_record(tmp_path):
+def test_controlled_peak_burst_uses_public_iteration_and_durably_preserves_every_record(tmp_path):
     from tests.research.test_databento_live_preparation import trade
     from tests.research.phase9.test_pipeline import gate,calendar
     from monatise.research.phase9.pipeline import ResearchPipeline
     order=[];clients=[]
     class BurstSDK(SDK):
         def subscribe(self,**kwargs):
-            super().subscribe(**kwargs);self.subscription=kwargs;order.append('subscribe')
-            self.reading=True
-            owner=self
-            class Transport:
-                def is_closing(self):return False
-                def is_reading(self):return owner.reading
-                def pause_reading(self):owner.reading=False
-                def resume_reading(self):owner.reading=True
-                def abort(self):owner.reading=False
-            self._session._transport=Transport()
-        def start(self):
+            super().subscribe(**kwargs);order.append('subscribe')
+        def __aiter__(self):
             assert order.count('subscribe')==3
-            self.remaining=1000 if self.subscription['schema']=='trades' else 0
-            self.callbacks=[self.callback];self.fault=None
-            FakeClient.start(self)
-            def pump():
-                if self.closed.done() or not self.remaining:return
-                if self.reading:
-                    # Four-record wire turns; pause is obeyed between turns.
-                    for _ in range(min(4,self.remaining)):
-                        n=1000-self.remaining
-                        self.callback(trade(s.contracts[n%3].metadata.instrument_id,t=NOW_NS-10**9+n*1000,sequence=n+10));self.remaining-=1
-                self.loop.call_later(.0001,pump)
-            self.loop.call_soon(pump)
+            wire=FakeClient();wire.subscription=self.subscription;wire.callbacks=[self.rows.append];wire.start()
+            if self.subscription['schema']=='trades':
+                self.rows.extend(trade(s.contracts[n%3].metadata.instrument_id,t=NOW_NS-10**9+n*1000,sequence=n+10) for n in range(1000))
+            return super().__aiter__()
     def factory(key,heartbeat):
         client=OwnedSDKClient(key,heartbeat,builder=BurstSDK);clients.append(client);return client
     s=scope(duration_seconds=3);spool=DurableSpool(tmp_path/'spool.sqlite')
