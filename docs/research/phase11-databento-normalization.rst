@@ -203,3 +203,25 @@ References
 * https://www.cmegroup.com/markets/metals/precious/gold.contractSpecs.html
 * https://www.cmegroup.com/markets/equities/sp/e-mini-sandp500.contractSpecs.html
 * https://www.cmegroup.com/markets/equities/nasdaq/e-mini-nasdaq-100.contractSpecs.html
+
+Provider semantics in the active native-information path
+------------------------------------------------------
+Databento's live API guide documents hung-connection detection as one configured
+heartbeat interval plus ten seconds without any messages (five plus ten is15s).
+It also notes that unstable internet may need a larger margin. A Wi-Fi event is
+not an input to record validation. Delivery interruption is distinguished from
+component record rejection, and retained native evidence remains preserved;
+interrupted continuity is never presented as an uninterrupted completed test.
+The current finite research attempt policy does not perform an automatic restart.
+
+The native-information path reports actual observation ages without the inherited
+local ten-second/relative-bar-age qualification cutoffs. It does not declare old
+observations fresh or executable. Locked/missing quote diagnostics are retained
+without importing an execution qualification rule into ordinary market context.
+Databento SLOW_READER_WARNING under warn behavior is nonfatal and retained with
+its source hash; the SDK does not skip records in that mode. Lag, native provider
+errors, replay state, exact source identity and data-quality flags remain visible.
+These native-path changes do not invoke or alter the excluded legacy engine graph.
+
+Reference: https://databento.com/docs/api-reference-live (System messages,
+Hung connection and Slow reader behavior).

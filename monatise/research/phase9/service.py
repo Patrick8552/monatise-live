@@ -131,7 +131,8 @@ class PersistentResearchService:
                 from .rotation import RotatingNativeJournal
                 journal_factory=lambda *a,**kw:RotatingNativeJournal(*a,policy=self.rotation_policy,**kw)
             capture=CMELiveCapture(step.scope,client_factory=self.factory,clock_ns=self.clock_ns,
-                journal_factory=journal_factory,clock_refresh=self.clock_refresh)
+                journal_factory=journal_factory,clock_refresh=self.clock_refresh,
+                native_information=all(getattr(g,'quality_mode',None)=='DATABENTO_NATIVE_INFORMATION_V1' for g in self.pipeline.gates.values()))
             self.capture=capture
             def tick(state,now):
                 if self.publisher is None:return

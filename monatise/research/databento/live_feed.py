@@ -26,10 +26,11 @@ def sdk_client(key,heartbeat_seconds):
 
 
 class CMELiveCapture:
-    def __init__(self,scope, *, client_factory=None,clock_ns=time.time_ns,queue_capacity=2048,journal_factory=None,clock_refresh=None,liveness_clock_ns=time.perf_counter_ns):
+    def __init__(self,scope, *, client_factory=None,clock_ns=time.time_ns,queue_capacity=2048,journal_factory=None,clock_refresh=None,liveness_clock_ns=time.perf_counter_ns,native_information=False):
         if not isinstance(scope,LiveScope) or type(queue_capacity) is not int or not 1<=queue_capacity<=2048:
             raise ValueError('prepared_bounded_live_capture_required')
         self.scope,self.factory,self.clock_ns=scope,client_factory or sdk_client,clock_ns
+        self.native_information=native_information
         self.liveness_clock_ns=liveness_clock_ns
         self.queue_capacity=queue_capacity
         self.journal_factory,self.clock_refresh=journal_factory,clock_refresh
@@ -39,7 +40,7 @@ class CMELiveCapture:
         if not isinstance(api_key,str) or not api_key.strip():raise ValueError('private_live_key_required')
         if evidence_kind=='ENGINEERING_SYNTHETIC' and self.factory is sdk_client:
             raise ValueError('fixtures_cannot_open_real_live_client')
-        state=FeedState(self.scope,checkpoints=checkpoints,recovery_review_reference=recovery_review_reference,bootstrap_prefixes=bootstrap_prefixes,liveness_clock_ns=self.liveness_clock_ns)
+        state=FeedState(self.scope,checkpoints=checkpoints,recovery_review_reference=recovery_review_reference,bootstrap_prefixes=bootstrap_prefixes,liveness_clock_ns=self.liveness_clock_ns,native_information=self.native_information)
         self.state=state
         self.active_clock_review=state.clock_review
         self.active_arrival_ns=None
@@ -281,6 +282,7 @@ class CMELiveCapture:
             report=dict(version='CME-live-capture-v1',scope=encode(self.scope),scope_sha256=self.scope.sha256,
                 permit_sha256=digest(permit),quality=health,checkpoint=state.checkpoint(),journals=manifests,
                 normalization_tail=state.normalized,failure_type=failure,failure_diagnostics=failures,transport_events=transport_events,
+                native_information_mode=self.native_information,
                 capture_clock_semantics="ORIGINAL_UTC_WALL_AND_MONOTONIC_ARRIVAL_V2",
                 bootstrap_clock_translations=state.bootstrap_clock_translations,
                 runtime=dict(databento=version('databento'),databento_dbn=version('databento-dbn')),

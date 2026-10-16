@@ -66,8 +66,9 @@ class Cursor:
 
 
 class FeedState:
-    def __init__(self,scope, *, checkpoints=None,recovery_review_reference=None,bootstrap_prefixes=None,liveness_clock_ns=None):
+    def __init__(self,scope, *, checkpoints=None,recovery_review_reference=None,bootstrap_prefixes=None,liveness_clock_ns=None,native_information=False):
         if bootstrap_prefixes and (not checkpoints or not recovery_review_reference):raise ValueError("reviewed_initial_prefix_requires_checkpoints")
+        self.native_information=native_information;self.provider_warnings=[]
         self.liveness_clock_ns=liveness_clock_ns;self.liveness_started={};self.liveness_last={}
         self.bootstrap_prefixes=bootstrap_prefixes or {}
         self.bootstrap_clock_translations=[]
@@ -125,6 +126,12 @@ class FeedState:
         if isinstance(record,dbn.SystemMsg):
             code=int(record.code)
             if code==int(dbn.SystemCode.HEARTBEAT):return None
+            if code==int(dbn.SystemCode.SLOW_READER_WARNING) and self.native_information:
+                # Databento documents warn as nonfatal, with no record skipping.
+                # Retain warning/lag evidence; never relabel delayed data current.
+                self.provider_warnings.append(dict(code=code,schema=schema,capture_ns=capture_ns,record_sha256=native_hash))
+                self.provider_warnings=self.provider_warnings[-128:]
+                return None
             if code==int(dbn.SystemCode.SUBSCRIPTION_ACK):self.acknowledged.add(schema);return None
             if code==int(dbn.SystemCode.END_OF_INTERVAL):
                 from .candles import WIDTHS
@@ -238,10 +245,11 @@ class FeedState:
             return max(self.scope.maximum_market_age_ns,2*WIDTHS[schema[6:]]) if schema.startswith('ohlcv-') else self.scope.maximum_market_age_ns
         stale=[f'{s}:{i}' for s in self.scope.schemas if s!='definition' for i in self.contracts
                if not 0<=now_ns+upper-self.latest.get((s,i),0)<=age_limit(s)]
+        if self.native_information:stale=[]
         unusable_quotes=[i for i in self.contracts if 'mbp-1' in self.scope.schemas and (i not in self.quotes
             or self.quotes[i][0] is None or self.quotes[i][3] is None
             or self.quotes[i][0]==self.quotes[i][3] or min(self.quotes[i][1],self.quotes[i][4])<=0)]
-        ready=(not self.component_reasons and not self.quality_reasons and not stalled and not stale and not unusable_quotes
+        ready=(not self.component_reasons and not self.quality_reasons and not stalled and not stale and (self.native_information or not unusable_quotes)
                and self.completed==set(self.scope.schemas) and self.verified_definitions==set(self.contracts)
                and now_ns+max(0,upper)<self.scope.session_end_ns)
         components={}
@@ -253,17 +261,22 @@ class FeedState:
                 if schema not in self.completed:reasons.append('replay_not_completed')
                 if iid not in self.verified_definitions:reasons.append('definition_unverified')
                 if f'{schema}:{iid}' in stale:reasons.append('stream_stale_or_missing')
-                if schema=='mbp-1' and iid in unusable_quotes:reasons.append('quote_unusable')
+                if schema=='mbp-1' and iid in unusable_quotes and not self.native_information:reasons.append('quote_unusable')
                 if now_ns+max(0,upper)>=self.scope.session_end_ns:reasons.append('session_ended')
                 # An uncertain transport fault remains fail-closed. Simple
                 # staleness/absence is independently attributed above.
                 reasons.extend(sorted(self.quality_reasons))
-                streams[schema]=dict(status='UNAVAILABLE' if reasons else 'CAPTURED_CONTEXT_FRESH',
+                streams[schema]=dict(status='UNAVAILABLE' if reasons else 'OBSERVED_NATIVE_INFORMATION' if self.native_information else 'CAPTURED_CONTEXT_FRESH',
                     reasons=reasons,event_ns=self.cursors[f'{schema}:{iid}'].event_ns,
                     provider_receive_ns=self.latest.get((schema,iid)),
                     complete_exchange_continuity_certified=False,**SAFETY)
             components[contract.metadata.raw_symbol]=streams
-        return dict(status='CAPTURED_CONTEXT_FRESH' if ready else 'UNAVAILABLE',
+        return dict(status=('OBSERVED_NATIVE_INFORMATION' if self.native_information else 'CAPTURED_CONTEXT_FRESH') if ready else 'UNAVAILABLE',
+            provider_warnings=list(self.provider_warnings),
+            custom_observation_age_cutoff_applied=not self.native_information,
+            observation_ages_ns={f'{s}:{i}':now_ns-t for (s,i),t in self.latest.items()},
+            transport_interrupted=bool(stalled or any(r.startswith(('connection_stalled_','provider_disconnected_','provider_disconnect_or_error_')) for r in self.quality_reasons)),
+            component_record_rejections_reported=bool(self.component_reasons),
             quarantined=bool(self.component_reasons or self.quality_reasons or stalled or self.completed!=set(self.scope.schemas)
                              or self.verified_definitions!=set(self.contracts)),reasons=sorted(self.quality_reasons),
             component_rejections={f'{s}:{i}':sorted(v) for (s,i),v in self.component_reasons.items()},
