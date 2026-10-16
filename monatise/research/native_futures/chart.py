@@ -104,6 +104,14 @@ def handler_for(snapshot,source_snapshot=None):
                         source=checked(source_snapshot)
                         if source['capture_id']!=body['capture_id']:raise ValueError('cross_capture_chart_forbidden')
                         delivery.update(source_status_at_observation=source['status'],source_observed_at_ns=source['observed_at_ns'],source_health=source['health'])
+                        quotes={}
+                        for symbol,latest in source['instruments'].items():
+                            info=body['analysis']['instruments'].get(symbol)
+                            if info is None or list(info['contract_identity'])!=latest['identity']:
+                                raise ValueError('cross_contract_chart_quote_forbidden')
+                            quotes[symbol]=latest['quotes']
+                        delivery['quote_snapshots']=quotes
+                        delivery['quote_scope']='SOURCE_OBSERVATION_ONLY; ANALYTICAL_FEATURES_NOT_RECOMPUTED'
                     data=json.dumps(dict(body=body,sha256=digest(body),delivery=delivery),separators=(',',':')).encode();mime='application/json';status=200
                 else:self.send_error(404);return
             except Exception:

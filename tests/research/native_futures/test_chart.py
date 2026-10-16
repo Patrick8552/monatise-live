@@ -84,3 +84,23 @@ def test_loopback_server_only_serves_whitelisted_checked_read_only_routes(tmp_pa
         assert request('GET','/')[0]==200 and request('GET','/app.js')[0]==200
         snap.write_text('{}');assert request('GET','/api/chart')[0]==503
     finally:server.shutdown();server.server_close();thread.join(2)
+
+
+def test_live_quote_overlay_retains_independent_clock_and_contract_scope(tmp_path):
+    s,p,c=service();body=chart_snapshot(s,cutoff_ns=NOW_NS,capture_id='x',reader_commit='a'*40)
+    snap=tmp_path/'chart.json';atomic_json(snap,dict(body=body,sha256=digest(body)))
+    source=tmp_path/'source.json';quote=dict(available=True,quote=dict(bid='2500',ask='2500.1',receive_ns=NOW_NS-1,available_ns=NOW_NS,executable_quote=False))
+    observation=dict(capture_id='x',status='CAPTURING',observed_at_ns=NOW_NS,health={},instruments={c.metadata.raw_symbol:dict(identity=list(c.identity),quotes={'mbp-1':quote})})
+    atomic_json(source,dict(body=observation,sha256=digest(observation)))
+    server=ThreadingHTTPServer(('127.0.0.1',0),handler_for(snap,source));thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+    def get():
+        conn=HTTPConnection('127.0.0.1',server.server_port,timeout=2);conn.request('GET','/api/chart');r=conn.getresponse();b=r.read();conn.close();return r.status,json.loads(b)
+    try:
+        status,r=get();assert status==200
+        assert r['body']['analysis_sha256']==body['analysis_sha256']
+        assert r['delivery']['quote_snapshots'][c.metadata.raw_symbol]['mbp-1']==quote
+        assert r['delivery']['source_observed_at_ns']==NOW_NS
+        observation['instruments'][c.metadata.raw_symbol]['identity'][2]+=1
+        atomic_json(source,dict(body=observation,sha256=digest(observation)))
+        assert get()[0]==503
+    finally:server.shutdown();server.server_close();thread.join(2)
