@@ -68,10 +68,22 @@ class FuturesMarketInfo:
                 for tf in ('5m','15m','1h','4h'):
                     frames[tf], _ = complete_parents(frames['1m'], tf, calendar)
                 history_status = dict(status='VERIFIED_SEPARATE_ANALYTICAL_HISTORY', live_soak_gap_repaired=False)
+        if getattr(gate,'quality_mode',None)=='DATABENTO_NATIVE_INFORMATION_V1' and frames.get('1m'):
+            # Native archives and current capture remain separate evidence kinds;
+            # complete parents retain their real children across that boundary.
+            from .history import complete_parents
+            for tf in ('5m','15m','1h','4h'):
+                frames[tf],_=complete_parents(frames['1m'],tf,calendar)
+            if any(b.evidence_kind=='AUTHENTIC_HISTORICAL_DOWNLOAD' for b in frames['1m']):
+                history_status=dict(status='SOURCE_VERIFIED_NATIVE_ARCHIVE_AND_LIVE_CHILDREN',
+                    custom_price_anomaly_applied=False,old_capture_repaired=False,
+                    unknown_missing_children_filled=False)
         frames = {tf: rows for tf, rows in frames.items() if rows}
         for tf in ('5s','1m','5m','15m','1h','4h'):
             if tf in frames:
                 continue
+            if getattr(gate,'quality_mode',None)=='DATABENTO_NATIVE_INFORMATION_V1' and frames.get('1m') and tf in {'5m','15m','1h','4h'}:
+                continue  # Already attempted real-minute children; do not bridge missing parents.
             smaller = [s for s in frames if WIDTHS[s] < WIDTHS[tf] and WIDTHS[tf] % WIDTHS[s] == 0]
             if smaller:
                 parents, _ = aggregate_complete(frames[max(smaller, key=lambda s:WIDTHS[s])], target=tf, calendar=calendar,

@@ -114,7 +114,8 @@ def load_capture(root,*,cutoff_ns,maximum_records=2000000,observation_sink=None,
             ref=scope['session_review_reference']
             opened=inputs['session_open_ns'];closed=scope['session_end_ns']
             calendars[iid]=ExchangeCalendar('GLBX.MDP3',c.metadata.exchange,ref,digest(ref),'explicit-read-only-capture-session',opened,closed,((opened,closed),))
-    pipeline=ResearchPipeline(gates,calendars,enabled_schemas=schemas,rolling=True,capacity=50000)
+    history_schemas=tuple(x['schema'] for x in inputs.get('native_history',())) if native_only else ()
+    pipeline=ResearchPipeline(gates,calendars,enabled_schemas=tuple(dict.fromkeys((*schemas,*history_schemas))),rolling=True,capacity=50000)
     if native_only and inputs.get('native_history'):
         from monatise.research.native_futures.history import seed_native_history
         seed_native_history(pipeline,inputs['native_history'],cutoff_ns=cutoff_ns)
