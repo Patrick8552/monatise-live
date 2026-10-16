@@ -36,11 +36,11 @@ class CMELiveCapture:
         self.journal_factory,self.clock_refresh=journal_factory,clock_refresh
 
     async def run(self, *, api_key,permit,permit_ledger,output,checkpoints=None,recovery_review_reference=None,
-                  bootstrap_prefixes=None,evidence_kind='AUTHENTIC_LIVE_CAPTURE',record_sink=None,checkpoint_sink=None,rejection_sink=None,tick_sink=None,metrics_sink=None):
+                  bootstrap_prefixes=None,evidence_kind='AUTHENTIC_LIVE_CAPTURE',record_sink=None,checkpoint_sink=None,rejection_sink=None,tick_sink=None,metrics_sink=None,count_recovery=False):
         if not isinstance(api_key,str) or not api_key.strip():raise ValueError('private_live_key_required')
         if evidence_kind=='ENGINEERING_SYNTHETIC' and self.factory is sdk_client:
             raise ValueError('fixtures_cannot_open_real_live_client')
-        state=FeedState(self.scope,checkpoints=checkpoints,recovery_review_reference=recovery_review_reference,bootstrap_prefixes=bootstrap_prefixes,liveness_clock_ns=self.liveness_clock_ns,native_information=self.native_information)
+        state=FeedState(self.scope,checkpoints=checkpoints,recovery_review_reference=recovery_review_reference,bootstrap_prefixes=bootstrap_prefixes,liveness_clock_ns=self.liveness_clock_ns,native_information=self.native_information,count_recovery=count_recovery)
         self.state=state
         self.active_clock_review=state.clock_review
         self.active_arrival_ns=None

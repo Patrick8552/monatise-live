@@ -17,12 +17,11 @@ python -m monatise.research.phase10.cli \
 ```
 
 The CLI verifies the source-bound authorization, exact instrument definitions,
-policies, anchors, original raw bytes and committed spool prefix. A stopped or
-stale capture is historical context, not current live analysis. The quote reader
-accepts `mbp-1` captures only with a sealed, byte-exact native bootstrap prefix,
-ask-price anchor and native receive timestamp. The existing narrowly reviewed
-trade clock equivalence does not apply to books. No reconnect, subscription,
-charge or first-price fallback is performed by the reader.
+normalization mode, original raw bytes and committed spool prefix. Legacy
+statistical captures also require their original policies and anchors. Native
+information captures use exact contract definitions and documented native
+semantics without a statistical price anchor. Stopped captures retain dated
+historical context. The reader never opens provider connections or repairs data.
 
 ## Meaning of outputs
 
@@ -81,5 +80,45 @@ states unsuitable for quote calculations remain labelled unavailable.
 Before broader use: complete historical range and session/holiday review, review native
 field/coverage failures against source evidence, validate quote/depth
 coverage under load, classify network/provider silence with retained diagnostics,
-and implement reviewed recovery. Production deployment and trading require a
+and verify bounded recovery with real interruptions. Production deployment and trading require a
 separate explicit decision.
+
+
+## Bounded reconnect with intraday replay
+
+The opt-in `DATABENTO_EVENT_TIME_COUNT_V1` orchestration follows
+[Databento recovery guidance](https://databento.com/docs/api-reference-live/basics/recovering-after-a-disconnection):
+
+* Track the last event timestamp and record count at that timestamp for each
+  schema/instrument. Subscribe before streaming, starting at the lowest stored
+  timestamp for that schema. An instrument without a cursor uses the original
+  authorized start. BBO/CBBO require receive-time cursors and are not enabled here.
+* Discard the older overlap and exactly the first N tied-timestamp records per
+  instrument, retaining every original and replayed byte in the journals/spool.
+  Replayed capture timestamps need not be byte-identical. Identical legitimate
+  executions after the counted prefix remain separate observations.
+* Require fresh definitions, acknowledgements and REPLAY_COMPLETED for every
+  schema before publication/current analysis. Missing tied-prefix records stop
+  recovery. Regressed event-time cursors require a separate overlap review; this
+  implementation does not pretend the simple seek recipe proves that case.
+* After a hung connection or disconnect without a provider ErrorMsg, close all
+  owned clients, wait at least one second, genuinely refresh metadata/clock
+  receipts, and resubscribe within the same finite authorization. Provider errors,
+  record rejections, storage/clock faults and exhausted attempt/time budgets
+  stop for review. There are at most three attempts in a 15-minute trial.
+* Keep `slow_reader_behavior="warn"`. The SDK's automatic reconnect in pinned
+  Python 0.87.0 uses `start=None`, so it is not used as a substitute for replay.
+  Only documented Live public methods are called by the transport.
+
+A hash-bound attempt ledger and independent read-only native reconstruction
+recompute the counted overlap and check every admission bit. Original failed
+attempt reports stay unchanged. A Wi-Fi link event is transport evidence, not a
+malformed-price finding. Analysis is RECOVERING until replay completes; aged-out
+or unreconciled data remains unavailable. This proves only retained provider
+replay consistency, not independent exchange completeness or execution readiness.
+
+Synthetic tests cover disconnect/replay, tied multiplicity, missing prefixes,
+provider errors, bounded exhaustion, cleanup and falsified overlap admission.
+Live results must be reported separately; an uninterrupted trial does not verify
+recovery from a real Wi-Fi outage. No data purchases or historical downloads are
+performed by the recovery service.

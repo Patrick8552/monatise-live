@@ -17,9 +17,19 @@ class Cursor:
     skipped: int=0
     index_ns: int|None=None
     event_order_regressed: bool=False
+    count_recovery: bool=False
 
     def accept(self,event_ns,native_hash, *, index_ns=None):
         timestamp_ns(event_ns)
+        # Databento's documented replay contract is inclusive event time plus
+        # per-instrument multiplicity, not byte equality of capture timestamps.
+        # Validate the record before reaching this cursor; retain every copy.
+        if self.count_recovery and self.replay_prefix:
+            if event_ns<self.event_ns:return False
+            if event_ns==self.event_ns and self.skipped<len(self.replay_prefix):
+                self.skipped+=1;return False
+            if self.skipped<len(self.replay_prefix):raise ValueError('replay_missing_tied_records')
+            self.replay_prefix=();self.skipped=0
         if index_ns is not None:
             timestamp_ns(index_ns)
             if self.index_ns is not None and index_ns<self.index_ns and not self.replay_prefix:
@@ -64,9 +74,17 @@ class Cursor:
         for h in hashes:hash_required(h)
         return cls(event_ns=event,hashes_at_event=list(hashes),replay_prefix=hashes,index_ns=index)
 
+    @classmethod
+    def recover_count(cls,value):
+        cursor=cls.recover(value)
+        cursor.count_recovery=True
+        return cursor
+
 
 class FeedState:
-    def __init__(self,scope, *, checkpoints=None,recovery_review_reference=None,bootstrap_prefixes=None,liveness_clock_ns=None,native_information=False):
+    def __init__(self,scope, *, checkpoints=None,recovery_review_reference=None,bootstrap_prefixes=None,liveness_clock_ns=None,native_information=False,count_recovery=False):
+        if count_recovery and (not native_information or bootstrap_prefixes or not checkpoints):
+            raise ValueError('native_documented_recovery_requires_committed_cursors')
         if bootstrap_prefixes and (not checkpoints or not recovery_review_reference):raise ValueError("reviewed_initial_prefix_requires_checkpoints")
         self.native_information=native_information;self.provider_warnings=[]
         self.liveness_clock_ns=liveness_clock_ns;self.liveness_started={};self.liveness_last={}
@@ -80,7 +98,8 @@ class FeedState:
         for schema in scope.schemas:
             for iid in self.contracts:
                 key=f'{schema}:{iid}'
-                self.cursors[key]=Cursor.recover(checkpoints[key]) if checkpoints and key in checkpoints else Cursor()
+                recover=Cursor.recover_count if count_recovery else Cursor.recover
+                self.cursors[key]=recover(checkpoints[key]) if checkpoints and key in checkpoints else Cursor()
                 if schema.startswith('ohlcv-'):
                     from .candles import WIDTHS
                     event=self.cursors[key].event_ns
