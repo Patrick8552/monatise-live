@@ -4,7 +4,7 @@ from monatise.research.institutional.models import digest,encode
 from monatise.research.databento.candles import WIDTHS
 from . import SAFETY
 
-FEATURES={'trade_features','mbp-1','mbp-10','oi_change',*(f'price:{tf}' for tf in WIDTHS)}
+FEATURES={'trade_features','mbp-1','mbp-10','open_interest','oi_change',*(f'price:{tf}' for tf in WIDTHS)}
 
 @dataclass(frozen=True)
 class AnalysisRequest:

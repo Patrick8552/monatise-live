@@ -6,7 +6,7 @@ GIL, gamma, dealer positioning, signal, or order decision is evaluated here.
 from decimal import Decimal
 
 from monatise.research.databento.candles import WIDTHS
-from monatise.research.institutional.indicators import trade_indicators
+from monatise.research.institutional.indicators import trade_indicators,book_indicator,open_interest_change,encode_source
 from monatise.research.institutional.models import digest, encode
 from monatise.research.phase9.availability import inherited_policy
 from monatise.research.phase9.candles import aggregate_complete
@@ -112,7 +112,7 @@ class FuturesMarketInfo:
                     sparse_coverage_proofs={r.sha256:encode(r) for b in rows for r in getattr(b,'coverage_reviews',())},
                     synthetic_bar_count=0,
                     source_sha256=digest(rows), selector_applied=False, fixed_selector_expiry_applied=False,
-                    native_analysis=analyse_frame(rows,tick_size=c.tick_size,cutoff_ns=request.cutoff_ns))
+                    native_analysis=analyse_frame(rows,tick_size=c.tick_size,cutoff_ns=request.cutoff_ns,calendar=calendar))
             except (ValueError,TypeError,ArithmeticError) as exc:
                 parts['price:'+tf] = dict(available=False,reason=str(exc))
         policy = inherited_policy(c,'trades')
@@ -124,7 +124,44 @@ class FuturesMarketInfo:
             parts['trade_features'] = dict(available=True,result=metrics,health=trade_health)
         else:
             parts['trade_features'] = dict(trade_health)
-        parts.update({k:dict(available=False,reason='not_captured_or_not_validated') for k in ('mbp-1','mbp-10','oi_change')})
+        # Only observations already admitted by the exact source/price gate can
+        # supply quotes or published OI. No subscriptions or legacy graph here.
+        policies={s:inherited_policy(c,'open_interest' if s=='statistics' else 'book')
+                  for s in ('mbp-1','mbp-10','statistics')}
+        health_by_schema=gate.health(now_ns=request.cutoff_ns,policies=policies,schemas=tuple(policies))
+        for schema in ('mbp-1','mbp-10'):
+            h=health_by_schema[schema]
+            values=[v for v in gate.accepted if v.schema==schema and v.source.admission_ns<=request.cutoff_ns]
+            if not h['available'] or not values:
+                parts[schema]=dict(available=False,reason=h.get('reason') or 'not_captured_or_not_validated',health=h)
+            else:
+                latest=values[-1];top=latest.payload[0]
+                parts[schema]=dict(available=True,health=h,result=book_indicator(latest),
+                    quote=dict(bid=top[0],ask=top[3],bid_contracts=top[1],ask_contracts=top[4],
+                        spread=str(Decimal(top[3])-Decimal(top[0])),receive_ns=latest.receive_ns,
+                        available_ns=latest.source.admission_ns,book_basis='DIRECT_DISPLAYED_BOOK',
+                        source_sha256=latest.source.record_sha256,executable_quote=False))
+        h=health_by_schema['statistics']
+        oi={}
+        for v in gate.accepted:
+            if v.schema=='statistics' and v.source.admission_ns<=request.cutoff_ns:
+                oi[v.payload[2]]=v  # Latest admitted publication for each reference date.
+        periods=sorted(oi)
+        if h['available'] and periods:
+            latest=oi[periods[-1]]
+            parts['open_interest']=dict(available=True,contracts=latest.payload[1],reference_ns=latest.payload[2],
+                publication_ns=latest.receive_ns,available_ns=latest.source.admission_ns,
+                health=h,source=encode_source(latest),signed_dealer_position=None)
+            if len(periods)>=2:
+                try:parts['oi_change']=dict(available=True,result=open_interest_change(oi[periods[-2]],latest,cutoff_ns=request.cutoff_ns))
+                except ValueError as exc:parts['oi_change']=dict(available=False,reason=str(exc))
+            else:parts['oi_change']=dict(available=False,reason='two_distinct_published_OI_periods_required')
+        else:
+            parts['open_interest']=dict(available=False,reason=h.get('reason') or 'not_captured_or_not_validated')
+            parts['oi_change']=dict(parts['open_interest'])
+        for v in parts.values():
+            if v.get('available') and 'result' in v and 'vwap' in v['result']:
+                v['result']['window_scope']='RETAINED_VALIDATED_EXECUTIONS_NOT_FULL_SESSION'
         available = [k for k,v in parts.items() if v['available']]
         state = 'PARTIAL_MARKET_INFORMATION' if available else 'UNAVAILABLE'
         source_scope=quarantine_scope(health,iid)

@@ -71,7 +71,7 @@ def load_capture(root,*,cutoff_ns,maximum_records=2000000,observation_sink=None,
     steps=auth['plan']['steps']
     if len(steps)!=1:raise ValueError('analysis_access_requires_single_reviewed_attempt')
     scope=steps[0]['scope'];schemas=tuple(scope['schemas']);refs=auth['calibration_references']
-    if not set(schemas)<={'definition','trades','ohlcv-1s','ohlcv-1m'} or 'trades' not in schemas:
+    if not set(schemas)<={'definition','trades','mbp-1','ohlcv-1s','ohlcv-1m'} or 'trades' not in schemas:
         raise ValueError('access_v1_requires_reviewed_trade_and_native_candle_capture')
     contracts={};gates={};calendars={};anchors={}
     for schema in schemas:
@@ -97,8 +97,8 @@ def load_capture(root,*,cutoff_ns,maximum_records=2000000,observation_sink=None,
             if policy.sha256!=refs[key]['policy_sha256']:raise ValueError('source_policy_hash_mismatch')
             sha=refs[key]['anchor_record_sha256'];row,at=anchors[(iid,schema,sha)]
             if row.ts_event!=refs[key]['anchor_event_ns']:raise ValueError('source_anchor_event_mismatch')
-            price=Decimal(row.price if schema=='trades' else row.close)/10**9
-            index=timestamp_ns(row.ts_recv if schema=='trades' else row.ts_event)
+            price=Decimal(row.price if schema=='trades' else row.levels[0].ask_px if schema=='mbp-1' else row.close)/10**9
+            index=timestamp_ns(row.ts_recv if schema in {'trades','mbp-1'} else row.ts_event)
             if refs[key].get('anchor_index_ns',index)!=index:raise ValueError('source_anchor_index_mismatch')
             policies[schema]=policy;points[schema]=dict(anchor=price,anchor_ns=index,anchor_sha256=sha)
         gates[iid]=QualityGate(c,policies['trades'],**points['trades'],schema_policies=policies,schema_anchors=points,rolling=True,capacity=50000)

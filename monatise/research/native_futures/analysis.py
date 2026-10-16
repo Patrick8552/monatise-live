@@ -4,7 +4,7 @@ from monatise.research.databento.candles import WIDTHS, HistoricalBar
 from monatise.research.institutional.models import digest
 
 
-def analyse_frame(bars, *, tick_size, cutoff_ns, swing_radius=2, maximum_bars=512):
+def analyse_frame(bars, *, tick_size, cutoff_ns, swing_radius=2, maximum_bars=512, calendar=None):
     rows=tuple(bars);tick=Decimal(tick_size)
     if type(swing_radius) is not int or not 1<=swing_radius<=5 or tick<=0:
         raise ValueError('bounded_native_swing_policy_required')
@@ -19,8 +19,23 @@ def analyse_frame(bars, *, tick_size, cutoff_ns, swing_radius=2, maximum_bars=51
     omitted=max(0,len(rows)-maximum_bars);rows=rows[-maximum_bars:]
     if any(b.identity!=rows[0].identity or b.timeframe!=rows[0].timeframe or b.close_ns>cutoff_ns or b.retrieval_ns>cutoff_ns for b in rows):
         raise ValueError('exact_available_native_frame_required')
-    if any(a.close_ns!=b.open_ns for a,b in zip(rows,rows[1:])):
-        return dict(available=False,reason='noncontiguous_validated_frame',gap_fill_count=0)
+    omitted=[]
+    if calendar is not None:
+        from monatise.research.databento.candles import ExchangeCalendar
+        if (not isinstance(calendar,ExchangeCalendar)
+                or (calendar.dataset,calendar.exchange)!=(rows[0].identity.dataset,rows[0].identity.exchange)
+                or any(not calendar.contains(b.open_ns,b.close_ns) for b in rows)):
+            raise ValueError('reviewed_native_frame_calendar_required')
+    width=WIDTHS[rows[0].timeframe]
+    for a,b in zip(rows,rows[1:]):
+        if a.close_ns==b.open_ns:continue
+        if (calendar is None or a.close_ns>b.open_ns or
+                (b.open_ns-a.close_ns)%width or (b.open_ns-a.close_ns)//width>10000):
+            return dict(available=False,reason='noncontiguous_validated_frame',gap_fill_count=0)
+        for start in range(a.close_ns,b.open_ns,width):
+            if calendar.contains(start,start+width):
+                return dict(available=False,reason='missing_bar_in_reviewed_trading_interval',gap_fill_count=0)
+            omitted.append(dict(open_ns=start,reason='REVIEWED_CLOSED_OR_PARTIAL_SESSION_BUCKET'))
     # Strict extrema avoid inventing a pivot direction on flat/equal plateaus.
     swings=[]
     for i in range(swing_radius,len(rows)-swing_radius):
@@ -71,7 +86,8 @@ def analyse_frame(bars, *, tick_size, cutoff_ns, swing_radius=2, maximum_bars=51
         swing_policy=dict(left_bars=swing_radius,right_bars=swing_radius,strict_extrema=True,confirmation_uses_closed_bars_only=True),
         structure=structure,fibonacci=fib,liquidity_proxies=dict(available=bool(zones),zones=zones,
             basis='REPEATED_CONFIRMED_PRICE_EXTREMA',resting_orders_observed=False,participant_identity_known=False),
-        source_sha256=digest(rows),gap_fill_count=0,crypto_engines_used=False,frozen_H1_selector_used=False,GIL_rules_used=False,execution_eligible=False)
+        source_sha256=digest(rows),calendar_sha256=calendar.sha256 if calendar else None,
+        omitted_session_buckets=omitted,gap_fill_count=0,crypto_engines_used=False,frozen_H1_selector_used=False,GIL_rules_used=False,execution_eligible=False)
     result['reproducibility_sha256']=digest(result);return result
 
 

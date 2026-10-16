@@ -179,3 +179,23 @@ def test_bootstrap_rejects_event_time_substitution_for_trade_receive_anchor(setu
     p.gates[c.metadata.instrument_id].guards['trades'].anchor_ns=rows[-1].ts_event
     with pytest.raises(ValueError,match='anchor_provider_index'):
         review_bootstrap(p,s,root,review_reference='WRONG_CLOCK_MUST_NOT_PASS')
+
+
+def test_book_bootstrap_uses_exact_native_prefix_and_receive_anchor(setup,tmp_path):
+    from tests.research.phase9.test_options_service import quote
+    p,c,s,_,_=setup;root=tmp_path/'book';s=replace(s,schemas=('definition','mbp-1'))
+    row=quote(c,2500);g=p.gates[c.metadata.instrument_id]
+    g.guards['mbp-1']=PriceGuard(c,g.policy,anchor=Decimal(row.levels[0].ask_px)/NS,
+        anchor_ns=row.ts_recv,anchor_sha256=hashlib.sha256(bytes(row)).hexdigest())
+    j=NativeJournal(root/'mbp-1',schema='mbp-1',scope=s,evidence_kind='ENGINEERING_SYNTHETIC')
+    j.append(row,capture_ns=NOW_NS);j.close(quality=dict(quarantined=False),checkpoint={})
+    review=review_bootstrap(p,s,root,review_reference='EXACT_BOOK_PREFIX')
+    st=FeedState(s,checkpoints=review.checkpoints(p,s),recovery_review_reference=review.sha256)
+    assert st.ingest('mbp-1',row,capture_ns=NOW_NS,ordinal=1) is None
+    assert not review.trade_prefixes
+    bad=dn.MBP1Msg(publisher_id=row.publisher_id,instrument_id=row.instrument_id,ts_event=row.ts_event,
+        ts_recv=row.ts_recv+1,price=row.price,size=row.size,action=row.action,side=row.side,
+        depth=row.depth,flags=int(row.flags),sequence=row.sequence,levels=row.levels[0])
+    st=FeedState(s,checkpoints=review.checkpoints(p,s),recovery_review_reference=review.sha256)
+    with pytest.raises(ValueError,match='prefix_mismatch'):
+        st.ingest('mbp-1',bad,capture_ns=NOW_NS,ordinal=1)

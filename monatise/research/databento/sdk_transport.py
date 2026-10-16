@@ -28,7 +28,7 @@ class OwnedSDKClient:
         self._client = None
         try:
             self._client = self._call(lambda: builder(key=key, heartbeat_interval_s=heartbeat_seconds,
-                reconnect_policy='none', loop=self._loop))
+                reconnect_policy='none', slow_reader_behavior='warn', loop=self._loop))
         except BaseException:
             self.close()
             raise

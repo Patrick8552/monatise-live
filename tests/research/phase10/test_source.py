@@ -157,3 +157,37 @@ def test_campaign_excludes_reported_bad_schema_without_admitting_its_clean_prefi
 def test_old_capture_cannot_be_silently_reinterpreted_with_new_normalization(capture):
     root,c=capture;path=root/'authorization.json';auth=json.loads(path.read_text());auth.pop('normalization_semantics');path.write_text(json.dumps(auth))
     with pytest.raises(ValueError,match='original_reader_or_separate_review'):load_capture(root,cutoff_ns=NOW_NS)
+
+
+def test_book_capture_replays_into_native_information_without_legacy_graph(tmp_path,monkeypatch):
+    from tests.research.phase9.test_options_service import quote
+    from monatise.research.phase9.pipeline import ResearchPipeline
+    c=contract();g=gate(c);root=tmp_path/'book-capture';root.mkdir();anchors=tmp_path/'book-anchors'
+    initial={'trades':trade(c,t=NOW_NS-5*NS),'mbp-1':quote(c,2500)}
+    refs={};policies={}
+    for schema,row in initial.items():
+        s=SimpleNamespace(schemas=(schema,),sha256=digest(schema),maximum_records=100,maximum_bytes=65536)
+        j=NativeJournal(anchors/schema,schema=schema,scope=s,evidence_kind='ENGINEERING_SYNTHETIC')
+        j.append(row,capture_ns=NOW_NS);j.close(quality={'quarantined':False},checkpoint={})
+        key=c.metadata.raw_symbol+':'+schema;policies[key]=encode(g.policy)
+        refs[key]=dict(policy_sha256=g.policy.sha256,anchor_event_ns=row.ts_event,
+            anchor_index_ns=row.ts_recv,anchor_record_sha256=hashlib.sha256(bytes(row)).hexdigest())
+    scope=dict(contracts=[encode(c)],schemas=['trades','mbp-1'],session_end_ns=NOW_NS//(60*NS)*60*NS+86400*NS,session_review_reference='ENGINEERING')
+    from monatise.research.databento.semantics import VERSION
+    auth=dict(normalization_semantics=VERSION,plan=dict(steps=[dict(scope=scope)]),calibration_references=refs)
+    (root/'authorization.json').write_text(json.dumps(auth))
+    inputs=dict(version='phase10-analysis-inputs-v1',normalization_semantics=VERSION,authorization_sha256=digest(auth),
+        anchor_root=str(anchors),session_open_ns=NOW_NS//(60*NS)*60*NS-86400*NS,policies=policies)
+    (root/'analysis-inputs.json').write_text(json.dumps(inputs))
+    spool=RotatingSpool(root/'spool',policy=RotationPolicy())
+    for schema,row in initial.items():spool.append(schema,row,capture_ns=NOW_NS,
+        delivery_id=digest(auth['plan'])+':0:'+schema+':0',evidence_kind='ENGINEERING_SYNTHETIC')
+    spool.checkpoint('feed_cursor',dict(spool_records=spool.count,cursors={}));spool.close()
+    final=root/'capture/attempt-00';final.mkdir(parents=True)
+    (final/'report.json').write_text(json.dumps(dict(scope_sha256=digest(scope),quality=dict(quarantined=False,reasons=[]))))
+    monkeypatch.setattr(ResearchPipeline,'analyse',lambda *a,**k:pytest.fail('legacy graph called'))
+    before=hashes(root);reader=load_capture(root,cutoff_ns=NOW_NS)
+    result=reader.analyse(AnalysisRequest((c.metadata.raw_symbol,),NOW_NS))['instruments'][c.metadata.raw_symbol]
+    assert result['components']['mbp-1']['available'] and hashes(root)==before
+    assert reader.pipeline.gates[c.metadata.instrument_id].guards['mbp-1'].anchor_ns==initial['mbp-1'].ts_recv
+    assert not result['crypto_engines_used'] and not result['frozen_H1_selector_used'] and not result['GIL_rules_used']
