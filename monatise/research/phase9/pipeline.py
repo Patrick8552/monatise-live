@@ -37,6 +37,8 @@ class ResearchPipeline:
                 evidence_kind=evidence_kind,enabled_schemas=self.enabled_schemas,clock_review=clock_review)
             result = gate.ingest(value,now_ns=admission_ns)
             result['mapping_provenance']=transformation_provenance(value)
+            if hasattr(gate,'quality_mode'):
+                result['mapping_provenance'].update(custom_price_anomaly_applied=False,excursion_measurement='NOT_APPLIED')
             if result['accepted']:
                 if schema=='trades':
                     builder=self.trade_candles[iid]
@@ -58,6 +60,8 @@ class ResearchPipeline:
                     self.trade_candles[iid].tainted.add((tf,value.event_ns//w*w))
             if assessment is not None:
                 assessment['price_screening_accepted']=result['accepted']
+                if hasattr(gate,'quality_mode'):
+                    assessment.update(price_plausibility='CUSTOM_STATISTICAL_GATE_RETIRED',custom_price_anomaly_applied=False)
                 if not result['accepted']:assessment['capabilities']={k:False for k in assessment['capabilities']}
                 result['record_quality']=assessment
             return result

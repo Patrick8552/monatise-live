@@ -70,11 +70,15 @@ def load_capture(root,*,cutoff_ns,maximum_records=2000000,observation_sink=None,
         raise ValueError('analysis_inputs_authorization_mismatch')
     steps=auth['plan']['steps']
     if len(steps)!=1:raise ValueError('analysis_access_requires_single_reviewed_attempt')
-    scope=steps[0]['scope'];schemas=tuple(scope['schemas']);refs=auth['calibration_references']
-    if not set(schemas)<={'definition','trades','mbp-1','ohlcv-1s','ohlcv-1m'} or 'trades' not in schemas:
+    scope=steps[0]['scope'];schemas=tuple(scope['schemas']);refs=auth.get('calibration_references',{})
+    from monatise.research.native_futures.information_gate import NativeInformationGate,MODE
+    native_only=auth.get('quality_mode')==MODE
+    if auth.get('quality_mode') not in (None,MODE):raise ValueError('unknown_source_quality_mode')
+    allowed={'definition','trades','mbp-1','ohlcv-1s','ohlcv-1m'} | ({'mbp-10','statistics','status'} if native_only else set())
+    if not set(schemas)<=allowed or 'trades' not in schemas:
         raise ValueError('access_v1_requires_reviewed_trade_and_native_candle_capture')
     contracts={};gates={};calendars={};anchors={}
-    for schema in schemas:
+    for schema in (() if native_only else schemas):
         if schema=='definition':continue
         wanted={v['anchor_record_sha256'] for k,v in refs.items() if k.endswith(':'+schema)}
         anchor_folder=Path(inputs['anchor_root'])/schema
@@ -90,22 +94,30 @@ def load_capture(root,*,cutoff_ns,maximum_records=2000000,observation_sink=None,
             row=rows[0];anchors[(row.instrument_id,schema,sha)]=(row,at)
     for encoded in scope['contracts']:
         c=decode_contract(encoded);iid=c.metadata.instrument_id;contracts[iid]=c;policies={};points={}
-        for schema in schemas:
-            if schema=='definition':continue
-            key=c.metadata.raw_symbol+':'+schema
-            pd=dict(inputs['policies'][key]);pd['scale']=Decimal(pd['scale']);policy=PlausibilityPolicy(**pd)
-            if policy.sha256!=refs[key]['policy_sha256']:raise ValueError('source_policy_hash_mismatch')
-            sha=refs[key]['anchor_record_sha256'];row,at=anchors[(iid,schema,sha)]
-            if row.ts_event!=refs[key]['anchor_event_ns']:raise ValueError('source_anchor_event_mismatch')
-            price=Decimal(row.price if schema=='trades' else row.levels[0].ask_px if schema=='mbp-1' else row.close)/10**9
-            index=timestamp_ns(row.ts_recv if schema in {'trades','mbp-1'} else row.ts_event)
-            if refs[key].get('anchor_index_ns',index)!=index:raise ValueError('source_anchor_index_mismatch')
-            policies[schema]=policy;points[schema]=dict(anchor=price,anchor_ns=index,anchor_sha256=sha)
-        gates[iid]=QualityGate(c,policies['trades'],**points['trades'],schema_policies=policies,schema_anchors=points,rolling=True,capacity=50000)
-        ref=scope['session_review_reference']
-        opened=inputs['session_open_ns'];closed=scope['session_end_ns']
-        calendars[iid]=ExchangeCalendar('GLBX.MDP3',c.metadata.exchange,ref,digest(ref),'explicit-read-only-capture-session',opened,closed,((opened,closed),))
+        if native_only:
+            gates[iid]=NativeInformationGate(c,capacity=50000,rolling=True)
+            cal=dict(inputs['calendars'][str(iid)]);cal['intervals']=tuple(tuple(x) for x in cal['intervals'])
+            calendars[iid]=ExchangeCalendar(**cal)
+        else:
+            for schema in schemas:
+                if schema=='definition':continue
+                key=c.metadata.raw_symbol+':'+schema
+                pd=dict(inputs['policies'][key]);pd['scale']=Decimal(pd['scale']);policy=PlausibilityPolicy(**pd)
+                if policy.sha256!=refs[key]['policy_sha256']:raise ValueError('source_policy_hash_mismatch')
+                sha=refs[key]['anchor_record_sha256'];row,at=anchors[(iid,schema,sha)]
+                if row.ts_event!=refs[key]['anchor_event_ns']:raise ValueError('source_anchor_event_mismatch')
+                price=Decimal(row.price if schema=='trades' else row.levels[0].ask_px if schema=='mbp-1' else row.close)/10**9
+                index=timestamp_ns(row.ts_recv if schema in {'trades','mbp-1'} else row.ts_event)
+                if refs[key].get('anchor_index_ns',index)!=index:raise ValueError('source_anchor_index_mismatch')
+                policies[schema]=policy;points[schema]=dict(anchor=price,anchor_ns=index,anchor_sha256=sha)
+            gates[iid]=QualityGate(c,policies['trades'],**points['trades'],schema_policies=policies,schema_anchors=points,rolling=True,capacity=50000)
+            ref=scope['session_review_reference']
+            opened=inputs['session_open_ns'];closed=scope['session_end_ns']
+            calendars[iid]=ExchangeCalendar('GLBX.MDP3',c.metadata.exchange,ref,digest(ref),'explicit-read-only-capture-session',opened,closed,((opened,closed),))
     pipeline=ResearchPipeline(gates,calendars,enabled_schemas=schemas,rolling=True,capacity=50000)
+    if native_only and inputs.get('native_history'):
+        from monatise.research.native_futures.history import seed_native_history
+        seed_native_history(pipeline,inputs['native_history'],cutoff_ns=cutoff_ns)
     from monatise.research.native_futures.quality_review import NativeQualityReview
     native_review=NativeQualityReview()
     # Read source health before the cursor snapshot. A later progress write can
@@ -222,8 +234,9 @@ def load_capture(root,*,cutoff_ns,maximum_records=2000000,observation_sink=None,
                 marker=next((r for r in reversed(controls) if r['end_ns']<=prefix_last_ns),None)
                 if marker is None:continue
                 if schema not in replays or schema in gate.faults or f'{schema}:{iid}' in health['component_rejections']:continue
-                step=WIDTHS[schema[6:]];ref=refs[gate.contract.metadata.raw_symbol+':'+schema]
-                begin=max(scope.get('start_ns',0),ref['anchor_event_ns']+step)
+                step=WIDTHS[schema[6:]]
+                begin=dict(scope.get('initial_schema_starts',())).get(schema,scope.get('start_ns',0))
+                if not native_only:begin=max(begin,refs[gate.contract.metadata.raw_symbol+':'+schema]['anchor_event_ns']+step)
                 begin=(begin+step-1)//step*step
                 if begin>=marker['end_ns']:continue
                 proof=NativeBarCoverage(gate.contract.identity,schema,begin,marker['end_ns'],prefix_last_ns,

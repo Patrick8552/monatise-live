@@ -109,7 +109,7 @@ class FeedState:
     def replay_start(self,schema):
         # A missing instrument cursor means replay from the original approved
         # start; never skip an instrument that had no records before disconnect.
-        clocks=[self.cursors[f'{schema}:{i}'].event_ns or (0 if schema=='definition' else self.scope.start_ns) for i in self.contracts]
+        clocks=[self.cursors[f'{schema}:{i}'].event_ns or (0 if schema=='definition' else self.scope.initial_start(schema)) for i in self.contracts]
         return min(clocks)
 
     def ingest(self,schema,record, *, capture_ns,ordinal):
@@ -169,7 +169,7 @@ class FeedState:
         lower,upper=review.bounds(capture_ns) if review else (0,0)
         if (record.publisher_id!=contract.metadata.publisher_id or max(event,received)>capture_ns+upper
                 or not contract.metadata.event_ns<=received<contract.metadata.expiration_ns
-                or not (contract.metadata.event_ns if schema=='definition' else self.scope.start_ns)<=event<self.scope.session_end_ns
+                or not (contract.metadata.event_ns if schema=='definition' else self.scope.initial_start(schema))<=event<self.scope.session_end_ns
                 or capture_ns+max(0,upper)>=self.scope.session_end_ns+self.scope.session_drain_seconds*10**9 or int(getattr(record,'flags',0))&(4|8|32)):
             raise ValueError('live_record_identity_clocks_session_or_quality_rejected')
         if schema.startswith('ohlcv-'):

@@ -10,7 +10,6 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 
 from monatise.adapters.databento_identity import timestamp_ns
-from monatise.application.gold_options import GoldOptionDefinition
 from monatise.research.databento.advanced import Observation
 from monatise.research.databento.acquisition import canonical_hash
 
@@ -56,6 +55,7 @@ def join_inputs(*, definition, definition_available_ns, option_quote, underlying
                 quote_available_ns, cutoff_ns, open_interest=None, maximum_quote_age_ns=60*10**9,
                 maximum_skew_ns=10**9):
     for t in (definition_available_ns,quote_available_ns,cutoff_ns): timestamp_ns(t)
+    from monatise.application.gold_options import GoldOptionDefinition
     if (not isinstance(definition,GoldOptionDefinition) or definition.family != "OG"
             or definition.style != "American" or definition.kind not in {"C","P"}
             or not 0 < maximum_quote_age_ns <= 60*10**9 or not 0 <= maximum_skew_ns <= 10**9

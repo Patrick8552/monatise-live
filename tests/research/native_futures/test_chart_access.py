@@ -128,3 +128,31 @@ def test_book_clock_diagnostic_never_grants_replay_or_data_admission(delta):
     assert not r['admission_authorized'] and not r['book_prefix_tolerance_granted'] and bytes(b)==before
     assert book_pair_review(a,changed(sequence=a.sequence+1))['classification']=='DIFFERENT_EVENT_OR_BOOK_STATE'
     assert book_pair_review(a,changed(ts_in_delta=a.ts_in_delta))['classification']=='DIFFERENT_EVENT_OR_BOOK_STATE'
+
+
+def test_native_publication_and_request_import_without_legacy_engines_or_application():
+    import os,subprocess,sys
+    from pathlib import Path
+    code="""
+import sys
+class NoLegacy:
+ def find_spec(self,fullname,path=None,target=None):
+  if fullname.startswith(('monatise.engines','monatise.application','monatise.routing')):
+   raise AssertionError('legacy dependency imported: '+fullname)
+sys.meta_path.insert(0,NoLegacy())
+from monatise.research.phase9.publication import CandlePublisher
+from monatise.research.phase9.service import PersistentResearchService
+from monatise.research.phase10.market_info import FuturesMarketInfo
+assert not any('signal_router' in name.lower() for name in sys.modules)
+"""
+    env=dict(os.environ,PYTHONPATH=str(Path(__file__).resolve().parents[3]))
+    result=subprocess.run([sys.executable,'-c',code],env=env,capture_output=True,text=True)
+    assert result.returncode==0,result.stderr
+
+
+def test_completed_capture_text_cannot_be_mistaken_for_an_active_feed():
+    from monatise.research.phase10.formatting import text_report
+    p,c=pipeline();add(p,trade(c),ordinal=1)
+    result=FuturesMarketInfo(p,source_health=lambda at:{'status':'SEALED_HISTORICAL_CAPTURE'}).analyse(AnalysisRequest((c.metadata.raw_symbol,),NOW_NS))
+    assert result['XAUUSD_signal_router_used'] is False
+    assert 'historical context only; no current live connection' in text_report(result)

@@ -18,6 +18,8 @@ def text_report(report):
             lines.append('Trade timestamp quality is quarantined. Independently validated native candle context is listed separately; flow/VWAP/profile remain unavailable.')
         elif scope!='NONE':
             lines.append('Quarantined instrument: calculated components below are retained context, unavailable for current live use.')
+        sealed=health.get('status')=='SEALED_HISTORICAL_CAPTURE'
+        if sealed:lines.append('Completed capture: historical context only; no current live connection.')
         components=value.get('components',{})
         history=value.get('history_warmup',health.get('history_warmup',{}))
         if history:
@@ -28,7 +30,7 @@ def text_report(report):
             part=components.get('price:'+tf,{})
             if not part.get('available'):
                 lines.append(tf+': unavailable — '+part.get('reason','insufficient validated history'));continue
-            lines.append(tf+': '+('historical context' if part.get('historical_only') else 'available')+
+            lines.append(tf+': '+('historical context' if part.get('historical_only') or sealed else 'available')+
                 '; validated candles='+str(part.get('validated_candle_count','unknown'))+'; '+part.get('coverage',''))
             if report.get('version')=='native-futures-market-information-v1':
                 stats=part['session_statistics']

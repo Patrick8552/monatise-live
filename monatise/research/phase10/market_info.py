@@ -16,7 +16,7 @@ from monatise.research.native_futures.analysis import analyse_frame, alignment
 from .diagnostics import second_intervals
 from monatise.research.databento.semantics import VERSION as NORMALIZATION_VERSION
 
-SAFETY = dict(execution_eligible=False, orders_placed=0, production_registered=False)
+SAFETY = dict(execution_eligible=False, orders_placed=0, production_registered=False, XAUUSD_signal_router_used=False)
 
 
 def quarantine_scope(health, iid):
@@ -118,7 +118,7 @@ class FuturesMarketInfo:
         policy = inherited_policy(c,'trades')
         trade_health = gate.health(now_ns=request.cutoff_ns,policies={'trades':policy},schemas=('trades',))['trades']
         if trade_health['available']:
-            values = [v for v in gate.accepted if v.schema == 'trades' and v.source.admission_ns <= request.cutoff_ns]
+            values = [v for v in getattr(gate,'trade_sources',gate.accepted) if v.schema == 'trades' and v.source.admission_ns <= request.cutoff_ns]
             metrics = trade_indicators(values,start_ns=min(v.receive_ns for v in values),
                 end_ns=max(v.receive_ns for v in values)+1, session_reference=calendar.sha256)
             parts['trade_features'] = dict(available=True,result=metrics,health=trade_health)
@@ -136,6 +136,8 @@ class FuturesMarketInfo:
                 parts[schema]=dict(available=False,reason=h.get('reason') or 'not_captured_or_not_validated',health=h)
             else:
                 latest=values[-1];top=latest.payload[0]
+                if top[0] is None or top[3] is None or min(top[1],top[4])<=0 or Decimal(top[0])>=Decimal(top[3]):
+                    parts[schema]=dict(available=False,reason='one_sided_locked_or_empty_book',native_record_retained=True);continue
                 parts[schema]=dict(available=True,health=h,result=book_indicator(latest),
                     quote=dict(bid=top[0],ask=top[3],bid_contracts=top[1],ask_contracts=top[4],
                         spread=str(Decimal(top[3])-Decimal(top[0])),receive_ns=latest.receive_ns,
@@ -143,7 +145,7 @@ class FuturesMarketInfo:
                         source_sha256=latest.source.record_sha256,executable_quote=False))
         h=health_by_schema['statistics']
         oi={}
-        for v in gate.accepted:
+        for v in getattr(gate,'statistics_sources',gate.accepted):
             if v.schema=='statistics' and v.source.admission_ns<=request.cutoff_ns:
                 oi[v.payload[2]]=v  # Latest admitted publication for each reference date.
         periods=sorted(oi)
@@ -176,7 +178,7 @@ class FuturesMarketInfo:
             validation=dict(source_quarantine_scope=source_scope,faults=dict(gate.faults),first_fault_details=dict(getattr(gate,'fault_details',{})),
                 source_record_reviews={k:v for k,v in health.get('native_rejection_reviews',{}).items() if k.endswith(':'+str(iid))},
                 price_fault_reviews=health.get('reader_price_fault_reviews',{}).get(c.metadata.raw_symbol,{}),
-                thresholds_relaxed=False,rejected_records_readmitted=False),
+                thresholds_relaxed=False,rejected_records_readmitted=False,quality_mode=getattr(gate,'quality_mode','LEGACY_STATISTICAL_V2'),custom_price_anomaly_applied=not hasattr(gate,'quality_mode')),
             multi_timeframe=alignment({tf:parts['price:'+tf].get('native_analysis',{}) for tf in request.timeframes}),
             information_scope='RETAINED_VALIDATED_CAPTURE_WINDOW',
             participant_identity='UNAVAILABLE_ANONYMOUS_EXCHANGE_DATA',

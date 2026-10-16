@@ -45,11 +45,25 @@ charge or first-price fallback is performed by the reader.
 * GC is a futures contract. FXCM XAUUSD prices on a separate chart require an
   independently synchronized basis and broker quote before manual spot decisions.
 
-The numerical plausibility policies remain unchanged and are not newly certified.
-A legitimate large move can require review; a successful short trial cannot prove
-full-session continuity, independent exchange truth or institutional reliability.
-Never relabel rejected history as validated H1/H4 warm-up. Never automatically
-reanchor, clear a fault, fill a gap, refit a holdout or promote to trading.
+The active `DATABENTO_NATIVE_INFORMATION_V1` mode, explicitly requested by the
+user, does not use custom statistical price anomalies, MAD thresholds, spread
+caps or price anchors. Documented DBN schema, native identity/tick/flag semantics,
+source positions, clocks, data freshness and source-continuity evidence remain.
+A large native move is not declared corrupt because it exceeds a local model.
+These are implementation checks, not a claim of Databento certification.
+
+Fresh continuous subscriptions start directly, without disconnecting a quote
+bootstrap and requiring another connection to reproduce its capture-clock bytes.
+Each schema's explicit replay start is bound to the source authorization. Books
+can start recently while trades/candles replay from the reviewed history boundary.
+No record from the earlier failed quote attempt is re-admitted. Older statistical
+captures retain their original mode, faults and reader requirements.
+
+History is a separately hashed provider archive interpreted under the new mode,
+not a repair of old captures or evidence of elapsed live continuity. Only complete
+native child buckets form parents; unknown missing intervals remain missing.
+Published OI is retained independently of high-rate book eviction. Displayed book
+states unsuitable for quote calculations remain labelled unavailable.
 
 ## Databento guidance followed
 
@@ -64,8 +78,8 @@ reanchor, clear a fault, fill a gap, refit a holdout or promote to trading.
   select the appropriate native statistics type and preserve publication/reference
   time. OI does not identify buyer/seller or imply dealer gamma.
 
-Before broader use: complete historical range and session/holiday review, resolve
-price-policy failures with separate admissible evidence, validate quote/depth
+Before broader use: complete historical range and session/holiday review, review native
+field/coverage failures against source evidence, validate quote/depth
 coverage under load, classify network/provider silence with retained diagnostics,
 and implement reviewed recovery. Production deployment and trading require a
 separate explicit decision.
