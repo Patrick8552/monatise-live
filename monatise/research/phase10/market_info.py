@@ -49,8 +49,9 @@ class FuturesMarketInfo:
         wrapped = self.pipeline
         p = getattr(wrapped, 'pipeline', wrapped)
         gate = p.gates[iid]
+        delay = 0 if getattr(gate,'quality_mode',None)=='DATABENTO_NATIVE_INFORMATION_V1' else 10*10**9
         frames = {tf: tuple(b for _, b in sorted(rows.items())
-            if b.close_ns+10*10**9 <= now and b.retrieval_ns <= now)
+            if b.close_ns+delay <= now and b.retrieval_ns <= now)
             for tf, rows in p.bars[iid].items()}
         calendar = p.calendars[iid]
         history_status = None
@@ -62,7 +63,7 @@ class FuturesMarketInfo:
                 live_soak_gap_repaired=False)
             if not historical.faults and now >= h['available_ns']:
                 minutes = join_minutes(h['bars'][iid], frames.get('1m', ()))
-                frames['1m'] = tuple(b for b in minutes if b.close_ns+10*10**9 <= now and b.retrieval_ns <= now)
+                frames['1m'] = tuple(b for b in minutes if b.close_ns+delay <= now and b.retrieval_ns <= now)
                 calendar = h['calendars'][iid]
                 gate = _CombinedGate(gate, historical)
                 for tf in ('5m','15m','1h','4h'):
@@ -127,7 +128,7 @@ class FuturesMarketInfo:
                     native_analysis=analyse_frame(rows,tick_size=c.tick_size,cutoff_ns=request.cutoff_ns,calendar=calendar))
             except (ValueError,TypeError,ArithmeticError) as exc:
                 parts['price:'+tf] = dict(available=False,reason=str(exc))
-        policy = inherited_policy(c,'trades')
+        policy = None if hasattr(gate,'quality_mode') else inherited_policy(c,'trades')
         trade_health = gate.health(now_ns=request.cutoff_ns,policies={'trades':policy},schemas=('trades',))['trades']
         if trade_health['available']:
             values = [v for v in getattr(gate,'trade_sources',gate.accepted) if v.schema == 'trades' and v.source.admission_ns <= request.cutoff_ns]
@@ -138,7 +139,7 @@ class FuturesMarketInfo:
             parts['trade_features'] = dict(trade_health)
         # Only observations already admitted by the exact source/price gate can
         # supply quotes or published OI. No subscriptions or legacy graph here.
-        policies={s:inherited_policy(c,'open_interest' if s=='statistics' else 'book')
+        policies={s:None if hasattr(gate,'quality_mode') else inherited_policy(c,'open_interest' if s=='statistics' else 'book')
                   for s in ('mbp-1','mbp-10','statistics')}
         health_by_schema=gate.health(now_ns=request.cutoff_ns,policies=policies,schemas=tuple(policies))
         for schema in ('mbp-1','mbp-10'):
@@ -188,12 +189,13 @@ class FuturesMarketInfo:
             # rejected trades to supply its candles, flow, VWAP or profile.
             parts['trade_features']=dict(available=False,reason='provider_receive_timestamp_quality_requires_review')
             state='PARTIAL_MARKET_INFORMATION' if any(v['available'] for v in parts.values()) else 'UNAVAILABLE'
-        result = dict(instrument=c.metadata.raw_symbol, availability=state,components=parts,
+        result = dict(instrument=c.metadata.raw_symbol, contract_identity=list(c.identity),availability=state,components=parts,
             capture_health=health,analysis_access='READ_ONLY',live_analysis_certified=False,
             validation=dict(source_quarantine_scope=source_scope,faults=dict(gate.faults),first_fault_details=dict(getattr(gate,'fault_details',{})),
                 source_record_reviews={k:v for k,v in health.get('native_rejection_reviews',{}).items() if k.endswith(':'+str(iid))},
                 price_fault_reviews=health.get('reader_price_fault_reviews',{}).get(c.metadata.raw_symbol,{}),
-                thresholds_relaxed=False,rejected_records_readmitted=False,quality_mode=getattr(gate,'quality_mode','LEGACY_STATISTICAL_V2'),custom_price_anomaly_applied=not hasattr(gate,'quality_mode')),
+                thresholds_relaxed=False,rejected_records_readmitted=False,quality_mode=getattr(gate,'quality_mode','LEGACY_STATISTICAL_V2'),custom_price_anomaly_applied=not hasattr(gate,'quality_mode'),
+                local_freshness_cutoffs_applied=not hasattr(gate,'quality_mode'),local_candle_delay_ns=0 if hasattr(gate,'quality_mode') else 10*10**9),
             multi_timeframe=alignment({tf:parts['price:'+tf].get('native_analysis',{}) for tf in request.timeframes}),
             information_scope='RETAINED_VALIDATED_CAPTURE_WINDOW',
             participant_identity='UNAVAILABLE_ANONYMOUS_EXCHANGE_DATA',

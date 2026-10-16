@@ -126,7 +126,10 @@ class OwnedSDKClient:
         def apply():
             transport=self._transport
             if transport is not None and not transport.is_closing():
-                (transport.resume_reading if enabled else transport.pause_reading)()
+                # A queued consumer resume may run after a newer pause applied
+                # inline by this network thread. Apply the latest requested
+                # state, not the obsolete state captured by the queued closure.
+                (transport.resume_reading if self._reading_requested else transport.pause_reading)()
         if threading.current_thread() is self._thread:apply()
         else:self._loop.call_soon_threadsafe(apply)
 

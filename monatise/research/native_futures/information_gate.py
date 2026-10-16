@@ -13,7 +13,6 @@ MODE='DATABENTO_NATIVE_INFORMATION_V1'
 class NativeInformationGate:
     lineage_observations=QualityGate.lineage_observations
     transport_gap=QualityGate.transport_gap
-    health=QualityGate.health
 
     def __init__(self,contract,*,capacity=50000,rolling=True):
         if contract.asset_class!='futures' or contract.metadata.product not in {'GC','ES','NQ'}:
@@ -27,6 +26,28 @@ class NativeInformationGate:
         self.price_sources={};self.coverage_reviews={};self.evicted_positions=0
         self.trade_sources=deque(maxlen=capacity);self.statistics_sources=deque(maxlen=256)
         self.quality_mode=MODE
+
+    def health(self, *, now_ns, policies=None, schemas):
+        """Observation availability, not a locally imposed trading freshness rule.
+
+        A valid old observation remains useful as dated information. Report its
+        actual age; do not label it current, synchronized or executable. ``policies``
+        is accepted for legacy call compatibility but never applies a TTL here.
+        """
+        result={}
+        for schema in schemas:
+            value=self.latest.get(schema);fault=self.faults.get(schema)
+            if value is None:
+                result[schema]=dict(available=False,reason=fault or 'no_native_observations')
+                continue
+            source=value.payload[1] if schema.startswith('ohlcv-') else value.payload[2] if schema=='statistics' else value.index_ns
+            result[schema]=dict(available=not fault,reason=fault,
+                freshness=dict(status='OBSERVED_TIMESTAMP_ONLY',age_ns=now_ns-source,
+                    source_ns=source,available_ns=value.source.admission_ns,evaluated_ns=now_ns,
+                    local_freshness_cutoff_applied=False,current_or_executable_certified=False),
+                event_ns=value.event_ns,receive_ns=value.receive_ns,capture_ns=value.source.retrieval_ns,
+                source_sha256=value.source.record_sha256,coverage='CAPTURED_SUBSET_CONTINUITY_UNCERTIFIED')
+        return result
 
     def reject(self,value,reason):
         self.faults[value.schema]=reason

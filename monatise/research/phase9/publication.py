@@ -52,10 +52,11 @@ class CandlePublisher:
                 # rebuild targets after their last durable publication. A live
                 # second tick must not re-aggregate the entire session.
                 native={};schemas={};frames={}
+                delay=0 if getattr(g,'quality_mode',None)=='DATABENTO_NATIVE_INFORMATION_V1' else 10*10**9
                 for tf,rows in pipeline.bars[iid].items():
                     schema='ohlcv-'+tf
                     if (schema,iid) not in replay_ready:continue
-                    allowed=[b for b in rows.values() if b.open_ns>=self.publish_from_ns and b.close_ns+10*10**9<=now_ns and b.retrieval_ns<=now_ns
+                    allowed=[b for b in rows.values() if b.open_ns>=self.publish_from_ns and b.close_ns+delay<=now_ns and b.retrieval_ns<=now_ns
                         and (interval_watermarks is None or b.close_ns<=interval_watermarks.get(schema,0))
                         and (schema not in g.faults or b.close_ns<=g.fault_event_ns.get(schema,0))]
                     if allowed:native[tf]=tuple(sorted(allowed,key=lambda b:b.open_ns))

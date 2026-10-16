@@ -6,6 +6,10 @@ from datetime import datetime,UTC
 def text_report(report):
     lines=['Monatise native futures analysis — read-only research',
         'As of '+datetime.fromtimestamp(report['request']['cutoff_ns']/10**9,UTC).isoformat()]
+    if report.get('delivery'):
+        d=report['delivery']
+        lines.append('Cached analysis age at response: '+str(round(d['analysis_age_ns']/10**9,3))+' seconds; refresh='+d['worker']['status'])
+        lines.append('Source state at response: '+d['source_status_at_response']+'; inspect source and quote ages. No automatic freshness qualification.')
     for symbol,value in report['instruments'].items():
         lines+=['',symbol+': '+value['availability']]
         if 'reason' in value:lines.append('Reason: '+value['reason'])
@@ -94,8 +98,9 @@ def text_report(report):
             part=components.get(schema,{})
             if part.get('available') and part.get('quote'):
                 q=part['quote'];lines.append(schema+' displayed bid/ask: '+str(q['bid'])+' / '+str(q['ask'])+
-                    '; sizes='+str(q['bid_contracts'])+' / '+str(q['ask_contracts'])+'; spread='+str(q['spread'])+
+                    '; sizes='+str(q['bid_contracts'])+' / '+str(q['ask_contracts'])+'; spread='+str(q.get('spread','not calculated'))+
                     '; receive UTC='+datetime.fromtimestamp(q['receive_ns']/10**9,UTC).isoformat()+'; broker executable quote=False')
+                if 'age_at_response_ns' in q:lines.append('  Quote age at response: '+str(round(q['age_at_response_ns']/10**9,3))+' seconds.')
         oi=components.get('open_interest',{})
         if oi.get('available'):
             lines.append('Published open interest: '+str(oi['contracts'])+' contracts; reference UTC='+
