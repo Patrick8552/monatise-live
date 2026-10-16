@@ -20,7 +20,7 @@ class RecoveryPolicy:
     def __post_init__(self):
         if (self.version!=VERSION or type(self.maximum_attempts) is not int or
                 not 1<=self.maximum_attempts<=3 or type(self.total_seconds) is not int or
-                not 1<=self.total_seconds<=900 or not 1<=self.delay_seconds<=30):
+                not 1<=self.total_seconds<=3600 or not 1<=self.delay_seconds<=30):
             raise ValueError('finite_native_recovery_policy_required')
 
 

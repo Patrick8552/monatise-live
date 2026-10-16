@@ -146,3 +146,11 @@ def test_reader_uses_each_hash_bound_clock_renewal_not_expired_initial_receipt()
         audit.ingest(0,'trades',trade(t=NOW_NS-1000000000+n),at=at,ordinal=n,arrival=at,
             clock=clock,admitted=True,rejection=None,position=n+1)
     assert audit.state.clock_history==[new]
+
+
+def test_explicit_one_hour_session_budget_is_bounded_without_changing_replay_rules():
+    policy=RecoveryPolicy(total_seconds=3600)
+    assert policy.maximum_attempts==3 and policy.version==VERSION
+    for seconds in (0,3601,True,3600.0):
+        with pytest.raises(ValueError,match='finite_native_recovery_policy_required'):
+            RecoveryPolicy(total_seconds=seconds)
