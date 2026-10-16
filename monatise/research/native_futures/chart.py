@@ -85,34 +85,66 @@ def export_once(capture,snapshot,*,reader_commit,cutoff_ns=None):
 
 
 def handler_for(snapshot,source_snapshot=None):
+    from .chart_delivery import CheckedChart
+    chart = CheckedChart(snapshot)
     assets={'/':('chart_ui.html','text/html; charset=utf-8'),'/app.js':('chart_ui.js','text/javascript; charset=utf-8')}
     class Handler(BaseHTTPRequestHandler):
         def log_message(self,*args):pass  # No licensed market data in access logs.
+        def delivery(self, body):
+            delivery=dict(response_ns=time.time_ns(),current_source_verification='NOT_CONTEMPORANEOUSLY_VERIFIED')
+            state=Path(str(snapshot)+'.status')
+            delivery['refresh']=json.loads(state.read_text()) if state.exists() else dict(status='UNKNOWN')
+            if source_snapshot:
+                source=checked(source_snapshot)
+                if source['capture_id']!=body['capture_id']:raise ValueError('cross_capture_chart_forbidden')
+                delivery.update(source_status_at_observation=source['status'],source_observed_at_ns=source['observed_at_ns'],source_health=source['health'])
+                quotes={}
+                for symbol,latest in source['instruments'].items():
+                    info=body['analysis']['instruments'].get(symbol)
+                    if info is None or list(info['contract_identity'])!=latest['identity']:
+                        raise ValueError('cross_contract_chart_quote_forbidden')
+                    quotes[symbol]=latest['quotes']
+                delivery['quote_snapshots']=quotes
+                delivery['quote_scope']='SOURCE_OBSERVATION_ONLY; ANALYTICAL_FEATURES_NOT_RECOMPUTED'
+            return delivery
+
+        def events(self):
+            # Browser push is local UI transport, not a Databento SDK connection.
+            self.send_response(200)
+            self.send_header('Content-Type','text/event-stream')
+            self.send_header('Cache-Control','no-store')
+            self.send_header('X-Content-Type-Options','nosniff')
+            self.end_headers()
+            deadline=getattr(self.server,'delivery_deadline',time.monotonic()+30)
+            previous=None
+            try:
+                while time.monotonic()<deadline:
+                    try:
+                        body,view=chart.read();delivery=self.delivery(body)
+                        key=(chart.key,delivery.get('source_observed_at_ns'),delivery['refresh'])
+                        if key!=previous:
+                            message=dict(view_revision=view['full_snapshot_sha256'],delivery=delivery)
+                            self.wfile.write(('data: '+json.dumps(message,separators=(',',':'))+'\n\n').encode())
+                            self.wfile.flush();previous=key
+                    except Exception:
+                        self.wfile.write(b'event: unavailable\ndata: {"error":"SOURCE_OR_CHART_REQUIRES_REVIEW"}\n\n')
+                        self.wfile.flush();return
+                    time.sleep(.25)
+            except (BrokenPipeError,ConnectionResetError,TimeoutError):return
+
         def do_GET(self):
             host=self.headers.get('Host','')
             if host not in {f'127.0.0.1:{self.server.server_port}',f'localhost:{self.server.server_port}'}:
                 self.send_error(403);return
+            if self.path=='/api/events':
+                self.events();return
             try:
                 if self.path in assets:
                     name,mime=assets[self.path];data=Path(__file__).with_name(name).read_bytes();status=200
-                elif self.path=='/api/chart':
-                    body=checked(snapshot)
-                    if body.get('version')!='native-futures-chart-v1':raise ValueError('native_chart_required')
-                    delivery=dict(response_ns=time.time_ns(),current_source_verification='NOT_CONTEMPORANEOUSLY_VERIFIED')
-                    state=Path(str(snapshot)+'.status')
-                    delivery['refresh']=json.loads(state.read_text()) if state.exists() else dict(status='UNKNOWN')
-                    if source_snapshot:
-                        source=checked(source_snapshot)
-                        if source['capture_id']!=body['capture_id']:raise ValueError('cross_capture_chart_forbidden')
-                        delivery.update(source_status_at_observation=source['status'],source_observed_at_ns=source['observed_at_ns'],source_health=source['health'])
-                        quotes={}
-                        for symbol,latest in source['instruments'].items():
-                            info=body['analysis']['instruments'].get(symbol)
-                            if info is None or list(info['contract_identity'])!=latest['identity']:
-                                raise ValueError('cross_contract_chart_quote_forbidden')
-                            quotes[symbol]=latest['quotes']
-                        delivery['quote_snapshots']=quotes
-                        delivery['quote_scope']='SOURCE_OBSERVATION_ONLY; ANALYTICAL_FEATURES_NOT_RECOMPUTED'
+                elif self.path in {'/api/chart','/api/view'}:
+                    complete,view=chart.read()
+                    body=complete if self.path=='/api/chart' else view
+                    delivery=self.delivery(complete)
                     data=json.dumps(dict(body=body,sha256=digest(body),delivery=delivery),separators=(',',':')).encode();mime='application/json';status=200
                 else:self.send_error(404);return
             except Exception:
@@ -147,6 +179,7 @@ def main(argv=None):
             time.sleep(min(args.interval,remaining))
     server=ThreadingHTTPServer(('127.0.0.1',args.port),handler_for(args.snapshot,args.source_snapshot))
     server.timeout=1;deadline=time.monotonic()+args.duration
+    server.delivery_deadline=deadline
     print(json.dumps(dict(url=f'http://127.0.0.1:{server.server_port}',access='LOOPBACK_READ_ONLY',duration=args.duration)),flush=True)
     try:
         while time.monotonic()<deadline:server.handle_request()

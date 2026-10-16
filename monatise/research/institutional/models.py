@@ -1,5 +1,5 @@
 """Immutable identities, native positions, calculations and preview contracts."""
-from dataclasses import asdict, dataclass, is_dataclass
+from dataclasses import dataclass, fields, is_dataclass
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
@@ -12,15 +12,22 @@ from monatise.research.databento.datasets import InstrumentMetadata
 from . import VERSION
 
 MAPPING_VERSION='native-futures-normalization-v2'
+_JSON_ATOMS = frozenset((str, int, float, bool, type(None)))
 
 
 def encode(value):
-    if is_dataclass(value):
-        return encode(asdict(value))
+    if type(value) in _JSON_ATOMS:
+        return value
     if isinstance(value, dict):
         return {str(k): encode(v) for k, v in value.items()}
     if isinstance(value, (tuple, list)):
         return [encode(v) for v in value]
+    if is_dataclass(value):
+        # Walk fields once. asdict recursively deep-copies the complete nested
+        # evidence tree before encode walks it again; large immutable native
+        # candle/source trees paid that cost on every digest. The canonical
+        # field names, recursion and JSON representation remain identical.
+        return {field.name: encode(getattr(value, field.name)) for field in fields(value)}
     if isinstance(value, (Decimal, datetime)):
         return str(value) if isinstance(value, Decimal) else value.isoformat()
     return value

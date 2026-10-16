@@ -267,3 +267,27 @@ no Python interpreter lock with live ingestion. The latest temporary handoff is
 replaced only after consumption; authoritative raw journals and publication
 evidence are preserved separately. Failed calculations are flagged without
 automatic retry. Full raw-journal forensic checks remain separate.
+
+
+### Local display delivery and implementation choices
+
+The local UI uses server-sent events (`/api/events`) for checked source
+observations and snapshot-change notifications. It fetches `/api/view` when
+the analytical snapshot changes; quotes advance without downloading all lineage
+again. `/api/chart` retains the complete checked snapshot. The display projection
+retains every displayed candle/indicator, native frame hash and references to
+full provenance. New atomic file versions are hash checked; repeated requests
+for an unchanged file reuse that verification. There is no fixed ten-second
+browser poll. This is Monatise's renderer design, not a vendor delivery rule.
+
+Canonical encoding walks dataclass fields directly instead of deep-copying the
+whole evidence tree before traversing it again. Byte/hash parity is required;
+native fields, normalization, indicators and validation do not change. CPU
+processing time is measured separately from provider/network delivery.
+
+Databento documents feed semantics and supported transport/replay. Indicator
+parameters, rendering, resource budgets and output windows are application
+choices, never vendor requirements. Native mode applies no bespoke price-anomaly
+model, observation-age qualification cap, frozen H1 or GIL rule. Missing/untrusted
+evidence stays explicit; optimizations never create prices, fill gaps or present
+historical evidence as current.
