@@ -12,7 +12,7 @@ SECONDS={'1m':60,'5m':300,'15m':900,'1h':3600,'4h':14400,'1d':86400}
 
 
 class SpotObservationLedger:
-    def __init__(self):self.rows={};self.last_receipt=0;self.revisions=[];self.observations=[];self.h1_freezes={}
+    def __init__(self):self.rows={};self.last_receipt=0;self.revisions=[];self.observations=[]
 
     def observe(self, observation):
         tf=observation['timeframe'];at=observation['received_ns'];raw=observation['candles']
@@ -43,11 +43,6 @@ class SpotObservationLedger:
                     observation_count=1,content_hash=content,source_hashes=[observation['source_sha256']],
                     original_candle_receive_ns=None,source='Safari TradingView FXCM chart',broker_certified=False)
         self.last_receipt=at;self.observations.append(dict(timeframe=tf,received_ns=at,source_sha256=observation['source_sha256']))
-        if tf=='1h':
-            finalized=self.finalized(tf,cutoff_ns=at)
-            if len(finalized)>=50:
-                last=finalized[-1];key=(last['open_ns'],last['content_hash'])
-                self.h1_freezes.setdefault(key,dict(cutoff_ns=at,rows=deepcopy(finalized)))
 
     def finalized(self,tf,*,cutoff_ns):
         return tuple(deepcopy(v) for k,v in sorted(self.rows.items()) if k[0]==tf and v['final_known_ns'] is not None and v['final_known_ns']<=cutoff_ns)

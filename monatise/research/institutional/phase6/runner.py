@@ -30,7 +30,7 @@ def isolated(request_file,output_file):
 
 def run(*,output,data_root=None,prepared_file=None,esnq_root=None,ledger_path=None,
         provider_records=(),billing_review=None,admission_review=None,broker_inputs=None,
-        provider_account_observation=None,frozen_H1_evidence=None):
+        provider_account_observation=None):
     repository=Path(__file__).resolve().parents[4]
     if bool(data_root)!=bool(prepared_file) or bool(esnq_root)!=bool(ledger_path):
         raise ValueError('paired_native_sources_and_ledger_required')
@@ -44,7 +44,7 @@ def run(*,output,data_root=None,prepared_file=None,esnq_root=None,ledger_path=No
         ledger_source_sha256=ledger_hash,ledger_rows=reservations(ledger_path) if ledger_path else [],
         provider_records=provider_records,billing_review=billing_review,admission_review=admission_review,
         broker_inputs=broker_inputs or {},provider_account_observation=provider_account_observation,
-        frozen_H1_evidence=frozen_H1_evidence,**SAFETY)
+        **SAFETY)
     request['input_sha256']=digest(request)
     input_file=output/'input.json';input_file.write_text(json.dumps(encode(request),sort_keys=True,indent=2));input_file.chmod(0o600)
     try:
@@ -65,7 +65,7 @@ def run(*,output,data_root=None,prepared_file=None,esnq_root=None,ledger_path=No
             authentic_canonical={k:r['status'] for k,r in a['authentic_canonical'].items()},
             engineering_canonical={k:r['status'] for k,r in a['engineering_canonical'].items()},
             new_acquisitions=0,incremental_provider_usage_usd='0',credit_consumed_usd='0',cash_spent_usd='0',
-            ledger_unchanged=True,model_versions=a['model_versions'],frozen_H1_evidence=frozen_H1_evidence,**SAFETY)
+            ledger_unchanged=True,model_versions=a['model_versions'],**SAFETY)
         store=ResearchArtifactStore(output/'immutable')
         store.publish('replays',a);store.publish('quality',summary)
         (output/'summary.json').write_text(json.dumps(encode(summary),sort_keys=True,indent=2))

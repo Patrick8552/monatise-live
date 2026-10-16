@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from monatise.engines.asset_scope import require_canonical_non_futures
+
 from dataclasses import replace
 from statistics import mean
 
@@ -28,6 +30,7 @@ class SupplyDemandEngine:
     def assess(self, request: ZoneRequest) -> ZoneAssessment:
         request.validate()
         market = request.market
+        require_canonical_non_futures(market.symbol)
         reasons: list[str] = []
 
         if market.quality.status is DataStatus.NO_DATA:

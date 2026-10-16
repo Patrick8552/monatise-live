@@ -235,27 +235,8 @@ def test_options_identity_clock_and_convention_guards(fault):
     with pytest.raises(ValueError):coverage((c,),**kwargs)
 
 
-@pytest.mark.parametrize('short',[False,True])
-def test_canonical_gold_preview_complete_and_never_executable(short):
-    value=asyncio.run(broker_preview(asset='GC',instrument='XAU/USD',now_ns=NOW_NS,
-        evidence=candle_evidence(short=short),include_canonical=True))
-    result=complete(value,market='ENGINEERING_BROKER')
-    assert result['decision']==('SHORT' if short else 'LONG') and result['reference_entry'] is not None
-    assert result['h1_structure'] and result['m15_setup'] and result['m5_trigger'] and result['fibonacci_evidence']
-    text=text_preview(result)
-    assert 'ENGINEERING_SYNTHETIC' in text and 'Execution eligible: FALSE' in text
-    assert not result['publication_eligible'] and not result['approval_eligible']
 
 
-def test_authentic_missing_inputs_stay_null_and_index_cannot_bypass_primary():
-    raw=asyncio.run(broker_preview(asset='ES',instrument='US500.cash',now_ns=NOW_NS,include_canonical=True))
-    result=complete(raw,market='BROKER',missing=['authentic_broker_candles'])
-    assert result['analytical_qualification']=='BLOCKED_AUTHENTIC_INPUTS'
-    assert all(result[k] is None for k in ('reference_entry','structural_stop','take_profit_targets','risk_to_reward','h1_structure'))
-    raw=asyncio.run(broker_preview(asset='ES',instrument='US500.cash',now_ns=NOW_NS,
-                                  evidence=candle_evidence('ES'),include_canonical=True))
-    assert 'required_primary_index_positioning_unavailable' in raw['preview']['rejection_reasons']
-    with pytest.raises(ValueError):text_preview(dict(result,execution_eligible=True))
 
 
 def test_phase5_isolated_two_repeat_hash_and_authentic_fixture_separation(tmp_path,monkeypatch):
@@ -264,7 +245,7 @@ def test_phase5_isolated_two_repeat_hash_and_authentic_fixture_separation(tmp_pa
     assert summary['repeat_equal'] and summary['actual_downloads']==0 and summary['credit_used_usd']=='0'
     result=json.loads((output/'preview-01.json').read_text())
     assert all(v['analytical_qualification']=='BLOCKED_AUTHENTIC_INPUTS' for v in result['authentic_previews'].values())
-    assert result['engineering_previews']['GC']['decision']=='LONG'
+    assert result['engineering_previews']['GC']['decision']=='INSUFFICIENT_MARKET_DATA'
     assert 'FAKE_SECRET' not in (output/'preview-01.json').read_text()
     assert (output/'preview-01.json').read_bytes()==(output/'preview-02.json').read_bytes()
     with pytest.raises(FileExistsError):run(output=output)
@@ -287,8 +268,6 @@ def test_broker_candle_export_binds_five_timeframes_spec_tick_and_origin(tmp_pat
     result=import_candles(path,specification=spec,sessions=calendar,review=review,admission_ns=NOW_NS,
         cutoff_ns=NOW_NS,spread_price='.2',confirmation_sha256=evidence.confirmation_sha256,confirmation_ns=NOW_NS)
     assert result.rows(expected='XAU/USD',now_ns=NOW_NS)==json.loads(evidence.timeframes_json)
-    raw=asyncio.run(broker_preview(asset='GC',instrument='XAU/USD',now_ns=NOW_NS,evidence=result,include_canonical=True))
-    assert complete(raw,market='ENGINEERING')['decision']=='LONG'
     with pytest.raises(ValueError):import_candles(path,specification=spec,sessions=calendar,
         review=dict(review,volume_kind='exchange_contracts'),admission_ns=NOW_NS,cutoff_ns=NOW_NS,spread_price='.2')
     with pytest.raises(RuntimeError,match='engineering_candles_cannot_enter_authentic'):

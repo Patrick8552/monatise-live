@@ -70,11 +70,10 @@ def main(request,output_file,*,repository,loop):
         dict(status='BLOCKED_AUTHENTIC_INPUTS',basis=None,rejection_reasons=['GC_native_source_missing'],**SAFETY))
     result=dict(schema=VERSION,baseline=BASELINE,input_sha256=request['input_sha256'],native_gc=native,
         native_indices=indices,billing=billing,admitted_indices=encode(admitted),gc_cvd=cvd,authentic_basis=basis,
-        authentic_options=option_inputs(cutoff_ns=END_NS),research_GIL_policy=POLICY,
+        authentic_options=option_inputs(cutoff_ns=END_NS),
         authentic_canonical=authentic,engineering_canonical=engineering,
         engineering_basis=basis_example(),engineering_options=options_example(),
         provider_account_observation=request.get('provider_account_observation'),
-        frozen_H1_evidence=request.get('frozen_H1_evidence'),
         model_versions=dict(cvd='exchange-side-CVD-plus-unknown-volume-bounds-v1',basis='gc-causal-basis-candidates-v1',
             options='existing-American-IV-plus-European-benchmark-scenarios-v1',canonical='unchanged-baseline-engines'),
         incremental_provider_usage_usd='0',credit_consumed_usd='0',cash_spent_usd='0',new_acquisitions=0,

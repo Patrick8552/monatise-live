@@ -14,7 +14,6 @@ from ..models import digest, encode
 from .basis import Timestamp, Quote, BasisPolicy, certify, map_level
 from .chain import ChainLeg, CoveragePolicy, assess
 from .greeks import GreekInput, validated
-from .gil import integrate, REQUIRED_GATES
 from . import SAFETY
 
 SPEC='https://www.cmegroup.com/rulebook/COMEX/1a/115.pdf'
@@ -147,9 +146,6 @@ def replay(request):
     technical={k:dict(provider=v['provider'],source_sha256=v['source_sha256'],completed_count=v['completed_count'],
         last_close_utc=v['last_close_utc'],indicators=v['indicators'],recent_swings=v['recent_swings'],
         unfilled_fvg=v['unfilled_fvg']) for k,v in context.items()}
-    gates={name:'NOT_CERTIFIED' for name in REQUIRED_GATES};gates['broker_price_validation']='MISSING'
-    gil=integrate(technical_preview=None,gates=gates,basis=basis,chain=coverage,greeks=greeks,
-        provider_statuses={'Databento':'ARCHIVED_CAPTURE_ONLY'})
     return dict(schema='monatise-phase7-genuine-regression-v1',evidence_kind=AUTHENTIC,
         replay_input_sha256=digest(request),as_of_ns=cutoff,freshness='HISTORICAL_CAPTURE_NOT_CURRENT_LIVE',
         market_data=dict(underlying=encode(parent),native_record_counts=counts,native_hashes=report['source_checks'],
@@ -167,6 +163,5 @@ def replay(request):
             hypothetical_scenarios=[],rejection_reasons=['insufficient_chain_coverage','dated_rate_missing','validated_American_gamma_missing','dealer_inventory_unknown']),
         mappings=[map_level(Decimal(s)/10**9,contract='GCZ6',basis=basis,now_ns=cutoff) for s in sorted({l.contract.metadata.strike_fixed for l in legs})],
         technical_analysis=dict(status='ARCHIVED_CONTEXT_ONLY',snapshots=technical,
-            canonical_H1_fibonacci_anchors=None,frozen_selector_changed=False,
             rejection_reasons=['no_hash_bound_canonical_technical_qualification_for_this_capture']),
-        decision=gil,incremental_data_cost_usd='0',credit_consumed_usd='0',new_acquisitions=0,**SAFETY)
+        trade_qualification_performed=False,incremental_data_cost_usd='0',credit_consumed_usd='0',new_acquisitions=0,**SAFETY)

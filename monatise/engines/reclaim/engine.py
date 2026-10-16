@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from monatise.engines.asset_scope import require_canonical_non_futures
+
 from monatise.core.models import Candle
 from monatise.engines.liquidity_sweep.models import (
     SweepDirection,
@@ -27,6 +29,7 @@ class ReclaimEngine:
     def assess(self, request: ReclaimRequest) -> ReclaimAssessment:
         request.validate()
         market = request.market
+        require_canonical_non_futures(market.symbol)
         reasons: list[str] = []
 
         if market.quality.status is DataStatus.NO_DATA:

@@ -14,9 +14,8 @@ def test_two_actual_observations_do_not_invent_historical_pivot_knowledge():
     two=observation(one['received_ns']+10**9);ledger.observe(two);bars=ledger.finalized('1h',cutoff_ns=two['received_ns'])
     assert len(bars)==50 and all(b['final_known_ns']==two['received_ns'] and b['original_candle_receive_ns'] is None for b in bars)
     assert all(b['volume'] is None for b in bars)
-    frozen=deepcopy(ledger.h1_freezes)
     ledger.observe(observation(two['received_ns']+10**9))
-    assert ledger.h1_freezes==frozen
+    assert not hasattr(ledger,"h1_freezes")
 
 def test_wrong_timeframe_and_future_finalization_are_rejected_or_excluded():
     ledger=SpotObservationLedger()

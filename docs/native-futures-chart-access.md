@@ -122,3 +122,108 @@ provider errors, bounded exhaustion, cleanup and falsified overlap admission.
 Live results must be reported separately; an uninterrupted trial does not verify
 recovery from a real Wi-Fi outage. No data purchases or historical downloads are
 performed by the recovery service.
+
+## Permanent futures scope and chart workflow
+
+GC/ES/NQ use the dedicated native information path permanently. The frozen H1
+selector execution bridges and research GIL qualifier have been deleted. Canonical
+crypto candle engines reject their raw, parent and continuous futures identifiers;
+the older Phase9 price path also uses native swings/technicals. Old broker-preview
+entrypoints return an explicit retired-route receipt without evaluating candles.
+Ordinary H1/H4 bars remain ordinary data. Immutable prior capture sources and Git
+history remain evidence, not approved algorithms for new requests. Root AGENTS.md
+records the user's permanent scope; do not restore a retired route as a fallback.
+
+Databento documents data acquisition, schemas and calculations. The following is
+Monatise's proposed use of those observations, not a vendor-endorsed strategy:
+
+1. Resolve the exact tradable contract and instrument ID. Align chart contract,
+   session, timezone, rollover/back-adjustment settings and timeframe grid with
+   the native source before comparing any prices or indicators. Continuous
+   Databento symbols map to actual unadjusted contracts; chart vendors can use
+   different rollover and adjustment conventions.
+2. Use native OHLCV for chart bars and close-based indicators. Databento marks the
+   beginning of the receive-time aggregation interval; no trades means no bar.
+   A verified no-print interval is different from an unknown capture gap. Do not
+   fill missing periods with invented candles or compare differently anchored H4.
+3. Use one declared VWAP definition and reset anchor. A trade VWAP uses
+   sum(price * size) / sum(size); a candle-close or typical-price VWAP can differ.
+   A retained execution window is not a full-session VWAP. EMA/RSI initialization,
+   swing confirmation and volume-profile range/bin settings must also match.
+4. Use trades for aggressor-side volume and delta. Trade B is buyer-aggressed,
+   A seller-aggressed, N unknown. Preserve unknown volume separately. An MBP
+   order Add/Modify/Cancel side describes the resting book, not a trade aggressor.
+   L1 displayed bid/ask is not full depth, institutional identity or broker fill
+   assurance. Every analysis reports source age, replay state and missing inputs.
+5. Keep the trading framework explicit: H4/H1 context and levels, M15 setup,
+   M5 trigger, structural invalidation, objective and user-defined risk. This is
+   an optional research convention to test; the data provider does not select
+   entries or certify profitability. Current software provides observations;
+   a validated dedicated futures setup/entry policy has not been delivered here.
+6. Execute manually on the actual broker instrument. Recheck the broker bid/ask,
+   contract expiry, point/tick value and costs. GC is not XAUUSD; ES/NQ futures
+   are not cash-index CFDs. Cross-instrument use needs a synchronized measured
+   basis and broker specifications, never a copied futures price or router.
+
+The immediate integration can be a separate Monatise evidence panel alongside a
+matching TradingView futures chart. TradingView/Pine uses its own supplied chart
+contexts; a Databento API subscription does not inject a feed into Pine. A custom
+Databento-fed chart needs a real backend datafeed integration and applicable
+chart/data licenses. TradingView Advanced Charts documents its Datafeed API for
+separate embedded applications; it is not the user's tradingview.com chart and
+its access/license availability has not been assumed. No chart connection has
+been built or enabled by the retirement change.
+
+Next engineering deliverable: a read-only native chart/evidence panel fed from
+the same normalized series, followed by exact indicator/session parity checks
+and a longer real-network recovery test. Then separately define and replay-test
+the user's native-futures entry/stop/target rules with realistic costs. No signal,
+execution integration, purchase or deployment is authorized by this document.
+
+Primary references:
+- https://databento.com/docs/standards-and-conventions/symbology
+- https://databento.com/docs/schemas-and-data-formats/ohlcv
+- https://databento.com/blog/vwap-python
+- https://databento.com/docs/standards-and-conventions/common-fields-enums-types
+- https://www.tradingview.com/pine-script-docs/concepts/other-timeframes-and-data/
+- https://www.tradingview.com/charting-library-docs/latest/connecting_data/datafeed-api/
+
+## Databento-fed local chart
+
+The local native chart replaces a separate chart feed **inside Monatise**.
+It does not alter the feed of a tradingview.com chart or execute Pine scripts.
+It uses a repository-owned Canvas renderer with no external scripts, chart
+licences, broker endpoints or API credentials in the browser. The HTTP service
+binds to 127.0.0.1 only and exposes fixed read-only routes.
+
+`python -m monatise.research.native_futures.chart export --capture CAPTURE
+--snapshot PRIVATE/chart.json --reader-commit COMMIT` performs source-verified
+reconstruction outside the collector. `serve --snapshot PRIVATE/chart.json
+--source-snapshot CAPTURE/source-snapshot.json --duration 3600` starts the chart
+at http://127.0.0.1:8766 for one hour. A separately launched `refresh` worker can
+publish snapshots from an authorized running collector; neither the reader nor
+the chart creates a Databento client or starts capture. On refresh failure the
+last successful snapshot remains explicitly historical. This is local research
+access, not a production deployment.
+
+The chart exports exactly the last 512 validated bars used by each native
+analysis frame and checks their digest against that frame. It preserves bar
+hashes, native identity, evidence category, UTC bucket starts and missing
+intervals; it creates no empty candles. Global/instrument source quarantine or
+failed candle lineage prevents chart publication for the affected scope.
+Dependent indicators remain unavailable where native gap checks fail. The
+chart contains closed 1m/5m/15m/H1/H4 candles, volume, EMA20, Wilder RSI14 and
+its SMA14, confirmed swings and Fibonacci, retained-window trade VWAP, known-side
+delta, explicit unknown-side volume, displayed bid/ask and executed-volume
+profile prices. The constant VWAP overlay is the declared retained-trade-window
+value, **not a reconstructed historical or daily VWAP series**. Indicators use
+the same native implementation/seed as the report. Data received after a candle
+closes remains subject to source reconstruction and quality checks before the
+next refresh. The current UI is snapshot-based (10-second polling; full verified
+reconstruction runs separately); it is not a tick-latency or execution terminal.
+
+The chart discloses analysis/source observation times and sealed/recovering
+states. A source heartbeat or polling response is not a fresh-exchange-delivery
+certificate. Current live operation requires an actually running authorized
+collector and refresh worker. A completed trial supplies historical context
+only. No new live connections are opened as part of building the chart.

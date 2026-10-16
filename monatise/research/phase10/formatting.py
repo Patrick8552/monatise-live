@@ -120,9 +120,9 @@ def text_report(report):
         lines.append('Participant identities unavailable. Depth/absorption/iceberg detection is not live-validated.')
     if report.get('version')=='native-futures-market-information-v1':
         lines+=['','Native futures market information only; no trading signal or participant identity is inferred.',
-            'Crypto engines, frozen H1 selection and GIL qualification are retired from this request path.',
+            'Dedicated native futures information; analytical observations do not authorize orders.',
             'No orders or provider requests are created. Exchange completeness remains unverified.']
     else:
         lines+=['','Qualification: NOT_EVALUATED. Decision: NO_TRADE.','Native futures prices; broker basis mapping is separate.',
-            'Gamma/GIL certification and complete exchange continuity are unavailable. No orders or provider requests are created.']
+            'Complete exchange continuity and execution readiness are not certified. No orders or provider requests are created.']
     return '\n'.join(lines)

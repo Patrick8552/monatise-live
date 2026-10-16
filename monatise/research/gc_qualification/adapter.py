@@ -1,13 +1,8 @@
-"""Prefix admission and canonical delegation. Import in the pinned worker only."""
+"""Legacy archive prefix conversion only; canonical delegation deleted."""
 from bisect import bisect_right
 from dataclasses import replace
 from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
 
-from monatise.application.gold_analysis import GoldLayerEvaluator
-from monatise.application.hierarchy.coordinator import HierarchyConfiguration
-from monatise.application.target_evidence import crypto_layer_candidates
-from monatise.application.take_profit import build_plan
-from monatise.engines.regime import RegimeRequest
 from monatise.research.gc_fib.candles import INTERVALS
 from monatise.research.gc_fib.worker import snapshot, instant
 
@@ -15,13 +10,9 @@ NS = 10**9
 
 
 def required_history(timeframe):
-    # H4 regime's returns baseline needs slow_window + 1, not 50. The other
-    # roles retain the canonical transport/liquidity floor of 50. This is a
-    # stricter warmup correction; history remains capped at 200 unchanged.
-    if timeframe == "4h":
-        fields = RegimeRequest.__dataclass_fields__
-        return max(50,*(fields[k].default+1 for k in ("slow_window","atr_window","compression_window")))
-    return 50
+    # Historical archive adapter's declared warm-up, not an analytical engine.
+    return 51 if timeframe=='4h' else 50
+
 
 
 class CutoffAdapter:
@@ -82,73 +73,3 @@ class CutoffAdapter:
                 known_at_ns=rows[-1].assumed_available_ns, close_ns=rows[-1].close_ns,
                 missing_or_no_trade_opens_ns=missing, outside_session_opens_ns=invalid)
         return frames,issues,lineage
-
-
-def native_plan(candidates, prepared, *, now, config, tick):
-    """Canonical selection first; inward rounding cannot skip a weak near target."""
-    plan = build_plan(candidates=candidates,direction=prepared.direction,
-        entry=prepared.reference_entry,stop=prepared.final_stop,now=now,
-        expires_at=prepared.expires_at,config=config,tick_size=tick)
-    sign = Decimal(1 if prepared.direction == "long" else -1)
-    entry,stop = Decimal(str(prepared.reference_entry)),Decimal(str(prepared.final_stop))
-    targets = []
-    for t in plan.targets:
-        price = (t.price/tick).to_integral_value(rounding=ROUND_FLOOR if sign == 1 else ROUND_CEILING)*tick
-        targets.append(replace(t,price=price,analysis_price=t.price,rr=(price-entry)*sign/abs(entry-stop)))
-    plan = replace(plan,targets=tuple(targets))
-    plan.validate(now=now,tick_size=tick)
-    return plan
-
-
-class NativeGoldEvaluator(GoldLayerEvaluator):
-    """Keep actual setup/trigger/context/bundle validation, delegate only risk I/O."""
-    def __init__(self, contract):
-        super().__init__(asset_route="gold",configuration=replace(HierarchyConfiguration(),
-            strategy_version="gold-sweep-reversal-technical-v1",always_collect_5m=True))
-        self.contract = contract
-        self.target_config = self.multi_tp
-        # The inherited evaluate otherwise computes a second default 1e-8 plan.
-        # The research _risk below runs the SAME producer/builder with native tick.
-        self.multi_tp = replace(self.multi_tp,enabled=False)
-        self.layers, self.prepared, self.plan, self.target_candidates = {},None,None,[]
-        self.risk_error = None
-
-    def _analyse_structure(self, snapshot, regime):
-        layer = super()._analyse_structure(snapshot,regime)
-        if layer is not None:
-            for name in ("liquidity","sweep","zones","reclaim","structure"):
-                value = getattr(layer,name)
-                layer = replace(layer,**{name:replace(value,metadata={**value.metadata,
-                    "engine_scope":"native_gc_exchange_candles","volume_kind":"exchange_traded_contracts"})})
-            self.layers[snapshot.timeframe] = layer
-        return layer
-
-    def _risk(self, layer, trigger, now, *, entry_layer=None, stop_layer=None):
-        try:
-            return self._prepare_and_complete(layer,trigger,now,entry_layer=entry_layer,stop_layer=stop_layer)
-        except ValueError as exc:
-            allowed = {"gold_entry_zone_unavailable","gold_stop_pattern_unavailable",
-                "stop and target are inconsistent with direction","insufficient target evidence",
-                "insufficient TP1 reward/risk; cannot skip first objective",
-                "invalid stop or setup expiry","target reversed, duplicated or insufficiently spaced"}
-            self.risk_error = str(exc) if str(exc) in allowed else "canonical_risk_validation_error"
-            raise
-
-    def _prepare_and_complete(self, layer, trigger, now, *, entry_layer=None, stop_layer=None):
-        self.prepared = self.prepare_entry_stop(trigger,now,entry_layer=entry_layer,stop_layer=stop_layer)
-        self.target_candidates = []
-        state = self._state["GCZ6"]
-        for tf,snap in state.snapshots.items():
-            evidence = self._analyse_structure(snap,state.regime_assessment)
-            self.target_candidates.extend(crypto_layer_candidates(evidence,timeframe=tf,
-                observed=snap.latest_finalized.scheduled_close_time,provider="monatise_gold"))
-        self.plan = native_plan(self.target_candidates,self.prepared,now=now,
-            config=self.target_config,tick=Decimal(self.contract.tick_size))
-        return self.prepared.complete(float(self.plan.targets[0].price))
-
-    def evaluate_native(self, frames, *, now, spread):
-        self.broker_units = self.contract.units(spread)
-        self.layers,self.prepared,self.plan,self.target_candidates = {},None,None,[]
-        self.risk_error = None
-        result = super().evaluate("GCZ6",frames,evaluated_at=now,macro_degraded=True)
-        return replace(result,take_profit_plan=self.plan)

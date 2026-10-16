@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from monatise.engines.asset_scope import require_canonical_non_futures
+
 from monatise.core.models import Candle
 from monatise.engines.liquidity.models import LiquiditySide
 from monatise.engines.liquidity_sweep.models import (
@@ -22,6 +24,7 @@ class LiquiditySweepEngine:
     def assess(self, request: SweepRequest) -> SweepAssessment:
         request.validate()
         market = request.market
+        require_canonical_non_futures(market.symbol)
         liquidity = request.liquidity
         reasons: list[str] = []
 

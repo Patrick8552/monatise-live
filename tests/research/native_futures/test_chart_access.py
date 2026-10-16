@@ -111,7 +111,7 @@ def test_native_text_reports_validated_quote_and_indicator_limits():
     report=FuturesMarketInfo(p,source_health=lambda at:{}).analyse(AnalysisRequest((c.metadata.raw_symbol,),NOW_NS))
     text=text_report(report)
     assert 'mbp-1 displayed bid/ask:' in text and 'broker executable quote=False' in text
-    assert 'Missing components:' in text and 'Crypto engines, frozen H1 selection and GIL' in text
+    assert 'Missing components:' in text and 'Dedicated native futures information' in text
 
 
 @pytest.mark.parametrize('delta',[-8,1,2,1001])

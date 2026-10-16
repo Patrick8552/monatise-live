@@ -34,3 +34,6 @@ include = ["monatise*"]
 addopts = "-ra"
 pythonpath = ["."]
 testpaths = ["tests"]
+
+[tool.setuptools.package-data]
+"monatise.research.native_futures" = ["chart_ui.html", "chart_ui.js"]

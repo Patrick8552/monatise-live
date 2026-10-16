@@ -56,7 +56,7 @@ def test_verified_warmup_supplies_engine_history_without_changing_live_gate(warm
     h=load_history(path,**kwargs);service=AnalysisService(WarmedPipeline(p,h))
     r=service.analyse(AnalysisRequest((c.metadata.raw_symbol,),NOW_NS))['instruments'][c.metadata.raw_symbol]
     for tf in ('1m','5m','15m'):
-        assert r['components']['price:'+tf]['engine_health']['liquidity']['available']
+        assert r['components']['price:'+tf]['native_analysis']['available']
     assert r['history_warmup']['historical_minutes']==780
     assert not r['history_warmup']['live_soak_gap_repaired']
     assert digest(tuple(p.gates[c.metadata.instrument_id].lineage_observations()))==before
@@ -90,7 +90,7 @@ def test_history_quality_fault_is_retained_and_live_analysis_survives(warm):
     path,p,c,kwargs=warm;h=load_history(path,**kwargs);h['gates'][c.metadata.instrument_id].transport_gap('ohlcv-1m','ENGINEERING_FAULT')
     r=AnalysisService(WarmedPipeline(p,h)).analyse(AnalysisRequest((c.metadata.raw_symbol,),NOW_NS))['instruments'][c.metadata.raw_symbol]
     assert r['history_warmup']['status']=='REJECTED_OR_NOT_AVAILABLE'
-    assert r['components']['price:1m']['engine_health']['liquidity']['available']
+    assert r['components']['price:1m']['native_analysis']['available']
     assert 'ENGINEERING_FAULT' in r['history_warmup']['faults']['ohlcv-1m']
 
 
@@ -101,7 +101,7 @@ def test_bad_optional_join_keeps_valid_live_components(warm):
     h['bars'][c.metadata.instrument_id]=(*h['bars'][c.metadata.instrument_id],replace(live,volume=live.volume+1))
     result=AnalysisService(WarmedPipeline(p,h)).analyse(AnalysisRequest((c.metadata.raw_symbol,),NOW_NS))['instruments'][c.metadata.raw_symbol]
     assert result['history_warmup']['status']=='REJECTED_HISTORY_JOIN'
-    assert result['components']['price:1m']['engine_health']['liquidity']['available']
+    assert result['components']['price:1m']['native_analysis']['available']
 
 
 def test_overlap_revision_and_missing_parent_child_are_rejected(warm):

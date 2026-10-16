@@ -76,8 +76,8 @@ def test_quote_free_native_context_and_indicators_reuse_real_engines(product):
     result=p.analyse(c.metadata.instrument_id,now_ns=NOW_NS,requested=('mbp-1','GIL'))
     assert result['availability']=='PARTIAL_ANALYSIS'
     price=result['components']['price:1h']
-    assert price['available'] and price['structure']['bias']=='bullish'
-    assert 'primary_anchor' in price['fibonacci']
+    assert price['available'] and price['native_analysis']['available']
+    assert 'fibonacci' in price['native_analysis']
     assert price['reference_price']>0 and not price['executable_quote']
     assert result['components']['trade_features']['result']['executed_contracts']==2
     assert result['basis_status']=='NOT_APPLICABLE' and result['analysis_instrument']==product+'Z6'
@@ -85,10 +85,11 @@ def test_quote_free_native_context_and_indicators_reuse_real_engines(product):
     assert result['qualification_status']=='NOT_EVALUATED' and not result['gil_enabled']
     # Historical context remains visible; expiry and source hash do not renew.
     later=p.analyse(c.metadata.instrument_id,now_ns=NOW_NS+4*3600*NS,requested=('price:1m',))
-    assert later['availability']=='CONTEXT_ONLY'
+    assert later['availability']=='PARTIAL_ANALYSIS'
     old,new=price,later['components']['price:1h']
-    assert old['original_expiry_ns']==new['original_expiry_ns'] and old['source_sha256']==new['source_sha256']
-    assert new['historical_only'] and not new['frozen_H1_parent_qualified']
+    assert 'original_expiry_ns' not in old and 'original_expiry_ns' not in new
+    assert old['source_sha256']==new['source_sha256']
+    assert not new['selector_applied'] and new['freshness']['age_ns']>old['freshness']['age_ns']
 
 
 @pytest.mark.parametrize('product',['GC','ES','NQ'])
@@ -263,12 +264,10 @@ def test_upstream_price_context_survives_downstream_engine_error(monkeypatch):
         rows.append(HistoricalBar(c.metadata,'1h',start+i*3600*NS,start+(i+1)*3600*NS,
             tuple(round(v*NS/tick)*tick for v in (b.open,b.high,b.low,b.close)),int(b.volume),NOW_NS,
             (digest(str(i)),),'ohlcv-1h','ENGINEERING_SYNTHETIC'))
-    def fail(*a):raise RuntimeError('synthetic engine defect')
-    monkeypatch.setattr(module.FibonacciLiquidityEngine,'assess',fail)
     r=price_components(c,rows,now_ns=NOW_NS,calendar=cal)
-    assert r['available'] and 'structure' in r and r['analysis_partial']
-    assert r['engine_health']['fibonacci']['unexpected_error']
-    assert 'fibonacci' not in r and r['session_statistics']['volume_contracts']>0
+    assert r['available'] and r['native_analysis']['available']
+    assert not r['crypto_engines_used'] and 'engine_health' not in r
+    assert r['session_statistics']['volume_contracts']>0
 
 
 @pytest.mark.parametrize('fault',['crossed','spread','locked','one_sided'])
