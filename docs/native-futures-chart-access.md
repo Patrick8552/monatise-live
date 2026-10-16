@@ -28,6 +28,9 @@ charge or first-price fallback is performed by the reader.
 
 * Structure/Fibonacci/price-based liquidity proxies use confirmed native swings;
   they do not replicate proprietary LuxAlgo scripts or establish resting orders.
+* Plain EMA20, Wilder RSI14, its SMA14 and descriptive recent crosses use only
+  validated closes, with explicit seeds and minimum history. They do not claim
+  equivalence to proprietary chart indicators or longer-history seeds.
 * UTC multi-timeframe structures may cross explicitly reviewed exchange closures.
   Missing buckets during fully open intervals still withhold structure. Partial
   session buckets are reported explicitly. No synthetic candles are inserted.

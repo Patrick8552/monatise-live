@@ -21,6 +21,7 @@ def test_closed_calendar_buckets_do_not_erase_structure_but_unknown_gaps_do():
     kept=rows[:8]+rows[9:]
     r=analyse_frame(kept,tick_size='.1',cutoff_ns=NOW_NS,calendar=cal)
     assert r['available'] and len(r['omitted_session_buckets'])==1 and r['gap_fill_count']==0
+    assert r['omitted_older_bars']==0 and type(r['omitted_older_bars']) is int
     assert not analyse_frame(kept,tick_size='.1',cutoff_ns=NOW_NS)['available']
     open_cal=replace(cal,intervals=((cal.valid_from_ns,cal.valid_to_ns),))
     assert analyse_frame(kept,tick_size='.1',cutoff_ns=NOW_NS,calendar=open_cal)['reason']=='missing_bar_in_reviewed_trading_interval'
@@ -67,3 +68,38 @@ def test_SDK_book_streams_explicitly_warn_instead_of_silently_skipping():
     c=OwnedSDKClient('ENGINEERING_ONLY',5,builder=builder)
     try:assert received['slow_reader_behavior']=='warn' and received['reconnect_policy']=='none'
     finally:c.close()
+
+
+def test_frame_history_limit_is_a_count_separate_from_session_omissions():
+    rows=bars([2500,2501,2505,2502,2501,2498,2501,2504,2508,2504,2503,2500,2503,2505,2510,2506,2505])
+    result=analyse_frame(rows,tick_size='.1',cutoff_ns=NOW_NS,maximum_bars=16)
+    assert result['omitted_older_bars']==1 and result['omitted_session_buckets']==[]
+
+
+@pytest.mark.parametrize('sign,expected',[(1,'100'),(-1,'0'),(0,'50')])
+def test_standard_indicators_have_explicit_wilder_and_sma_seeds(sign,expected):
+    from monatise.research.native_futures.technicals import close_indicators
+    rows=tuple((2500+sign*i)*10**9 for i in range(40))
+    r=close_indicators(rows)
+    assert r['rsi14']['value']==expected
+    assert r['ema20']['available'] and r['rsi14_sma14']['value']==expected
+    assert r['rsi_cross_above_sma_within_4_bars']['observed'] is False
+    assert not r['trade_signal']
+    short=close_indicators(rows[:14]);assert not short['rsi14']['available']
+    assert not close_indicators(rows[:31])['rsi_cross_above_sma_within_4_bars']['available']
+    assert close_indicators(rows[:32])['rsi_cross_above_sma_within_4_bars']['available']
+
+
+def test_wilder_rsi_known_mixed_close_reference():
+    from monatise.research.native_futures.technicals import close_indicators
+    # Mixed gains/losses: initial 14-change averages are hand-verifiable.
+    values=[100,102,101,104,102,103,105,104,107,106,108,107,109,108,110]
+    result=close_indicators(tuple(v*10**9 for v in values))
+    gain=Decimal(17)/14;loss=Decimal(7)/14
+    assert abs(Decimal(result['rsi14']['value'])-(100-100/(1+gain/loss)))<Decimal('1e-24')
+
+
+def test_ema20_uses_sma_seed_then_two_over_twenty_one():
+    from monatise.research.native_futures.technicals import close_indicators
+    result=close_indicators(tuple((2500+i)*10**9 for i in range(21)))
+    assert Decimal(result['ema20']['value'])==Decimal('2510.5')
