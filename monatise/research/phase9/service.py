@@ -110,7 +110,7 @@ class PersistentResearchService:
                 begun=time.perf_counter_ns()
                 position,sha,_=self.spool.append(schema,record,capture_ns=captured,
                     delivery_id=f'{self.plan.sha256}:{index}:{schema}:{ordinal}',evidence_kind=evidence_kind,
-                    admitted=admitted,clock_review=capture.active_clock_review)
+                    admitted=admitted,clock_review=capture.active_clock_review,arrival_ns=capture.active_arrival_ns)
                 durability_latencies.record('durable_spool_transaction',time.perf_counter_ns()-begun)
                 # Native control and verified replay-prefix duplicates do not
                 # become market volume. The source bytes remain in both journals.
@@ -123,7 +123,7 @@ class PersistentResearchService:
             def reject(schema,record,captured,ordinal,error_type):
                 self.spool.append(schema,record,capture_ns=captured,
                     delivery_id=f'{self.plan.sha256}:{index}:{schema}:{ordinal}',evidence_kind=evidence_kind,
-                    admitted=False,rejection_reason=error_type,clock_review=capture.active_clock_review)
+                    admitted=False,rejection_reason=error_type,clock_review=capture.active_clock_review,arrival_ns=capture.active_arrival_ns)
                 iid=getattr(record,'instrument_id',None)
                 if iid in self.pipeline.gates:self.pipeline.gates[iid].transport_gap(schema,error_type,event_ns=getattr(record,'ts_event',None))
             journal_factory=None

@@ -66,8 +66,9 @@ class Cursor:
 
 
 class FeedState:
-    def __init__(self,scope, *, checkpoints=None,recovery_review_reference=None,bootstrap_prefixes=None):
+    def __init__(self,scope, *, checkpoints=None,recovery_review_reference=None,bootstrap_prefixes=None,liveness_clock_ns=None):
         if bootstrap_prefixes and (not checkpoints or not recovery_review_reference):raise ValueError("reviewed_initial_prefix_requires_checkpoints")
+        self.liveness_clock_ns=liveness_clock_ns;self.liveness_started={};self.liveness_last={}
         self.bootstrap_prefixes=bootstrap_prefixes or {}
         self.bootstrap_clock_translations=[]
         self.scope=scope;self.clock_review=scope.clock_review;self.clock_history=[scope.clock_review] if scope.clock_review else [];self.contracts={c.metadata.instrument_id:c for c in scope.contracts}
@@ -112,11 +113,12 @@ class FeedState:
         clocks=[self.cursors[f'{schema}:{i}'].event_ns or (0 if schema=='definition' else self.scope.initial_start(schema)) for i in self.contracts]
         return min(clocks)
 
-    def ingest(self,schema,record, *, capture_ns,ordinal):
+    def ingest(self,schema,record, *, capture_ns,ordinal,arrival_ns=None):
         import databento_dbn as dbn
         timestamp_ns(capture_ns)
         if schema not in self.scope.schemas:raise ValueError('unsubscribed_schema')
         self.last_message[schema]=capture_ns
+        if arrival_ns is not None:self.liveness_last[schema]=arrival_ns
         native_hash=hashlib.sha256(bytes(record)).hexdigest()
         if isinstance(record,dbn.ErrorMsg):
             self.quarantine('provider_error_code_'+str(int(record.code)));return None
@@ -229,7 +231,7 @@ class FeedState:
         try:lower,upper=self.clock_review.bounds(now_ns) if self.clock_review else (0,0)
         except ValueError:
             self.quarantine('independent_clock_review_expired_or_invalid');lower=upper=0
-        stalled=[s for s in self.scope.schemas if now_ns-self.last_message.get(s,self.started.get(s,now_ns))>
+        stalled=[s for s in self.scope.schemas if (self.liveness_clock_ns()-self.liveness_last.get(s,self.liveness_started.get(s,self.liveness_clock_ns())) if self.liveness_clock_ns is not None else now_ns-self.last_message.get(s,self.started.get(s,now_ns)))>
                  (self.scope.heartbeat_seconds+10)*10**9]
         from .candles import WIDTHS
         def age_limit(schema):

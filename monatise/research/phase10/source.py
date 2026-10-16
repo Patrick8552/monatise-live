@@ -129,7 +129,7 @@ def load_capture(root,*,cutoff_ns,maximum_records=2000000,observation_sink=None,
     try:
         segments=checkpoint(state,'segments');cursor=checkpoint(state,'feed_cursor');limit=cursor['spool_records']
         if type(limit) is not int or not 0<=limit<=maximum_records:raise ValueError('analysis_replay_record_budget_exceeded')
-        count=0;accepted=0;rejected=0;last_global=0;kinds=set();last_captures={};delivery_prefix=digest(auth['plan'])+':0:'
+        count=0;accepted=0;rejected=0;last_global=0;kinds=set();last_captures={};last_arrivals={};delivery_prefix=digest(auth['plan'])+':0:'
         acks=set();replays=set();markers={};native_prefix=digest([]);clock_cache={};prefix_last_ns=0;prefix_clock=None
         for segment in segments:
             base=segment['base'];path=root/'spool'/segment['path']
@@ -140,15 +140,22 @@ def load_capture(root,*,cutoff_ns,maximum_records=2000000,observation_sink=None,
                     if hashlib.file_digest(stream,'sha256').hexdigest()!=segment['sha256']:raise ValueError('source_sealed_segment_hash_mismatch')
             db=readonly(path,sealed=bool(segment.get('sha256')))
             try:
-                for row in db.execute('SELECT id,delivery,schema,captured,native,hash,kind,admitted,metadata_hash,rejection,clock_review FROM raw WHERE id<=? ORDER BY id',(limit-base,)):
-                    ordinal,delivery,schema,at,raw,sha,kind,admitted,metadata,rejection,review=row
+                arrival_column='arrival_ns' if 'arrival_ns' in {r[1] for r in db.execute('PRAGMA table_info(raw)')} else 'NULL'
+                for row in db.execute('SELECT id,delivery,schema,captured,native,hash,kind,admitted,metadata_hash,rejection,clock_review,'+arrival_column+' FROM raw WHERE id<=? ORDER BY id',(limit-base,)):
+                    ordinal,delivery,schema,at,raw,sha,kind,admitted,metadata,rejection,review,arrival=row
                     timestamp_ns(at)
-                    if at<last_captures.get(schema,0):raise ValueError('source_capture_clock_regression')
+                    arrival_reviewed=auth.get('capture_clock_semantics')=='ORIGINAL_UTC_WALL_AND_MONOTONIC_ARRIVAL_V2'
+                    if (arrival is not None)!=arrival_reviewed:raise ValueError('source_capture_clock_semantics_mismatch')
+                    if arrival is not None:
+                        if type(arrival) is not int or arrival<=0 or arrival<last_arrivals.get(schema,0):raise ValueError('source_monotonic_arrival_regression')
+                        last_arrivals[schema]=arrival
+                    elif at<last_captures.get(schema,0):raise ValueError('source_capture_clock_regression')
                     last_captures[schema]=at
                     if not delivery.startswith(delivery_prefix+schema+':') or not delivery.rsplit(':',1)[1].isdecimal():raise ValueError('source_delivery_plan_mismatch')
                     if ordinal+base!=last_global+1:raise ValueError('source_native_position_gap')
                     last_global=ordinal+base;count+=1
-                    if digest([delivery,schema,at,sha,kind,bool(admitted),rejection,review])!=metadata or hashlib.sha256(raw).hexdigest()!=sha:
+                    from monatise.research.phase9.storage import record_metadata_hash
+                    if record_metadata_hash(delivery,schema,at,sha,kind,bool(admitted),rejection,review,arrival)!=metadata or hashlib.sha256(raw).hexdigest()!=sha:
                         raise ValueError('source_native_or_metadata_hash_mismatch')
                     if not 1<=len(raw)<=65536 or admitted not in (0,1):raise ValueError('bounded_native_source_row_required')
                     if schema not in schemas or kind not in {'AUTHENTIC_LIVE_CAPTURE','ENGINEERING_SYNTHETIC'}:raise ValueError('source_schema_or_evidence_mismatch')

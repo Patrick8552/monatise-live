@@ -191,3 +191,37 @@ def test_book_capture_replays_into_native_information_without_legacy_graph(tmp_p
     assert result['components']['mbp-1']['available'] and hashes(root)==before
     assert reader.pipeline.gates[c.metadata.instrument_id].guards['mbp-1'].anchor_ns==initial['mbp-1'].ts_recv
     assert not result['crypto_engines_used'] and not result['frozen_H1_selector_used'] and not result['GIL_rules_used']
+
+
+@pytest.mark.parametrize('arrival_regression',[False,True])
+def test_reader_preserves_wall_regression_but_rejects_arrival_regression(capture,arrival_regression):
+    from monatise.research.phase9.storage import record_metadata_hash
+    root,c=capture;state=root/'spool/state.sqlite'
+    auth_path=root/'authorization.json';auth=json.loads(auth_path.read_text());auth['capture_clock_semantics']='ORIGINAL_UTC_WALL_AND_MONOTONIC_ARRIVAL_V2'
+    auth_path.write_text(json.dumps(auth));inputs_path=root/'analysis-inputs.json';inputs=json.loads(inputs_path.read_text());inputs['authorization_sha256']=digest(auth);inputs_path.write_text(json.dumps(inputs))
+    with sqlite3.connect(state) as db:
+        segments=json.loads(db.execute("SELECT value FROM states WHERE name='segments'").fetchone()[0])
+    db.close()
+    for segment in segments:
+        path=root/'spool'/segment['path'];path.chmod(0o600)
+        with sqlite3.connect(path) as db:
+            rows=list(db.execute('SELECT id,delivery,schema,captured,hash,kind,admitted,rejection,clock_review FROM raw ORDER BY id'))
+            for ordinal,d,schema,at,sha,kind,a,rejection,review in rows:
+                global_id=segment['base']+ordinal
+                wall=NOW_NS-global_id*111000
+                arrival=100+global_id
+                if arrival_regression and global_id==3:arrival=1
+                h=record_metadata_hash(d,schema,wall,sha,kind,bool(a),rejection,review,arrival)
+                db.execute('UPDATE raw SET captured=?,arrival_ns=?,metadata_hash=? WHERE id=?',(wall,arrival,h,ordinal))
+        db.execute('PRAGMA wal_checkpoint(TRUNCATE)');db.close()
+        segment['sha256']=hashlib.sha256(path.read_bytes()).hexdigest()
+    with sqlite3.connect(state) as db:
+        db.execute("UPDATE states SET value=?,hash=? WHERE name='segments'",(json.dumps(segments),digest(segments)))
+    db.execute('PRAGMA wal_checkpoint(TRUNCATE)');db.close()
+    if arrival_regression:
+        with pytest.raises(ValueError,match='monotonic_arrival_regression'):load_capture(root,cutoff_ns=NOW_NS)
+    else:
+        before=hashes(root)
+        result=load_capture(root,cutoff_ns=NOW_NS).analyse(AnalysisRequest((c.metadata.raw_symbol,),NOW_NS))
+        assert result['instruments'][c.metadata.raw_symbol]['capture_health']['native_records_verified']==4
+        assert hashes(root)==before

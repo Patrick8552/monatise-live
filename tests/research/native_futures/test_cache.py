@@ -107,22 +107,6 @@ def test_native_candle_needs_no_extra_ten_second_local_delay(tmp_path):
     finally:pub.close()
 
 
-def test_old_queued_resume_cannot_override_a_new_inline_network_pause():
-    import threading
+def test_native_cache_has_no_application_socket_resume_path():
     from monatise.research.databento.sdk_transport import OwnedSDKClient
-    pending=[]
-    class Loop:
-        def call_soon_threadsafe(self,fn):pending.append(fn)
-    class Transport:
-        reading=False
-        def is_closing(self):return False
-        def resume_reading(self):self.reading=True
-        def pause_reading(self):self.reading=False
-    client=OwnedSDKClient.__new__(OwnedSDKClient)
-    client._closed=False;client._loop=Loop();client._transport=Transport()
-    client._thread=threading.Thread();client._reading_requested=False
-    client.set_reading(True)  # Consumer schedules a resume on the network loop.
-    client._thread=threading.current_thread()
-    client.set_reading(False)  # Newer callback pauses inline before queued resume.
-    pending[0]()
-    assert not client._transport.reading and not client._reading_requested
+    assert not hasattr(OwnedSDKClient,'set_reading')
