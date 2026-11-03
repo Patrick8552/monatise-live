@@ -5,6 +5,7 @@ class checks local provenance and ordering. It supplies no price model, anchor,
 MAD threshold, spread cap, signal qualification or automatic recovery.
 """
 from collections import OrderedDict,deque
+from monatise.research.databento.datasets import NATIVE_FUTURES_PRODUCTS
 from monatise.research.institutional.models import MarketObservation,digest
 from monatise.research.phase9.quality import QualityGate
 
@@ -15,7 +16,7 @@ class NativeInformationGate:
     transport_gap=QualityGate.transport_gap
 
     def __init__(self,contract,*,capacity=50000,rolling=True):
-        if contract.asset_class!='futures' or contract.metadata.product not in {'GC','ES','NQ'}:
+        if contract.asset_class!='futures' or contract.metadata.product not in NATIVE_FUTURES_PRODUCTS:
             raise ValueError('reviewed_native_futures_required')
         if type(capacity) is not int or not 1<=capacity<=100000 or type(rolling) is not bool:
             raise ValueError('bounded_native_information_required')

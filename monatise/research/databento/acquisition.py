@@ -74,7 +74,7 @@ class HistoricalRequest:
             pid, iid, symbol = item
             if (type(pid) is not int or not 0 < pid < 65536 or type(iid) is not int
                     or not 0 < iid < 2**32 or not isinstance(symbol, str)
-                    or not re.fullmatch(r"(?:(?:GC|ES|NQ|CL)[FGHJKMNQUVXZ]\d{1,2}|OG[A-Za-z0-9 .+-]{1,60})", symbol)):
+                    or not re.fullmatch(r"(?:(?:GC|ES|NQ|CL|BTC)[FGHJKMNQUVXZ]\d{1,2}|OG[A-Za-z0-9 .+-]{1,60})", symbol)):
                 raise ValueError("explicit reviewed CME contract identity required")
         if (len(set(self.contracts)) != len(self.contracts)
                 or len({c[2] for c in self.contracts}) != len(self.contracts)

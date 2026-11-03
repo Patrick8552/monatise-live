@@ -10,7 +10,7 @@ from monatise.research.databento.options import normalize_open_interest
 from .models import Contract, MarketObservation, Source, number
 
 # Descriptors do not grant availability, exact identities, conventions or activation.
-SECONDARY = {p: {"enabled": False, "definition_required": True} for p in ("CL", "YM", "RTY", "BTC", "ETH")}
+SECONDARY = {p: {"enabled": False, "definition_required": True} for p in ("CL", "YM", "RTY", "ETH")}
 
 
 @dataclass(frozen=True)
@@ -22,7 +22,7 @@ class EconomicConvention:
     reference: str
 
     def __post_init__(self):
-        if self.product not in {"GC", "ES", "NQ", "CL", "OG"} or not self.price_unit or not self.reference:
+        if self.product not in {"GC", "ES", "NQ", "CL", "OG", "BTC"} or not self.price_unit or not self.reference:
             raise ValueError("reviewed_product_convention_required")
         number(self.tick_size, positive=True)
         number(self.multiplier, positive=True)

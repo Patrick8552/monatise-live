@@ -21,3 +21,8 @@ No purchases, paid downloads, subscription expansion, deployment, merging or
 trading unless explicitly authorized. Do not start live connections merely to
 answer conceptual questions. Retiring analytical rules does not change order
 execution permissions or unrelated production protections.
+
+Native BTC support is documented in `docs/native-bitcoin-futures.md`. BTC futures
+must use reviewed native definitions and their own dated 24/7 maintenance calendar;
+do not reuse the index calendar, assume subscription coverage, or reinterpret a
+bare spot/perpetual ticker as a verified futures contract inside crypto engines.

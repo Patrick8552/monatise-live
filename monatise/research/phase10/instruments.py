@@ -1,5 +1,6 @@
 """Candidate audit descriptors only. This registry cannot enable an instrument."""
 from copy import deepcopy
+from monatise.research.databento.datasets import NATIVE_FUTURES_PRODUCTS
 
 CANDIDATES={
  'YM':dict(name='E-mini Dow',exchange='XCBT',tick_size='1',multiplier='5',price_unit='INDEX_POINTS',settlement='cash',contract_cycle='quarterly',specification='https://www.cmegroup.com/markets/equities/dow-jones/e-mini-dow.contractSpecs.html'),
@@ -15,5 +16,5 @@ def audit_catalog():
             dated_session_calendar_required=True,independent_quality_calibration_required=True,
             live_operation_verified=False,regular_hours_reference='https://www.cmegroup.com/trading-hours.html',
             blockers=['exact_native_definition_and_expiry_review','dated_session_calendar_and_holidays','contract_schema_quality_calibration','genuine_live_validation'])
-    return dict(version='phase10-instrument-audit-catalog-v1',supported_research_products=['GC','ES','NQ'],
+    return dict(version='phase10-instrument-audit-catalog-v1',supported_research_products=list(NATIVE_FUTURES_PRODUCTS),
         candidates=candidates,expansion_activated=False,subscription_changes=0)

@@ -1,6 +1,7 @@
-"""Native GC/ES/NQ context; canonical engines and frozen selector deleted."""
+"""Native futures context; canonical engines and frozen selector deleted."""
 from datetime import UTC, datetime
 from decimal import Decimal
+from monatise.research.databento.datasets import NATIVE_FUTURES_PRODUCTS
 import logging
 
 from monatise.research.databento.candles import WIDTHS
@@ -64,7 +65,7 @@ from .lineage import verify_bar_lineage
 class NativeFuturesCoordinator:
     def analyse(self, gate, *, bars_by_timeframe, calendar, now_ns, mandatory=('price:1h',), requested=(), reviewed_history=False):
         c = gate.contract
-        if c.asset_class != 'futures' or c.metadata.product not in {'GC','ES','NQ'}:
+        if c.asset_class != 'futures' or c.metadata.product not in NATIVE_FUTURES_PRODUCTS:
             raise ValueError('reviewed_native_futures_contract_required')
         components = {}
         for tf, bars in bars_by_timeframe.items():

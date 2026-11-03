@@ -4,6 +4,7 @@ One-hour bars are ordinary data. No frozen selector, two-hour selector lifetime,
 GIL, gamma, dealer positioning, signal, or order decision is evaluated here.
 """
 from decimal import Decimal
+from monatise.research.databento.datasets import NATIVE_FUTURES_PRODUCTS
 
 from monatise.research.databento.candles import WIDTHS
 from monatise.research.institutional.indicators import trade_indicators,book_indicator,open_interest_change,encode_source
@@ -96,7 +97,7 @@ class FuturesMarketInfo:
     def _instrument(self, iid, request, health):
         p, gate, frames, calendar, history = self._frames(iid, request.cutoff_ns)
         c = gate.contract
-        if c.asset_class != 'futures' or c.metadata.product not in {'GC','ES','NQ'}:
+        if c.asset_class != 'futures' or c.metadata.product not in NATIVE_FUTURES_PRODUCTS:
             raise ValueError('reviewed_native_futures_contract_required')
         parts = {}
         for tf in request.timeframes:
@@ -184,7 +185,8 @@ class FuturesMarketInfo:
                 v['result']['window_scope']='RETAINED_VALIDATED_EXECUTIONS_NOT_FULL_SESSION'
         available = [k for k,v in parts.items() if v['available']]
         state = 'PARTIAL_MARKET_INFORMATION' if available else 'UNAVAILABLE'
-        if 'replay_completed' in health and not {'definition','trades','ohlcv-1s','ohlcv-1m'}<=set(health['replay_completed']):state='UNAVAILABLE'
+        required_replays = {'definition', 'trades', *(s for s in p.enabled_schemas if s.startswith('ohlcv-'))}
+        if 'replay_completed' in health and not required_replays<=set(health['replay_completed']):state='UNAVAILABLE'
         source_scope=quarantine_scope(health,iid)
         if source_scope in {'GLOBAL_SOURCE_QUARANTINE','INSTRUMENT_SOURCE_QUARANTINE'}:state='UNAVAILABLE'
         elif source_scope=='COMPONENT_SOURCE_QUARANTINE':

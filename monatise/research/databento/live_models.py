@@ -9,7 +9,7 @@ from monatise.adapters.databento_identity import timestamp_ns
 from monatise.research.institutional.models import Contract,number,digest,hash_required
 from monatise.research.institutional.normalize import definition,EconomicConvention
 from monatise.research.institutional.native_index import validate as index_definition
-from monatise.research.databento.datasets import DatasetCapability
+from monatise.research.databento.datasets import DatasetCapability, NATIVE_FUTURES_PRODUCTS
 
 SCHEMAS=('definition','trades','mbp-1')
 SUPPORTED_SCHEMAS=SCHEMAS+('mbp-10','ohlcv-1s','ohlcv-1m','ohlcv-1h','statistics','status')
@@ -59,7 +59,10 @@ def native_definition(record, *, capability,publishers,as_of_ns):
     product=str(record.asset)
     if product in {'ES','NQ'}:
         return index_definition(record,capability=capability,publishers=publishers,as_of_ns=as_of_ns)
-    if product!='GC':raise ValueError('only_reviewed_GC_ES_NQ_native_futures_supported')
+    if product == 'BTC':
+        from monatise.research.institutional.native_bitcoin import validate
+        return validate(record,capability=capability,publishers=publishers,as_of_ns=as_of_ns)
+    if product!='GC':raise ValueError('only_reviewed_native_futures_supported')
     from monatise.adapters.databento_identity import native_gc_economics
     tick,size=native_gc_economics(record)
     return definition(record,capability=capability,publishers=publishers,as_of_ns=as_of_ns,
@@ -88,7 +91,7 @@ class LiveScope:
         timestamp_ns(self.start_ns);timestamp_ns(self.session_end_ns)
         if (not isinstance(self.contracts,tuple) or not 1<=len(self.contracts)<=3
                 or len({c.identity for c in self.contracts})!=len(self.contracts)
-                or any(c.asset_class!='futures' or c.metadata.product not in {'GC','ES','NQ'} for c in self.contracts)
+                or any(c.asset_class!='futures' or c.metadata.product not in NATIVE_FUTURES_PRODUCTS for c in self.contracts)
                 or not isinstance(self.schemas,tuple) or not self.schemas or len(set(self.schemas))!=len(self.schemas)
                 or not set(self.schemas)<=set(SUPPORTED_SCHEMAS) or 'definition' not in self.schemas
                 or not self.session_review_reference

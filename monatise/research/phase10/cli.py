@@ -7,12 +7,12 @@ from . import SAFETY
 
 
 def main(argv=None):
-    parser=argparse.ArgumentParser(description='Read-only native GC/ES/NQ analysis from an existing private capture. No downloads, trading or deployment.')
+    parser=argparse.ArgumentParser(description='Read-only native GC/ES/NQ/BTC analysis from an existing private capture. No downloads, trading or deployment.')
     source=parser.add_mutually_exclusive_group()
     source.add_argument('--capture',help='Existing private capture containing reviewed analysis-inputs.json')
     source.add_argument('--capture-pointer',help='Reviewed local file naming the current exact capture; no discovery or connection')
     instruments=parser.add_mutually_exclusive_group()
-    instruments.add_argument('--symbols',nargs='+',help='Exact loaded contracts or unique loaded GC/ES/NQ products')
+    instruments.add_argument('--symbols',nargs='+',help='Exact loaded contracts or unique loaded GC/ES/NQ/BTC products')
     instruments.add_argument('--request',help='For example: Analyse GC, ES and NQ using Databento')
     parser.add_argument('--history-manifest',help='Optional separately reviewed native warm-up history')
     parser.add_argument('--timeframes',nargs='+',default=['1m','5m','15m','1h','4h'])

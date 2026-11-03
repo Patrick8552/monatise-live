@@ -47,14 +47,15 @@ def test_initial_schema_start_is_explicit_and_does_not_need_any_replay_prefix():
     with pytest.raises(ValueError):replace(s,initial_schema_starts=(('mbp-1',NOW_NS+NS),)).validate_at(NOW_NS)
 
 
-def test_native_mode_source_replay_never_needs_a_calibration_or_price_anchor(tmp_path):
+@pytest.mark.parametrize('product',['GC','BTC'])
+def test_native_mode_source_replay_never_needs_a_calibration_or_price_anchor(tmp_path,product):
     import json
     from monatise.research.institutional.models import encode,digest
     from monatise.research.phase9.rotation import RotatingSpool,RotationPolicy
     from monatise.research.phase10.source import load_capture
     from monatise.research.phase10.access import AnalysisRequest
     from monatise.research.databento.semantics import VERSION
-    c=contract();cal=calendar(c);root=tmp_path/'native';root.mkdir()
+    c=contract(product);cal=calendar(c);root=tmp_path/'native';root.mkdir()
     sc=dict(contracts=[encode(c)],schemas=['trades'],session_end_ns=cal.valid_to_ns,session_review_reference='ENGINEERING',start_ns=NOW_NS-100*NS)
     auth=dict(normalization_semantics=VERSION,quality_mode=MODE,plan=dict(steps=[dict(scope=sc)]))
     (root/'authorization.json').write_text(json.dumps(auth))
