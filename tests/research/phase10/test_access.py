@@ -53,7 +53,7 @@ def test_catalog_lists_candidates_without_enabling_them(capsys):
     assert main(['--list-instruments'])==0
     value=json.loads(capsys.readouterr().out)
     assert set(value['candidates'])=={'YM','RTY','CL','SI'}
-    assert value['supported_research_products']==['GC','ES','NQ']
+    assert value['supported_research_products']==['GC','ES','NQ','BTC']
     assert all(not x['analytical_support_enabled'] for x in value['candidates'].values())
 
 

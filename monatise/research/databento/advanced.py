@@ -78,7 +78,7 @@ class AdvancedAdapters:
 
     def _price(self, value):
         p = fixed(value)
-        if p % self.tick or (self.identity.product in {"GC", "OG", "ES", "NQ"} and p <= 0):
+        if p % self.tick or (self.identity.product in {"GC", "OG", "ES", "NQ", "BTC"} and p <= 0):
             raise ValueError("off-tick or invalid instrument price")
         return str(p)
 

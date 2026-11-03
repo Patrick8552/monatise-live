@@ -19,7 +19,12 @@ PRODUCTS = {"GC": ("XCEC", "COMEX", "GC.FUT"),
             "OG": ("XCEC", "COMEX", "OG.OPT"),
             "ES": ("XCME", "CME", "ES.FUT"),
             "NQ": ("XCME", "CME", "NQ.FUT"),
-            "CL": ("XNYM", "NYMEX", "CL.FUT")}
+            "CL": ("XNYM", "NYMEX", "CL.FUT"),
+            "BTC": ("XCME", "CME", "BTC.FUT")}
+
+# Software support only; exact native definitions, calendars and account data
+# access must still be verified for each capture. No new entitlement is implied.
+NATIVE_FUTURES_PRODUCTS = ("GC", "ES", "NQ", "BTC")
 
 
 @dataclass(frozen=True)
@@ -94,7 +99,7 @@ class InstrumentMetadata:
                     or type(self.underlying_id) is not int or not 0 < self.underlying_id < 2**32):
                 raise ValueError("exact standard OG metadata required")
         else:
-            match=re.fullmatch(r"(GC|ES|NQ|CL)([FGHJKMNQUVXZ])(\d{1,2})",self.raw_symbol)
+            match=re.fullmatch(r"(GC|ES|NQ|CL|BTC)([FGHJKMNQUVXZ])(\d{1,2})",self.raw_symbol)
             if (self.kind != "F" or match is None or match[1] != self.product
                     or type(self.maturity_year) is not int or not 1900 <= self.maturity_year <= 2200
                     or self.maturity_month != "FGHJKMNQUVXZ".index(match[2])+1
@@ -139,7 +144,7 @@ def discover(record, *, publishers, capability, as_of_ns):
             raise ValueError("invalid standard futures option metadata")
         strike, underlying = record.strike_price, record.underlying_id
     else:
-        match = re.fullmatch(r"(GC|ES|NQ|CL)([FGHJKMNQUVXZ])(\d{1,2})", raw)
+        match = re.fullmatch(r"(GC|ES|NQ|CL|BTC)([FGHJKMNQUVXZ])(\d{1,2})", raw)
         if (kind != "F" or str(record.security_type) != "FUT" or match is None
                 or match[1] != product or type(record.maturity_year) is not int
                 or not 1900 <= record.maturity_year <= 2200

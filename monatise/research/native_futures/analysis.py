@@ -1,5 +1,6 @@
 """Causal confirmed swings and descriptive futures structure, no trade rules."""
 from decimal import Decimal
+from monatise.research.databento.datasets import NATIVE_FUTURES_PRODUCTS
 from monatise.research.databento.candles import WIDTHS, HistoricalBar
 from monatise.research.institutional.models import digest
 from .technicals import close_indicators
@@ -13,7 +14,7 @@ def analyse_frame(bars, *, tick_size, cutoff_ns, swing_radius=2, maximum_bars=51
         raise ValueError('bounded_native_frame_required')
     if not rows:return dict(available=False,reason='insufficient_validated_history')
     from monatise.research.phase10.history import JoinedBar
-    if (any(not isinstance(b,(HistoricalBar,JoinedBar)) for b in rows) or rows[0].identity.product not in {'GC','ES','NQ'}
+    if (any(not isinstance(b,(HistoricalBar,JoinedBar)) for b in rows) or rows[0].identity.product not in NATIVE_FUTURES_PRODUCTS
             or tick!=Decimal(dict(rows[0].identity.native_terms)['min_price_increment'])/10**9
             or type(cutoff_ns) is not int or cutoff_ns<=0):
         raise ValueError('reviewed_exact_native_futures_terms_required')

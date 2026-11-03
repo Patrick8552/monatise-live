@@ -22,8 +22,9 @@ from tests.test_databento_gold import replay
 
 def native(product='GC',**changes):
     iid,tick,size,unit,venue={'GC':(41271,'.1',100,'TRYOZ','XCEC'),
-        'ES':(10252,'.25',50,'IPNT','XCME'),'NQ':(261401,'.25',20,'IPNT','XCME')}[product]
-    display=Decimal('.1') if product=='GC' else Decimal('.01')
+        'ES':(10252,'.25',50,'IPNT','XCME'),'NQ':(261401,'.25',20,'IPNT','XCME'),
+        'BTC':(42316233,'5',5,'IPNT','XCME')}[product]
+    display=Decimal('.1') if product=='GC' else Decimal('1') if product=='BTC' else Decimal('.01')
     values=dict(publisher_id=1,instrument_id=iid,ts_event=NOW_NS-86400*10**9,ts_recv=NOW_NS-86400*10**9+1,
         raw_symbol=product+'Z6',asset=product,exchange=venue,currency='USD',instrument_class=dbn.InstrumentClass.FUTURE,
         security_type='FUT',leg_count=0,user_defined_instrument=dbn.UserDefinedInstrument.NO,

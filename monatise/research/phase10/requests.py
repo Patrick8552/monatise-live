@@ -1,6 +1,7 @@
 """Bounded read-only request phrases and exact contract resolution; no AI/API."""
 from pathlib import Path
 import re
+from monatise.research.databento.datasets import NATIVE_FUTURES_PRODUCTS
 
 
 def request_symbols(text):
@@ -9,8 +10,8 @@ def request_symbols(text):
     if not match:raise ValueError('supported_read_only_analysis_phrase_required')
     words=re.split(r'\s*(?:,|\band\b)\s*|\s+',match.group(1),flags=re.I)
     symbols=tuple(w.upper() for w in words if w)
-    if not 1<=len(symbols)<=3 or len(set(symbols))!=len(symbols) or any(s not in {'GC','ES','NQ'} for s in symbols):
-        raise ValueError('only_distinct_GC_ES_NQ_analysis_supported')
+    if not 1<=len(symbols)<=3 or len(set(symbols))!=len(symbols) or any(s not in NATIVE_FUTURES_PRODUCTS for s in symbols):
+        raise ValueError('only_distinct_supported_native_futures_analysis')
     return symbols
 
 
