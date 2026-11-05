@@ -1,0 +1,3 @@
+# Optional isolated research reader; production dependencies are unchanged.
+databento==0.90.0
+pytest>=8,<9
