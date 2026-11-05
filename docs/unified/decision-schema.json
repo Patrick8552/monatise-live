@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:monatise:unified-native-shadow:v1",
+  "type": "object",
+  "required": ["schema_version", "code_hash", "decision_id", "cycle_id", "experiment_id", "instrument", "market_bias", "trade_action", "selected_opportunity_id", "signal_status", "selection_event_id", "is_new_selection", "entry", "stop_loss", "targets", "net_rr", "reason", "candidate_audit", "arbitration_audit", "mode", "execution_eligible", "orders_created"],
+  "properties": {
+    "schema_version": {"const": "unified-native-shadow-v1"},
+    "code_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "mode": {"const": "SHADOW"},
+    "execution_eligible": {"const": false},
+    "orders_created": {"const": 0},
+    "trade_action": {"enum": ["BUY", "SELL", "NO_TRADE"]},
+    "signal_status": {"enum": [null, "WATCHING", "ARMED", "TRIGGERED", "INVALIDATED", "EXPIRED", "SUPERSEDED"]},
+    "market_bias": {"type": "object", "required": ["value", "evidence_status"], "properties": {"value": {"enum": ["BULLISH", "BEARISH", "NEUTRAL"]}, "evidence_status": {"enum": ["OBSERVED", "UNAVAILABLE"]}}},
+    "selected_opportunity_id": {"type": ["string", "null"]},
+    "selection_event_id": {"type": ["string", "null"]},
+    "is_new_selection": {"type": "boolean"},
+    "entry": {"type": ["object", "null"]},
+    "stop_loss": {"type": ["string", "null"]},
+    "targets": {"type": ["array", "null"], "minItems": 1, "maxItems": 3},
+    "net_rr": {"type": ["array", "null"], "minItems": 1, "maxItems": 3},
+    "candidate_audit": {"type": "array"},
+    "arbitration_audit": {"type": "array"}
+  },
+  "allOf": [{
+    "if": {"properties": {"trade_action": {"const": "NO_TRADE"}}},
+    "then": {"properties": {"selected_opportunity_id": {"type": "null"}, "selection_event_id": {"type": "null"}, "entry": {"type": "null"}, "stop_loss": {"type": "null"}, "targets": {"type": "null"}, "net_rr": {"type": "null"}, "is_new_selection": {"const": false}}},
+    "else": {"properties": {"signal_status": {"const": "TRIGGERED"}, "selected_opportunity_id": {"type": "string"}, "selection_event_id": {"type": "string"}, "entry": {"type": "object"}, "stop_loss": {"type": "string"}, "targets": {"type": "array"}, "net_rr": {"type": "array"}}}
+  }]
+}
