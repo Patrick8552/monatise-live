@@ -346,3 +346,45 @@ def test_analysis_and_entry_quote_thresholds_are_separately_configurable():
     assert row['gates']['economics']==['ENTRY_QUOTE_STALE']
     assert reference_analysis(s,f,p,[row],{'reasons':[]},{'reasons':[]},{'raw':{'raw_regime':'TREND'}})['action']=='BUY'
     with pytest.raises(ValueError,match='ANALYSIS_QUOTE_AGE'):replace(p,analysis_quote_age_ns=0)
+
+
+def current_research_policy():
+    from monatise.research.btc_upgrade.__main__ import load_policy
+    return load_policy(Path(__file__).resolve().parents[3]/'docs/btc-upgrade/research-policy.json')
+
+
+@pytest.mark.parametrize('side',[Side.BUY,Side.SELL])
+@pytest.mark.parametrize('pathway',['TREND','RANGE'])
+@pytest.mark.parametrize('age_ns',[6*NS,59*NS,60*NS,60*NS+1])
+def test_current_policy_entry_freshness_boundary(side,pathway,age_ns):
+    configured=current_research_policy()
+    assert configured.trend.quote_age_ns==60*NS
+    assert configured.analysis_quote_age_ns==60*NS
+    if pathway=='RANGE':
+        s,p,f,box=range_fixture(side)
+        o=range_observations(s,f,p,box)[0]
+    else:
+        s,p,f,o=fixture(side);box=None
+    p=replace(p,trend=configured.trend)
+    s=replace(s,cutoff_ns=NOW+age_ns)
+    row=inspect(o,s,p,f,{'regime':pathway,'side':side},box)
+    if age_ns<=60*NS:
+        assert row['plan'] is not None and not row['gates']['economics']
+    else:
+        assert row['plan'] is None and row['gates']['economics']==['ENTRY_QUOTE_STALE']
+
+
+@pytest.mark.parametrize('age_ns',[60*NS,60*NS+1])
+def test_service_uses_and_reports_current_entry_freshness(tmp_path,monkeypatch,age_ns):
+    s,p,f,o=fixture();p=replace(p,trend=current_research_policy().trend)
+    s=replace(s,cutoff_ns=NOW+age_ns)
+    monkeypatch.setattr('monatise.research.btc_upgrade.service.build_frames',lambda *a:f)
+    monkeypatch.setattr('monatise.research.btc_upgrade.service.classify',lambda *a:{'raw_regime':'TREND','side':'BUY','closed_bar_ns':NOW,'reasons':[]})
+    monkeypatch.setattr('monatise.research.btc_upgrade.service.trend_observations',lambda *a:(o,))
+    store=Store(tmp_path/'ledger.sqlite')
+    try:
+        r=BTCService(store,p,stream='entry-60s',series_id='fixture').evaluate(s,'one')
+        assert r['analysis']['quote_freshness_policy']=={'conditional_analysis_limit_seconds':'60','entry_limit_seconds':'60'}
+        assert ('ENTRY_QUOTE_STALE' in r['readiness']['source']['reasons'])==(age_ns>60*NS)
+        assert r['execution_eligible'] is False and r['orders_created']==0
+    finally:store.close()

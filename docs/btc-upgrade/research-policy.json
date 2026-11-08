@@ -1,0 +1,26 @@
+{
+  "trend": {
+    "version": "unified-research-v1",
+    "behavior_checked": true,
+    "rationale_hash": "cc26897c35437ccf38346661aea2d459f543563f727d1e0b6a05a428646240fb",
+    "pivot_radius": 2,
+    "baseline_bars": 12,
+    "quote_age_ns": 60000000000,
+    "trigger_bars": 1,
+    "entry_tolerance_ticks": 1,
+    "stop_buffer_ticks": 1,
+    "fee_ticks_per_side": "1",
+    "slippage_ticks_per_side": "1",
+    "min_net_rr": "1",
+    "volume_mode": "EXECUTED_BAR_PARTICIPATION",
+    "news_required": true,
+    "allow_neutral_h4": false,
+    "allow_neutral_h1_c": false,
+    "allow_neutral_m15": true,
+    "allow_mixed_transition": true,
+    "outcome_mode": "NATIVE_L1"
+  },
+  "range_enabled": true,
+  "cost_basis": "UNVERIFIED_RESEARCH_ASSUMPTIONS",
+  "analysis_quote_age_ns": 60000000000
+}
